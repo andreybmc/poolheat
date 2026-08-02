@@ -1,0 +1,3246 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>poolheat · M63 · demo UI</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --bg2: #121820;
+      --panel: #161d27;
+      --panel2: #1c2532;
+      --border: #2a3544;
+      --border2: #3a4a5e;
+      --text: #e8eef6;
+      --muted: #8b9bb0;
+      --dim: #5c6b7e;
+      --accent: #3d9cf0;
+      --accent2: #2b7fc9;
+      --ok: #3ecf8e;
+      --ok-bg: rgba(62, 207, 142, 0.12);
+      --warn: #f0b429;
+      --warn-bg: rgba(240, 180, 41, 0.12);
+      --danger: #f07178;
+      --danger-bg: rgba(240, 113, 120, 0.12);
+      --purple: #b48ead;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+      --font: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: "SF Mono", "Cascadia Code", "Consolas", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.45;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 156, 240, 0.12), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 0%, rgba(62, 207, 142, 0.06), transparent);
+    }
+
+    /* —— layout —— */
+    .app {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 16px 20px 48px;
+    }
+
+    header.app-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 20px;
+      padding: 12px 0 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-mark {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #3d9cf0, #2b7fc9 50%, #3ecf8e);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: -0.02em;
+      box-shadow: 0 4px 16px rgba(61, 156, 240, 0.35);
+    }
+
+    .brand h1 {
+      font-size: 1.15rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .brand p {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .header-meta {
+      margin-left: auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 550;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+    }
+
+    .pill .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--dim);
+    }
+
+    .pill.ok { color: var(--ok); border-color: rgba(62, 207, 142, 0.35); background: var(--ok-bg); }
+    .pill.ok .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .pill.warn { color: var(--warn); border-color: rgba(240, 180, 41, 0.35); background: var(--warn-bg); }
+    .pill.warn .dot { background: var(--warn); }
+    .pill.danger { color: var(--danger); border-color: rgba(240, 113, 120, 0.35); background: var(--danger-bg); }
+    .pill.danger .dot { background: var(--danger); }
+    .pill.accent { color: var(--accent); border-color: rgba(61, 156, 240, 0.4); background: rgba(61, 156, 240, 0.1); }
+
+    /* —— tabs —— */
+    nav.tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      padding: 4px;
+      background: var(--bg2);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow-x: auto;
+    }
+
+    nav.tabs button {
+      flex: 1;
+      min-width: max-content;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: 0.875rem;
+      font-weight: 550;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    nav.tabs button:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
+    nav.tabs button.active {
+      color: var(--text);
+      background: var(--panel2);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* —— grid —— */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    @media (max-width: 960px) {
+      .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+      .header-meta { margin-left: 0; width: 100%; }
+    }
+
+    @media (min-width: 640px) and (max-width: 960px) {
+      .grid-4 { grid-template-columns: 1fr 1fr; }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+
+    /* —— cards —— */
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .card-h {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    .card-h h2 {
+      font-size: 0.92rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+
+    .card-h .sub {
+      font-size: 0.72rem;
+      color: var(--dim);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    .card-b { padding: 16px; }
+
+    .stack { display: flex; flex-direction: column; gap: 16px; }
+
+    /* —— metrics —— */
+    .metric {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+    }
+
+    .metric label {
+      display: block;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--dim);
+      margin-bottom: 4px;
+    }
+
+    .metric .val {
+      font-size: 1.45rem;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.03em;
+    }
+
+    .metric .val small {
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .metric .hint {
+      margin-top: 4px;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+
+    .metric.highlight-ok .val { color: var(--ok); }
+    .metric.highlight-warn .val { color: var(--warn); }
+    .metric.highlight-danger .val { color: var(--danger); }
+    .metric.highlight-accent .val { color: var(--accent); }
+
+    /* —— forms —— */
+    label.field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    label.field span.req::after {
+      content: " *";
+      color: var(--danger);
+    }
+
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      border-radius: var(--radius-sm);
+      padding: 9px 11px;
+      font: inherit;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(61, 156, 240, 0.15);
+    }
+
+    input:disabled, select:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 560px) {
+      .row { grid-template-columns: 1fr; }
+    }
+
+    .check {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 0.875rem;
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .check input {
+      margin-top: 3px;
+      accent-color: var(--accent);
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+
+    .check .desc {
+      display: block;
+      font-size: 0.75rem;
+      color: var(--dim);
+      margin-top: 2px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid var(--border2);
+      background: var(--panel2);
+      color: var(--text);
+      padding: 9px 14px;
+      border-radius: var(--radius-sm);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 550;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+
+    .btn:hover { border-color: var(--accent); background: rgba(61, 156, 240, 0.1); }
+    .btn.primary {
+      background: linear-gradient(180deg, #4aa8f5, var(--accent2));
+      border-color: transparent;
+      color: #fff;
+    }
+    .btn.primary:hover { filter: brightness(1.08); }
+    .btn.danger {
+      background: var(--danger-bg);
+      border-color: rgba(240, 113, 120, 0.45);
+      color: var(--danger);
+    }
+    .btn.ghost { background: transparent; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    /* —— zone map —— */
+    .zone {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg2);
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .zone.active {
+      border-color: rgba(61, 156, 240, 0.55);
+      box-shadow: 0 0 0 1px rgba(61, 156, 240, 0.2), inset 0 0 24px rgba(61, 156, 240, 0.05);
+    }
+
+    .zone.critical {
+      border-color: rgba(240, 113, 120, 0.4);
+    }
+
+    .zone.critical.active {
+      border-color: var(--danger);
+      box-shadow: 0 0 0 1px rgba(240, 113, 120, 0.25);
+    }
+
+    .zone-h {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: rgba(0, 0, 0, 0.2);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .zone-h .badge {
+      font-size: 0.68rem;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: var(--panel2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+
+    .zone.active .zone-h .badge {
+      background: rgba(61, 156, 240, 0.15);
+      color: var(--accent);
+      border-color: rgba(61, 156, 240, 0.35);
+    }
+
+    .zone.critical .zone-h .badge {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border-color: rgba(240, 113, 120, 0.35);
+    }
+
+    .zone-h .title {
+      font-weight: 600;
+      font-size: 0.9rem;
+      flex: 1;
+      min-width: 120px;
+    }
+
+    .zone-h .range {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .zone-b { padding: 14px; }
+
+    .zone-temps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      background: rgba(0, 0, 0, 0.18);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+    }
+
+    .zone-temps label.field {
+      font-size: 0.72rem;
+    }
+
+    .zone-temps input {
+      font-family: var(--mono);
+      font-size: 0.88rem;
+    }
+
+    .zone-temps .hint-inline {
+      grid-column: 1 / -1;
+      font-size: 0.72rem;
+      color: var(--dim);
+    }
+
+    .zone-temps .hint-inline.err {
+      color: var(--danger);
+    }
+
+    .map-note {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin-bottom: 14px;
+      padding: 10px 12px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(61, 156, 240, 0.25);
+      background: rgba(61, 156, 240, 0.08);
+    }
+
+    .actuators {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    @media (max-width: 720px) {
+      .actuators { grid-template-columns: 1fr; }
+    }
+
+    .act {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px;
+      background: var(--panel);
+      transition: opacity 0.15s;
+    }
+
+    .act.off { opacity: 0.42; }
+
+    .act-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .act-top label {
+      font-size: 0.8rem;
+      font-weight: 550;
+      cursor: pointer;
+      flex: 1;
+    }
+
+    .act-warn {
+      font-size: 0.68rem;
+      color: var(--warn);
+      margin-top: 6px;
+    }
+
+    /* —— temp bar —— */
+    .temp-scale {
+      position: relative;
+      height: 28px;
+      border-radius: 6px;
+      background: linear-gradient(90deg,
+        #3ecf8e 0%,
+        #3ecf8e 35%,
+        #3d9cf0 35%,
+        #3d9cf0 55%,
+        #f0b429 55%,
+        #f0b429 75%,
+        #f07178 75%,
+        #f07178 100%);
+      margin: 8px 0 4px;
+      opacity: 0.85;
+    }
+
+    .temp-scale .needle {
+      position: absolute;
+      top: -4px;
+      bottom: -4px;
+      width: 3px;
+      background: #fff;
+      border-radius: 2px;
+      box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
+      transform: translateX(-50%);
+      transition: left 0.4s ease;
+    }
+
+    .temp-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.68rem;
+      color: var(--dim);
+      font-family: var(--mono);
+    }
+
+    /* —— log —— */
+    .log {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.55;
+      max-height: 280px;
+      overflow-y: auto;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      color: var(--muted);
+    }
+
+    .log .line { white-space: nowrap; }
+    .log .t { color: var(--dim); }
+    .log .ok { color: var(--ok); }
+    .log .warn { color: var(--warn); }
+    .log .info { color: var(--accent); }
+    .log .danger { color: var(--danger); }
+
+    /* —— banner —— */
+    .banner {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 16px;
+      padding: 10px 14px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+      font-size: 0.85rem;
+      border: 1px solid;
+    }
+
+    .banner.dry {
+      background: rgba(180, 142, 173, 0.12);
+      border-color: rgba(180, 142, 173, 0.4);
+      color: #d4b8cf;
+    }
+
+    .banner.warmup {
+      background: var(--warn-bg);
+      border-color: rgba(240, 180, 41, 0.4);
+      color: var(--warn);
+    }
+
+    /* —— layers —— */
+    .layers {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .layer {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      font-size: 0.8rem;
+    }
+
+    .layer .n {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      color: var(--dim);
+      text-align: center;
+    }
+
+    .layer.on {
+      border-color: rgba(61, 156, 240, 0.4);
+      background: rgba(61, 156, 240, 0.08);
+    }
+
+    .layer.block {
+      border-color: rgba(240, 180, 41, 0.35);
+      background: var(--warn-bg);
+    }
+
+    /* hash2cash admin-style toast stack */
+    .staff-toast-stack {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 1300;
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      width: min(24rem, calc(100vw - 2rem));
+      pointer-events: none;
+    }
+    .staff-toast-stack > * { pointer-events: auto; }
+    .staff-toast {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.6rem;
+      padding: 0.72rem 0.85rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      transition: opacity 220ms ease, transform 220ms ease;
+    }
+    .staff-toast--success { border-left: 4px solid #22c55e; }
+    .staff-toast--error { border-left: 4px solid #ef4444; }
+    .staff-toast--warn { border-left: 4px solid #f0b429; }
+    .staff-toast--info { border-left: 4px solid #3d9cf0; }
+    .staff-toast__icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.35rem;
+      height: 1.35rem;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      color: #fff;
+      font-size: 0.75rem;
+      font-weight: 700;
+      margin-top: 0.05rem;
+    }
+    .staff-toast--success .staff-toast__icon { background: #22c55e; }
+    .staff-toast--error .staff-toast__icon { background: #ef4444; }
+    .staff-toast--warn .staff-toast__icon { background: #f0b429; color: #1a1a1a; }
+    .staff-toast--info .staff-toast__icon { background: #3d9cf0; }
+    .staff-toast__body {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .staff-toast__message {
+      margin: 0;
+      font-size: 0.88rem;
+      line-height: 1.35;
+      color: var(--text);
+    }
+    .staff-toast__time {
+      flex: 0 0 auto;
+      font-size: 0.72rem;
+      color: var(--muted);
+      white-space: nowrap;
+      padding-top: 0.1rem;
+    }
+    .staff-toast--hiding {
+      opacity: 0;
+      transform: translateX(0.35rem);
+      pointer-events: none;
+    }
+    .staff-toast-stack__close-all {
+      width: 100%;
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--panel2);
+      color: #4ade80;
+      font-size: 0.85rem;
+      font-weight: 550;
+      cursor: pointer;
+    }
+    .staff-toast-stack__close-all:hover {
+      background: rgba(34, 197, 94, 0.1);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+    @media (max-width: 720px) {
+      .staff-toast-stack {
+        top: 0.65rem;
+        right: 0.65rem;
+        width: min(24rem, calc(100vw - 1.3rem));
+      }
+    }
+
+    /* tooltips for implicit terms */
+    .tip {
+      cursor: help;
+      border-bottom: 1px dashed color-mix(in srgb, var(--muted) 70%, transparent);
+      text-decoration: none;
+    }
+    .tip:hover, .tip:focus {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    label .tip, .tc-label .tip, .metric label .tip, .bc-id .tip {
+      font: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
+    }
+    .tip-bubble {
+      position: fixed;
+      z-index: 1400;
+      max-width: min(22rem, calc(100vw - 1.5rem));
+      padding: 0.65rem 0.8rem;
+      background: #121820;
+      border: 1px solid var(--border2);
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+      color: var(--text);
+      font-size: 0.8rem;
+      line-height: 1.4;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.12s ease, transform 0.12s ease;
+    }
+    .tip-bubble.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .tip-bubble strong {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--accent);
+      margin-bottom: 0.25rem;
+      letter-spacing: 0.02em;
+    }
+    .tip-bubble .tip-body {
+      color: #c8d4e2;
+      white-space: pre-line;
+    }
+
+    footer.demo-note {
+      margin-top: 28px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      font-size: 0.75rem;
+      color: var(--dim);
+      text-align: center;
+    }
+
+    .sim-panel {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: var(--bg2);
+      border: 1px dashed var(--border2);
+      border-radius: var(--radius-sm);
+      margin-bottom: 16px;
+    }
+
+    .sim-panel label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .sim-panel input[type="range"] {
+      width: 140px;
+      accent-color: var(--accent);
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 14px 0;
+    }
+
+    .tag {
+      font-size: 0.68rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--panel2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      font-family: var(--mono);
+    }
+
+    .temp-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    @media (max-width: 960px) {
+      .temp-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 520px) {
+      .temp-grid { grid-template-columns: 1fr; }
+    }
+
+    .temp-card {
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .temp-card::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--dim);
+    }
+
+    .temp-card.liquid::before { background: var(--accent); }
+    .temp-card.env::before { background: var(--ok); }
+    .temp-card.board::before { background: var(--warn); }
+    .temp-card.chip::before { background: var(--danger); }
+
+    .temp-card .tc-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--dim);
+      margin-bottom: 6px;
+    }
+
+    .temp-card .tc-val {
+      font-size: 1.65rem;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.03em;
+    }
+
+    .temp-card .tc-val small {
+      font-size: 0.85rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .temp-card .tc-extra {
+      margin-top: 8px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      line-height: 1.4;
+      font-family: var(--mono);
+    }
+
+    .board-chip-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+
+    @media (max-width: 720px) {
+      .board-chip-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    .bc-cell {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+    }
+
+    .bc-cell .bc-id {
+      font-size: 0.68rem;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .bc-cell .bc-t {
+      font-size: 1.2rem;
+      font-weight: 650;
+      font-variant-numeric: tabular-nums;
+      margin-top: 2px;
+    }
+
+    .bc-cell .bc-t small { font-size: 0.75rem; color: var(--muted); font-weight: 500; }
+
+    .live-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
+      margin-bottom: 16px;
+      padding: 10px 14px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+    }
+
+    .live-bar .src {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    /* hash2cash-style brush + scroll */
+    .chart-nav {
+      margin-top: 10px;
+      padding: 0 2px;
+    }
+    .chart-brush-wrap {
+      height: 56px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #0c1016;
+      overflow: hidden;
+      cursor: ew-resize;
+      user-select: none;
+    }
+    .chart-brush-wrap canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .chart-scroll {
+      margin-top: 8px;
+      height: 14px;
+      position: relative;
+      padding: 0 2px;
+    }
+    .chart-scroll[hidden] { display: none !important; }
+    .chart-scroll-track {
+      position: relative;
+      height: 10px;
+      margin-top: 2px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--border) 80%, #000);
+      cursor: pointer;
+    }
+    .chart-scroll-thumb {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      min-width: 20px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 55%, var(--border));
+      border: 1px solid rgba(61, 156, 240, 0.45);
+      cursor: grab;
+      box-sizing: border-box;
+    }
+    .chart-scroll-thumb:active { cursor: grabbing; }
+    .chart-zoom-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 14px;
+      margin-bottom: 12px;
+    }
+    .chart-zoom-row label.field {
+      min-width: 140px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark">PH</div>
+        <div>
+          <h1>poolheat</h1>
+          <p>Keenetic Peak · M63 · MVP demo</p>
+        </div>
+      </div>
+      <div class="header-meta">
+        <span class="pill accent tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
+        <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
+        <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
+        <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> zone: —</span>
+        <span class="pill tip" data-tip-key="lan_token">LAN · token</span>
+      </div>
+    </header>
+
+    <div class="banner dry" id="banner-dry">
+      <strong>DRY RUN</strong>
+      <span>Команды на майнер не отправляются — только policy + лог.</span>
+      <button class="btn ghost" type="button" style="margin-left:auto" id="btn-dry-help">Как выключить</button>
+    </div>
+
+    <div class="banner warmup" id="banner-warmup" style="display:none">
+      <strong class="tip" data-tip-key="warmup">WARMUP / upfreq</strong>
+      <span>Майнер ещё выходит на режим —
+        <em class="tip" data-tip-key="upward">upward</em> заблокирован.
+        <em class="tip" data-tip-key="downward">Downward</em> и
+        <em class="tip" data-tip-key="critical">Critical</em> разрешены.
+      </span>
+    </div>
+
+    <div class="live-bar">
+      <span class="tag" id="src-tag">LIVE</span>
+      <span class="src" id="src-detail">опрос /api/live · 192.168.1.10:4028</span>
+      <span class="src" id="src-updated">—</span>
+      <button class="btn ghost" type="button" id="btn-refresh" onclick="fetchLive(true)">Обновить</button>
+      <label class="check" style="margin:0 0 0 auto">
+        <input type="checkbox" id="use-live" checked />
+        <span>Live с майнера</span>
+      </label>
+    </div>
+
+    <div class="sim-panel" id="sim-panel" title="Только когда Live выкл" style="display:none">
+      <span class="tag">SIM</span>
+      <label>liquid °C
+        <input type="range" id="sim-liquid" min="15" max="45" step="0.1" value="27.1" />
+        <strong id="sim-liquid-v">27.1</strong>
+      </label>
+      <label>env °C
+        <input type="range" id="sim-env" min="10" max="45" step="0.1" value="26.5" />
+        <strong id="sim-env-v">26.5</strong>
+      </label>
+      <label>board0/1 °C
+        <input type="range" id="sim-tctrl" min="25" max="60" step="0.1" value="41.3" />
+        <strong id="sim-tctrl-v">41.3</strong>
+      </label>
+      <label>chip max °C
+        <input type="range" id="sim-chip" min="30" max="80" step="0.1" value="58.0" />
+        <strong id="sim-chip-v">58.0</strong>
+      </label>
+      <label class="check" style="margin:0">
+        <input type="checkbox" id="sim-upfreq" />
+        <span>upfreq / not ready</span>
+      </label>
+      <label class="check" style="margin:0">
+        <input type="checkbox" id="sim-dry" checked />
+        <span>dry_run</span>
+      </label>
+    </div>
+
+    <nav class="tabs" role="tablist">
+      <button type="button" class="active" data-tab="dash">Обзор</button>
+      <button type="button" data-tab="charts">Графики</button>
+      <button type="button" data-tab="map">Карта зон</button>
+      <button type="button" data-tab="miner">Майнер</button>
+      <button type="button" data-tab="safety">Safety</button>
+      <button type="button" data-tab="logs">Логи</button>
+    </nav>
+
+    <!-- ========== DASHBOARD ========== -->
+    <section class="view active" id="view-dash">
+      <div class="stack">
+        <!-- Primary temperatures -->
+        <div class="temp-grid">
+          <div class="temp-card liquid">
+            <div class="tc-label"><span class="tip" data-tip-key="liquid">Вода / liquid</span></div>
+            <div class="tc-val"><span id="t-liquid">—</span> <small>°C</small></div>
+            <div class="tc-extra">status.liquid_temp<br>регуляция (<span class="tip" data-tip-key="t_ctrl">T_ctrl</span>)</div>
+          </div>
+          <div class="temp-card env">
+            <div class="tc-label"><span class="tip" data-tip-key="env">Окружение / env</span></div>
+            <div class="tc-val"><span id="t-env">—</span> <small>°C</small></div>
+            <div class="tc-extra">summary.Env Temp</div>
+          </div>
+          <div class="temp-card board">
+            <div class="tc-label"><span class="tip" data-tip-key="pcb">Платы · max PCB</span></div>
+            <div class="tc-val"><span id="t-board-max">—</span> <small>°C</small></div>
+            <div class="tc-extra">max boards · hot 0/1: <span id="t-board-hot">—</span></div>
+          </div>
+          <div class="temp-card chip">
+            <div class="tc-label"><span class="tip" data-tip-key="chip_max">Чипы · max</span></div>
+            <div class="tc-val"><span id="t-chip-max">—</span> <small>°C</small></div>
+            <div class="tc-extra">avg <span id="t-chip-avg">—</span> · min <span id="t-chip-min">—</span></div>
+          </div>
+        </div>
+
+        <div class="grid-4">
+          <div class="metric highlight-accent">
+            <label><span class="tip" data-tip-key="t_ctrl">T_ctrl</span> · liquid</label>
+            <div class="val"><span data-bind="tctrl">—</span> <small>°C</small></div>
+            <div class="hint" id="hint-hyst">карта зон по liquid</div>
+          </div>
+          <div class="metric">
+            <label><span class="tip" data-tip-key="t_safe">T_safe</span> · chip max</label>
+            <div class="val"><span data-bind="tsafe">—</span> <small>°C</small></div>
+            <div class="hint"><span class="tip" data-tip-key="critical">Critical</span> / safety</div>
+          </div>
+          <div class="metric highlight-ok">
+            <label><span class="tip" data-tip-key="power_measured">Power measured</span></label>
+            <div class="val"><span data-bind="pw">—</span> <small>W</small></div>
+            <div class="hint"><span data-bind="pwMode">—</span> · <span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span> · <span data-bind="hr">—</span> <span class="tip" data-tip-key="hashrate">TH/s</span></div>
+          </div>
+          <div class="metric">
+            <label><span class="tip" data-tip-key="zone">Policy zone</span></label>
+            <div class="val" style="font-size:1.15rem" data-bind="zoneName">—</div>
+            <div class="hint" data-bind="zoneHint">—</div>
+          </div>
+        </div>
+
+        <!-- Power controls -->
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Мощность · Mode / Limit / pct</h2>
+              <div class="sub">текущие значения с майнера + ручная установка (write API)</div>
+            </div>
+            <span class="pill" id="pill-write" style="display:none"><span class="dot"></span> write…</span>
+          </div>
+          <div class="card-b">
+            <div class="grid-3" style="margin-bottom:16px">
+              <div class="metric">
+                <label><span class="tip" data-tip-key="power_mode">Power Mode</span> (now)</label>
+                <div class="val" style="font-size:1.2rem" id="pw-mode-now">—</div>
+                <div class="hint">summary.Power Mode · last cmd: <span id="pw-mode-cmd">—</span></div>
+              </div>
+              <div class="metric">
+                <label><span class="tip" data-tip-key="power_limit">Power Limit</span></label>
+                <div class="val" style="font-size:1.05rem">
+                  <span id="pw-lim-meas">—</span> <small>W meas</small>
+                </div>
+                <div class="hint">set: <span id="pw-lim-set">—</span> W · cmd: <span id="pw-lim-cmd">—</span></div>
+              </div>
+              <div class="metric">
+                <label><span class="tip" data-tip-key="power_pct">Power pct</span></label>
+                <div class="val" style="font-size:1.2rem"><span id="pw-pct-now">—</span> <small>%</small></div>
+                <div class="hint">API rarely reports · last cmd · ⚠ may <span class="tip" data-tip-key="low_hash">LOW_HASH</span></div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
+              <div>
+                <label class="field">Power Mode
+                  <select id="set-mode">
+                    <option value="low">low</option>
+                    <option value="normal">normal</option>
+                    <option value="high">high</option>
+                  </select>
+                </label>
+                <button class="btn primary" type="button" style="width:100%;margin-top:8px" id="btn-set-mode">
+                  Применить mode
+                </button>
+              </div>
+              <div>
+                <label class="field">Set Power Limit (W)
+                  <input type="number" id="set-limit" value="7000" min="0" max="15000" step="50" />
+                </label>
+                <button class="btn" type="button" style="width:100%;margin-top:8px" id="btn-set-limit">
+                  Применить limit
+                </button>
+                <p style="font-size:0.7rem;color:var(--warn);margin-top:6px">⚠ adjust_power_limit может reboot</p>
+              </div>
+              <div>
+                <label class="field">Power pct (%)
+                  <input type="number" id="set-pct" value="100" min="0" max="100" step="1" />
+                </label>
+                <button class="btn" type="button" style="width:100%;margin-top:8px" id="btn-set-pct">
+                  Применить pct
+                </button>
+                <p style="font-size:0.7rem;color:var(--muted);margin-top:6px">temporary · может откатиться / LOW_HASH</p>
+              </div>
+            </div>
+
+            <div class="row" style="margin-top:14px;grid-template-columns:1fr 1fr auto;align-items:end">
+              <label class="field">API password
+                <input type="password" id="api-password" value="admin" autocomplete="off" />
+              </label>
+              <label class="check" style="padding-bottom:10px">
+                <input type="checkbox" id="allow-writes" />
+                <span>Разрешить write на майнер
+                  <span class="desc">без галки кнопки Apply заблокированы</span>
+                </span>
+              </label>
+              <button class="btn ghost" type="button" id="btn-refresh-pw" onclick="fetchLive(true)">Обновить статус</button>
+            </div>
+            <p id="write-status" style="font-size:0.8rem;color:var(--muted);margin-top:10px">last write: —</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Платы (PCB) · 4 hashboard</h2>
+              <div class="sub">devs[].Temperature · Upfreq Complete</div>
+            </div>
+          </div>
+          <div class="card-b board-chip-grid" id="boards-grid">
+            <div class="bc-cell"><div class="bc-id">Board 0</div><div class="bc-t"><span id="b0">—</span> <small>°C</small></div><div class="tc-extra" id="b0u">upfreq —</div></div>
+            <div class="bc-cell"><div class="bc-id">Board 1</div><div class="bc-t"><span id="b1">—</span> <small>°C</small></div><div class="tc-extra" id="b1u">upfreq —</div></div>
+            <div class="bc-cell"><div class="bc-id">Board 2</div><div class="bc-t"><span id="b2">—</span> <small>°C</small></div><div class="tc-extra" id="b2u">upfreq —</div></div>
+            <div class="bc-cell"><div class="bc-id">Board 3</div><div class="bc-t"><span id="b3">—</span> <small>°C</small></div><div class="tc-extra" id="b3u">upfreq —</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Чипы (summary)</h2>
+              <div class="sub">Chip Temp Min / Avg / Max</div>
+            </div>
+          </div>
+          <div class="card-b grid-3">
+            <div class="metric"><label>Chip min</label><div class="val" style="font-size:1.2rem"><span id="chip-min">—</span> <small>°C</small></div></div>
+            <div class="metric"><label>Chip avg</label><div class="val" style="font-size:1.2rem"><span id="chip-avg">—</span> <small>°C</small></div></div>
+            <div class="metric highlight-danger" style="border-color:rgba(240,113,120,0.25)"><label><span class="tip" data-tip-key="chip_max">Chip max</span> · <span class="tip" data-tip-key="t_safe">T_safe</span></label><div class="val" style="font-size:1.2rem;color:var(--danger)"><span id="chip-max">—</span> <small>°C</small></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Шкала liquid (карта зон)</h2>
+              <div class="sub">игла = liquid_temp · пороги T_low / T_high / T_crit с карты</div>
+            </div>
+          </div>
+          <div class="card-b">
+            <div class="temp-scale"><div class="needle" id="needle" style="left:40%"></div></div>
+            <div class="temp-labels">
+              <span>20</span>
+              <span id="scale-low">26</span>
+              <span id="scale-high">28</span>
+              <span id="scale-crit">35</span>
+              <span>40</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2>Слои решения</h2>
+                <div class="sub">приоритет сверху вниз</div>
+              </div>
+            </div>
+            <div class="card-b layers" id="layers">
+              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (sleep)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="override"><span class="n">2</span><span class="tip" data-tip-key="override">Manual override / pause</span><span class="tag">off</span></div>
+              <div class="layer on block" data-layer="warmup"><span class="n">3</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
+              <div class="layer" data-layer="map"><span class="n">4</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
+              <div class="layer" data-layer="fail"><span class="n">5</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2>Что применили бы сейчас</h2>
+                <div class="sub">preview · dry_run</div>
+              </div>
+            </div>
+            <div class="card-b">
+              <div class="grid-3" style="margin-bottom:12px">
+                <div class="metric">
+                  <label>working_mode</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevMode">— hold</div>
+                </div>
+                <div class="metric">
+                  <label>power_limit</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevLim">— skip</div>
+                </div>
+                <div class="metric">
+                  <label>power_pct</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevPct">— skip</div>
+                </div>
+              </div>
+              <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
+                Warmup: upward заблокирован. T в deadband 41–44 — карта не меняет профиль.
+              </p>
+              <div class="btn-row">
+                <button class="btn" type="button" id="btn-pause">Pause</button>
+                <button class="btn" type="button" id="btn-override">Override 30m</button>
+                <button class="btn danger" type="button" id="btn-force-sleep">Force sleep…</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ========== CHARTS ========== -->
+    <section class="view" id="view-charts">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>История и графики</h2>
+              <div class="sub">zoom + brush + scroll · как в hash2cash admin</div>
+            </div>
+            <button class="btn" type="button" id="btn-hist-refresh">Обновить</button>
+          </div>
+          <div class="card-b">
+            <div class="chart-zoom-row">
+              <label class="field">Zoom
+                <select id="chart-zoom" data-fleet-zoom>
+                  <option value="1h">1 час</option>
+                  <option value="6h">6 часов</option>
+                  <option value="12h">12 часов</option>
+                  <option value="1d" selected>1 день</option>
+                  <option value="2d">2 дня</option>
+                  <option value="7d">7 дней</option>
+                </select>
+              </label>
+              <label class="field">Хранить, дней
+                <input type="number" id="hist-retention" value="7" min="1" max="90" />
+              </label>
+              <label class="field">Интервал сбора, сек
+                <input type="number" id="hist-interval" value="30" min="5" max="3600" step="5" />
+              </label>
+              <button class="btn primary" type="button" id="btn-hist-save">Сохранить настройки</button>
+              <label class="check" style="margin-left:auto">
+                <input type="checkbox" id="hist-enabled" checked />
+                <span>Сбор данных</span>
+              </label>
+            </div>
+            <div class="row" style="margin-bottom:12px;align-items:center">
+              <span class="src" id="hist-stats">—</span>
+              <span class="src" id="hist-view-label" style="margin-left:auto">view: —</span>
+            </div>
+
+            <div class="card" style="box-shadow:none;margin-bottom:14px">
+              <div class="card-h"><div><h2>Температуры °C</h2><div class="sub">liquid · env · boards · chip max</div></div></div>
+              <div class="card-b" style="height:260px;position:relative">
+                <canvas id="chart-temp"></canvas>
+              </div>
+            </div>
+            <div class="card" style="box-shadow:none;margin-bottom:10px">
+              <div class="card-h"><div><h2>Мощность W · хешрейт TH/s · freq</h2><div class="sub">power · limit (слева) · hashrate TH/s · freq (справа)</div></div></div>
+              <div class="card-b" style="height:240px;position:relative">
+                <canvas id="chart-power"></canvas>
+              </div>
+            </div>
+
+            <!-- brush + scroll (shared for both charts) -->
+            <div class="chart-nav">
+              <div class="chart-brush-wrap" title="Перетащите окно / края для zoom">
+                <canvas id="chart-brush" height="56"></canvas>
+              </div>
+              <div class="chart-scroll" id="chart-scroll" hidden>
+                <div class="chart-scroll-track" id="chart-scroll-track">
+                  <div class="chart-scroll-thumb" id="chart-scroll-thumb"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== MAP ========== -->
+    <section class="view" id="view-map">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Карта: температура → что менять</h2>
+              <div class="sub">Диапазоны <strong>задаёте вы</strong> · 41/44/48 — только пресет по умолчанию</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-save-map">Сохранить карту</button>
+          </div>
+          <div class="card-b">
+            <div class="map-note">
+              <strong>Ручная карта зон.</strong>
+              <code>T_ctrl</code> = <strong>liquid</strong> (вода), <code>T_safe</code> = <strong>chip max</strong>.
+              Пресет liquid 26/28 · Critical по chip 70 — калибруйте сами.
+            </div>
+
+            <!-- Global thresholds (source of truth for bands) -->
+            <div class="card" style="margin-bottom:14px;box-shadow:none">
+              <div class="card-h">
+                <div>
+                  <h2>Пороги T_ctrl / T_safe (°C)</h2>
+                  <div class="sub">редактируйте → зоны и SIM пересчитаются</div>
+                </div>
+                <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пресет liquid 26 / 28 / 35</button>
+              </div>
+              <div class="card-b">
+                <div class="row" style="grid-template-columns:repeat(4,1fr)">
+                  <label class="field"><span class="tip" data-tip-key="t_low">T_low</span> · liquid → more heat
+                    <input type="number" id="thr-low" value="26" step="0.1" />
+                  </label>
+                  <label class="field"><span class="tip" data-tip-key="t_high">T_high</span> · liquid → less heat
+                    <input type="number" id="thr-high" value="28" step="0.1" />
+                  </label>
+                  <label class="field"><span class="tip" data-tip-key="t_crit">T_crit</span> · chip max Critical
+                    <input type="number" id="thr-crit" value="70" step="0.1" />
+                  </label>
+                  <label class="field"><span class="tip" data-tip-key="t_crit_clear">T_crit_clear</span> · chip
+                    <input type="number" id="thr-crit-clear" value="65" step="0.1" />
+                  </label>
+                </div>
+                <p class="hint-inline" id="thr-validate" style="margin-top:10px;font-size:0.75rem;color:var(--dim)"></p>
+              </div>
+            </div>
+
+            <!-- Zone Normal -->
+            <div class="zone" data-zone="normal" id="zone-normal">
+              <div class="zone-h">
+                <span class="badge">Z1</span>
+                <span class="title">Normal heat</span>
+                <span class="range" id="z1-range-label">T_ctrl ≤ T_low</span>
+              </div>
+              <div class="zone-b">
+                <div class="zone-temps">
+                  <label class="field">T_enter ≤ (°C)
+                    <input type="number" id="z1-t-enter" value="41" step="0.1" title="Войти в Normal когда T упала до…" />
+                  </label>
+                  <label class="field">T_exit ≥ (°C) · гистерезис
+                    <input type="number" id="z1-t-exit" value="44" step="0.1" title="Выйти из Normal когда T выросла до…" />
+                  </label>
+                  <div class="hint-inline">Связано с T_low / T_high. Меньше T_enter — раньше «полный жар».</div>
+                </div>
+                <div class="actuators">
+                  <div class="act" data-act="mode">
+                    <div class="act-top">
+                      <input type="checkbox" id="z1-mode" checked onchange="syncAct(this)" />
+                      <label for="z1-mode">Working mode</label>
+                    </div>
+                    <select id="z1-mode-v">
+                      <option value="low">low power</option>
+                      <option value="normal" selected>normal</option>
+                      <option value="high">high</option>
+                    </select>
+                  </div>
+                  <div class="act off" data-act="limit">
+                    <div class="act-top">
+                      <input type="checkbox" id="z1-lim" onchange="syncAct(this)" />
+                      <label for="z1-lim">Power limit (W)</label>
+                    </div>
+                    <input type="number" id="z1-lim-v" value="6000" disabled />
+                    <div class="act-warn">⚠ может reboot — не для thrash</div>
+                  </div>
+                  <div class="act off" data-act="pct">
+                    <div class="act-top">
+                      <input type="checkbox" id="z1-pct" onchange="syncAct(this)" />
+                      <label for="z1-pct">Power pct (%)</label>
+                    </div>
+                    <input type="number" id="z1-pct-v" value="100" min="0" max="100" disabled />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Zone Hold -->
+            <div class="zone active" data-zone="hold" id="zone-hold">
+              <div class="zone-h">
+                <span class="badge">Z0 · active</span>
+                <span class="title">Deadband / hold</span>
+                <span class="range" id="z0-range-label">T_low &lt; T &lt; T_high</span>
+              </div>
+              <div class="zone-b">
+                <div class="zone-temps">
+                  <label class="field">T_min (auto)
+                    <input type="number" id="z0-t-min" value="41" step="0.1" readonly title="= T_low" />
+                  </label>
+                  <label class="field">T_max (auto)
+                    <input type="number" id="z0-t-max" value="44" step="0.1" readonly title="= T_high" />
+                  </label>
+                  <div class="hint-inline">Hold = всё между Normal и Reduced. Actuators всегда off — правите только пороги выше.</div>
+                </div>
+                <p style="font-size:0.85rem;color:var(--muted)">
+                  Ничего не трогаем. Bootstrap in-band → sticky last или Reduced, не force Normal.
+                </p>
+              </div>
+            </div>
+
+            <!-- Zone Reduced -->
+            <div class="zone" data-zone="reduced" id="zone-reduced">
+              <div class="zone-h">
+                <span class="badge">Z2</span>
+                <span class="title">Reduced heat</span>
+                <span class="range" id="z2-range-label">T_ctrl ≥ T_high</span>
+              </div>
+              <div class="zone-b">
+                <div class="zone-temps">
+                  <label class="field">T_enter ≥ (°C)
+                    <input type="number" id="z2-t-enter" value="44" step="0.1" />
+                  </label>
+                  <label class="field">T_exit ≤ (°C) · гистерезис
+                    <input type="number" id="z2-t-exit" value="41" step="0.1" />
+                  </label>
+                  <div class="hint-inline">Обычно T_enter = T_high, T_exit = T_low (связанный гистерезис).</div>
+                </div>
+                <div class="actuators">
+                  <div class="act" data-act="mode">
+                    <div class="act-top">
+                      <input type="checkbox" id="z2-mode" checked onchange="syncAct(this)" />
+                      <label for="z2-mode">Working mode</label>
+                    </div>
+                    <select id="z2-mode-v">
+                      <option value="low" selected>low power</option>
+                      <option value="normal">normal</option>
+                      <option value="high">high</option>
+                    </select>
+                  </div>
+                  <div class="act" data-act="limit">
+                    <div class="act-top">
+                      <input type="checkbox" id="z2-lim" checked onchange="syncAct(this)" />
+                      <label for="z2-lim">Power limit (W)</label>
+                    </div>
+                    <input type="number" id="z2-lim-v" value="4000" />
+                    <div class="act-warn">⚠ Stage 0: reboot? иначе лучше pct</div>
+                  </div>
+                  <div class="act off" data-act="pct">
+                    <div class="act-top">
+                      <input type="checkbox" id="z2-pct" onchange="syncAct(this)" />
+                      <label for="z2-pct">Power pct (%)</label>
+                    </div>
+                    <input type="number" id="z2-pct-v" value="70" disabled />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Zone Critical -->
+            <div class="zone critical" data-zone="critical" id="zone-critical">
+              <div class="zone-h">
+                <span class="badge">Z3 · safety</span>
+                <span class="title">Critical (safety, выше карты)</span>
+                <span class="range" id="z3-range-label">T_safe ≥ T_crit</span>
+              </div>
+              <div class="zone-b">
+                <div class="zone-temps">
+                  <label class="field">T_enter ≥ (°C) · T_safe
+                    <input type="number" id="z3-t-enter" value="48" step="0.1" />
+                  </label>
+                  <label class="field">T_exit ≤ (°C) · clear
+                    <input type="number" id="z3-t-exit" value="44" step="0.1" />
+                  </label>
+                  <div class="hint-inline">Метрика Critical = T_safe (max всех плат), не только 0/1. Калибруйте под HEX.</div>
+                </div>
+                <div class="actuators">
+                  <div class="act" data-act="mode">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-mode" checked onchange="syncAct(this)" />
+                      <label for="z3-mode">Working mode</label>
+                    </div>
+                    <select id="z3-mode-v">
+                      <option value="low" selected>low power</option>
+                      <option value="normal">normal</option>
+                    </select>
+                  </div>
+                  <div class="act off" data-act="limit">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-lim" onchange="syncAct(this)" />
+                      <label for="z3-lim">Power limit (W)</label>
+                    </div>
+                    <input type="number" id="z3-lim-v" value="2500" disabled />
+                  </div>
+                  <div class="act" data-act="sleep">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-sleep" checked onchange="syncAct(this)" />
+                      <label for="z3-sleep">Sleep / power_off</label>
+                    </div>
+                    <p style="font-size:0.75rem;color:var(--danger);margin-top:4px">opt-in · UI confirm · wake → Reduced</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+            <div class="row">
+              <label class="field"><span class="tip" data-tip-key="dwell">min_dwell_sec</span>
+                <input type="number" value="600" />
+              </label>
+              <label class="field"><span class="tip" data-tip-key="settle">post_apply_settle_sec</span>
+                <input type="number" value="300" />
+              </label>
+              <label class="field"><span class="tip" data-tip-key="streak">consecutive_samples</span>
+                <input type="number" value="3" />
+              </label>
+              <label class="field"><span class="tip" data-tip-key="poll">poll_interval_sec</span>
+                <input type="number" value="45" />
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== POOL ========== -->
+    <!-- ========== MINER ========== -->
+    <section class="view" id="view-miner">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Подключение Whatsminer</h2>
+              <div class="sub">TCP :4028 · token после get_token</div>
+            </div>
+            <button class="btn" type="button" id="btn-test-conn">Test connection</button>
+          </div>
+          <div class="card-b">
+            <div class="row">
+              <label class="field"><span class="req">IP / host</span>
+                <input type="text" value="192.168.1.10" />
+              </label>
+              <label class="field">Port
+                <input type="number" value="4028" />
+              </label>
+            </div>
+            <div class="row" style="margin-top:12px">
+              <label class="field">API password
+                <input type="password" value="admin" />
+              </label>
+              <label class="field">actuator_strategy (до Stage 0)
+                <select>
+                  <option selected>mode_only</option>
+                  <option>power_pct</option>
+                  <option>power_limit</option>
+                  <option>hybrid (mode + rare limit)</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Warmup / upfreq gate</h2>
+              <div class="sub">пока не ready — нет смысла повышать профиль</div>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="warmup-en" checked />
+              <span>Ждать выхода на рабочий режим
+                <span class="desc">upfreq=0 / ramping / unstable power → block upward</span>
+              </span>
+            </label>
+            <label class="check">
+              <input type="checkbox" checked />
+              <span>Во warmup разрешить только снижать / Critical
+                <span class="desc">safety first</span>
+              </span>
+            </label>
+            <div class="row">
+              <label class="field"><span class="tip" data-tip-key="streak">min_stable_samples</span>
+                <input type="number" value="3" />
+              </label>
+              <label class="field"><span class="tip" data-tip-key="warmup">max_warmup_wait_min</span>
+                <input type="number" value="30" />
+              </label>
+            </div>
+            <div class="metric" id="ready-metric">
+              <label><span class="tip" data-tip-key="miner_ready">miner_ready</span></label>
+              <div class="val" style="font-size:1.1rem;color:var(--warn)" id="ready-val">false · upfreq</div>
+              <div class="hint">SIM: снимите «upfreq / not ready» чтобы разрешить ↑</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== SAFETY ========== -->
+    <section class="view" id="view-safety">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Safety &amp; remote</h2>
+              <div class="sub">Critical · fail-safe · auth</div>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <div class="row">
+              <label class="field"><span class="tip" data-tip-key="t_crit">T_crit</span> (°C)
+                <input type="number" value="70" step="0.1" />
+              </label>
+              <label class="field"><span class="tip" data-tip-key="t_crit_clear">T_crit_clear</span> (°C)
+                <input type="number" value="65" step="0.1" />
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" checked />
+              <span><span class="tip" data-tip-key="critical">critical_allow_sleep</span>
+                <span class="desc">wake → только Reduced, never Normal</span>
+              </span>
+            </label>
+            <label class="check">
+              <input type="checkbox" />
+              <span>critical_sleep_confirmed (UI ack)
+                <span class="desc">без галки — sleep не уйдёт на майнер при first boot</span>
+              </span>
+            </label>
+            <label class="check">
+              <input type="checkbox" checked />
+              <span>on_api_fail → Reduced (<span class="tip" data-tip-key="fail_safe">fail-safe</span>)
+                <span class="desc">не hold high power при потере API</span>
+              </span>
+            </label>
+            <div class="divider"></div>
+            <div class="row">
+              <label class="field">Auth mode
+                <select>
+                  <option>open (LAN only — not with Cloud)</option>
+                  <option selected>token (Bearer)</option>
+                  <option>basic</option>
+                </select>
+              </label>
+              <label class="field">Remote
+                <select>
+                  <option selected>Keenetic Cloud / Remote Access</option>
+                  <option>WireGuard / VPN only</option>
+                  <option>LAN only</option>
+                </select>
+              </label>
+            </div>
+            <p style="font-size:0.8rem;color:var(--muted)">
+              :8787 не пробрасывать raw в интернет. Cloud + token; open запрещён при remote.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== LOGS ========== -->
+    <section class="view" id="view-logs">
+      <div class="card">
+        <div class="card-h">
+          <div>
+            <h2>Action log</h2>
+            <div class="sub">commanded vs measured · demo</div>
+          </div>
+          <button class="btn ghost" type="button" id="btn-export-log">Export</button>
+        </div>
+        <div class="card-b">
+          <div class="log" id="log">
+            <div class="line"><span class="t">19:42:01</span> <span class="info">POLL</span> t_ctrl=42.6 t_safe=42.6 boards=[42.6,42.5,35.4,35.3] power=4180 upfreq=1</div>
+            <div class="line"><span class="t">19:42:01</span> <span class="warn">WARMUP</span> miner_ready=false → block upward</div>
+            <div class="line"><span class="t">19:42:01</span> <span class="ok">ZONE</span> hold (deadband) · apply=none</div>
+            <div class="line"><span class="t">19:41:16</span> <span class="info">POLL</span> t_ctrl=42.5 power=4120</div>
+            <div class="line"><span class="t">19:40:31</span> <span class="info">DRY_RUN</span> would_skip upward (warmup)</div>
+            <div class="line"><span class="t">19:12:00</span> <span class="ok">APPLY</span> zone=reduced mode=low limit=4000 dry_run=true reason=t_ctrl≥44 streak=3</div>
+            <div class="line"><span class="t">19:11:15</span> <span class="warn">STREAK</span> reduced 2/3</div>
+            <div class="line"><span class="t">18:00:00</span> <span class="info">START</span> evaluate-before-write · cold_start=reduced</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="demo-note">
+      Demo UI · live temps via <code>python3 serve.py</code> · M63 192.168.1.10
+    </footer>
+  </div>
+
+  <div class="staff-toast-stack" id="toast-stack" aria-live="polite" aria-relevant="additions removals"></div>
+  <div class="tip-bubble" id="tip-bubble" role="tooltip" hidden>
+    <strong id="tip-title"></strong>
+    <div class="tip-body" id="tip-body"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    /* —— glossary tooltips —— */
+    const TIPS = {
+      t_ctrl: {
+        title: "T_ctrl",
+        body: "Основная температура для карты зон (регуляция тепла).\nСейчас = liquid_temp (жидкость контура/бассейна).\nСравнивается с T_low / T_high.",
+      },
+      t_safe: {
+        title: "T_safe",
+        body: "Метрика безопасности ASIC.\nСейчас = Chip Temp Max (самый горячий чип).\nЕсли ≥ T_crit → Critical (sleep / hard cut), выше карты зон.",
+      },
+      t_low: {
+        title: "T_low",
+        body: "Нижний порог liquid.\nЕсли T_ctrl ≤ T_low — «холодно», нужно больше тепла → зона Normal (upward, если warmup pass).",
+      },
+      t_high: {
+        title: "T_high",
+        body: "Верхний порог liquid.\nЕсли T_ctrl ≥ T_high — «тепло», меньше тепла → зона Reduced.\nВместе с T_low даёт гистерезис (мертвая зона hold).",
+      },
+      t_crit: {
+        title: "T_crit",
+        body: "Порог Critical по T_safe (chip max), не по liquid.\nПри достижении — аварийное снижение / sleep.\nКалибруйте выше рабочей chip temp, с запасом.",
+      },
+      t_crit_clear: {
+        title: "T_crit_clear",
+        body: "Выход из Critical: T_safe должна упасть ≤ этого значения.\nДолжно быть T_crit_clear < T_crit (гистерезис), иначе thrash sleep/wake.",
+      },
+      liquid: {
+        title: "liquid_temp",
+        body: "Температура жидкости из status.liquid_temp.\nБлиже всего к «нагреву бассейна» на вашем M63.\nИспользуется как T_ctrl для карты зон.",
+      },
+      env: {
+        title: "Env Temp",
+        body: "Температура окружения из summary (датчик/оценка майнера).\nСправочно: не основной рычаг регуляции в MVP.",
+      },
+      pcb: {
+        title: "PCB / boards",
+        body: "Температура плат hashboard (devs[].Temperature).\n0/1 обычно горячее, 2/3 холоднее.\nНе путать с Chip Temp — чипы обычно выше.",
+      },
+      chip_max: {
+        title: "Chip Temp Max",
+        body: "Максимальная температура чипов (summary).\nГлавный safety-сигнал → T_safe / Critical.",
+      },
+      power_mode: {
+        title: "Power Mode",
+        body: "Заводской профиль: Low / Normal / High.\nМеняет и мощность, и ожидаемый хешрейт (меньше ложных LOW_HASH, чем у pct).\nКоманды: set_low/normal/high_power.",
+      },
+      power_limit: {
+        title: "Power Limit",
+        body: "Потолок мощности в ваттах (set / measured).\nadjust_power_limit может вызвать reboot/restart — не thrash.\nmeas ≈ фактический лимит, set = setpoint.",
+      },
+      power_pct: {
+        title: "Power pct %",
+        body: "Временная доля мощности внутри текущего mode.\nset_power_pct — тонко, но: может откатиться; expected hashrate часто не обновляется → LOW_HASH.\nНе основной рычаг MVP.",
+      },
+      power_measured: {
+        title: "Power measured",
+        body: "Фактическая потребляемая мощность (W) из summary.Power.\nНе путать с Power Limit (потолок) и mode (профиль).",
+      },
+      hashrate: {
+        title: "Hashrate TH/s",
+        body: "Хешрейт ≈ HS RT / MHS 1m ÷ 1e6.\nПадает вместе с мощностью при low/pct.\nСравнивайте с expected mode, иначе firmware шлёт LOW_HASH.",
+      },
+      freq: {
+        title: "freq_avg",
+        body: "Средняя частота чипов (MHz).\nПадает при power_pct / downclock.\nИндикатор settle после смены мощности.",
+      },
+      low_hash: {
+        title: "LOW_HASH",
+        body: "Ошибка firmware: current hashrate < expected для режима.\nЧасто после set_power_pct (expected остаётся от full mode).\nЛечится mode (не pct) или возвратом 100%.",
+      },
+      dry_run: {
+        title: "dry_run",
+        body: "Режим «без записи на майнер».\nPolicy и логи работают, write API не шлёт команды.\nСнимать только после Stage 0 и наблюдения.",
+      },
+      warmup: {
+        title: "Warmup / upfreq",
+        body: "Пока майнер выходит на частоту (Upfreq Complete≠1 или Hash Stable=false).\nUpward заблокирован; Downward и Critical разрешены.\nИначе можно сорвать разгон.",
+      },
+      upward: {
+        title: "Upward",
+        body: "Команды, повышающие мощность/тепло:\nNormal/High mode, pct↑, limit↑.\nБлокируются на warmup.",
+      },
+      downward: {
+        title: "Downward",
+        body: "Команды, снижающие мощность/тепло:\nLow mode, pct↓, limit↓.\nРазрешены даже на warmup (safety).",
+      },
+      critical: {
+        title: "Critical",
+        body: "Аварийный слой: T_safe ≥ T_crit.\nПриоритет выше карты зон и demand.\nМожет включать sleep/power_off (opt-in).\nWake → сначала Reduced, не Normal.",
+      },
+      zone: {
+        title: "Policy zone",
+        body: "Текущая зона карты:\nNormal · Hold (deadband) · Reduced · Critical.\nHold — между T_low и T_high, actuators не трогаем.",
+      },
+      fail_safe: {
+        title: "API fail-safe",
+        body: "Если нет связи с майнером / stale temps:\nне держим high power «вслепую».\nПо умолчанию → Reduced (или hold-safe), + alert.",
+      },
+      dwell: {
+        title: "min_dwell_sec",
+        body: "Минимальное время между сменами режима (сек).\nЗащита от thrash 41↔44 / liquid колебаний.\nТипично 300–900 с.",
+      },
+      settle: {
+        title: "post_apply_settle_sec",
+        body: "После успешного write игнорируем Normal↔Reduced на N секунд.\nМощность/freq доезжают минуты.\nCritical entry обычно всё равно разрешён.",
+      },
+      streak: {
+        title: "consecutive_samples",
+        body: "Сколько опросов подряд условие зоны должно держаться, прежде чем apply.\nСглаживает шум датчиков.",
+      },
+      poll: {
+        title: "poll_interval_sec",
+        body: "Как часто контроллер читает API майнера.\nТипично 30–60 с. Не путать с интервалом сбора истории.",
+      },
+      miner_ready: {
+        title: "miner_ready",
+        body: "true, когда разгон завершён и hash stable.\nУсловие для разрешения upward.\nСмотрите Upfreq Complete + Hash Stable.",
+      },
+      override: {
+        title: "Override / pause",
+        body: "Ручной режим: оператор временно задаёт actuators.\nPause — только наблюдение, без write.\nПосле expiry — снова policy с dwell.",
+      },
+      api_live: {
+        title: "API live",
+        body: "Связь с Whatsminer TCP :4028 через serve.py.\nOK = last poll успешен.\nFail → fail-safe и SIM/ошибка.",
+      },
+      lan_token: {
+        title: "LAN · token",
+        body: "UI в локальной сети; для API/UI рекомендуется Bearer token.\nRemote — через VPN / Keenetic Cloud, не raw :8787 в интернет.",
+      },
+      hysteresis: {
+        title: "Гистерезис",
+        body: "Разные пороги входа и выхода (T_low ≠ T_high, T_crit_clear < T_crit).\nЧтобы не дёргать mode на каждом 0.1 °C.",
+      },
+      stage0: {
+        title: "Stage 0",
+        body: "Разведка на живом M63: какие write-команды работают, ватты, reboot, settle.\nДо этого — dry_run only.",
+      },
+    };
+
+    function initTooltips() {
+      const bubble = document.getElementById("tip-bubble");
+      const titleEl = document.getElementById("tip-title");
+      const bodyEl = document.getElementById("tip-body");
+      if (!bubble) return;
+
+      let active = null;
+      let hideT = null;
+
+      function place(el) {
+        const r = el.getBoundingClientRect();
+        const bw = bubble.offsetWidth || 280;
+        const bh = bubble.offsetHeight || 80;
+        let left = r.left + r.width / 2 - bw / 2;
+        let top = r.bottom + 8;
+        left = Math.max(8, Math.min(left, window.innerWidth - bw - 8));
+        if (top + bh > window.innerHeight - 8) {
+          top = r.top - bh - 8;
+        }
+        bubble.style.left = left + "px";
+        bubble.style.top = Math.max(8, top) + "px";
+      }
+
+      function show(el) {
+        const key = el.getAttribute("data-tip-key");
+        const tip = TIPS[key];
+        if (!tip) return;
+        clearTimeout(hideT);
+        active = el;
+        titleEl.textContent = tip.title;
+        bodyEl.textContent = tip.body;
+        bubble.hidden = false;
+        // layout then place
+        requestAnimationFrame(() => {
+          place(el);
+          bubble.classList.add("show");
+        });
+        el.setAttribute("aria-describedby", "tip-bubble");
+      }
+
+      function hide() {
+        bubble.classList.remove("show");
+        hideT = setTimeout(() => {
+          if (!bubble.classList.contains("show")) bubble.hidden = true;
+        }, 120);
+        if (active) active.removeAttribute("aria-describedby");
+        active = null;
+      }
+
+      document.addEventListener("mouseover", (e) => {
+        const el = e.target.closest("[data-tip-key]");
+        if (el) show(el);
+      });
+      document.addEventListener("mouseout", (e) => {
+        const el = e.target.closest("[data-tip-key]");
+        if (!el) return;
+        const to = e.relatedTarget;
+        if (to && (el.contains(to) || bubble.contains(to))) return;
+        hide();
+      });
+      document.addEventListener("focusin", (e) => {
+        const el = e.target.closest("[data-tip-key]");
+        if (el) show(el);
+      });
+      document.addEventListener("focusout", (e) => {
+        const el = e.target.closest("[data-tip-key]");
+        if (el) hide();
+      });
+      window.addEventListener("scroll", () => { if (active) place(active); }, true);
+      window.addEventListener("resize", () => { if (active) place(active); });
+    }
+
+    /* —— tabs —— */
+    document.querySelectorAll("nav.tabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.remove("active"));
+        document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById("view-" + btn.dataset.tab).classList.add("active");
+        if (btn.dataset.tab === "charts") loadHistoryCharts();
+      });
+    });
+
+    /* —— toast stack (hash2cash admin style) —— */
+    const toastState = { items: [], seq: 0, timers: new Map() };
+
+    function toastIcon(type) {
+      if (type === "error") {
+        return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M4 4l8 8M12 4 4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+      }
+      if (type === "warn") {
+        return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M8 3.2 14 13H2L8 3.2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8 7v3.2M8 11.6h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+      }
+      if (type === "info") {
+        return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.6"/><path d="M8 7.2V11M8 5.2h.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+      }
+      // success
+      return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M3.5 8.2 6.4 11l6.1-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    }
+
+    function renderToastStack() {
+      const stack = document.getElementById("toast-stack");
+      if (!stack) return;
+      const items = toastState.items;
+      if (!items.length) {
+        stack.innerHTML = "";
+        return;
+      }
+      stack.innerHTML = items.map((t) => {
+        const time = t.createdAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+        const hide = t.hiding ? " staff-toast--hiding" : "";
+        return (
+          '<div class="staff-toast staff-toast--' + t.type + hide + '" data-id="' + t.id + '" role="alert" tabindex="0">' +
+            '<span class="staff-toast__icon" aria-hidden="true">' + toastIcon(t.type) + "</span>" +
+            '<div class="staff-toast__body">' +
+              '<p class="staff-toast__message"></p>' +
+              '<time class="staff-toast__time">' + time + "</time>" +
+            "</div>" +
+          "</div>"
+        );
+      }).join("") + (items.length > 1
+        ? '<button type="button" class="staff-toast-stack__close-all" id="toast-close-all">Закрыть все</button>'
+        : "");
+
+      // set message text safely
+      items.forEach((t) => {
+        const el = stack.querySelector('.staff-toast[data-id="' + t.id + '"] .staff-toast__message');
+        if (el) el.textContent = t.message;
+      });
+
+      stack.querySelectorAll(".staff-toast").forEach((el) => {
+        el.addEventListener("click", () => dismissToast(el.getAttribute("data-id")));
+      });
+      const closeAll = document.getElementById("toast-close-all");
+      if (closeAll) closeAll.addEventListener("click", dismissAllToasts);
+    }
+
+    function dismissToast(id) {
+      const item = toastState.items.find((t) => t.id === id);
+      if (!item || item.hiding) return;
+      item.hiding = true;
+      renderToastStack();
+      const old = toastState.timers.get(id);
+      if (old) clearTimeout(old);
+      setTimeout(() => {
+        toastState.items = toastState.items.filter((t) => t.id !== id);
+        toastState.timers.delete(id);
+        renderToastStack();
+      }, 220);
+    }
+
+    function dismissAllToasts() {
+      [...toastState.items].forEach((t) => dismissToast(t.id));
+    }
+
+    /**
+     * @param {string} message
+     * @param {"success"|"error"|"warn"|"info"} [type]
+     * @param {number} [ttlMs]
+     */
+    function toast(message, type, ttlMs) {
+      // auto-detect type from message if not set
+      let t = type || "info";
+      if (!type) {
+        const m = String(message).toLowerCase();
+        if (m.includes("fail") || m.includes("ошиб") || m.includes("error") || m.includes("недост")) t = "error";
+        else if (m.includes("⚠") || m.includes("warn") || m.includes("reboot") || m.includes("low_hash") || m.includes("осторож")) t = "warn";
+        else if (m.includes("сохран") || m.includes("ok") || m.includes("примен") || m.includes("обновл") || m.includes("успеш")) t = "success";
+      }
+      const id = "t" + (++toastState.seq);
+      const item = {
+        id,
+        message: String(message),
+        type: t,
+        createdAt: new Date(),
+        hiding: false,
+      };
+      toastState.items.unshift(item);
+      // cap stack
+      while (toastState.items.length > 6) {
+        const dropped = toastState.items.pop();
+        const tm = toastState.timers.get(dropped.id);
+        if (tm) clearTimeout(tm);
+        toastState.timers.delete(dropped.id);
+      }
+      renderToastStack();
+      const ttl = ttlMs != null ? ttlMs : (t === "error" ? 6000 : 3200);
+      const timer = setTimeout(() => dismissToast(id), ttl);
+      toastState.timers.set(id, timer);
+      return id;
+    }
+
+    function toastSuccess(msg, ttl) { return toast(msg, "success", ttl); }
+    function toastError(msg, ttl) { return toast(msg, "error", ttl); }
+    function toastWarn(msg, ttl) { return toast(msg, "warn", ttl); }
+    function toastInfo(msg, ttl) { return toast(msg, "info", ttl); }
+
+    function syncAct(checkbox) {
+      const act = checkbox.closest(".act");
+      const inputs = act.querySelectorAll("select, input[type=number]");
+      if (checkbox.checked) {
+        act.classList.remove("off");
+        inputs.forEach((i) => { if (i.type !== "checkbox") i.disabled = false; });
+      } else {
+        act.classList.add("off");
+        inputs.forEach((i) => { if (i.type !== "checkbox") i.disabled = true; });
+      }
+      recompute();
+    }
+
+    /* —— live / sim state —— */
+    const useLive = document.getElementById("use-live");
+    const simPanel = document.getElementById("sim-panel");
+    const simT = document.getElementById("sim-tctrl");
+    const simLiquid = document.getElementById("sim-liquid");
+    const simEnv = document.getElementById("sim-env");
+    const simChip = document.getElementById("sim-chip");
+    const simUp = document.getElementById("sim-upfreq");
+    const simDry = document.getElementById("sim-dry");
+
+    /** @type {object|null} */
+    let live = null;
+    let liveError = null;
+    let thrSyncLock = false;
+
+    function setText(sel, text) {
+      document.querySelectorAll(sel).forEach((el) => { el.textContent = text; });
+    }
+
+    function setId(id, text) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }
+
+    function fmt(n, d = 1) {
+      if (n == null || !Number.isFinite(Number(n))) return "—";
+      return Number(n).toFixed(d);
+    }
+
+    function num(id, fallback) {
+      const v = parseFloat(document.getElementById(id).value);
+      return Number.isFinite(v) ? v : fallback;
+    }
+
+    function getThresholds() {
+      return {
+        low: num("thr-low", 26),
+        high: num("thr-high", 28),
+        crit: num("thr-crit", 70),
+        critClear: num("thr-crit-clear", 65),
+      };
+    }
+
+    function getReading() {
+      if (useLive.checked && live && live.ok !== false && !liveError) {
+        const boards = live.boards || [0, 0, 0, 0];
+        const upfreq = live.upfreq || [1, 1, 1, 1];
+        const hs = live.hash_stable;
+        const notStable = hs === false || hs === "false";
+        return {
+          liquid: Number(live.liquid),
+          env: Number(live.env),
+          boards: boards.map(Number),
+          upfreq: upfreq.map(Number),
+          chip_min: Number(live.chip_min),
+          chip_avg: Number(live.chip_avg),
+          chip_max: Number(live.chip_max),
+          power: Number(live.power),
+          mode: live.mode || "—",
+          freq: Number(live.freq_avg),
+          hashrate_th: Number(live.hashrate_th),
+          upfreq_block: upfreq.some((u) => Number(u) !== 1) || notStable,
+          dry: simDry.checked,
+          source: "live",
+        };
+      }
+      // SIM
+      const b01 = parseFloat(simT.value);
+      const b23 = b01 - 6.5;
+      return {
+        liquid: parseFloat(simLiquid.value),
+        env: parseFloat(simEnv.value),
+        boards: [b01, b01, b23, b23],
+        upfreq: simUp.checked ? [0, 0, 1, 1] : [1, 1, 1, 1],
+        chip_min: parseFloat(simChip.value) - 10,
+        chip_avg: parseFloat(simChip.value) - 5,
+        chip_max: parseFloat(simChip.value),
+        power: 5700,
+        mode: "Low",
+        freq: 390,
+        hashrate_th: 300,
+        upfreq_block: simUp.checked,
+        dry: simDry.checked,
+        source: "sim",
+      };
+    }
+
+    function validateThresholds(th) {
+      const el = document.getElementById("thr-validate");
+      const errs = [];
+      if (!(th.low < th.high)) errs.push("нужно T_low < T_high");
+      if (!(th.high < th.crit)) errs.push("нужно T_high < T_crit");
+      if (!(th.critClear < th.crit)) errs.push("нужно T_crit_clear < T_crit");
+      if (th.low >= th.high - 0.2) errs.push("гистерезис слишком узкий (< 0.2 °C)");
+      if (errs.length) {
+        el.textContent = "⚠ " + errs.join(" · ");
+        el.style.color = "var(--danger)";
+        return false;
+      }
+      el.textContent = "OK: hold = (" + th.low + " … " + th.high + ") °C · critical ≥ " + th.crit + " °C";
+      el.style.color = "var(--ok)";
+      return true;
+    }
+
+    /** Global thr-* is source of truth; push into per-zone fields + labels */
+    function syncZonesFromGlobal() {
+      if (thrSyncLock) return;
+      thrSyncLock = true;
+      const th = getThresholds();
+      document.getElementById("z1-t-enter").value = th.low;
+      document.getElementById("z1-t-exit").value = th.high;
+      document.getElementById("z2-t-enter").value = th.high;
+      document.getElementById("z2-t-exit").value = th.low;
+      document.getElementById("z3-t-enter").value = th.crit;
+      document.getElementById("z3-t-exit").value = th.critClear;
+      document.getElementById("z0-t-min").value = th.low;
+      document.getElementById("z0-t-max").value = th.high;
+      thrSyncLock = false;
+      updateZoneLabels(th);
+      validateThresholds(th);
+    }
+
+    /** Per-zone edit → write back to global thr (linked hysteresis model) */
+    function syncGlobalFromZone(which) {
+      if (thrSyncLock) return;
+      thrSyncLock = true;
+      if (which === "z1" || which === "z2") {
+        const low = num("z1-t-enter", num("z2-t-exit", 41));
+        const high = num("z1-t-exit", num("z2-t-enter", 44));
+        document.getElementById("thr-low").value = low;
+        document.getElementById("thr-high").value = high;
+        document.getElementById("z1-t-enter").value = low;
+        document.getElementById("z1-t-exit").value = high;
+        document.getElementById("z2-t-enter").value = high;
+        document.getElementById("z2-t-exit").value = low;
+        document.getElementById("z0-t-min").value = low;
+        document.getElementById("z0-t-max").value = high;
+      }
+      if (which === "z3") {
+        document.getElementById("thr-crit").value = num("z3-t-enter", 48);
+        document.getElementById("thr-crit-clear").value = num("z3-t-exit", 44);
+      }
+      thrSyncLock = false;
+      const th = getThresholds();
+      updateZoneLabels(th);
+      validateThresholds(th);
+    }
+
+    function updateZoneLabels(th) {
+      document.getElementById("z1-range-label").textContent =
+        "T_ctrl ≤ " + th.low + " °C (enter) · exit ≥ " + th.high;
+      document.getElementById("z0-range-label").textContent =
+        th.low + " < T_ctrl < " + th.high + " · hold";
+      document.getElementById("z2-range-label").textContent =
+        "T_ctrl ≥ " + th.high + " °C (enter) · exit ≤ " + th.low;
+      document.getElementById("z3-range-label").textContent =
+        "T_safe ≥ " + th.crit + " °C · clear ≤ " + th.critClear;
+      document.getElementById("scale-low").textContent = String(th.low);
+      document.getElementById("scale-high").textContent = String(th.high);
+      document.getElementById("scale-crit").textContent = String(th.crit);
+      document.getElementById("hint-hyst").textContent =
+        "Цель A · гистерезис " + th.low + "–" + th.high + " °C";
+      // Safety tab fields if present
+      const sc = document.querySelector('#view-safety input[value="48"], #view-safety label.field input');
+    }
+
+    function resetPresetThresholds() {
+      document.getElementById("thr-low").value = 26;
+      document.getElementById("thr-high").value = 28;
+      document.getElementById("thr-crit").value = 70;
+      document.getElementById("thr-crit-clear").value = 65;
+      syncZonesFromGlobal();
+      recompute();
+      toastSuccess("Пресет порогов: liquid 26/28 · chip crit 70");
+    }
+
+    function updateTempDisplay(r) {
+      const boards = r.boards;
+      const boardMax = Math.max(...boards);
+      const boardHot = Math.max(boards[0], boards[1]);
+
+      setId("t-liquid", fmt(r.liquid));
+      setId("t-env", fmt(r.env));
+      setId("t-board-max", fmt(boardMax));
+      setId("t-board-hot", fmt(boardHot));
+      setId("t-chip-max", fmt(r.chip_max));
+      setId("t-chip-avg", fmt(r.chip_avg));
+      setId("t-chip-min", fmt(r.chip_min));
+      setId("chip-min", fmt(r.chip_min));
+      setId("chip-avg", fmt(r.chip_avg));
+      setId("chip-max", fmt(r.chip_max));
+
+      for (let i = 0; i < 4; i++) {
+        setId("b" + i, fmt(boards[i]));
+        const u = r.upfreq[i];
+        setId("b" + i + "u", "upfreq " + (u === 1 ? "ok" : String(u)));
+      }
+
+      // T_ctrl = liquid, T_safe = chip max
+      setText("[data-bind=tctrl]", fmt(r.liquid));
+      setText("[data-bind=tsafe]", fmt(r.chip_max));
+      setText("[data-bind=pw]", Number.isFinite(r.power) ? Math.round(r.power) : "—");
+      setText("[data-bind=pwMode]", r.mode || "—");
+      setText("[data-bind=freq]", fmt(r.freq, 0));
+      setText("[data-bind=hr]", fmt(r.hashrate_th, 1));
+
+      // Power mode / limit / pct
+      const modeNow = r.mode || (live && live.mode) || "—";
+      setId("pw-mode-now", modeNow);
+      setId("pw-mode-cmd", (live && live.mode_cmd) != null ? live.mode_cmd : "—");
+
+      const limMeas = (live && live.power_limit != null) ? live.power_limit : (r.power_limit != null ? r.power_limit : null);
+      const limSet = (live && live.power_limit_set != null) ? live.power_limit_set : null;
+      setId("pw-lim-meas", limMeas != null ? Math.round(Number(limMeas)) : "—");
+      setId("pw-lim-set", limSet != null && limSet !== "" ? limSet : "—");
+      setId("pw-lim-cmd", (live && live.power_limit_cmd != null) ? live.power_limit_cmd : "—");
+
+      // pct: prefer last commanded; reported rarely available
+      let pctShow = "—";
+      if (live && live.power_pct_cmd != null) pctShow = String(live.power_pct_cmd);
+      else if (live && live.power_pct_reported != null) pctShow = String(live.power_pct_reported);
+      setId("pw-pct-now", pctShow);
+
+      // sync form defaults from live (don't fight user mid-edit)
+      if (live && live.ok && !window.__pwFormDirty) {
+        const mn = (live.mode_norm || String(modeNow).toLowerCase());
+        const sel = document.getElementById("set-mode");
+        if (sel && ["low", "normal", "high"].includes(mn)) sel.value = mn;
+        if (limSet != null && limSet !== "") {
+          document.getElementById("set-limit").value = limSet;
+        }
+        if (live.power_pct_cmd != null) {
+          document.getElementById("set-pct").value = live.power_pct_cmd;
+        }
+      }
+
+      if (live && live.last_write) {
+        const lw = live.last_write;
+        setId("write-status",
+          "last write: " + (lw.ts || "") + " · " + lw.action + " = " + lw.value);
+      }
+
+      // SIM labels
+      if (simLiquid) document.getElementById("sim-liquid-v").textContent = fmt(r.liquid);
+      if (simEnv) document.getElementById("sim-env-v").textContent = fmt(r.env);
+      if (simT) document.getElementById("sim-tctrl-v").textContent = fmt(boardHot);
+      if (simChip) document.getElementById("sim-chip-v").textContent = fmt(r.chip_max);
+    }
+
+    async function applyPower(action, value) {
+      const allow = document.getElementById("allow-writes");
+      if (!allow.checked) {
+        toastWarn("Включите «Разрешить write на майнер»");
+        return;
+      }
+      if (!useLive.checked) {
+        toastWarn("Включите Live с майнера");
+        return;
+      }
+      const password = document.getElementById("api-password").value || "admin";
+      const pill = document.getElementById("pill-write");
+      pill.style.display = "inline-flex";
+      pill.className = "pill warn";
+      pill.innerHTML = '<span class="dot"></span> write…';
+      toastInfo("Отправка команды: " + action + " = " + value + "…", 1800);
+
+      try {
+        const res = await fetch("/api/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, value, password }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          throw new Error(body.error || ("HTTP " + res.status));
+        }
+        let okMsg = "Команда принята";
+        if (action === "mode") okMsg = "Режим изменён: " + String(value).toUpperCase();
+        else if (action === "power_limit") okMsg = "Power Limit установлен: " + value + " W";
+        else if (action === "power_pct") okMsg = "Power pct установлен: " + value + " %";
+        if (body.warning) {
+          toastSuccess(okMsg);
+          toastWarn(body.warning, 5000);
+        } else {
+          toastSuccess(okMsg);
+        }
+        setId("write-status", "last write: " + new Date().toLocaleTimeString() + " · " + action + " = " + value + " · OK");
+        pill.className = "pill ok";
+        pill.innerHTML = '<span class="dot"></span> write ok';
+        window.__pwFormDirty = false;
+        setTimeout(() => fetchLive(false), 800);
+        setTimeout(() => fetchLive(false), 3000);
+      } catch (e) {
+        toastError("Ошибка записи: " + e.message);
+        setId("write-status", "error: " + e.message);
+        pill.className = "pill danger";
+        pill.innerHTML = '<span class="dot"></span> write fail';
+      }
+    }
+
+    function recompute() {
+      const th = getThresholds();
+      validateThresholds(th);
+      updateZoneLabels(th);
+
+      const r = getReading();
+      updateTempDisplay(r);
+
+      // Policy: liquid for map, chip_max for critical
+      const tLiquid = r.liquid;
+      const tSafe = r.chip_max;
+      const upfreq = r.upfreq_block;
+      const dry = r.dry;
+
+      // needle on liquid scale 20..40 °C
+      const pct = Math.min(100, Math.max(0, ((tLiquid - 20) / 20) * 100));
+      document.getElementById("needle").style.left = pct + "%";
+
+      document.getElementById("banner-dry").style.display = dry ? "flex" : "none";
+      document.getElementById("pill-dry").style.display = dry ? "inline-flex" : "none";
+
+      document.getElementById("banner-warmup").style.display = upfreq ? "flex" : "none";
+      document.getElementById("pill-warmup").style.display = upfreq ? "inline-flex" : "none";
+
+      const readyEl = document.getElementById("ready-val");
+      if (readyEl) {
+        readyEl.textContent = upfreq ? "false · upfreq" : "true · stable";
+        readyEl.style.color = upfreq ? "var(--warn)" : "var(--ok)";
+      }
+
+      // API pill
+      const apiPill = document.getElementById("pill-api");
+      if (useLive.checked) {
+        if (liveError) {
+          apiPill.className = "pill danger";
+          apiPill.innerHTML = '<span class="dot"></span> API fail';
+        } else if (live) {
+          apiPill.className = "pill ok";
+          apiPill.innerHTML = '<span class="dot"></span> API live';
+        } else {
+          apiPill.className = "pill warn";
+          apiPill.innerHTML = '<span class="dot"></span> API …';
+        }
+      } else {
+        apiPill.className = "pill accent";
+        apiPill.innerHTML = '<span class="dot"></span> SIM';
+      }
+
+      document.getElementById("src-tag").textContent = r.source === "live" ? "LIVE" : "SIM";
+      document.getElementById("src-detail").textContent = r.source === "live"
+        ? "192.168.1.10:4028 · summary+status+devs"
+        : "симуляция (снимите Live)";
+
+      document.querySelectorAll(".layer").forEach((l) => {
+        l.classList.remove("on", "block");
+        const tag = l.querySelector(".tag");
+        if (l.dataset.layer === "warmup") {
+          if (upfreq) { l.classList.add("on", "block"); tag.textContent = "block ↑"; }
+          else { tag.textContent = "pass"; }
+        }
+        if (l.dataset.layer === "critical") {
+          if (tSafe >= th.crit) { l.classList.add("on", "block"); tag.textContent = "SLEEP"; }
+          else tag.textContent = "off";
+        }
+        if (l.dataset.layer === "fail") tag.textContent = liveError ? "fail" : "ok";
+        if (l.dataset.layer === "override") tag.textContent = "off";
+      });
+
+      document.querySelectorAll(".zone").forEach((z) => z.classList.remove("active"));
+      ["zone-normal", "zone-hold", "zone-reduced", "zone-critical"].forEach((id) => {
+        const badge = document.querySelector("#" + id + " .badge");
+        if (!badge) return;
+        badge.textContent = badge.textContent.replace(/ · active/g, "");
+      });
+
+      let zone = "hold";
+      let zoneName = "hold / deadband";
+      let zoneHint = "liquid в hold";
+      let prevMode = "— hold";
+      let prevLim = "— skip";
+      let prevPct = "— skip";
+      let reason = "";
+      let powerShow = r.power;
+
+      // Critical by chip max (T_safe)
+      if (tSafe >= th.crit) {
+        zone = "critical";
+        zoneName = "critical";
+        zoneHint = "chip max ≥ " + th.crit;
+        prevMode = document.getElementById("z3-mode").checked
+          ? document.getElementById("z3-mode-v").value : "— skip";
+        prevLim = document.getElementById("z3-lim").checked
+          ? document.getElementById("z3-lim-v").value + " W" : "— skip";
+        prevPct = document.getElementById("z3-sleep").checked ? "SLEEP" : "— skip";
+        reason = "Safety: chip_max=" + fmt(tSafe) + " ≥ T_crit=" + th.crit;
+        document.getElementById("zone-critical").classList.add("active");
+        document.querySelector("#zone-critical .badge").textContent = "Z3 · safety · active";
+        document.querySelector('[data-layer="critical"]').classList.add("on", "block");
+      } else if (tLiquid >= th.high) {
+        zone = "reduced";
+        zoneName = "reduced";
+        zoneHint = "liquid ≥ " + th.high;
+        prevMode = document.getElementById("z2-mode").checked
+          ? document.getElementById("z2-mode-v").value : "— skip";
+        prevLim = document.getElementById("z2-lim").checked
+          ? document.getElementById("z2-lim-v").value + " W" : "— skip";
+        prevPct = document.getElementById("z2-pct").checked
+          ? document.getElementById("z2-pct-v").value + " %" : "— skip";
+        reason = "Z2: liquid=" + fmt(tLiquid) + " ≥ T_high (меньше тепла)";
+        document.getElementById("zone-reduced").classList.add("active");
+        document.querySelector("#zone-reduced .badge").textContent = "Z2 · active";
+      } else if (tLiquid <= th.low) {
+        zone = "normal";
+        zoneName = "normal heat";
+        zoneHint = "liquid ≤ " + th.low;
+        if (upfreq) {
+          prevMode = "— blocked ↑";
+          prevLim = "— blocked ↑";
+          prevPct = "— blocked ↑";
+          reason = "Нужен Normal, но warmup блокирует ↑";
+        } else {
+          prevMode = document.getElementById("z1-mode").checked
+            ? document.getElementById("z1-mode-v").value : "— skip";
+          prevLim = document.getElementById("z1-lim").checked
+            ? document.getElementById("z1-lim-v").value + " W" : "— skip";
+          prevPct = document.getElementById("z1-pct").checked
+            ? document.getElementById("z1-pct-v").value + " %" : "— skip";
+          reason = "Z1: liquid=" + fmt(tLiquid) + " ≤ T_low (больше тепла)";
+        }
+        document.getElementById("zone-normal").classList.add("active");
+        document.querySelector("#zone-normal .badge").textContent = "Z1 · active";
+      } else {
+        zone = "hold";
+        document.getElementById("zone-hold").classList.add("active");
+        document.querySelector("#zone-hold .badge").textContent = "Z0 · active";
+        reason = "Deadband liquid " + th.low + "–" + th.high + " °C · hold";
+      }
+
+      const mapLayer = document.querySelector('[data-layer="map"]');
+      if (mapLayer) {
+        mapLayer.classList.add("on");
+        mapLayer.querySelector(".tag").textContent = zone;
+      }
+
+      setText("[data-bind=zoneName]", zoneName);
+      setText("[data-bind=zoneHint]", zoneHint);
+      setText("[data-bind=prevMode]", prevMode);
+      setText("[data-bind=prevLim]", prevLim);
+      setText("[data-bind=prevPct]", prevPct);
+      setText("[data-bind=prevReason]", reason);
+      // keep measured power from miner when live
+      if (r.source === "live" && Number.isFinite(r.power)) {
+        setText("[data-bind=pw]", Math.round(r.power));
+      }
+
+      const modePill = document.getElementById("pill-mode");
+      modePill.className = "pill " + (zone === "critical" ? "danger" : zone === "reduced" ? "warn" : zone === "normal" ? "ok" : "accent");
+      modePill.innerHTML = '<span class="dot"></span> zone: ' + zone;
+    }
+
+    async function fetchLive(manual) {
+      if (!useLive.checked) {
+        recompute();
+        return;
+      }
+      try {
+        const res = await fetch("/api/live?t=" + Date.now(), { cache: "no-store" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        live = await res.json();
+        liveError = null;
+        document.getElementById("src-updated").textContent =
+          "обновлено " + new Date().toLocaleTimeString() +
+          (live.ts ? " · miner ok" : "");
+        if (manual) toastSuccess("Данные с майнера обновлены");
+      } catch (e) {
+        liveError = String(e.message || e);
+        document.getElementById("src-updated").textContent =
+          "ошибка: " + liveError + " · запустите python3 serve.py";
+        if (manual) toastError("Live недоступен — запустите serve.py");
+      }
+      recompute();
+    }
+
+    function onLiveToggle() {
+      simPanel.style.display = useLive.checked ? "none" : "flex";
+      fetchLive(false);
+    }
+
+    useLive.addEventListener("change", onLiveToggle);
+    [simT, simLiquid, simEnv, simChip].forEach((el) => {
+      if (el) el.addEventListener("input", recompute);
+    });
+    simUp.addEventListener("change", recompute);
+    simDry.addEventListener("change", recompute);
+    const warmupEn = document.getElementById("warmup-en");
+    if (warmupEn) warmupEn.addEventListener("change", recompute);
+
+    // Power form — mark dirty so live poll doesn't overwrite inputs mid-edit
+    ["set-mode", "set-limit", "set-pct"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener("input", () => { window.__pwFormDirty = true; });
+      if (el) el.addEventListener("change", () => { window.__pwFormDirty = true; });
+    });
+    document.getElementById("btn-set-mode").addEventListener("click", () => {
+      applyPower("mode", document.getElementById("set-mode").value);
+    });
+    document.getElementById("btn-set-limit").addEventListener("click", () => {
+      const w = document.getElementById("set-limit").value;
+      if (!confirm("adjust_power_limit " + w + " W — возможен reboot/restart. Продолжить?")) return;
+      applyPower("power_limit", w);
+    });
+    document.getElementById("btn-set-pct").addEventListener("click", () => {
+      const p = document.getElementById("set-pct").value;
+      if (!confirm("set_power_pct " + p + "% — возможен LOW_HASH, temporary. Продолжить?")) return;
+      applyPower("power_pct", p);
+    });
+
+    ["thr-low", "thr-high", "thr-crit", "thr-crit-clear"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", () => {
+        syncZonesFromGlobal();
+        recompute();
+      });
+    });
+    ["z1-t-enter", "z1-t-exit"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", () => {
+        syncGlobalFromZone("z1");
+        recompute();
+      });
+    });
+    ["z2-t-enter", "z2-t-exit"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", () => {
+        syncGlobalFromZone("z2");
+        recompute();
+      });
+    });
+    ["z3-t-enter", "z3-t-exit"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", () => {
+        syncGlobalFromZone("z3");
+        recompute();
+      });
+    });
+
+    // zone enter defaults for liquid preset
+    document.getElementById("z1-t-enter").value = 26;
+    document.getElementById("z1-t-exit").value = 28;
+    document.getElementById("z2-t-enter").value = 28;
+    document.getElementById("z2-t-exit").value = 26;
+    document.getElementById("z3-t-enter").value = 70;
+    document.getElementById("z3-t-exit").value = 65;
+
+    syncZonesFromGlobal();
+    onLiveToggle();
+    setInterval(() => { if (useLive.checked) fetchLive(false); }, 5000);
+
+    /* ── history / charts (hash2cash-style zoom + brush + scroll) ── */
+    let chartTemp = null;
+    let chartPower = null;
+    let histPoints = [];
+    let fullStart = 0; // unix sec
+    let fullEnd = 0;
+    let view = { start: 0, end: 0 }; // unix sec
+    let loadHours = 48;
+    let brushBound = false;
+
+    const ZOOM_HOURS = { "1h": 1, "6h": 6, "12h": 12, "1d": 24, "2d": 48, "7d": 168 };
+    const ZOOM_SEC = {
+      "1h": 3600, "6h": 6 * 3600, "12h": 12 * 3600,
+      "1d": 86400, "2d": 2 * 86400, "7d": 7 * 86400,
+    };
+
+    function contextHoursForPreset(preset) {
+      const viewH = ZOOM_HOURS[preset] ?? 24;
+      if (viewH >= 168) return 168;
+      if (viewH >= 48) return 168;
+      if (viewH >= 24) return 48;
+      if (viewH <= 6) return 24;
+      return 48;
+    }
+
+    function chartDefaults() {
+      Chart.defaults.color = "#8b9bb0";
+      Chart.defaults.borderColor = "rgba(42,53,68,0.9)";
+      Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+    }
+
+    function viewSpan() { return Math.max(view.end - view.start, 60); }
+
+    function clampView(next) {
+      let { start, end } = next;
+      const minSpan = 60;
+      if (end - start < minSpan) end = start + minSpan;
+      if (start < fullStart) { end += fullStart - start; start = fullStart; }
+      if (end > fullEnd) { start -= end - fullEnd; end = fullEnd; }
+      if (start < fullStart) start = fullStart;
+      if (end > fullEnd) end = fullEnd;
+      if (end - start < minSpan) start = Math.max(fullStart, end - minSpan);
+      return { start, end };
+    }
+
+    function syncFullRange() {
+      if (!histPoints.length) { fullStart = fullEnd = 0; return; }
+      fullStart = histPoints[0].ts;
+      fullEnd = histPoints[histPoints.length - 1].ts;
+      if (fullEnd <= fullStart) fullEnd = fullStart + 60;
+    }
+
+    function applyViewFromPreset(preset, anchorEnd) {
+      syncFullRange();
+      if (!fullEnd) return;
+      const dataSpan = Math.max(fullEnd - fullStart, 60);
+      const presetSpan = ZOOM_SEC[preset] ?? dataSpan;
+      const vSpan = Math.min(presetSpan, dataSpan);
+      const end = Math.min(anchorEnd ?? fullEnd, fullEnd);
+      view = clampView({ start: Math.max(fullStart, end - vSpan), end });
+    }
+
+    function fmtViewLabel() {
+      if (!fullEnd) return "view: —";
+      const s = new Date(view.start * 1000).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+      const e = new Date(view.end * 1000).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+      const h = ((view.end - view.start) / 3600).toFixed(1);
+      return "view: " + s + " → " + e + " (" + h + "h)";
+    }
+
+    function xySeries(key) {
+      return histPoints
+        .filter((p) => p[key] != null)
+        .map((p) => ({ x: p.ts, y: Number(p[key]) }));
+    }
+
+    function xAxisOpts() {
+      return {
+        type: "linear",
+        min: view.start,
+        max: view.end,
+        ticks: {
+          maxTicksLimit: 8,
+          maxRotation: 0,
+          callback: (v) => {
+            const d = new Date(v * 1000);
+            return d.toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+          },
+        },
+        grid: { color: "rgba(42,53,68,0.5)" },
+      };
+    }
+
+    function ensureCharts() {
+      chartDefaults();
+      const common = {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        parsing: false,
+        normalized: true,
+        interaction: { mode: "nearest", axis: "x", intersect: false },
+        plugins: {
+          legend: { labels: { boxWidth: 12, boxHeight: 12 } },
+          tooltip: {
+            callbacks: {
+              title: (items) => {
+                if (!items.length) return "";
+                return new Date(items[0].parsed.x * 1000).toLocaleString();
+              },
+            },
+          },
+        },
+      };
+
+      if (!chartTemp) {
+        chartTemp = new Chart(document.getElementById("chart-temp"), {
+          type: "line",
+          data: {
+            datasets: [
+              { label: "liquid", data: [], borderColor: "#3d9cf0", backgroundColor: "rgba(61,156,240,0.1)", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+              { label: "env", data: [], borderColor: "#3ecf8e", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "board0", data: [], borderColor: "#f0b429", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "board2", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "chip max", data: [], borderColor: "#f07178", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+            ],
+          },
+          options: {
+            ...common,
+            scales: {
+              x: xAxisOpts(),
+              y: { title: { display: true, text: "°C" }, grid: { color: "rgba(42,53,68,0.5)" } },
+            },
+          },
+        });
+      }
+      if (!chartPower) {
+        chartPower = new Chart(document.getElementById("chart-power"), {
+          type: "line",
+          data: {
+            datasets: [
+              { label: "power W", data: [], borderColor: "#3ecf8e", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+              { label: "limit W", data: [], borderColor: "#3d9cf0", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], fill: false },
+              { label: "hashrate TH/s", data: [], borderColor: "#c792ea", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+              { label: "freq", data: [], borderColor: "#f0b429", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 1.2, borderDash: [2, 3], fill: false },
+            ],
+          },
+          options: {
+            ...common,
+            scales: {
+              x: xAxisOpts(),
+              y: { position: "left", title: { display: true, text: "W" }, grid: { color: "rgba(42,53,68,0.5)" } },
+              y1: { position: "right", title: { display: true, text: "TH/s · freq" }, grid: { drawOnChartArea: false } },
+            },
+          },
+        });
+      }
+    }
+
+    function renderCharts() {
+      ensureCharts();
+      if (!histPoints.length) {
+        chartTemp.data.datasets.forEach((d) => { d.data = []; });
+        chartPower.data.datasets.forEach((d) => { d.data = []; });
+        chartTemp.update("none");
+        chartPower.update("none");
+        drawBrush();
+        updateScrollUI();
+        document.getElementById("hist-view-label").textContent = "view: нет данных";
+        return;
+      }
+
+      const map = [
+        ["liquid", 0], ["env", 1], ["board0", 2], ["board2", 3], ["chip_max", 4],
+      ];
+      map.forEach(([key, i]) => { chartTemp.data.datasets[i].data = xySeries(key); });
+      chartPower.data.datasets[0].data = xySeries("power");
+      chartPower.data.datasets[1].data = xySeries("power_limit");
+      chartPower.data.datasets[2].data = xySeries("hashrate_th");
+      chartPower.data.datasets[3].data = xySeries("freq");
+
+      chartTemp.options.scales.x.min = view.start;
+      chartTemp.options.scales.x.max = view.end;
+      chartPower.options.scales.x.min = view.start;
+      chartPower.options.scales.x.max = view.end;
+
+      chartTemp.update("none");
+      chartPower.update("none");
+      drawBrush();
+      updateScrollUI();
+      document.getElementById("hist-view-label").textContent = fmtViewLabel();
+    }
+
+    function drawBrush() {
+      const canvas = document.getElementById("chart-brush");
+      if (!canvas) return;
+      const parent = canvas.parentElement;
+      const dpr = window.devicePixelRatio || 1;
+      const w = parent.clientWidth || 600;
+      const h = parent.clientHeight || 56;
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = w + "px";
+      canvas.style.height = h + "px";
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      const pad = { l: 8, r: 8, t: 6, b: 4 };
+      const plotW = w - pad.l - pad.r;
+      const plotH = h - pad.t - pad.b;
+      ctx.fillStyle = "#0c1016";
+      ctx.fillRect(pad.l, pad.t, plotW, plotH);
+
+      if (!histPoints.length || fullEnd <= fullStart) return;
+      const fullSpan = fullEnd - fullStart;
+      const series = histPoints.filter((p) => p.power != null || p.liquid != null);
+      if (!series.length) return;
+
+      // prefer power for brush silhouette, fallback liquid
+      const key = series.some((p) => p.power != null) ? "power" : "liquid";
+      const vals = series.map((p) => Number(p[key])).filter((v) => Number.isFinite(v));
+      const maxV = Math.max(...vals, 0.001);
+      const toX = (ts) => pad.l + ((ts - fullStart) / fullSpan) * plotW;
+      const toY = (v) => pad.t + plotH - (v / maxV) * plotH;
+      const y0 = pad.t + plotH;
+
+      ctx.beginPath();
+      ctx.moveTo(toX(series[0].ts), y0);
+      series.forEach((p) => {
+        const v = Number(p[key]);
+        if (Number.isFinite(v)) ctx.lineTo(toX(p.ts), toY(v));
+      });
+      ctx.lineTo(toX(series[series.length - 1].ts), y0);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(61,156,240,0.25)";
+      ctx.fill();
+
+      ctx.beginPath();
+      let started = false;
+      series.forEach((p) => {
+        const v = Number(p[key]);
+        if (!Number.isFinite(v)) return;
+        const x = toX(p.ts), y = toY(v);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = "#3d9cf0";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      const x1 = toX(Math.max(fullStart, view.start));
+      const x2 = toX(Math.min(fullEnd, view.end));
+      ctx.fillStyle = "rgba(0,0,0,0.42)";
+      ctx.fillRect(pad.l, pad.t, Math.max(0, x1 - pad.l), plotH);
+      ctx.fillRect(x2, pad.t, Math.max(0, pad.l + plotW - x2), plotH);
+      ctx.fillStyle = "rgba(61,156,240,0.22)";
+      ctx.fillRect(x1, pad.t, Math.max(x2 - x1, 4), plotH);
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.fillRect(x1 - 2, pad.t, 3, plotH);
+      ctx.fillRect(x2 - 1, pad.t, 3, plotH);
+    }
+
+    function updateScrollUI() {
+      const wrap = document.getElementById("chart-scroll");
+      const track = document.getElementById("chart-scroll-track");
+      const thumb = document.getElementById("chart-scroll-thumb");
+      if (!wrap || !track || !thumb) return;
+      syncFullRange();
+      const fullSpan = fullEnd - fullStart;
+      const vSpan = viewSpan();
+      const panSpan = fullSpan - vSpan;
+      if (panSpan > 60 && fullSpan > 0) {
+        wrap.hidden = false;
+        const trackW = track.clientWidth || track.offsetWidth;
+        const thumbW = Math.max(20, Math.round((vSpan / fullSpan) * trackW));
+        const maxLeft = Math.max(0, trackW - thumbW);
+        const left = panSpan > 0 ? Math.round(((view.start - fullStart) / panSpan) * maxLeft) : 0;
+        thumb.style.width = thumbW + "px";
+        thumb.style.left = left + "px";
+      } else {
+        wrap.hidden = true;
+      }
+    }
+
+    const drag = {
+      mode: null, // left | right | pan | scroll
+      startX: 0,
+      startView: null,
+      scrollStartLeft: 0,
+    };
+
+    function bindBrushScroll() {
+      if (brushBound) return;
+      brushBound = true;
+      const brushCanvas = document.getElementById("chart-brush");
+      const track = document.getElementById("chart-scroll-track");
+      const thumb = document.getElementById("chart-scroll-thumb");
+
+      brushCanvas.addEventListener("mousedown", (e) => {
+        if (!histPoints.length) return;
+        syncFullRange();
+        const rect = brushCanvas.getBoundingClientRect();
+        const padL = 8, padR = 8;
+        const plotW = rect.width - padL - padR;
+        const fullSpan = Math.max(fullEnd - fullStart, 1);
+        const toX = (ts) => padL + ((ts - fullStart) / fullSpan) * plotW;
+        const x = e.clientX - rect.left;
+        const vx1 = toX(view.start);
+        const vx2 = toX(view.end);
+        const handle = 8;
+        if (Math.abs(x - vx1) <= handle) drag.mode = "left";
+        else if (Math.abs(x - vx2) <= handle) drag.mode = "right";
+        else if (x > vx1 && x < vx2) drag.mode = "pan";
+        else {
+          const ratio = Math.min(1, Math.max(0, (x - padL) / plotW));
+          const clickTs = fullStart + ratio * fullSpan;
+          const half = viewSpan() / 2;
+          view = clampView({ start: clickTs - half, end: clickTs + half });
+          renderCharts();
+          return;
+        }
+        drag.startX = e.clientX;
+        drag.startView = { ...view };
+      });
+
+      thumb.addEventListener("mousedown", (e) => {
+        const wrap = document.getElementById("chart-scroll");
+        if (wrap.hidden) return;
+        e.preventDefault();
+        drag.mode = "scroll";
+        drag.startX = e.clientX;
+        drag.startView = { ...view };
+        drag.scrollStartLeft = thumb.offsetLeft;
+      });
+
+      track.addEventListener("mousedown", (e) => {
+        if (e.target === thumb) return;
+        const wrap = document.getElementById("chart-scroll");
+        if (wrap.hidden) return;
+        syncFullRange();
+        const rect = track.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const trackW = rect.width;
+        const thumbW = thumb.offsetWidth;
+        const fullSpan = fullEnd - fullStart;
+        const vSpan = viewSpan();
+        const panSpan = fullSpan - vSpan;
+        if (panSpan <= 0) return;
+        const maxLeft = Math.max(0, trackW - thumbW);
+        const left = Math.min(maxLeft, Math.max(0, x - thumbW / 2));
+        const start = fullStart + (left / maxLeft) * panSpan;
+        view = clampView({ start, end: start + vSpan });
+        renderCharts();
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!drag.mode) return;
+        syncFullRange();
+        if (drag.mode === "scroll") {
+          const trackW = track.clientWidth;
+          const thumbW = thumb.offsetWidth;
+          const maxLeft = Math.max(0, trackW - thumbW);
+          const fullSpan = fullEnd - fullStart;
+          const vSpan = drag.startView.end - drag.startView.start;
+          const panSpan = fullSpan - vSpan;
+          if (panSpan <= 0 || maxLeft <= 0) return;
+          const dx = e.clientX - drag.startX;
+          const left = Math.min(maxLeft, Math.max(0, drag.scrollStartLeft + dx));
+          const start = fullStart + (left / maxLeft) * panSpan;
+          view = clampView({ start, end: start + vSpan });
+          renderCharts();
+          return;
+        }
+        const brushCanvas = document.getElementById("chart-brush");
+        const rect = brushCanvas.getBoundingClientRect();
+        const plotW = rect.width - 16;
+        const fullSpan = Math.max(fullEnd - fullStart, 1);
+        const dx = e.clientX - drag.startX;
+        const dTs = (dx / plotW) * fullSpan;
+        const minSpan = Math.min(drag.startView.end - drag.startView.start, fullSpan * 0.02);
+        let { start, end } = drag.startView;
+        if (drag.mode === "left") start = Math.min(end - minSpan, start + dTs);
+        else if (drag.mode === "right") end = Math.max(start + minSpan, end + dTs);
+        else { start += dTs; end += dTs; }
+        view = clampView({ start, end });
+        renderCharts();
+      });
+
+      window.addEventListener("mouseup", () => { drag.mode = null; });
+      window.addEventListener("resize", () => { renderCharts(); });
+    }
+
+    async function loadHistoryConfig() {
+      try {
+        const res = await fetch("/api/history/config");
+        const body = await res.json();
+        if (!body.ok) return;
+        const c = body.config || {};
+        document.getElementById("hist-enabled").checked = !!c.enabled;
+        document.getElementById("hist-retention").value = c.retention_days ?? 7;
+        document.getElementById("hist-interval").value = c.sample_interval_sec ?? 30;
+        const st = body.stats || {};
+        document.getElementById("hist-stats").textContent =
+          "точек: " + (st.count || 0) +
+          (st.oldest_iso ? " · с " + st.oldest_iso : "") +
+          (st.db_size_bytes != null ? " · db " + Math.round(st.db_size_bytes / 1024) + " KB" : "");
+      } catch (e) {
+        document.getElementById("hist-stats").textContent = "config error: " + e.message;
+      }
+    }
+
+    async function saveHistoryConfig() {
+      const payload = {
+        enabled: document.getElementById("hist-enabled").checked,
+        retention_days: Number(document.getElementById("hist-retention").value),
+        sample_interval_sec: Number(document.getElementById("hist-interval").value),
+      };
+      try {
+        const res = await fetch("/api/history/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "fail");
+        toastSuccess("Настройки истории сохранены" + (body.pruned ? " · удалено старых: " + body.pruned : ""));
+        await loadHistoryConfig();
+        await loadHistoryCharts();
+      } catch (e) {
+        toastError("Не удалось сохранить настройки: " + e.message);
+      }
+    }
+
+    async function loadHistoryCharts(preset) {
+      await loadHistoryConfig();
+      bindBrushScroll();
+      const zoomEl = document.getElementById("chart-zoom");
+      const z = preset || zoomEl.value || "1d";
+      zoomEl.value = z;
+      const nextLoad = contextHoursForPreset(z);
+      loadHours = nextLoad;
+      try {
+        const res = await fetch("/api/history?hours=" + loadHours + "&max=5000");
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "history fail");
+        histPoints = body.points || [];
+        document.getElementById("hist-stats").textContent =
+          "загружено: " + histPoints.length +
+          " · db: " + ((body.stats && body.stats.count) || 0) +
+          " · context " + loadHours + "h · zoom " + z;
+
+        syncFullRange();
+        applyViewFromPreset(z);
+        renderCharts();
+      } catch (e) {
+        document.getElementById("hist-stats").textContent = "history error: " + e.message;
+        toastError("История: " + e.message);
+      }
+    }
+
+    function applyZoomPreset(preset) {
+      const nextLoad = contextHoursForPreset(preset);
+      if (nextLoad !== loadHours || !histPoints.length) {
+        void loadHistoryCharts(preset);
+        return;
+      }
+      applyViewFromPreset(preset);
+      renderCharts();
+    }
+
+    document.getElementById("btn-hist-refresh").addEventListener("click", () => {
+      toastInfo("Обновление графиков…", 1500);
+      loadHistoryCharts().then(() => toastSuccess("Графики обновлены"));
+    });
+    document.getElementById("btn-hist-save").addEventListener("click", saveHistoryConfig);
+    document.getElementById("chart-zoom").addEventListener("change", (e) => {
+      toastInfo("Zoom: " + e.target.value, 1600);
+      applyZoomPreset(e.target.value);
+    });
+
+    document.getElementById("btn-save-map")?.addEventListener("click", () => {
+      toastSuccess("Карта зон сохранена (demo → /opt/etc/poolheat/config.yaml)");
+    });
+    document.getElementById("btn-test-conn")?.addEventListener("click", async () => {
+      toastInfo("Проверка связи с майнером…", 1500);
+      try {
+        const res = await fetch("/api/live?t=" + Date.now());
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "API fail");
+        toastSuccess("Связь OK · " + (body.mode || "?") + " · " + Math.round(body.power || 0) + " W");
+      } catch (e) {
+        toastError("Нет связи: " + e.message);
+      }
+    });
+    document.getElementById("btn-pause")?.addEventListener("click", () => {
+      toastWarn("Pause: записи остановлены, майнер как есть (demo)");
+    });
+    document.getElementById("btn-override")?.addEventListener("click", () => {
+      toastWarn("Override 30 мин: ручной режим (demo · UI confirm)");
+    });
+    document.getElementById("btn-force-sleep")?.addEventListener("click", () => {
+      toastError("Force sleep — только после confirm в Safety (demo)");
+    });
+    document.getElementById("btn-export-log")?.addEventListener("click", () => {
+      toastSuccess("Экспорт логов JSONL (demo)");
+    });
+    document.getElementById("btn-dry-help")?.addEventListener("click", () => {
+      toastInfo("В проде: config dry_run: false после Stage 0 и 48h dry-run");
+    });
+
+    // welcome once per session
+    try {
+      if (!sessionStorage.getItem("poolheat_toast_hi")) {
+        sessionStorage.setItem("poolheat_toast_hi", "1");
+        toastInfo("poolheat demo · наведите на T_crit, dry_run, upward… — есть подсказки", 4200);
+      }
+    } catch (_) { /* ignore */ }
+
+    initTooltips();
+    loadHistoryConfig();
+  </script>
+</body>
+</html>

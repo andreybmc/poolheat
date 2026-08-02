@@ -1,0 +1,6 @@
+#!/bin/sh
+echo "poolheat: stopping..."
+/opt/etc/init.d/S99poolheat stop 2>/dev/null || true
+/opt/etc/init.d/S99poolheat-standalone stop 2>/dev/null || true
+killall poolheatd 2>/dev/null || true
+exit 0

@@ -1,0 +1,19 @@
+# runtime / local
+ui-demo/history.db
+ui-demo/history.db-*
+ui-demo/history_config.json
+ui-demo/last_commands.json
+ui-demo/.last_commands.json
+ui-demo/poolheat.log
+**/__pycache__/
+*.pyc
+.DS_Store
+*.swp
+
+# local experiment dumps (may contain network/pool details)
+power-pct-*.json
+stage0-snapshot*.json
+
+# optional local config with secrets
+ui-demo/config.json
+packaging/entware/opt/etc/poolheat/config.local.json

@@ -1,0 +1,8 @@
+{
+  "bind": "0.0.0.0",
+  "http_port": 8787,
+  "miner_host": "192.168.1.10",
+  "miner_port": 4028,
+  "api_password": "admin",
+  "comment": "Keenetic Peak + Whatsminer M63 — edit miner_host if needed"
+}

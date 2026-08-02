@@ -1,0 +1,36 @@
+#!/bin/sh
+echo "poolheat: postinst"
+
+mkdir -p /opt/var/poolheat /opt/var/run /opt/etc/poolheat
+chmod 755 /opt/bin/poolheatd /opt/lib/poolheat/serve.py 2>/dev/null || true
+chmod 755 /opt/etc/init.d/S99poolheat /opt/etc/init.d/S99poolheat-standalone 2>/dev/null || true
+
+# Whatsminer privileged API crypto deps
+if [ -x /opt/bin/pip3 ] || [ -x /opt/bin/pip ]; then
+  PIP=/opt/bin/pip3
+  [ -x "$PIP" ] || PIP=/opt/bin/pip
+  echo "poolheat: installing pycryptodome + passlib..."
+  "$PIP" install pycryptodome passlib || {
+    echo "poolheat: pip install failed — run manually:"
+    echo "  /opt/bin/pip3 install pycryptodome passlib"
+  }
+else
+  echo "poolheat: pip not found. Install: opkg install python3-pip"
+  echo "  then: /opt/bin/pip3 install pycryptodome passlib"
+fi
+
+if [ -x /opt/etc/init.d/S99poolheat ] && [ -f /opt/etc/init.d/rc.func ]; then
+  /opt/etc/init.d/S99poolheat start 2>/dev/null || true
+elif [ -x /opt/etc/init.d/S99poolheat-standalone ]; then
+  /opt/etc/init.d/S99poolheat-standalone start 2>/dev/null || true
+fi
+
+echo ""
+echo "poolheat installed."
+echo "  UI:     http://<keenetic-lan-ip>:8787/"
+echo "  config: /opt/etc/poolheat/config.json"
+echo "  data:   /opt/var/poolheat/"
+echo "  start:  /opt/etc/init.d/S99poolheat-standalone start"
+echo "  stop:   /opt/etc/init.d/S99poolheat-standalone stop"
+echo ""
+exit 0

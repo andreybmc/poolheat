@@ -1,0 +1,17 @@
+#!/bin/sh
+# poolheat daemon launcher (Entware / Keenetic)
+export PATH=/opt/bin:/opt/sbin:$PATH
+
+export POOLHEAT_WWW=/opt/share/poolheat/www
+export POOLHEAT_DATA=/opt/var/poolheat
+export POOLHEAT_CONFIG=/opt/etc/poolheat/config.json
+
+# common Entware site-packages locations
+export PYTHONPATH=/opt/lib/python3.11/site-packages:/opt/lib/python3.10/site-packages:/opt/lib/python3.9/site-packages:$PYTHONPATH
+
+PY=/opt/bin/python3
+if [ ! -x "$PY" ]; then
+  PY=python3
+fi
+
+exec "$PY" /opt/lib/poolheat/serve.py

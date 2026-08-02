@@ -1,0 +1,4 @@
+#!/bin/sh
+# Keep history/config by default
+echo "poolheat removed (data kept in /opt/var/poolheat)"
+exit 0
