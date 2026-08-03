@@ -132,7 +132,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.2.0"
+_DEFAULT_APP_VERSION = "0.3.0"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -154,7 +154,7 @@ _zone_cfg_lock = threading.Lock()
 _policy_lock = threading.Lock()
 _policy_stop = threading.Event()
 _policy_ctrl: dict = {
-    "heat_zone": None,  # z0|z1|z2 sticky
+    "heat_zone": None,  # z0|z1|z2|z3 sticky
     "safety_sticky": False,
     "last_key": None,
     "streak_key": None,
@@ -163,11 +163,20 @@ _policy_ctrl: dict = {
     "last_event": None,
     "events": [],  # last ~40 events for UI
     "enabled": True,
+    # Manual override: until unix ts — zone auto off, Safety still on
+    "override_until_ts": 0.0,
+    # Warmup (upfreq) started at (for max_warmup_wait_min)
+    "warmup_since_ts": None,
 }
 
 DEFAULT_ZONE_CFG: dict = {
-    "t0": 26.0,
-    "t1": 28.0,
+    # map schema: 2 = Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat (T0/T1/T2)
+    "zone_map_version": 2,
+    # liquid thresholds (°C): cold → warm
+    # ≤ T0 High · T0–T1 Normal · T1–T2 Reduced · ≥ T2 No heat
+    "t0": 24.0,
+    "t1": 26.0,
+    "t2": 28.0,
     "h": 0.5,
     "t_crit": 70.0,
     "t_crit_clear": 65.0,
@@ -178,28 +187,42 @@ DEFAULT_ZONE_CFG: dict = {
     "min_write_interval_sec": 60,
     # Power Limit match tolerance (W) — within band = already OK
     "limit_tol_w": 100,
+    # Warmup / upfreq gate
+    "warmup_en": True,
+    "warmup_downward_only": True,  # during warmup: only ↓ / Critical
+    "max_warmup_wait_min": 30,  # after this, allow ↑ even if upfreq incomplete
     "zones": {
-        "z0": {
+        "z0": {  # High Heat — coldest water
+            "mode_en": True,
+            "mode": "high",
+            "work_en": True,
+            "work": "resume",
+            "lim_en": True,
+            "lim": 7000,
+            "pct_en": False,
+            "pct": 100,
+        },
+        "z1": {  # Normal heat
             "mode_en": True,
             "mode": "normal",
             "work_en": True,
             "work": "resume",
-            "lim_en": False,
-            "lim": 6000,
+            "lim_en": True,
+            "lim": 5000,
             "pct_en": False,
             "pct": 100,
         },
-        "z1": {
+        "z2": {  # Reduced heat
             "mode_en": True,
             "mode": "low",
             "work_en": True,
             "work": "resume",
             "lim_en": True,
-            "lim": 4000,
+            "lim": 2500,
             "pct_en": False,
             "pct": 70,
         },
-        "z2": {
+        "z3": {  # No heat
             "mode_en": False,
             "mode": "low",
             "work_en": True,
@@ -226,7 +249,7 @@ DEFAULT_ZONE_CFG: dict = {
                 "work_en": True,
                 "work": "resume",
                 "lim_en": True,
-                "lim": 4000,
+                "lim": 2500,
                 "pct_en": False,
                 "pct": 70,
             },
@@ -272,6 +295,7 @@ def _load_zone_cfg() -> None:
         for key in (
             "t0",
             "t1",
+            "t2",
             "h",
             "t_crit",
             "t_crit_clear",
@@ -280,6 +304,7 @@ def _load_zone_cfg() -> None:
             "streak",
             "min_write_interval_sec",
             "limit_tol_w",
+            "max_warmup_wait_min",
         ):
             if key in raw and raw[key] is not None:
                 try:
@@ -289,25 +314,65 @@ def _load_zone_cfg() -> None:
                         "streak",
                         "min_write_interval_sec",
                         "limit_tol_w",
+                        "max_warmup_wait_min",
                     ):
                         cfg[key] = int(float(raw[key]))
                     else:
                         cfg[key] = float(raw[key])
                 except (TypeError, ValueError):
                     pass
+        for bkey in ("warmup_en", "warmup_downward_only"):
+            if bkey in raw:
+                cfg[bkey] = bool(raw[bkey])
         cfg["min_write_interval_sec"] = max(
             10, min(3600, int(cfg.get("min_write_interval_sec", 60) or 60))
         )
         cfg["limit_tol_w"] = max(10, min(2000, int(cfg.get("limit_tol_w", 100) or 100)))
+        cfg["max_warmup_wait_min"] = max(
+            1, min(240, int(cfg.get("max_warmup_wait_min", 30) or 30))
+        )
+        cfg["warmup_en"] = bool(cfg.get("warmup_en", True))
+        cfg["warmup_downward_only"] = bool(cfg.get("warmup_downward_only", True))
         # clamps
         cfg["t0"] = float(cfg["t0"])
         cfg["t1"] = float(cfg["t1"])
         cfg["h"] = max(0.2, min(5.0, float(cfg.get("h", 0.5))))
         cfg["t_crit"] = float(cfg["t_crit"])
         cfg["t_crit_clear"] = float(cfg["t_crit_clear"])
+        zones_in = raw.get("zones") if isinstance(raw.get("zones"), dict) else {}
+        ver = int(raw.get("zone_map_version") or 0)
+        # migrate v1 (3 heat zones) → v2 (4 heat zones + T2)
+        if ver < 2:
+            old_t0 = float(cfg.get("t0", 26))
+            old_t1 = float(cfg.get("t1", 28))
+            # if t2 already present but version missing, treat t0/t1/t2 as-is for thresholds
+            if "t2" in raw and raw.get("t2") is not None and "z3" in zones_in:
+                cfg["t2"] = float(raw["t2"])
+            else:
+                h0 = float(cfg.get("h", 0.5))
+                # old: ≤t0 Normal, mid Reduced, ≥t1 No heat
+                cfg["t0"] = old_t0 - max(2.0, h0)
+                cfg["t1"] = old_t0
+                cfg["t2"] = old_t1
+            if "z3" not in zones_in:
+                old_z = dict(zones_in)
+                zones_in = {
+                    "z0": None,  # High → default
+                    "z1": old_z.get("z0"),  # was Normal
+                    "z2": old_z.get("z1"),  # was Reduced
+                    "z3": old_z.get("z2"),  # was No heat
+                    "critical": old_z.get("critical"),
+                }
+            cfg["zone_map_version"] = 2
+        if "t2" not in cfg or cfg.get("t2") is None:
+            cfg["t2"] = float(cfg.get("t1", 28)) + max(2.0, float(cfg.get("h", 0.5)))
+        cfg["t2"] = float(cfg["t2"])
+        # ensure t0 < t1 < t2
         if cfg["t0"] >= cfg["t1"]:
             cfg["t1"] = cfg["t0"] + max(cfg["h"], 0.5)
-        zones_in = raw.get("zones") if isinstance(raw.get("zones"), dict) else {}
+        if cfg["t1"] >= cfg["t2"]:
+            cfg["t2"] = cfg["t1"] + max(cfg["h"], 0.5)
+        cfg["zone_map_version"] = 2
         zones_out = {}
         for name, default in DEFAULT_ZONE_CFG["zones"].items():
             zin = zones_in.get(name)
@@ -334,6 +399,11 @@ def _load_zone_cfg() -> None:
                 zones_out[name] = _normalize_zone_entry(zin, default)
         cfg["zones"] = zones_out
         _zone_cfg = cfg
+        # persist migration so UI/API see v2 map (already under lock — write directly)
+        try:
+            _save_json(ZONE_CFG_FILE, _zone_cfg)
+        except Exception:
+            pass
 
 
 def _save_zone_cfg() -> None:
@@ -481,6 +551,8 @@ DEFAULT_WEATHER_CFG = {
     "latitude": 55.7558,
     "longitude": 37.6173,
     "timezone": "Europe/Moscow",
+    # how often to re-fetch Open-Meteo (server cache TTL + UI poll)
+    "refresh_interval_sec": 600,
 }
 
 WEATHER_PRESETS = [
@@ -499,7 +571,7 @@ _weather_cfg: dict = dict(DEFAULT_WEATHER_CFG)
 _weather_cache_lock = threading.Lock()
 _weather_cache: dict | None = None
 _weather_cache_ts = 0.0
-WEATHER_CACHE_TTL = 600.0  # 10 min
+WEATHER_CACHE_TTL_DEFAULT = 600.0  # 10 min
 
 _pool_cfg_lock = threading.Lock()
 _pool_cfg: dict = dict(DEFAULT_POOL_CFG)
@@ -570,6 +642,16 @@ def _save_hist_cfg() -> None:
         _save_json(CONFIG_FILE, _hist_cfg)
 
 
+def _weather_refresh_sec(cfg: dict | None = None) -> int:
+    """Clamp weather refresh interval (seconds)."""
+    c = cfg if isinstance(cfg, dict) else _weather_cfg
+    try:
+        sec = int(c.get("refresh_interval_sec") or WEATHER_CACHE_TTL_DEFAULT)
+    except (TypeError, ValueError):
+        sec = int(WEATHER_CACHE_TTL_DEFAULT)
+    return max(60, min(86400, sec))
+
+
 def _load_weather_cfg() -> None:
     global _weather_cfg
     with _weather_cfg_lock:
@@ -583,6 +665,7 @@ def _load_weather_cfg() -> None:
             _weather_cfg["longitude"] = DEFAULT_WEATHER_CFG["longitude"]
         if not _weather_cfg.get("city"):
             _weather_cfg["city"] = DEFAULT_WEATHER_CFG["city"]
+        _weather_cfg["refresh_interval_sec"] = _weather_refresh_sec(_weather_cfg)
 
 
 def _save_weather_cfg() -> None:
@@ -787,14 +870,17 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
         return {"ok": True, "enabled": False, "city": c.get("city"), "temp_c": None}
 
     now = time.time()
+    ttl = float(_weather_refresh_sec(c))
     with _weather_cache_lock:
         if (
             not force
             and _weather_cache is not None
-            and (now - _weather_cache_ts) < WEATHER_CACHE_TTL
+            and (now - _weather_cache_ts) < ttl
             and _weather_cache.get("ok")
         ):
-            return dict(_weather_cache)
+            out = dict(_weather_cache)
+            out["refresh_interval_sec"] = int(ttl)
+            return out
 
     lat = float(c["latitude"])
     lon = float(c["longitude"])
@@ -834,6 +920,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             "weather_code": code_i,
             "weather_text": _WMO_RU.get(code_i, "—") if code_i is not None else "—",
             "observed_at": cur.get("time"),
+            "refresh_interval_sec": int(ttl),
             "source": "open-meteo",
             "cached": False,
         }
@@ -929,10 +1016,35 @@ def init_db() -> None:
                     code TEXT NOT NULL,
                     cause TEXT,
                     miner_ts TEXT,
+                    miner_sn TEXT,
+                    miner_type TEXT,
+                    miner_mac TEXT,
+                    miner_label TEXT,
+                    component_sn TEXT,
+                    component_tag TEXT,
                     UNIQUE(code, miner_ts)
                 )
                 """
             )
+            # migrate older journals
+            err_cols = {
+                r[1] for r in conn.execute("PRAGMA table_info(miner_error_log)").fetchall()
+            }
+            for col, decl in (
+                ("miner_sn", "TEXT"),
+                ("miner_type", "TEXT"),
+                ("miner_mac", "TEXT"),
+                ("miner_label", "TEXT"),
+                ("component_sn", "TEXT"),
+                ("component_tag", "TEXT"),
+            ):
+                if col not in err_cols:
+                    try:
+                        conn.execute(
+                            f"ALTER TABLE miner_error_log ADD COLUMN {col} {decl}"
+                        )
+                    except Exception:
+                        pass
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_miner_err_seen ON miner_error_log(seen_ts DESC)"
             )
@@ -942,15 +1054,201 @@ def init_db() -> None:
 
 
 MINER_ERROR_LOG_MAX = 100
+_IDENT_CACHE: dict = {"ts": 0.0, "data": None}
+_IDENT_CACHE_TTL = 45.0
+_BACKFILL_DONE = False
+INFO_CACHE_FILE = DATA / "info_cache.json"
+MINER_ID_CACHE_FILE = DATA / "miner_identity_cache.json"
 
 
-def log_miner_errors(entries: list[dict]) -> int:
+def _miner_display_label(ident: dict | None) -> str:
+    """Prefer ASIC SN; else model · MAC."""
+    if not isinstance(ident, dict):
+        return "—"
+    sn = (ident.get("minersn") or "").strip()
+    if sn:
+        return sn
+    parts: list[str] = []
+    mt = (ident.get("miner_type") or "").strip()
+    mac = (ident.get("mac") or "").strip()
+    if mt:
+        parts.append(mt)
+    if mac:
+        parts.append(mac)
+    return " · ".join(parts) if parts else "—"
+
+
+def _sm_slot_from_error(code: str | None, cause: str | None) -> int | None:
+    """SM0..SM3 → slot 0..3 from cause text or known board error codes."""
+    text = f"{cause or ''} {code or ''}"
+    m = re.search(r"\bSM\s*([0-3])\b", text, re.I)
+    if m:
+        return int(m.group(1))
+    c = str(code or "").strip().lstrip("0") or str(code or "").strip()
+    if not c.isdigit():
+        return None
+    # last digit = board index for SM* families
+    families = (
+        "300", "301", "302", "303",
+        "320", "321", "322", "323",
+        "350", "351", "352", "353",
+        "410", "411", "412", "413",
+        "420", "421", "422", "423",
+        "430", "431", "432", "433",
+        "440", "441", "442", "443",
+        "510", "511", "512", "513",
+        "530", "531", "532", "533",
+        "540", "541", "542", "543",
+        "550", "551", "552", "553",
+        "560", "561", "562", "563",
+        "5110", "5111", "5112", "5113",
+    )
+    if c in families or any(c.startswith(p) and len(c) == len(p) for p in ("30", "32", "35", "41", "42", "43", "44", "51", "53", "54", "55", "56")):
+        d = int(c[-1])
+        if 0 <= d <= 3:
+            return d
+    # 5110-5113 frequency up
+    if c.startswith("511") and len(c) == 4:
+        d = int(c[-1])
+        if 0 <= d <= 3:
+            return d
+    return None
+
+
+def _is_psu_error_code(code: str | None) -> bool:
+    c = str(code or "").strip().lstrip("0") or ""
+    if not c.isdigit():
+        return False
+    n = int(c)
+    return 200 <= n < 300
+
+
+def _component_for_error(
+    code: str | None,
+    cause: str | None,
+    ident: dict | None,
+) -> tuple[str | None, str | None]:
+    """
+    Component SN for the failing part.
+    SM2 reading chip id error → PCB SN of slot 2.
+    PSU family → powersn.
+    """
+    ident = ident if isinstance(ident, dict) else {}
+    slot = _sm_slot_from_error(code, cause)
+    if slot is not None:
+        boards = ident.get("boards") or []
+        pcb = None
+        for b in boards:
+            if not isinstance(b, dict):
+                continue
+            try:
+                if int(b.get("slot")) == slot:
+                    pcb = b.get("pcb_sn")
+                    break
+            except (TypeError, ValueError):
+                continue
+        if not pcb and 0 <= slot < len(boards) and isinstance(boards[slot], dict):
+            pcb = boards[slot].get("pcb_sn")
+        return (str(pcb) if pcb else None), f"SM{slot}"
+    if _is_psu_error_code(code):
+        psn = ident.get("powersn")
+        return (str(psn) if psn else None), "PSU"
+    return None, None
+
+
+def _load_miner_id_disk() -> dict | None:
+    try:
+        if not MINER_ID_CACHE_FILE.is_file():
+            return None
+        d = json.loads(MINER_ID_CACHE_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def _save_miner_id_disk(data: dict) -> None:
+    try:
+        MINER_ID_CACHE_FILE.write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _identity_usable(data: dict | None) -> bool:
+    if not isinstance(data, dict):
+        return False
+    return bool(
+        data.get("ok")
+        or data.get("mac")
+        or data.get("miner_type")
+        or data.get("minersn")
+        or (data.get("boards") or [])
+    )
+
+
+def get_miner_identity_cached(force: bool = False) -> dict:
+    """Cached miner identity (type, mac, sn, boards PCB SN). Falls back to last good."""
+    global _BACKFILL_DONE
+    now = time.time()
+    if (
+        not force
+        and _IDENT_CACHE.get("data")
+        and (now - float(_IDENT_CACHE.get("ts") or 0)) < _IDENT_CACHE_TTL
+        and _identity_usable(_IDENT_CACHE.get("data"))
+    ):
+        return dict(_IDENT_CACHE["data"])
+    data: dict
+    try:
+        data = _collect_miner_identity()
+    except Exception as e:
+        data = {"ok": False, "error": str(e), "boards": []}
+    if _identity_usable(data):
+        _IDENT_CACHE["ts"] = now
+        _IDENT_CACHE["data"] = data
+        _save_miner_id_disk(data)
+        if not _BACKFILL_DONE:
+            try:
+                n = backfill_miner_error_log_identity(ident=data)
+                if n:
+                    print(f"error log backfill: {n} rows")
+                _BACKFILL_DONE = True
+            except Exception as e:
+                print(f"error log backfill: {e}")
+        return dict(data)
+    # live failed — use memory / disk last-good
+    if _identity_usable(_IDENT_CACHE.get("data")):
+        return dict(_IDENT_CACHE["data"])
+    disk = _load_miner_id_disk()
+    if _identity_usable(disk):
+        _IDENT_CACHE["ts"] = now
+        _IDENT_CACHE["data"] = disk
+        return dict(disk)
+    _IDENT_CACHE["ts"] = now
+    _IDENT_CACHE["data"] = data
+    return dict(data)
+
+
+def log_miner_errors(
+    entries: list[dict],
+    *,
+    miner_ctx: dict | None = None,
+) -> int:
     """
     Append new miner errors to journal (dedupe by code+miner_ts).
+    Stores miner identity + component SN for the miner active at log time.
     Keep only last MINER_ERROR_LOG_MAX rows. Returns number inserted.
     """
     if not entries:
         return 0
+    ident = miner_ctx if isinstance(miner_ctx, dict) else get_miner_identity_cached()
+    label = _miner_display_label(ident)
+    miner_sn = (ident.get("minersn") or None) if isinstance(ident, dict) else None
+    miner_type = (ident.get("miner_type") or None) if isinstance(ident, dict) else None
+    miner_mac = (ident.get("mac") or None) if isinstance(ident, dict) else None
+    if miner_sn == "":
+        miner_sn = None
+
     now = time.time()
     iso = datetime.now().isoformat(timespec="seconds")
     inserted = 0
@@ -964,14 +1262,33 @@ def log_miner_errors(entries: list[dict]) -> int:
                 miner_ts = e.get("ts")
                 miner_ts_s = str(miner_ts) if miner_ts not in (None, "") else ""
                 cause = e.get("cause") or e.get("message") or ""
+                # allow per-entry override of component
+                comp_sn = e.get("component_sn")
+                comp_tag = e.get("component_tag")
+                if not comp_sn and not comp_tag:
+                    comp_sn, comp_tag = _component_for_error(code, cause, ident)
                 try:
                     cur = conn.execute(
                         """
                         INSERT OR IGNORE INTO miner_error_log
-                            (seen_ts, seen_iso, code, cause, miner_ts)
-                        VALUES (?,?,?,?,?)
+                            (seen_ts, seen_iso, code, cause, miner_ts,
+                             miner_sn, miner_type, miner_mac, miner_label,
+                             component_sn, component_tag)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?)
                         """,
-                        (now, iso, code, str(cause), miner_ts_s),
+                        (
+                            now,
+                            iso,
+                            code,
+                            str(cause),
+                            miner_ts_s,
+                            miner_sn,
+                            miner_type,
+                            miner_mac,
+                            label,
+                            comp_sn,
+                            comp_tag,
+                        ),
                     )
                     inserted += int(cur.rowcount or 0)
                 except Exception:
@@ -994,6 +1311,66 @@ def log_miner_errors(entries: list[dict]) -> int:
     return inserted
 
 
+def backfill_miner_error_log_identity(ident: dict | None = None) -> int:
+    """
+    Fill miner/component columns for old journal rows using Info identity
+    (current live or last-good cache). Returns number of rows updated.
+    """
+    if ident is None:
+        try:
+            ident = get_miner_identity_cached(force=False)
+        except Exception:
+            ident = _load_miner_id_disk() or {}
+    if not _identity_usable(ident):
+        return 0
+    label = _miner_display_label(ident)
+    miner_sn = ident.get("minersn") or None
+    if miner_sn == "":
+        miner_sn = None
+    miner_type = ident.get("miner_type") or None
+    miner_mac = ident.get("mac") or None
+    updated = 0
+    with _db_lock:
+        conn = _db_connect()
+        try:
+            cur = conn.execute(
+                """
+                SELECT id, code, cause, miner_label, component_sn, component_tag
+                FROM miner_error_log
+                """
+            )
+            rows = cur.fetchall()
+            for r in rows:
+                fields: dict = {}
+                if not (r["miner_label"] or "").strip():
+                    fields["miner_sn"] = miner_sn
+                    fields["miner_type"] = miner_type
+                    fields["miner_mac"] = miner_mac
+                    fields["miner_label"] = label
+                if not (r["component_sn"] or "").strip():
+                    csn, ctag = _component_for_error(r["code"], r["cause"], ident)
+                    if csn:
+                        fields["component_sn"] = csn
+                    if ctag and not (r["component_tag"] or "").strip():
+                        fields["component_tag"] = ctag
+                elif not (r["component_tag"] or "").strip():
+                    _, ctag = _component_for_error(r["code"], r["cause"], ident)
+                    if ctag:
+                        fields["component_tag"] = ctag
+                if not fields:
+                    continue
+                sets = ", ".join(f"{k}=?" for k in fields)
+                conn.execute(
+                    f"UPDATE miner_error_log SET {sets} WHERE id=?",
+                    (*fields.values(), r["id"]),
+                )
+                updated += 1
+            conn.commit()
+        finally:
+            conn.close()
+    return updated
+
+
 def _display_cause(code: str | None, cause: str | None) -> str:
     """Prefer official Whatsminer web Cause when stored text is a placeholder."""
     c = str(code or "").strip()
@@ -1010,7 +1387,9 @@ def query_miner_error_log(limit: int = 100) -> list[dict]:
         try:
             cur = conn.execute(
                 """
-                SELECT id, seen_ts, seen_iso, code, cause, miner_ts
+                SELECT id, seen_ts, seen_iso, code, cause, miner_ts,
+                       miner_sn, miner_type, miner_mac, miner_label,
+                       component_sn, component_tag
                 FROM miner_error_log
                 ORDER BY seen_ts DESC, id DESC
                 LIMIT ?
@@ -1020,14 +1399,42 @@ def query_miner_error_log(limit: int = 100) -> list[dict]:
             rows = []
             for r in cur.fetchall():
                 code = r["code"]
+                cause = _display_cause(code, r["cause"])
+                # display miner: stored label, or rebuild
+                mlabel = (r["miner_label"] or "").strip()
+                if not mlabel:
+                    mlabel = _miner_display_label(
+                        {
+                            "minersn": r["miner_sn"],
+                            "miner_type": r["miner_type"],
+                            "mac": r["miner_mac"],
+                        }
+                    )
+                ctag = (r["component_tag"] or "").strip()
+                csn = (r["component_sn"] or "").strip()
+                if not csn and not ctag:
+                    csn2, ctag2 = _component_for_error(code, cause, None)
+                    csn, ctag = (csn2 or ""), (ctag2 or "")
+                comp_disp = csn or "—"
+                if ctag and csn:
+                    comp_disp = f"{ctag} · {csn}"
+                elif ctag and not csn:
+                    comp_disp = ctag
                 rows.append(
                     {
                         "id": r["id"],
                         "seen_ts": r["seen_ts"],
                         "seen_iso": r["seen_iso"],
                         "code": code,
-                        "cause": _display_cause(code, r["cause"]),
+                        "cause": cause,
                         "miner_ts": r["miner_ts"] or None,
+                        "miner_sn": r["miner_sn"] or None,
+                        "miner_type": r["miner_type"] or None,
+                        "miner_mac": r["miner_mac"] or None,
+                        "miner": mlabel if mlabel != "—" else "—",
+                        "component_sn": csn or None,
+                        "component_tag": ctag or None,
+                        "component": comp_disp,
                     }
                 )
             return rows
@@ -1481,19 +1888,18 @@ def collect_system_info() -> dict:
     """Router + miner identity + host resources for Info tab."""
     disks: list[dict] = []
     seen: set[str] = set()
+    # skip rootfs (always full) and poolheat data (same FS as /opt on Peak)
     for path, label in (
-        (str(DATA), "poolheat data"),
         ("/opt", "/opt (Entware)"),
         ("/storage", "/storage"),
         ("/tmp", "/tmp"),
-        ("/", "/ (rootfs)"),
     ):
         ent = _disk_usage_entry(path, label)
         if not ent:
             continue
         # de-dupe by total+free fingerprint (bind-mounts)
         key = f"{ent['total_b']}:{ent['free_b']}:{ent.get('used_b')}"
-        if key in seen and path not in (str(DATA), "/opt"):
+        if key in seen:
             continue
         seen.add(key)
         disks.append(ent)
@@ -1505,11 +1911,13 @@ def collect_system_info() -> dict:
     except Exception:
         pass
 
-    return {
+    miner = get_miner_identity_cached(force=True)
+    router = _collect_router_info()
+    result = {
         "ok": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
-        "router": _collect_router_info(),
-        "miner": _collect_miner_identity(),
+        "router": router,
+        "miner": miner,
         "resources": {
             "disks": disks,
             "memory": _host_memory(),
@@ -1527,6 +1935,27 @@ def collect_system_info() -> dict:
             "miner_host": f"{HOST_MINER}:{PORT_MINER}",
         },
     }
+    # full Info snapshot for instant UI (models/versions/boards/resources)
+    try:
+        cache_blob = dict(result)
+        cache_blob["cached_at"] = result["ts"]
+        INFO_CACHE_FILE.write_text(
+            json.dumps(cache_blob, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+    return result
+
+
+def load_info_cache() -> dict | None:
+    """Last successful Info snapshot (router/miner) for fast UI paint."""
+    try:
+        if not INFO_CACHE_FILE.is_file():
+            return None
+        data = json.loads(INFO_CACHE_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
 
 
 def _read_version_file(path: Path) -> str | None:
@@ -1670,7 +2099,9 @@ def check_github_update() -> dict:
                 out["release_name"] = rel.get("name") or rel.get("tag_name")
                 out["release_url"] = rel.get("html_url")
                 out["published_at"] = rel.get("published_at")
-                out["notes"] = (rel.get("body") or "")[:800] or None
+                # keep newlines for UI pre-wrap; soft cap length
+                body_notes = (rel.get("body") or "").replace("\r\n", "\n").strip()
+                out["notes"] = body_notes[:4000] if body_notes else None
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 raise
@@ -2446,7 +2877,7 @@ def _resolve_miner_errors(
 
     # journal: log active errors (dedupe by code+miner_ts in DB)
     try:
-        log_miner_errors(active)
+        log_miner_errors(active, miner_ctx=get_miner_identity_cached())
     except Exception as e:
         print(f"[errors] log failed: {e}")
 
@@ -2559,6 +2990,8 @@ def fetch_live() -> dict:
         "power": summary.get("Power"),
         "mode": mode,
         "mode_norm": mode_norm,
+        "mineroff": status.get("mineroff"),
+        "mineroff_reason": status.get("mineroff_reason"),
         "power_limit": summary.get("Power Limit"),
         "power_limit_set": status.get("power_limit_set"),
         "power_pct_reported": hash_pct_num,
@@ -2566,6 +2999,27 @@ def fetch_live() -> dict:
         "power_limit_cmd": lim_cmd,
         "mode_cmd": mode_cmd,
         "work_cmd": work_cmd,
+        # measured from miner API (for UI); work_cmd remains last commanded
+        "work_measured": (
+            "suspend"
+            if _measured_work_state(
+                {
+                    "mineroff": status.get("mineroff"),
+                    "mode": mode,
+                    "mode_norm": mode_norm,
+                    "power": summary.get("Power"),
+                    "hashrate_th": hashrate_th,
+                }
+            )
+            == "sleep"
+            else "resume"
+        ),
+        "mode_measured": mode_norm,
+        "power_limit_measured": (
+            _f(status.get("power_limit_set"))
+            if _f(status.get("power_limit_set")) is not None
+            else _f(summary.get("Power Limit"))
+        ),
         "last_write": last_write,
         "freq_avg": summary.get("freq_avg"),
         "hashrate_th": hashrate_th,
@@ -2586,21 +3040,48 @@ def fetch_live() -> dict:
     }
 
 
-def _infer_work_state(live: dict) -> str:
-    """resume | sleep — Mining Control for history bands."""
-    wc = live.get("work_cmd")
-    if wc in ("sleep", "suspend"):
-        return "sleep"
-    if wc == "resume":
-        return "resume"
-    mode = str(live.get("mode_norm") or live.get("mode") or "").lower()
-    if "sleep" in mode or mode in ("off", "power_off"):
-        return "sleep"
+def _measured_work_state(live: dict) -> str:
+    """
+    Actual mining state from miner API (NOT last work_cmd).
+    Primary signals: status.mineroff + hashrate. Residual board power after
+    power_off is normal and must NOT look like Resume (avoids Suspend thrash).
+    sleep/suspend · resume/mining
+    """
+    mo = live.get("mineroff")
+    mo_s = str(mo).strip().lower() if mo is not None else ""
     p = _f(live.get("power"))
     h = _f(live.get("hashrate_th"))
-    if p is not None and p < 50 and (h is None or h < 1):
+    hashing = h is not None and h >= 1.0  # TH/s
+
+    # API says miner off → Suspend, unless it is actually hashing
+    if mo_s in ("true", "1", "yes"):
+        return "resume" if hashing else "sleep"
+
+    mode = str(live.get("mode_norm") or live.get("mode") or "").lower()
+    if "sleep" in mode or mode in ("off", "power_off"):
+        return "resume" if hashing else "sleep"
+
+    # mineroff false / unknown: hashing or sustained power = mining
+    if hashing:
+        return "resume"
+    if mo_s in ("false", "0", "no"):
+        # claimed on — residual <100 W after stop still common; use higher bar
+        if p is not None and p >= 200:
+            return "resume"
+        if p is not None and p < 80 and not hashing:
+            return "sleep"
+        return "resume"  # mineroff false default = mining path
+    # no mineroff field
+    if p is not None and p >= 200:
+        return "resume"
+    if p is not None and p < 50 and not hashing:
         return "sleep"
-    return "resume"
+    return "resume" if hashing else "sleep"
+
+
+def _infer_work_state(live: dict) -> str:
+    """resume | sleep — measured state for history bands / UI badge."""
+    return _measured_work_state(live)
 
 
 def _infer_upfreq_ok(live: dict) -> int | None:
@@ -2882,40 +3363,165 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
     print(f"[policy] {ev['ts']} {kind}: {msg}")
 
 
-def _evaluate_heat_zone(liquid: float | None, sticky: str | None, t0: float, t1: float, h: float) -> str:
-    """Z0 Normal · Z1 Reduced · Z2 No heat with hysteresis (mirrors UI)."""
+def _place_heat_zone(liq: float, t0: float, t1: float, t2: float) -> str:
+    """Absolute placement without hysteresis."""
+    if liq <= t0:
+        return "z0"  # High Heat
+    if liq <= t1:
+        return "z1"  # Normal
+    if liq >= t2:
+        return "z3"  # No heat
+    return "z2"  # Reduced
+
+
+def _evaluate_heat_zone(
+    liquid: float | None,
+    sticky: str | None,
+    t0: float,
+    t1: float,
+    t2: float,
+    h: float,
+) -> str:
+    """
+    Z0 High Heat · Z1 Normal · Z2 Reduced · Z3 No heat.
+    Thresholds: liquid ≤ T0 | T0–T1 | T1–T2 | ≥ T2. Hysteresis h at edges.
+    """
+    valid = ("z0", "z1", "z2", "z3")
     if liquid is None or not isinstance(liquid, (int, float)):
-        return sticky if sticky in ("z0", "z1", "z2") else "z1"
+        return sticky if sticky in valid else "z2"
     liq = float(liquid)
     h = max(0.2, float(h))
-    if sticky not in ("z0", "z1", "z2"):
-        if liq <= t0:
-            return "z0"
-        if liq >= t1:
-            return "z2"
-        return "z1"
+    if sticky not in valid:
+        return _place_heat_zone(liq, t0, t1, t2)
     if sticky == "z0":
         if liq >= t0 + h:
-            return "z2" if liq >= t1 else "z1"
+            return _place_heat_zone(liq, t0, t1, t2)
         return "z0"
-    if sticky == "z2":
-        if liq <= t1 - h:
-            return "z0" if liq <= t0 else "z1"
-        return "z2"
-    # z1
-    if liq <= t0:
-        return "z0"
-    if liq >= t1:
-        return "z2"
-    return "z1"
+    if sticky == "z3":
+        if liq <= t2 - h:
+            return _place_heat_zone(liq, t0, t1, t2)
+        return "z3"
+    if sticky == "z1":
+        if liq <= t0:
+            return "z0"
+        if liq >= t1 + h:
+            return _place_heat_zone(liq, t0, t1, t2)
+        return "z1"
+    # sticky z2 Reduced
+    if liq <= t1 - h:
+        return _place_heat_zone(liq, t0, t1, t2)
+    if liq >= t2:
+        return "z3"
+    return "z2"
 
 
 def _upfreq_block(live: dict) -> bool:
+    """
+    True while hashboards are still ramping (Upfreq Complete ≠ 1).
+    Not meaningful when miner is Suspended — boards report upfreq=0 while off,
+    which must NOT block Z1 resume (deadlock: suspend → forever warmup).
+    """
+    # Suspend / off: ignore upfreq gate
+    try:
+        if _measured_work_state(live) == "sleep":
+            return False
+    except Exception:
+        mo = str(live.get("mineroff") or "").strip().lower()
+        if mo in ("true", "1", "yes"):
+            return False
+        p = _f(live.get("power"))
+        h = _f(live.get("hashrate_th"))
+        if (p is not None and p < 50) and (h is None or h < 1):
+            return False
     up = live.get("upfreq") or []
     try:
         return any(int(u) != 1 for u in up)
     except (TypeError, ValueError):
         return False
+
+
+_MODE_RANK = {"low": 0, "normal": 1, "high": 2}
+
+
+def _cmd_is_upward(action: str, value, live: dict) -> bool:
+    """
+    True if command increases heat/power vs measured state.
+    Used by warmup gate: block upward, allow downward + Critical.
+    """
+    action = (action or "").strip().lower()
+    if action == "working":
+        want = "suspend" if str(value).lower() in ("suspend", "sleep") else "resume"
+        have = _live_work(live)
+        # resume while suspended (or idle) → more heat
+        return want == "resume" and have == "suspend"
+    if action == "mode":
+        want = str(value).strip().lower()
+        have = _live_mode(live)
+        wr = _MODE_RANK.get(want)
+        if wr is None:
+            return False
+        if have is None:
+            # unknown measured: treat normal/high as upward risk
+            return wr > 0
+        return wr > _MODE_RANK.get(have, 0)
+    if action == "power_limit":
+        try:
+            want = float(value)
+        except (TypeError, ValueError):
+            return False
+        have = _live_limit_w(live)
+        if have is None:
+            return want > 0
+        return want > float(have) + 50.0
+    if action == "power_pct":
+        try:
+            want = float(value)
+        except (TypeError, ValueError):
+            return False
+        have = None
+        pw = _f(live.get("power"))
+        lim = _live_limit_w(live)
+        if pw is not None and lim is not None and lim > 0:
+            have = 100.0 * pw / lim
+        else:
+            have = _f(live.get("power_pct_reported"))
+        if have is None:
+            return want > 50
+        return want > float(have) + 5.0
+    return False
+
+
+def _filter_downward_cmds(
+    cmds: list[tuple[str, object]], live: dict
+) -> list[tuple[str, object]]:
+    """Keep only non-upward commands (downward / same / suspend)."""
+    out: list[tuple[str, object]] = []
+    for action, value in cmds:
+        if _cmd_is_upward(action, value, live):
+            continue
+        out.append((action, value))
+    return out
+
+
+def _override_active(now: float | None = None) -> bool:
+    now = time.time() if now is None else now
+    with _policy_lock:
+        until = float(_policy_ctrl.get("override_until_ts") or 0)
+    return until > now
+
+
+def set_policy_override(minutes: float | None = None, *, clear: bool = False) -> dict:
+    """Start override for N minutes, or clear. Safety Critical still applies."""
+    with _policy_lock:
+        if clear or not minutes or float(minutes) <= 0:
+            _policy_ctrl["override_until_ts"] = 0.0
+            msg = "OVERRIDE cleared · zone auto resumed"
+        else:
+            mins = max(1.0, min(24 * 60.0, float(minutes)))
+            _policy_ctrl["override_until_ts"] = time.time() + mins * 60.0
+            msg = f"OVERRIDE {mins:.0f}m · zone auto off · Safety on"
+    _policy_log("ok", msg)
+    return get_policy_status()
 
 
 def _zone_entry_commands(z: dict | None) -> list[tuple[str, object]]:
@@ -2948,8 +3554,16 @@ def _zone_entry_commands(z: dict | None) -> list[tuple[str, object]]:
 
 
 def _live_work(live: dict) -> str:
-    """resume | suspend from measured miner state."""
-    return "suspend" if _infer_work_state(live) == "sleep" else "resume"
+    """resume | suspend from measured miner state (power / hashrate / mineroff)."""
+    return "suspend" if _measured_work_state(live) == "sleep" else "resume"
+
+
+def _desired_work_from_profile(profile: dict | None) -> str | None:
+    """suspend | resume if zone profile enables Mining Control, else None."""
+    if not isinstance(profile, dict) or not profile.get("work_en"):
+        return None
+    w = str(profile.get("work") or "resume").lower()
+    return "suspend" if w in ("suspend", "sleep") else "resume"
 
 
 def _live_mode(live: dict) -> str | None:
@@ -2961,7 +3575,10 @@ def _live_mode(live: dict) -> str | None:
 
 
 def _live_limit_w(live: dict) -> float | None:
-    return _f(live.get("power_limit")) or _f(live.get("power_limit_set"))
+    # prefer power_limit_set (configured on ASIC); summary Power Limit is 0 in Suspend
+    return _f(live.get("power_limit_set")) or _f(live.get("power_limit_measured")) or _f(
+        live.get("power_limit")
+    )
 
 
 def _diff_commands_vs_live(
@@ -3024,13 +3641,17 @@ def _policy_apply_commands(cmds: list[tuple[str, object]], source: str) -> bool:
 
 
 def get_policy_status() -> dict:
+    now = time.time()
     with _policy_lock:
         ctrl = dict(_policy_ctrl)
         events = list(ctrl.get("events") or [])
+        ov_until = float(ctrl.get("override_until_ts") or 0)
+        warmup_since = ctrl.get("warmup_since_ts")
     with _miner_cfg_lock:
         dry = bool(DRY_RUN)
         poll = int(POLL_INTERVAL_SEC)
     zc = get_zone_cfg()
+    ov_rem = max(0, int(ov_until - now)) if ov_until > now else 0
     return {
         "ok": True,
         "server_side": True,
@@ -3045,9 +3666,14 @@ def get_policy_status() -> dict:
         "last_apply_ts": ctrl.get("last_apply_ts"),
         "last_event": ctrl.get("last_event"),
         "events": events[:20],
+        "override_active": ov_until > now,
+        "override_until_ts": ov_until if ov_until > now else None,
+        "override_remaining_sec": ov_rem,
+        "warmup_since_ts": warmup_since,
         "thresholds": {
             "t0": zc.get("t0"),
             "t1": zc.get("t1"),
+            "t2": zc.get("t2"),
             "h": zc.get("h"),
             "t_crit": zc.get("t_crit"),
             "t_crit_clear": zc.get("t_crit_clear"),
@@ -3056,6 +3682,9 @@ def get_policy_status() -> dict:
             "streak": zc.get("streak"),
             "min_write_interval_sec": zc.get("min_write_interval_sec"),
             "limit_tol_w": zc.get("limit_tol_w"),
+            "warmup_en": bool(zc.get("warmup_en", True)),
+            "warmup_downward_only": bool(zc.get("warmup_downward_only", True)),
+            "max_warmup_wait_min": int(zc.get("max_warmup_wait_min", 30) or 30),
         },
     }
 
@@ -3091,8 +3720,9 @@ def policy_tick() -> None:
     upfreq_block = _upfreq_block(live)
 
     zc = get_zone_cfg()
-    t0 = float(zc.get("t0", 26))
-    t1 = float(zc.get("t1", 28))
+    t0 = float(zc.get("t0", 24))
+    t1 = float(zc.get("t1", 26))
+    t2 = float(zc.get("t2", 28))
     h = float(zc.get("h", 0.5))
     t_crit = float(zc.get("t_crit", 70))
     t_crit_clear = float(zc.get("t_crit_clear", 65))
@@ -3101,7 +3731,28 @@ def policy_tick() -> None:
     settle_sec = max(0, int(zc.get("settle_sec", 300) or 0))
     min_write = max(10, int(zc.get("min_write_interval_sec", 60) or 60))
     limit_tol = float(zc.get("limit_tol_w", 100) or 100)
+    warmup_en = bool(zc.get("warmup_en", True))
+    warmup_downward_only = bool(zc.get("warmup_downward_only", True))
+    max_warmup_wait_min = max(1, min(240, int(zc.get("max_warmup_wait_min", 30) or 30)))
     zones = zc.get("zones") or {}
+
+    now_ts = time.time()
+    # warmup timer for max_warmup_wait_min
+    with _policy_lock:
+        if upfreq_block and warmup_en:
+            if not _policy_ctrl.get("warmup_since_ts"):
+                _policy_ctrl["warmup_since_ts"] = now_ts
+            warmup_since = float(_policy_ctrl.get("warmup_since_ts") or now_ts)
+        else:
+            _policy_ctrl["warmup_since_ts"] = None
+            warmup_since = None
+        ov_until = float(_policy_ctrl.get("override_until_ts") or 0)
+    override_on = ov_until > now_ts
+    warmup_expired = bool(
+        warmup_since is not None
+        and (now_ts - warmup_since) >= (max_warmup_wait_min * 60.0)
+    )
+    warmup_active = bool(warmup_en and upfreq_block and not warmup_expired)
 
     # --- safety sticky ---
     was_safety = safety_sticky
@@ -3111,7 +3762,7 @@ def policy_tick() -> None:
         elif chip_max <= t_crit_clear:
             safety_sticky = False
 
-    heat_zone = _evaluate_heat_zone(liquid, heat_sticky, t0, t1, h)
+    heat_zone = _evaluate_heat_zone(liquid, heat_sticky, t0, t1, t2, h)
 
     with _miner_cfg_lock:
         dry = bool(DRY_RUN)
@@ -3126,21 +3777,42 @@ def policy_tick() -> None:
         profile = crit.get("on_crit") if isinstance(crit, dict) else None
         is_safety = True
     elif was_safety and not safety_sticky:
+        # after Critical: on_clear is downward-ish; still apply (not blocked by override)
         desired = "safety:on_clear"
         crit = zones.get("critical") or {}
         profile = crit.get("on_clear") if isinstance(crit, dict) else None
         is_safety = True
+    elif override_on:
+        # Manual Override: no zone auto; Safety still handled above
+        desired = None
+        if last_key != "override":
+            rem = int(ov_until - now_ts)
+            _policy_log(
+                "info",
+                f"OVERRIDE active · {rem // 60}m{rem % 60:02d}s left · zone auto paused",
+            )
+            with _policy_lock:
+                _policy_ctrl["last_key"] = "override"
+            last_key = "override"
     elif not dry:
-        if heat_zone == "z0" and upfreq_block:
+        if warmup_active and heat_zone == "z0":
+            # cannot go Normal heat while upfreq incomplete
             desired = None
-            # log once
             if last_key != "block:upfreq":
-                _policy_log("info", "Z0 needed but upfreq blocks upward")
+                _policy_log(
+                    "info",
+                    "WARMUP · Z0 blocked (upfreq) · downward/Critical only"
+                    if warmup_downward_only
+                    else "WARMUP · Z0 blocked (upfreq)",
+                )
                 with _policy_lock:
                     _policy_ctrl["last_key"] = "block:upfreq"
+                last_key = "block:upfreq"
         else:
             desired = heat_zone
             profile = zones.get(heat_zone)
+            if warmup_active and warmup_expired:
+                pass  # allow full profile after max wait
     else:
         # dry run: zone would — only if desired cmds would differ from live
         dry_tag = "dry:" + str(heat_zone)
@@ -3150,6 +3822,8 @@ def policy_tick() -> None:
                 live,
                 limit_tol_w=limit_tol,
             )
+            if warmup_active and warmup_downward_only and would:
+                would = _filter_downward_cmds(would, live)
             if would:
                 _policy_log(
                     "info",
@@ -3167,30 +3841,100 @@ def policy_tick() -> None:
         _policy_ctrl["heat_zone"] = heat_zone
         _policy_ctrl["safety_sticky"] = safety_sticky
 
-    if not desired:
-        return
-
-    # Desired profile for this tick
-    desired_cmds = _zone_entry_commands(profile)
+    # Desired profile for this tick (may be None in dry_run — still enforce suspend drift)
+    desired_cmds = _zone_entry_commands(profile) if desired else []
     # Diff vs measured — heart of "don't spam if already correct"
-    need_cmds = _diff_commands_vs_live(desired_cmds, live, limit_tol_w=limit_tol)
+    need_cmds = (
+        _diff_commands_vs_live(desired_cmds, live, limit_tol_w=limit_tol)
+        if desired_cmds
+        else []
+    )
+
+    # Warmup: strip upward commands (mode↑ limit↑ resume-from-mining) unless Safety
+    # Only while actually mining with incomplete upfreq — not while Suspended.
+    warmup_dropped: list[str] = []
+    if (
+        need_cmds
+        and warmup_active
+        and warmup_downward_only
+        and not is_safety
+    ):
+        before = list(need_cmds)
+        need_cmds = _filter_downward_cmds(need_cmds, live)
+        warmup_dropped = [
+            f"{a}={v}" for a, v in before if (a, v) not in need_cmds
+        ]
+        if warmup_dropped and last_key != "block:warmup_up":
+            _policy_log(
+                "info",
+                "WARMUP block upward: " + ", ".join(warmup_dropped),
+            )
+            with _policy_lock:
+                _policy_ctrl["last_key"] = "block:warmup_up"
+            last_key = "block:warmup_up"
+
+    # If miner should be Suspend but woke up (hash/power) — force re-suspend.
+    # Sources: zone/safety profile work=suspend, or last work_cmd = sleep/suspend.
+    # Skip during Override (operator owns control), except Safety handled above.
+    measured_work = _live_work(live)
+    want_work = _desired_work_from_profile(profile) if desired else None
+    last_wc = str(live.get("work_cmd") or "").strip().lower()
+    if want_work is None and last_wc in ("sleep", "suspend") and not override_on:
+        want_work = "suspend"
+    if (
+        want_work == "suspend"
+        and measured_work == "resume"
+        and not override_on
+    ):
+        already = any(
+            a == "working" and str(v).lower() in ("suspend", "sleep")
+            for a, v in need_cmds
+        )
+        if not already:
+            need_cmds = list(need_cmds) + [("working", "suspend")]
+        if not desired:
+            desired = "enforce:suspend"
+
+    # dry_run: only Safety profile + suspend re-enforce may write
+    if dry and need_cmds and not is_safety:
+        need_cmds = [
+            (a, v)
+            for a, v in need_cmds
+            if a == "working" and str(v).lower() in ("suspend", "sleep")
+        ]
+        if need_cmds:
+            desired = "enforce:suspend"
+        else:
+            need_cmds = []
 
     if not need_cmds:
         # Already matches miner — no write, no notification
+        # Keep warmup block key so we don't spam the same log every poll
         with _policy_lock:
-            _policy_ctrl["last_key"] = desired
-            _policy_ctrl["streak_key"] = desired
+            if warmup_dropped:
+                _policy_ctrl["last_key"] = "block:warmup_up"
+                _policy_ctrl["streak_key"] = "block:warmup_up"
+            elif desired:
+                _policy_ctrl["last_key"] = desired
+                _policy_ctrl["streak_key"] = desired
             _policy_ctrl["streak_count"] = 0
         return
 
     # streak only for pending mismatches
-    mismatch_sig = desired + "|" + ",".join(f"{a}={v}" for a, v in need_cmds)
+    mismatch_sig = str(desired) + "|" + ",".join(f"{a}={v}" for a, v in need_cmds)
     if streak_key == mismatch_sig:
         streak_count += 1
     else:
         streak_key = mismatch_sig
         streak_count = 1
-    need = min(2, streak_need) if is_safety else streak_need
+    # re-suspend / safety: faster confirm (2 samples); pure suspend enforce: 2
+    suspend_only = all(
+        a == "working" and str(v).lower() in ("suspend", "sleep") for a, v in need_cmds
+    )
+    if is_safety or suspend_only or str(desired).startswith("enforce:"):
+        need = min(2, streak_need)
+    else:
+        need = streak_need
     with _policy_lock:
         _policy_ctrl["streak_key"] = streak_key
         _policy_ctrl["streak_count"] = streak_count
@@ -3200,13 +3944,16 @@ def policy_tick() -> None:
 
     now = time.time()
     # After write: wait settle (miner ramping) before next reconcile write
-    if last_apply_ts and (now - last_apply_ts) < settle_sec:
+    # Suspend re-enforce: shorter settle (miner may ignore power_off if settle too long)
+    settle_use = min(settle_sec, 60) if suspend_only else settle_sec
+    if last_apply_ts and (now - last_apply_ts) < settle_use:
         return
     # Absolute min gap between any auto writes
-    if last_apply_ts and (now - last_apply_ts) < min_write:
+    min_write_use = min(min_write, 30) if suspend_only else min_write
+    if last_apply_ts and (now - last_apply_ts) < min_write_use:
         return
     # Dwell only when *changing* zone profile (z1→z2), not when re-fixing same zone
-    same_profile = last_key == desired
+    same_profile = last_key == desired or suspend_only
     if (
         not is_safety
         and not same_profile
@@ -3219,12 +3966,14 @@ def policy_tick() -> None:
         "ok",
         f"AUTO {desired} · fix "
         + ", ".join(f"{a}={v}" for a, v in need_cmds)
-        + f" (have mode={_live_mode(live)} work={_live_work(live)} lim={_live_limit_w(live)})",
+        + f" (have mode={_live_mode(live)} work={measured_work} "
+        f"P={_f(live.get('power'))} TH={_f(live.get('hashrate_th'))} "
+        f"lim={_live_limit_w(live)})",
         dry_run=dry,
         liquid=liquid,
         chip_max=chip_max,
     )
-    ok = _policy_apply_commands(need_cmds, source=desired)
+    ok = _policy_apply_commands(need_cmds, source=str(desired))
     with _policy_lock:
         _policy_ctrl["last_key"] = None if desired == "safety:on_clear" else desired
         if ok:
@@ -3349,10 +4098,32 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(200, get_policy_status())
             return
         if path in ("/api/system/info", "/api/info"):
+            qs = parse_qs(urlparse(self.path).query)
+            cached_only = str((qs.get("cached") or ["0"])[0]).lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if cached_only:
+                c = load_info_cache()
+                if c:
+                    self._json_response(200, {**c, "from_cache": True})
+                else:
+                    self._json_response(
+                        404, {"ok": False, "error": "no info cache yet", "from_cache": True}
+                    )
+                return
             try:
                 self._json_response(200, collect_system_info())
             except Exception as e:
-                self._json_response(500, {"ok": False, "error": str(e)})
+                # fallback to cache on live failure
+                c = load_info_cache()
+                if c:
+                    self._json_response(
+                        200, {**c, "from_cache": True, "live_error": str(e)}
+                    )
+                else:
+                    self._json_response(500, {"ok": False, "error": str(e)})
             return
         if path in ("/api/version", "/api/update/status"):
             self._json_response(
@@ -3372,7 +4143,22 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
-        if path == "/":
+        # SPA tab routes: /miner, /map, … → index.html (client uses #miner too)
+        spa_tabs = {
+            "miner",
+            "map",
+            "pool",
+            "settings",
+            "info",
+            "logs",
+            "dash",
+            "overview",
+            "zones",
+            "zone",
+            "home",
+        }
+        seg = path.strip("/").split("/")[0].lower() if path.strip("/") else ""
+        if path == "/" or path == "/index.html" or seg in spa_tabs:
             self.path = "/index.html"
         return super().do_GET()
 
@@ -3622,6 +4408,10 @@ class Handler(SimpleHTTPRequestHandler):
                     _weather_cfg["latitude"] = float(req["latitude"])
                 if "longitude" in req:
                     _weather_cfg["longitude"] = float(req["longitude"])
+                if "refresh_interval_sec" in req and req["refresh_interval_sec"] is not None:
+                    _weather_cfg["refresh_interval_sec"] = _weather_refresh_sec(
+                        {"refresh_interval_sec": req["refresh_interval_sec"]}
+                    )
                 cfg = dict(_weather_cfg)
             _save_weather_cfg()
             with _weather_cache_lock:
@@ -3709,6 +4499,7 @@ class Handler(SimpleHTTPRequestHandler):
                 for key in (
                     "t0",
                     "t1",
+                    "t2",
                     "h",
                     "t_crit",
                     "t_crit_clear",
@@ -3717,6 +4508,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "streak",
                     "min_write_interval_sec",
                     "limit_tol_w",
+                    "max_warmup_wait_min",
                 ):
                     if key in req and req[key] is not None:
                         try:
@@ -3726,21 +4518,38 @@ class Handler(SimpleHTTPRequestHandler):
                                 "streak",
                                 "min_write_interval_sec",
                                 "limit_tol_w",
+                                "max_warmup_wait_min",
                             ):
                                 cfg[key] = int(float(req[key]))
                             else:
                                 cfg[key] = float(req[key])
                         except (TypeError, ValueError):
                             pass
+                for bkey in ("warmup_en", "warmup_downward_only"):
+                    if bkey in req:
+                        cfg[bkey] = bool(req[bkey])
                 cfg["min_write_interval_sec"] = max(
                     10, min(3600, int(cfg.get("min_write_interval_sec", 60) or 60))
                 )
                 cfg["limit_tol_w"] = max(
                     10, min(2000, int(cfg.get("limit_tol_w", 100) or 100))
                 )
+                cfg["max_warmup_wait_min"] = max(
+                    1, min(240, int(cfg.get("max_warmup_wait_min", 30) or 30))
+                )
+                if "warmup_en" in req or "warmup_en" not in cfg:
+                    cfg["warmup_en"] = bool(cfg.get("warmup_en", True))
+                if "warmup_downward_only" in req or "warmup_downward_only" not in cfg:
+                    cfg["warmup_downward_only"] = bool(
+                        cfg.get("warmup_downward_only", True)
+                    )
                 cfg["h"] = max(0.2, min(5.0, float(cfg.get("h", 0.5))))
+                if "t2" not in cfg or cfg.get("t2") is None:
+                    cfg["t2"] = float(cfg.get("t1", 28)) + max(2.0, float(cfg["h"]))
                 if float(cfg["t0"]) >= float(cfg["t1"]):
                     raise ValueError("need t0 < t1")
+                if float(cfg["t1"]) >= float(cfg["t2"]):
+                    raise ValueError("need t1 < t2")
                 if float(cfg["t_crit_clear"]) >= float(cfg["t_crit"]):
                     raise ValueError("need t_crit_clear < t_crit")
                 zones_in = req.get("zones") if isinstance(req.get("zones"), dict) else {}
@@ -3821,7 +4630,7 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_policy_post(self) -> None:
-        """Update dry_run / enable server policy."""
+        """Update dry_run / enable / override server policy."""
         try:
             req = self._read_json_body()
             if "dry_run" in req:
@@ -3829,6 +4638,24 @@ class Handler(SimpleHTTPRequestHandler):
             if "enabled" in req:
                 with _policy_lock:
                     _policy_ctrl["enabled"] = bool(req["enabled"])
+            # Override 30m (or N min): pause zone auto, Safety still on
+            if "override_clear" in req and req["override_clear"]:
+                self._json_response(200, set_policy_override(clear=True))
+                return
+            if "override_min" in req and req["override_min"] is not None:
+                self._json_response(
+                    200, set_policy_override(minutes=float(req["override_min"]))
+                )
+                return
+            if "override" in req:
+                if req["override"] in (False, 0, "0", "false", "off"):
+                    self._json_response(200, set_policy_override(clear=True))
+                    return
+                mins = 30.0
+                if isinstance(req["override"], (int, float)) and float(req["override"]) > 0:
+                    mins = float(req["override"])
+                self._json_response(200, set_policy_override(minutes=mins))
+                return
             self._json_response(200, get_policy_status())
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
@@ -3876,6 +4703,21 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main() -> None:
     init_db()
+    # backfill error journal miner/component columns from current ASIC Info
+    try:
+        n = backfill_miner_error_log_identity()
+        if n:
+            print(f"error log backfill: {n} rows")
+    except Exception as e:
+        print(f"error log backfill: {e}")
+    # warm Info cache (non-blocking-ish: may take a few seconds)
+    def _warm_info() -> None:
+        try:
+            collect_system_info()
+        except Exception as e:
+            print(f"info cache warm: {e}")
+
+    threading.Thread(target=_warm_info, name="info-warm", daemon=True).start()
     t = threading.Thread(target=collector_loop, name="history-collector", daemon=True)
     t.start()
     tp = threading.Thread(target=policy_loop, name="policy-control", daemon=True)

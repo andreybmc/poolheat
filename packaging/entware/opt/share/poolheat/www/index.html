@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>poolheat_wM · Keenetic · Whatsminer</title>
+  <title>poolheat_WM · Keenetic · Whatsminer</title>
   <style>
     :root {
       --bg: #0b0f14;
@@ -23,6 +23,11 @@
       --warn-bg: rgba(240, 180, 41, 0.12);
       --danger: #f07178;
       --danger-bg: rgba(240, 113, 120, 0.12);
+      /* PCB = aluminum (silver), chip = silicon (violet) */
+      --alum: #c5ccd4;
+      --alum-dim: #9aa3ad;
+      --silicon: #b07af0;
+      --silicon-dim: #8b5cf6;
       --purple: #b48ead;
       --radius: 12px;
       --radius-sm: 8px;
@@ -472,6 +477,19 @@
     }
 
     /* —— zone map —— */
+    /* thresholds wrap on narrow viewports */
+    .thr-fields {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+    @media (max-width: 520px) {
+      .thr-fields {
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      }
+    }
+
     .zone {
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
@@ -481,41 +499,54 @@
       transition: border-color 0.2s, box-shadow 0.2s;
     }
 
-    /* zone badge colors = liquid scale gradient (green → blue → amber → red) */
+    /* zone badges: High(saturated dark green) → Normal(green) → Reduced(blue) → No heat(amber) */
     .zone[data-zone="z0"] {
-      border-color: rgba(62, 207, 142, 0.28);
+      border-color: rgba(0, 170, 55, 0.6);
     }
     .zone[data-zone="z0"].active {
+      border-color: rgba(0, 190, 60, 0.98);
+      box-shadow: 0 0 0 1px rgba(0, 180, 55, 0.45), inset 0 0 28px rgba(0, 160, 50, 0.22);
+    }
+    .zone[data-zone="z0"] .zone-h .badge {
+      background: rgba(0, 160, 50, 0.5);
+      color: #3dff8a;
+      border-color: rgba(0, 200, 70, 0.85);
+    }
+
+    .zone[data-zone="z1"] {
+      border-color: rgba(62, 207, 142, 0.28);
+    }
+    .zone[data-zone="z1"].active {
       border-color: rgba(62, 207, 142, 0.65);
       box-shadow: 0 0 0 1px rgba(62, 207, 142, 0.22), inset 0 0 24px rgba(62, 207, 142, 0.06);
     }
-    .zone[data-zone="z0"] .zone-h .badge {
+    .zone[data-zone="z1"] .zone-h .badge {
       background: rgba(62, 207, 142, 0.14);
       color: #3ecf8e;
       border-color: rgba(62, 207, 142, 0.4);
     }
 
-    .zone[data-zone="z1"] {
+    .zone[data-zone="z2"] {
       border-color: rgba(61, 156, 240, 0.28);
     }
-    .zone[data-zone="z1"].active {
+    .zone[data-zone="z2"].active {
       border-color: rgba(61, 156, 240, 0.65);
       box-shadow: 0 0 0 1px rgba(61, 156, 240, 0.22), inset 0 0 24px rgba(61, 156, 240, 0.06);
     }
-    .zone[data-zone="z1"] .zone-h .badge {
+    .zone[data-zone="z2"] .zone-h .badge {
       background: rgba(61, 156, 240, 0.14);
       color: #3d9cf0;
       border-color: rgba(61, 156, 240, 0.4);
     }
 
-    .zone[data-zone="z2"] {
+    .zone[data-zone="z3"] {
       border-color: rgba(240, 180, 41, 0.28);
     }
-    .zone[data-zone="z2"].active {
+    .zone[data-zone="z3"].active {
       border-color: rgba(240, 180, 41, 0.7);
       box-shadow: 0 0 0 1px rgba(240, 180, 41, 0.22), inset 0 0 24px rgba(240, 180, 41, 0.06);
     }
-    .zone[data-zone="z2"] .zone-h .badge {
+    .zone[data-zone="z3"] .zone-h .badge {
       background: rgba(240, 180, 41, 0.14);
       color: #f0b429;
       border-color: rgba(240, 180, 41, 0.45);
@@ -657,22 +688,26 @@
       margin-top: 6px;
     }
 
-    /* —— temp bar —— */
+    /* —— temp bar (liquid zone map, 20–40 °C) + Safety red —— */
     .temp-scale {
       position: relative;
       height: 28px;
       border-radius: 6px;
+      /* default until JS paints T0/T1/T2 + Safety */
       background: linear-gradient(90deg,
-        #3ecf8e 0%,
-        #3ecf8e 35%,
-        #3d9cf0 35%,
-        #3d9cf0 55%,
-        #f0b429 55%,
+        #00a63e 0%,
+        #00a63e 20%,
+        #3ecf8e 20%,
+        #3ecf8e 30%,
+        #3d9cf0 30%,
+        #3d9cf0 40%,
+        #f0b429 40%,
         #f0b429 75%,
         #f07178 75%,
         #f07178 100%);
       margin: 8px 0 4px;
-      opacity: 0.85;
+      opacity: 0.98;
+      overflow: hidden;
     }
 
     .temp-scale .needle {
@@ -685,6 +720,7 @@
       box-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
       transform: translateX(-50%);
       transition: left 0.4s ease;
+      z-index: 2;
     }
 
     .temp-labels {
@@ -694,6 +730,32 @@
       color: var(--dim);
       font-family: var(--mono);
     }
+
+    .scale-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 14px;
+      margin-top: 8px;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .scale-legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .scale-legend i {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .scale-legend .lg-z0 { background: #00a63e; }
+    .scale-legend .lg-z1 { background: #3ecf8e; }
+    .scale-legend .lg-z2 { background: #3d9cf0; }
+    .scale-legend .lg-z3 { background: #f0b429; }
+    .scale-legend .lg-safe { background: #f07178; }
 
     /* history meta — small, muted */
     .hist-meta {
@@ -761,6 +823,17 @@
       color: var(--warn);
     }
 
+    .banner.override {
+      background: rgba(61, 156, 240, 0.12);
+      border-color: rgba(61, 156, 240, 0.45);
+      color: var(--accent);
+    }
+    .banner.override #override-timer {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
     /* —— Errors panel (get_error_code) —— */
     .card.errors-card {
       margin-bottom: 16px;
@@ -779,35 +852,60 @@
       font-variant-numeric: tabular-nums;
     }
     .err-table th {
-      text-align: left;
+      text-align: center;
       font-size: 0.7rem;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--dim);
       font-weight: 600;
-      padding: 0 10px 8px 0;
+      padding: 0 8px 8px;
       border-bottom: 1px solid var(--border);
     }
     .err-table th:last-child { padding-right: 0; }
+    .err-table th:first-child { padding-left: 0; }
     .err-table td {
-      padding: 10px 10px 10px 0;
-      vertical-align: top;
+      padding: 10px 8px;
+      vertical-align: middle;
       border-bottom: 1px solid rgba(42, 53, 68, 0.55);
       color: var(--text);
     }
+    /* Hashboards · PCB SN — all columns centered */
+    #info-boards-table th,
+    #info-boards-table td {
+      text-align: center;
+    }
+    #info-boards-table td {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
     .err-table tr:last-child td { border-bottom: none; }
     .err-table td:last-child { padding-right: 0; }
+    .err-table td:first-child { padding-left: 0; }
     .err-table .col-code {
       width: 5.5rem;
       font-weight: 700;
       color: var(--danger);
       white-space: nowrap;
+      text-align: center;
     }
     .err-table .col-cause {
       color: var(--text);
       line-height: 1.4;
       word-break: break-word;
       cursor: help;
+    }
+    .err-table .col-miner {
+      width: 22%;
+      font-size: 0.78rem;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .err-table .col-comp {
+      width: 20%;
+      font-size: 0.78rem;
+      font-family: var(--mono, ui-monospace, monospace);
+      color: var(--alum-dim, var(--muted));
+      word-break: break-all;
     }
     .err-table .col-time {
       width: 9.5rem;
@@ -1013,6 +1111,39 @@
       color: var(--dim);
       text-align: center;
     }
+    footer.demo-note .footer-ver {
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .update-notes {
+      display: none;
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 280px;
+      overflow: auto;
+      font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    }
+    .update-notes.is-visible {
+      display: block;
+    }
+    .update-notes .rn-label {
+      display: block;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--dim);
+      margin-bottom: 6px;
+      font-family: var(--font);
+    }
 
     .sim-panel {
       display: flex;
@@ -1115,7 +1246,26 @@
     }
     .temp-card.outdoor::before { background: #5ec8e8; }
     .temp-card.board-chip::before {
-      background: linear-gradient(180deg, var(--warn) 0 50%, var(--danger) 50% 100%);
+      /* top: PCB aluminum · bottom: chip silicon */
+      background: linear-gradient(180deg, var(--alum) 0 50%, var(--silicon) 50% 100%);
+    }
+    .temp-card.board-chip .tc-pcb {
+      color: var(--alum);
+    }
+    .temp-card.board-chip .tc-pcb small {
+      color: var(--alum-dim);
+    }
+    .temp-card.board-chip .tc-chip {
+      color: var(--silicon);
+    }
+    .temp-card.board-chip .tc-chip small {
+      color: var(--silicon-dim);
+    }
+    .temp-card.board-chip .tc-extra .tc-pcb-line {
+      color: var(--alum-dim);
+    }
+    .temp-card.board-chip .tc-extra .tc-chip-line {
+      color: var(--silicon-dim);
     }
     .temp-card.heat-loss::before { background: var(--warn); }
     .temp-card.power-meas::before { background: var(--ok); }
@@ -1341,10 +1491,30 @@
   <div class="app">
     <header class="app-header">
       <div class="brand">
-        <div class="brand-mark">wM</div>
+        <div class="brand-mark">WM</div>
         <div>
-          <h1>poolheat_wM</h1>
+          <h1>poolheat_WM</h1>
           <p id="brand-devices">Keenetic — · Whatsminer —</p>
+          <script>
+            /* instant paint from last Info cache (localStorage) */
+            (function () {
+              try {
+                var raw = localStorage.getItem("poolheat_wm_info_cache");
+                if (!raw) return;
+                var d = JSON.parse(raw);
+                if (d && d.brandText) {
+                  var el = document.getElementById("brand-devices");
+                  if (el) el.textContent = d.brandText;
+                }
+                var ver = d && (d.version || (d.poolheat && d.poolheat.version) ||
+                  (d.body && d.body.poolheat && d.body.poolheat.version));
+                if (ver) {
+                  var fv = document.getElementById("footer-ver");
+                  if (fv) fv.textContent = String(ver).replace(/^v/i, "");
+                }
+              } catch (e) { /* ignore */ }
+            })();
+          </script>
         </div>
       </div>
       <div class="header-meta">
@@ -1369,6 +1539,17 @@
         <em class="tip" data-tip-key="downward">Downward</em> и
         <em class="tip" data-tip-key="critical">Critical</em> разрешены.
       </span>
+    </div>
+
+    <div class="banner override" id="banner-override" style="display:none" hidden>
+      <strong class="tip" data-tip-key="override">OVERRIDE</strong>
+      <span>
+        Auto-зоны Z0–Z2 на паузе · Safety Critical работает ·
+        осталось <span id="override-timer">—:—</span>
+      </span>
+      <button class="btn danger" type="button" style="margin-left:auto" id="btn-override-clear">
+        Отключить Override
+      </button>
     </div>
 
     <div class="live-bar">
@@ -1446,13 +1627,13 @@
               <span class="tip" data-tip-key="chip_max">Чипы (max)</span>
             </div>
             <div class="tc-val tc-val-dual">
-              <span id="t-board-max">—</span> <small>°C</small>
+              <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
               <span class="tc-sep" aria-hidden="true">/</span>
-              <span id="t-chip-max">—</span> <small>°C</small>
+              <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
             </div>
             <div class="tc-extra">
-              <div>chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span></div>
-              <div>pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
+              <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
+              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span></div>
             </div>
           </div>
         </div>
@@ -1616,7 +1797,7 @@
               Управление <strong>на сервере</strong> (poolheat policy loop), не только в браузере.
               Галка меняет только локально — на сервер уходит по <strong>Сохранить</strong>.
               <br />
-              <strong>Вкл:</strong> Z0/Z1/Z2 auto <em>не</em> пишется (лог would).
+              <strong>Вкл:</strong> Z0–Z3 auto <em>не</em> пишется (лог would).
               <strong>Safety</strong> (chip ≥ T_crit) — <em>пишется всегда</em>.
               <br />
               <strong>Выкл:</strong> auto-apply зон + Safety. Ручные кнопки — галка «Разрешить write».
@@ -1631,7 +1812,7 @@
           <div class="card-h">
             <div>
               <h2>Режим майнера</h2>
-              <div class="sub">текущие значения с майнера · ручная установка по ссылке ниже</div>
+              <div class="sub">measured с API майнера (mineroff · mode · power_limit_set) · ручная установка ниже</div>
             </div>
             <span class="pill" id="pill-write" style="display:none"><span class="dot"></span> write…</span>
           </div>
@@ -1758,7 +1939,7 @@
             </div>
             <div class="card-b layers" id="layers">
               <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (sleep)</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="override"><span class="n">2</span><span class="tip" data-tip-key="override">Manual override / pause</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="override"><span class="n">2</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
               <div class="layer on block" data-layer="warmup"><span class="n">3</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
               <div class="layer" data-layer="map"><span class="n">4</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
               <div class="layer" data-layer="fail"><span class="n">5</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
@@ -1790,9 +1971,11 @@
               <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
                 Warmup: upward (→ Z0) заблокирован. Карта: Z0 / Z1 / Z2 по liquid.
               </p>
-              <div class="btn-row">
-                <button class="btn" type="button" id="btn-pause">Pause</button>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
                 <button class="btn" type="button" id="btn-override">Override 30m</button>
+                <button class="btn danger" type="button" id="btn-override-clear-2" hidden>
+                  Отключить Override
+                </button>
                 <button class="btn danger" type="button" id="btn-force-sleep">Force sleep…</button>
               </div>
             </div>
@@ -1808,31 +1991,34 @@
           <div class="card-h">
             <div>
               <h2>Карта зон · нагрев бассейна</h2>
-              <div class="sub">Z0 Normal · Z1 Reduced · Z2 No heat · safety отдельно</div>
+              <div class="sub">Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat · safety отдельно</div>
             </div>
             <button class="btn primary" type="button" id="btn-save-map">Сохранить карту</button>
           </div>
           <div class="card-b">
             <div class="map-note">
               <strong>T_ctrl</strong> = liquid · <strong>T_safe</strong> = chip max.
-              Три зоны нагрева; deadband/hold нет — середина = <strong>Z1 Reduced</strong>.
-              Гистерезис h защищает от thrash у T0/T1 (не отдельная зона).
+              Четыре зоны нагрева; deadband/hold нет.
+              Гистерезис h защищает от thrash у T0 / T1 / T2.
             </div>
 
             <div class="card" style="margin-bottom:14px;box-shadow:none">
               <div class="card-h">
                 <div>
                   <h2>Пороги (°C)</h2>
-                  <div class="sub">T0 · T1 · h · chip Critical</div>
+                  <div class="sub">T0 · T1 · T2 · h · chip Critical</div>
                 </div>
-                <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пресет 26 / 28 · h 0.5</button>
+                <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пресет 24 / 26 / 28 · h 0.5</button>
               </div>
               <div class="card-b">
-                <div class="row" style="grid-template-columns:repeat(5,1fr);gap:12px">
+                <div class="thr-fields">
                   <label class="field"><span class="tip" data-tip-key="t0">T0</span> · Z0↔Z1
-                    <input type="number" id="thr-low" value="26" step="0.1" />
+                    <input type="number" id="thr-low" value="24" step="0.1" />
                   </label>
                   <label class="field"><span class="tip" data-tip-key="t1">T1</span> · Z1↔Z2
+                    <input type="number" id="thr-mid" value="26" step="0.1" />
+                  </label>
+                  <label class="field"><span class="tip" data-tip-key="t2">T2</span> · Z2↔Z3
                     <input type="number" id="thr-high" value="28" step="0.1" />
                   </label>
                   <label class="field"><span class="tip" data-tip-key="hyst">h</span> · гистерезис
@@ -1847,10 +2033,11 @@
                 </div>
                 <p class="hint-inline" id="thr-validate" style="margin-top:10px;font-size:0.75rem;color:var(--dim)"></p>
                 <p style="font-size:0.75rem;color:var(--muted);margin:8px 0 0;line-height:1.45">
-                  liquid ≤ T0 → <strong>Z0</strong> full heat ·
-                  T0 &lt; liquid &lt; T1 → <strong>Z1</strong> reduced ·
-                  liquid ≥ T1 → <strong>Z2</strong> no heat.
-                  Переходы с задержкой h: выход из Z0 при ≥ T0+h, выход из Z2 при ≤ T1−h.
+                  liquid ≤ T0 → <strong>Z0 High</strong> ·
+                  T0–T1 → <strong>Z1 Normal</strong> ·
+                  T1–T2 → <strong>Z2 Reduced</strong> ·
+                  liquid ≥ T2 → <strong>Z3 No heat</strong>.
+                  Гистерезис h на границах T0 / T1 / T2.
                 </p>
               </div>
             </div>
@@ -1859,30 +2046,40 @@
               <div class="card-h">
                 <div>
                   <h2>Шкала liquid (карта зон)</h2>
-                  <div class="sub">игла = liquid · T0 / T1 · зоны Z0–Z2</div>
+                  <div class="sub">игла = liquid · T0 / T1 / T2 · зоны Z0–Z3</div>
                 </div>
               </div>
               <div class="card-b">
-                <div class="temp-scale"><div class="needle" id="needle" style="left:40%"></div></div>
+                <div class="temp-scale" id="liquid-temp-scale">
+                  <div class="needle" id="needle" style="left:40%"></div>
+                </div>
                 <div class="temp-labels">
                   <span>20</span>
-                  <span id="scale-low">26</span>
+                  <span id="scale-low">24</span>
+                  <span id="scale-mid">26</span>
                   <span id="scale-high">28</span>
                   <span id="scale-crit">35</span>
                   <span>40</span>
                 </div>
+                <div class="scale-legend">
+                  <span><i class="lg-z0"></i> Z0 High</span>
+                  <span><i class="lg-z1"></i> Z1 Normal</span>
+                  <span><i class="lg-z2"></i> Z2 Reduced</span>
+                  <span><i class="lg-z3"></i> Z3 No heat</span>
+                  <span><i class="lg-safe"></i> Safety (chip)</span>
+                </div>
               </div>
             </div>
 
-            <!-- Z0 Normal heat -->
+            <!-- Z0 High Heat -->
             <div class="zone" data-zone="z0" id="zone-z0">
               <div class="zone-h">
                 <span class="badge">Z0</span>
-                <span class="title">Normal heat</span>
+                <span class="title">High Heat</span>
                 <span class="range" id="z0-range-label">liquid ≤ T0</span>
               </div>
               <div class="zone-b">
-                <p class="hint-inline" style="margin-bottom:10px">Полный нагрев — бассейн «холодный».</p>
+                <p class="hint-inline" style="margin-bottom:10px">Максимальный нагрев — вода самая холодная.</p>
                 <div class="actuators">
                   <div class="act" data-act="mode">
                     <div class="act-top">
@@ -1891,8 +2088,8 @@
                     </div>
                     <select id="z0-mode-v">
                       <option value="low">low</option>
-                      <option value="normal" selected>normal</option>
-                      <option value="high">high</option>
+                      <option value="normal">normal</option>
+                      <option value="high" selected>high</option>
                     </select>
                     <div class="act-warn">⚠ mode перезапускает майнинг</div>
                   </div>
@@ -1906,12 +2103,12 @@
                       <option value="suspend">Suspend Mining</option>
                     </select>
                   </div>
-                  <div class="act off" data-act="limit">
+                  <div class="act" data-act="limit">
                     <div class="act-top">
-                      <input type="checkbox" id="z0-lim" onchange="syncAct(this)" />
+                      <input type="checkbox" id="z0-lim" checked onchange="syncAct(this)" />
                       <label for="z0-lim">Power limit (W)</label>
                     </div>
-                    <input type="number" id="z0-lim-v" value="6000" disabled />
+                    <input type="number" id="z0-lim-v" value="7000" />
                     <div class="act-warn">⚠ limit перезапускает майнинг</div>
                   </div>
                   <div class="act off" data-act="pct">
@@ -1925,15 +2122,15 @@
               </div>
             </div>
 
-            <!-- Z1 Reduced heat -->
+            <!-- Z1 Normal heat -->
             <div class="zone" data-zone="z1" id="zone-z1">
               <div class="zone-h">
                 <span class="badge">Z1</span>
-                <span class="title">Reduced heat</span>
-                <span class="range" id="z1-range-label">T0 &lt; liquid &lt; T1</span>
+                <span class="title">Normal heat</span>
+                <span class="range" id="z1-range-label">T0 &lt; liquid ≤ T1</span>
               </div>
               <div class="zone-b">
-                <p class="hint-inline" style="margin-bottom:10px">Слабый нагрев — целевая «середина», не hold.</p>
+                <p class="hint-inline" style="margin-bottom:10px">Обычный нагрев — рабочий режим.</p>
                 <div class="actuators">
                   <div class="act" data-act="mode">
                     <div class="act-top">
@@ -1941,8 +2138,8 @@
                       <label for="z1-mode">Power Mode</label>
                     </div>
                     <select id="z1-mode-v">
-                      <option value="low" selected>low</option>
-                      <option value="normal">normal</option>
+                      <option value="low">low</option>
+                      <option value="normal" selected>normal</option>
                       <option value="high">high</option>
                     </select>
                     <div class="act-warn">⚠ mode перезапускает майнинг</div>
@@ -1962,7 +2159,7 @@
                       <input type="checkbox" id="z1-lim" checked onchange="syncAct(this)" />
                       <label for="z1-lim">Power limit (W)</label>
                     </div>
-                    <input type="number" id="z1-lim-v" value="4000" />
+                    <input type="number" id="z1-lim-v" value="5000" />
                     <div class="act-warn">⚠ limit перезапускает майнинг</div>
                   </div>
                   <div class="act off" data-act="pct">
@@ -1970,28 +2167,28 @@
                       <input type="checkbox" id="z1-pct" onchange="syncAct(this)" />
                       <label for="z1-pct">Power pct (%)</label>
                     </div>
-                    <input type="number" id="z1-pct-v" value="70" min="0" max="100" disabled />
+                    <input type="number" id="z1-pct-v" value="100" min="0" max="100" disabled />
                   </div>
                 </div>
               </div>
             </div>
 
-            <!-- Z2 No heat -->
+            <!-- Z2 Reduced heat -->
             <div class="zone" data-zone="z2" id="zone-z2">
               <div class="zone-h">
                 <span class="badge">Z2</span>
-                <span class="title">No heat</span>
-                <span class="range" id="z2-range-label">liquid ≥ T1</span>
+                <span class="title">Reduced heat</span>
+                <span class="range" id="z2-range-label">T1 &lt; liquid &lt; T2</span>
               </div>
               <div class="zone-b">
-                <p class="hint-inline" style="margin-bottom:10px">Не добавлять тепло — вода достаточно тёплая.</p>
+                <p class="hint-inline" style="margin-bottom:10px">Слабый нагрев — целевая «середина», не hold.</p>
                 <div class="actuators">
-                  <div class="act off" data-act="mode">
+                  <div class="act" data-act="mode">
                     <div class="act-top">
-                      <input type="checkbox" id="z2-mode" onchange="syncAct(this)" />
+                      <input type="checkbox" id="z2-mode" checked onchange="syncAct(this)" />
                       <label for="z2-mode">Power Mode</label>
                     </div>
-                    <select id="z2-mode-v" disabled>
+                    <select id="z2-mode-v">
                       <option value="low" selected>low</option>
                       <option value="normal">normal</option>
                       <option value="high">high</option>
@@ -2004,16 +2201,16 @@
                       <label for="z2-work">Mining Control</label>
                     </div>
                     <select id="z2-work-v">
-                      <option value="resume">Resume Mining</option>
-                      <option value="suspend" selected>Suspend Mining</option>
+                      <option value="resume" selected>Resume Mining</option>
+                      <option value="suspend">Suspend Mining</option>
                     </select>
                   </div>
-                  <div class="act off" data-act="limit">
+                  <div class="act" data-act="limit">
                     <div class="act-top">
-                      <input type="checkbox" id="z2-lim" onchange="syncAct(this)" />
+                      <input type="checkbox" id="z2-lim" checked onchange="syncAct(this)" />
                       <label for="z2-lim">Power limit (W)</label>
                     </div>
-                    <input type="number" id="z2-lim-v" value="0" disabled />
+                    <input type="number" id="z2-lim-v" value="2500" />
                     <div class="act-warn">⚠ limit перезапускает майнинг</div>
                   </div>
                   <div class="act off" data-act="pct">
@@ -2021,7 +2218,58 @@
                       <input type="checkbox" id="z2-pct" onchange="syncAct(this)" />
                       <label for="z2-pct">Power pct (%)</label>
                     </div>
-                    <input type="number" id="z2-pct-v" value="0" min="0" max="100" disabled />
+                    <input type="number" id="z2-pct-v" value="70" min="0" max="100" disabled />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Z3 No heat -->
+            <div class="zone" data-zone="z3" id="zone-z3">
+              <div class="zone-h">
+                <span class="badge">Z3</span>
+                <span class="title">No heat</span>
+                <span class="range" id="z3-range-label">liquid ≥ T2</span>
+              </div>
+              <div class="zone-b">
+                <p class="hint-inline" style="margin-bottom:10px">Не добавлять тепло — вода достаточно тёплая.</p>
+                <div class="actuators">
+                  <div class="act off" data-act="mode">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-mode" onchange="syncAct(this)" />
+                      <label for="z3-mode">Power Mode</label>
+                    </div>
+                    <select id="z3-mode-v" disabled>
+                      <option value="low" selected>low</option>
+                      <option value="normal">normal</option>
+                      <option value="high">high</option>
+                    </select>
+                    <div class="act-warn">⚠ mode перезапускает майнинг</div>
+                  </div>
+                  <div class="act" data-act="work">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-work" checked onchange="syncAct(this)" />
+                      <label for="z3-work">Mining Control</label>
+                    </div>
+                    <select id="z3-work-v">
+                      <option value="resume">Resume Mining</option>
+                      <option value="suspend" selected>Suspend Mining</option>
+                    </select>
+                  </div>
+                  <div class="act off" data-act="limit">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-lim" onchange="syncAct(this)" />
+                      <label for="z3-lim">Power limit (W)</label>
+                    </div>
+                    <input type="number" id="z3-lim-v" value="0" disabled />
+                    <div class="act-warn">⚠ limit перезапускает майнинг</div>
+                  </div>
+                  <div class="act off" data-act="pct">
+                    <div class="act-top">
+                      <input type="checkbox" id="z3-pct" onchange="syncAct(this)" />
+                      <label for="z3-pct">Power pct (%)</label>
+                    </div>
+                    <input type="number" id="z3-pct-v" value="0" min="0" max="100" disabled />
                   </div>
                 </div>
               </div>
@@ -2032,12 +2280,12 @@
               <div class="zone-h">
                 <span class="badge">Safety</span>
                 <span class="title">Critical · chip / T_safe</span>
-                <span class="range" id="z3-range-label">T_safe ≥ T_crit</span>
+                <span class="range" id="z-crit-range-label">T_safe ≥ T_crit</span>
               </div>
               <div class="zone-b">
                 <p class="hint-inline" style="margin-bottom:12px">
-                  Не зона бассейна. Выше Z0–Z2. Метрика = chip max.
-                  Два набора команд: вход по <strong>T_crit</strong> и выход по <strong>T_crit_clear</strong> (→ Z1, не Z0).
+                  Не зона бассейна. Выше Z0–Z3. Метрика = chip max.
+                  Два набора команд: вход по <strong>T_crit</strong> и выход по <strong>T_crit_clear</strong> (→ Z2 Reduced).
                 </p>
 
                 <div class="card" style="box-shadow:none;margin-bottom:12px;border-color:rgba(240,113,120,0.35)">
@@ -2237,7 +2485,10 @@
               <h2>Погода · город</h2>
               <div class="sub">Open-Meteo · текущая t°C на улице · без API-ключа</div>
             </div>
-            <button class="btn" type="button" id="btn-wx-refresh">Обновить погоду</button>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn" type="button" id="btn-wx-refresh">Обновить погоду</button>
+              <button class="btn primary" type="button" id="btn-wx-interval-save">Сохранить</button>
+            </div>
           </div>
           <div class="card-b stack" style="gap:12px">
             <label class="check">
@@ -2246,10 +2497,15 @@
                 <span class="desc">карточка «Улица» на обзоре</span>
               </span>
             </label>
-            <div class="metric">
-              <label>Текущий город</label>
-              <div class="val" style="font-size:1.05rem" id="wx-cfg-city">—</div>
-              <div class="hint" id="wx-cfg-meta">—</div>
+            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+              <div class="metric" style="margin:0">
+                <label>Текущий город</label>
+                <div class="val" style="font-size:1.05rem" id="wx-cfg-city">—</div>
+                <div class="hint" id="wx-cfg-meta">—</div>
+              </div>
+              <label class="field" style="margin:0;align-self:start">Интервал обновления, мин
+                <input type="number" id="wx-interval-min" value="10" min="1" max="1440" step="1" />
+              </label>
             </div>
             <div class="row" style="align-items:end">
               <label class="field" style="flex:1">Поиск города
@@ -2384,13 +2640,13 @@
             <label class="check">
               <input type="checkbox" id="warmup-en" checked />
               <span>Ждать выхода на рабочий режим
-                <span class="desc">upfreq=0 / ramping / unstable power → block upward</span>
+                <span class="desc">upfreq=0 / ramping → block Z0 / upward</span>
               </span>
             </label>
             <label class="check">
-              <input type="checkbox" checked />
+              <input type="checkbox" id="warmup-downward-only" checked />
               <span>Во warmup разрешить только снижать / Critical
-                <span class="desc">safety first</span>
+                <span class="desc">mode↑ limit↑ resume блокируются; Z2/Suspend/Critical — да</span>
               </span>
             </label>
             <div class="row" style="grid-template-columns:1fr">
@@ -2398,6 +2654,10 @@
                 <input type="number" id="warmup-max-wait" value="30" min="1" max="240" />
               </label>
             </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.4">
+              Сохраняется кнопкой «Сохранить» у anti-thrash (та же zone config).
+              После max_warmup_wait — upward снова разрешён, даже если upfreq ещё 0.
+            </p>
             <div class="metric" id="ready-metric">
               <label><span class="tip" data-tip-key="miner_ready">miner_ready</span></label>
               <div class="val" style="font-size:1.1rem;color:var(--warn)" id="ready-val">false · upfreq</div>
@@ -2409,38 +2669,11 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Safety &amp; remote</h2>
-              <div class="sub">Critical · fail-safe · auth</div>
+              <h2>Remote</h2>
+              <div class="sub">доступ · auth · не пробрасывать :8787 в WAN</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
-            <div class="row">
-              <label class="field"><span class="tip" data-tip-key="t_crit">T_crit</span> (°C)
-                <input type="number" value="70" step="0.1" />
-              </label>
-              <label class="field"><span class="tip" data-tip-key="t_crit_clear">T_crit_clear</span> (°C)
-                <input type="number" value="65" step="0.1" />
-              </label>
-            </div>
-            <label class="check">
-              <input type="checkbox" checked />
-              <span><span class="tip" data-tip-key="critical">critical_allow_sleep</span>
-                <span class="desc">wake → только Reduced, never Normal</span>
-              </span>
-            </label>
-            <label class="check">
-              <input type="checkbox" />
-              <span>critical_sleep_confirmed (UI ack)
-                <span class="desc">без галки — sleep не уйдёт на майнер при first boot</span>
-              </span>
-            </label>
-            <label class="check">
-              <input type="checkbox" checked />
-              <span>on_api_fail → Reduced (<span class="tip" data-tip-key="fail_safe">fail-safe</span>)
-                <span class="desc">не hold high power при потере API</span>
-              </span>
-            </label>
-            <div class="divider"></div>
             <div class="row">
               <label class="field">Auth mode
                 <select>
@@ -2457,7 +2690,7 @@
                 </select>
               </label>
             </div>
-            <p style="font-size:0.8rem;color:var(--muted)">
+            <p style="font-size:0.8rem;color:var(--muted);margin:0">
               :8787 не пробрасывать raw в интернет. Cloud + token; open запрещён при remote.
             </p>
           </div>
@@ -2471,7 +2704,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>poolheat_wM · ПО</h2>
+              <h2>poolheat_WM · ПО</h2>
               <div class="sub">версия · проверка обновлений GitHub</div>
             </div>
             <div class="btn-row" style="gap:8px">
@@ -2503,7 +2736,10 @@
               <a href="https://github.com/andreybmc/poolheat" target="_blank" rel="noopener" id="info-github-link">GitHub</a>.
               Установка скачает архив (tag/branch), обновит UI+serve, config.json не трогает, перезапустит сервис.
             </p>
-            <p style="font-size:0.78rem;margin:0;display:none" id="info-update-notes"></p>
+            <div class="update-notes" id="info-update-notes" hidden>
+              <span class="rn-label">Release notes</span>
+              <div id="info-update-notes-body"></div>
+            </div>
           </div>
         </div>
 
@@ -2658,7 +2894,7 @@
           <div class="card-h">
             <div>
               <h2>Журнал ошибок майнера</h2>
-              <div class="sub">последние 100 · дата/время · ErrorCode · Cause</div>
+              <div class="sub">последние 100 · дата · код · cause · майнер · SN компонента</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn danger ghost" type="button" id="btn-err-log-clear">Clear</button>
@@ -2674,10 +2910,12 @@
                     <th class="col-time">Дата / время</th>
                     <th class="col-code">ErrorCode</th>
                     <th class="col-cause">Cause</th>
+                    <th class="col-miner">Майнер</th>
+                    <th class="col-comp">SN компонента</th>
                   </tr>
                 </thead>
                 <tbody id="miner-err-log-rows">
-                  <tr><td colspan="3" style="color:var(--dim)">пока пусто</td></tr>
+                  <tr><td colspan="5" style="color:var(--dim)">пока пусто</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2708,9 +2946,28 @@
       </div>
     </section>
 
-    <footer class="demo-note">
-      © powered by BMC mining solutions
+    <footer class="demo-note" id="app-footer">
+      Powered by poolheat_WM <span class="footer-ver" id="footer-ver">0.3.0</span>.
+      (с) 2025–<span id="footer-year"></span> BMC mining solutions.
     </footer>
+    <script>
+      (function () {
+        var y = document.getElementById("footer-year");
+        if (y) y.textContent = String(new Date().getFullYear());
+        // version from Info cache immediately (no wait for /api)
+        try {
+          var raw = localStorage.getItem("poolheat_wm_info_cache");
+          var ver = null;
+          if (raw) {
+            var d = JSON.parse(raw);
+            ver = (d && (d.version || (d.poolheat && d.poolheat.version) ||
+              (d.body && d.body.poolheat && d.body.poolheat.version))) || null;
+          }
+          var el = document.getElementById("footer-ver");
+          if (el && ver) el.textContent = String(ver).replace(/^v/i, "");
+        } catch (e) { /* keep default 0.3.0 */ }
+      })();
+    </script>
   </div>
 
   <div class="staff-toast-stack" id="toast-stack" aria-live="polite" aria-relevant="additions removals"></div>
@@ -2733,23 +2990,27 @@
       },
       t0: {
         title: "T0 · Z0↔Z1",
-        body: "Нижний порог liquid.\n≤ T0 → Z0 Normal heat (полный жар).\nВыход из Z0: liquid ≥ T0 + h.",
+        body: "Порог High / Normal.\n≤ T0 → Z0 High Heat.\nВыход из Z0: liquid ≥ T0 + h.",
       },
       t1: {
         title: "T1 · Z1↔Z2",
-        body: "Верхний порог liquid.\n≥ T1 → Z2 No heat.\nВыход из Z2: liquid ≤ T1 − h.\nМежду T0 и T1 — Z1 Reduced heat.",
+        body: "Порог Normal / Reduced.\nT0–T1 → Z1 Normal.\nВыше T1 → Z2 Reduced (с h).",
+      },
+      t2: {
+        title: "T2 · Z2↔Z3",
+        body: "Порог Reduced / No heat.\n≥ T2 → Z3 No heat.\nВыход из Z3: liquid ≤ T2 − h.",
       },
       hyst: {
         title: "h · гистерезис",
-        body: "Защита от thrash у порогов T0/T1 (°C).\nНе отдельная зона и не hold.\nТипично 0.3–1.0 °C.",
+        body: "Защита от thrash у порогов T0/T1/T2 (°C).\nНе отдельная зона и не hold.\nТипично 0.3–1.0 °C.",
       },
       t_low: {
         title: "T0",
         body: "См. T0 · Z0↔Z1.",
       },
       t_high: {
-        title: "T1",
-        body: "См. T1 · Z1↔Z2.",
+        title: "T2",
+        body: "См. T2 · Z2↔Z3.",
       },
       t_crit: {
         title: "T_crit",
@@ -2849,7 +3110,7 @@
       },
       warmup: {
         title: "Warmup / upfreq",
-        body: "Пока хотя бы одна плата: Upfreq Complete ≠ 1.\nUpward заблокирован; Downward и Critical разрешены.\nHash Stable=false — отдельный settle хеша, не warmup.",
+        body: "Пока Upfreq Complete ≠ 1 (и warmup_en):\n· Z0 блокируется\n· при «только снижать» — mode↑/limit↑/resume режутся\n· Critical и Z2/Suspend — да\n· max_warmup_wait_min: после N мин upward снова можно.",
       },
       upward: {
         title: "Upward",
@@ -2861,11 +3122,11 @@
       },
       critical: {
         title: "Critical",
-        body: "Аварийный слой: T_safe ≥ T_crit.\nПриоритет выше карты зон и demand.\nМожет включать sleep/power_off (opt-in).\nWake → сначала Reduced, не Normal.",
+        body: "Аварийный слой: T_safe ≥ T_crit.\nПриоритет выше Z0–Z2.\nКоманды (Suspend / mode / limit) — в Карта зон → Safety on_crit / on_clear.\nОтдельный critical_allow_sleep не используется.",
       },
       zone: {
         title: "Policy zone",
-        body: "Z0 Normal heat · Z1 Reduced heat · Z2 No heat.\nSafety Critical — отдельно по chip max.\nDeadband/hold нет: середина = Z1.",
+        body: "Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat.\nSafety Critical — отдельно по chip max.\nПороги T0 < T1 < T2.",
       },
       fail_safe: {
         title: "API fail-safe",
@@ -2904,8 +3165,8 @@
         body: "true, когда разгон завершён и hash stable.\nУсловие для разрешения upward.\nСмотрите Upfreq Complete + Hash Stable.",
       },
       override: {
-        title: "Override / pause",
-        body: "Ручной режим: оператор временно задаёт actuators.\nPause — только наблюдение, без write.\nПосле expiry — снова policy с dwell.",
+        title: "Override 30m",
+        body: "Пауза auto-зон Z0–Z2 на 30 мин (server).\nSafety Critical (chip) — всё равно.\nПовторный клик — снять досрочно.\nРучные кнопки режима — работают.",
       },
       api_live: {
         title: "API live",
@@ -2997,25 +3258,116 @@
       window.addEventListener("resize", () => { if (active) place(active); });
     }
 
-    /* —— tabs —— */
+    /* —— tabs + URL (#miner or /miner) —— */
+    const TAB_IDS = ["dash", "miner", "map", "pool", "settings", "info", "logs"];
+    const TAB_ALIASES = {
+      "": "dash",
+      overview: "dash",
+      home: "dash",
+      index: "dash",
+      "index.html": "dash",
+      zones: "map",
+      zone: "map",
+      weather: "pool",
+      config: "settings",
+      about: "info",
+      log: "logs",
+      errors: "logs",
+    };
+
+    function resolveTabId(raw) {
+      let t = String(raw || "").trim().toLowerCase();
+      t = t.replace(/^#\/?/, "").replace(/^\//, "");
+      t = t.split(/[/?#]/)[0] || "";
+      if (TAB_ALIASES[t]) return TAB_ALIASES[t];
+      if (TAB_IDS.includes(t)) return t;
+      return null;
+    }
+
+    function tabFromLocation() {
+      const hashTab = resolveTabId(location.hash);
+      if (hashTab) return hashTab;
+      const parts = location.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+      const last = parts.length ? parts[parts.length - 1] : "";
+      const pathTab = resolveTabId(last);
+      return pathTab || "dash";
+    }
+
+    function setTabUrl(tabId, mode) {
+      // Prefer hash: always works; path optional via history
+      const hash = tabId === "dash" ? "#/" : "#" + tabId;
+      try {
+        if (mode === "replace") {
+          if (location.hash !== hash && location.hash !== "#" + tabId) {
+            history.replaceState({ tab: tabId }, "", hash);
+          }
+        } else if (location.hash !== hash && location.hash !== "#" + tabId) {
+          history.pushState({ tab: tabId }, "", hash);
+        }
+      } catch (_) {
+        location.hash = tabId === "dash" ? "" : tabId;
+      }
+    }
+
+    function activateTab(tabId, opts) {
+      opts = opts || {};
+      if (!TAB_IDS.includes(tabId)) tabId = "dash";
+      const btn = document.querySelector(
+        'nav.tabs button[data-tab="' + tabId + '"]'
+      );
+      document.querySelectorAll("nav.tabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tab === tabId);
+      });
+      document.querySelectorAll(".view").forEach((v) => {
+        v.classList.toggle("active", v.id === "view-" + tabId);
+      });
+      if (!btn) {
+        // still try show view
+      }
+      if (tabId === "dash") {
+        try {
+          if (typeof loadHistoryCharts === "function") loadHistoryCharts();
+          if (typeof chartTemp !== "undefined" && chartTemp) chartTemp.resize();
+          if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
+        } catch (_) { /* ignore */ }
+      }
+      if (tabId === "logs" && typeof loadMinerErrorLog === "function") {
+        loadMinerErrorLog();
+      }
+      if (tabId === "info" && typeof loadSystemInfo === "function") {
+        loadSystemInfo({ forceLive: true });
+      }
+      if (!opts.skipUrl) {
+        setTabUrl(tabId, opts.replaceUrl ? "replace" : "push");
+      }
+      return tabId;
+    }
+
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.remove("active"));
-        document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-        btn.classList.add("active");
-        document.getElementById("view-" + btn.dataset.tab).classList.add("active");
-        if (btn.dataset.tab === "dash") {
-          loadHistoryCharts();
-          // Chart.js needs resize after tab was hidden
-          try {
-            if (typeof chartTemp !== "undefined" && chartTemp) chartTemp.resize();
-            if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
-          } catch (_) { /* ignore */ }
-        }
-        if (btn.dataset.tab === "logs") loadMinerErrorLog();
-        if (btn.dataset.tab === "info") loadSystemInfo();
+        activateTab(btn.dataset.tab);
       });
     });
+    window.addEventListener("hashchange", () => {
+      const t = tabFromLocation();
+      activateTab(t, { skipUrl: true });
+    });
+    window.addEventListener("popstate", () => {
+      const t = tabFromLocation();
+      activateTab(t, { skipUrl: true });
+    });
+    // initial route (path /miner → #miner, or hash)
+    (function initTabRoute() {
+      const t = tabFromLocation();
+      // normalize path /miner to /#miner so refresh works without SPA edge cases
+      const path = location.pathname.replace(/\/+$/, "") || "/";
+      if (path !== "/" && path !== "/index.html" && !location.hash) {
+        try {
+          history.replaceState({ tab: t }, "", t === "dash" ? "#/" : "#" + t);
+        } catch (_) { /* ignore */ }
+      }
+      activateTab(t, { skipUrl: true, replaceUrl: true });
+    })();
 
     /* —— toast stack (hash2cash admin style) —— */
     const toastState = { items: [], seq: 0, timers: new Map() };
@@ -3282,7 +3634,7 @@
             (body.max != null ? " / " + body.max : "");
         }
         if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="3" style="color:var(--dim)">пока пусто</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="color:var(--dim)">пока пусто</td></tr>';
           return;
         }
         tbody.innerHTML = rows.map((e) => {
@@ -3290,18 +3642,22 @@
             (e.miner_ts ? formatMinerErrTs(e.miner_ts) : "—");
           const code = e.code != null ? String(e.code) : "—";
           const cause = e.cause || ("Error code " + code);
+          const miner = e.miner || e.miner_label || "—";
+          const comp = e.component || e.component_sn || "—";
           return (
             "<tr>" +
             '<td class="col-time">' + esc(when) + "</td>" +
             '<td class="col-code">' + esc(code) + "</td>" +
             '<td class="col-cause">' + esc(cause) + "</td>" +
+            '<td class="col-miner" title="' + esc(miner) + '">' + esc(miner) + "</td>" +
+            '<td class="col-comp" title="' + esc(comp) + '">' + esc(comp) + "</td>" +
             "</tr>"
           );
         }).join("");
       } catch (e) {
         if (stats) stats.textContent = "ошибка журнала: " + e.message;
         tbody.innerHTML =
-          '<tr><td colspan="3" style="color:var(--danger)">' +
+          '<tr><td colspan="5" style="color:var(--danger)">' +
           String(e.message).replace(/</g, "&lt;") + "</td></tr>";
       }
     }
@@ -3354,59 +3710,63 @@
       return Number.isFinite(v) ? v : fallback;
     }
 
-    // Sticky heat-policy zone (not safety): z0 | z1 | z2
+    // Sticky heat-policy zone (not safety): z0|z1|z2|z3
     let policyZone = null; // null → bootstrap from liquid
     // Sticky safety Critical until T_crit_clear
     let safetySticky = false;
 
     function getThresholds() {
       return {
-        t0: num("thr-low", 26),
-        t1: num("thr-high", 28),
+        t0: num("thr-low", 24),
+        t1: num("thr-mid", 26),
+        t2: num("thr-high", 28),
         h: Math.max(0.2, num("thr-hyst", 0.5)),
         crit: num("thr-crit", 70),
         critClear: num("thr-crit-clear", 65),
-        // aliases for older call sites
         get low() { return this.t0; },
-        get high() { return this.t1; },
+        get high() { return this.t2; },
       };
     }
 
+    function placeHeatZone(liquid, th) {
+      if (liquid <= th.t0) return "z0";
+      if (liquid <= th.t1) return "z1";
+      if (liquid >= th.t2) return "z3";
+      return "z2";
+    }
+
     /**
-     * Heat map: Z0 Normal · Z1 Reduced · Z2 No heat.
-     * No hold zone. Hysteresis only at T0/T1 edges (sticky).
+     * Heat map: Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat.
+     * Thresholds T0 < T1 < T2. Hysteresis h at edges.
      */
     function evaluateHeatZone(liquid, sticky, th) {
       const T0 = th.t0;
       const T1 = th.t1;
+      const T2 = th.t2;
       const h = th.h;
-      if (!Number.isFinite(liquid)) return sticky || "z1";
+      const valid = ["z0", "z1", "z2", "z3"];
+      if (!Number.isFinite(liquid)) return sticky && valid.includes(sticky) ? sticky : "z2";
 
-      // Bootstrap: mid-band → Z1 (reduced), never force Normal in-band
-      if (!sticky || !["z0", "z1", "z2"].includes(sticky)) {
-        if (liquid <= T0) return "z0";
-        if (liquid >= T1) return "z2";
-        return "z1";
+      if (!sticky || !valid.includes(sticky)) {
+        return placeHeatZone(liquid, th);
       }
-
       if (sticky === "z0") {
-        // leave Normal only when clearly warmer than T0
-        if (liquid >= T0 + h) {
-          return liquid >= T1 ? "z2" : "z1";
-        }
+        if (liquid >= T0 + h) return placeHeatZone(liquid, th);
         return "z0";
       }
-      if (sticky === "z2") {
-        // leave No heat only when clearly cooler than T1
-        if (liquid <= T1 - h) {
-          return liquid <= T0 ? "z0" : "z1";
-        }
-        return "z2";
+      if (sticky === "z3") {
+        if (liquid <= T2 - h) return placeHeatZone(liquid, th);
+        return "z3";
       }
-      // sticky z1
-      if (liquid <= T0) return "z0";
-      if (liquid >= T1) return "z2";
-      return "z1";
+      if (sticky === "z1") {
+        if (liquid <= T0) return "z0";
+        if (liquid >= T1 + h) return placeHeatZone(liquid, th);
+        return "z1";
+      }
+      // z2 Reduced
+      if (liquid <= T1 - h) return placeHeatZone(liquid, th);
+      if (liquid >= T2) return "z3";
+      return "z2";
     }
 
     function zoneActuators(zoneOrPrefix) {
@@ -3448,6 +3808,7 @@
       return {
         t0: th.t0,
         t1: th.t1,
+        t2: th.t2,
         h: th.h,
         t_crit: th.crit,
         t_crit_clear: th.critClear,
@@ -3456,10 +3817,14 @@
         streak: num("thr-streak", 3),
         min_write_interval_sec: num("thr-min-write", 60),
         limit_tol_w: num("thr-limit-tol", 100),
+        warmup_en: !!document.getElementById("warmup-en")?.checked,
+        warmup_downward_only: !!document.getElementById("warmup-downward-only")?.checked,
+        max_warmup_wait_min: num("warmup-max-wait", 30),
         zones: {
           z0: readZone("z0"),
           z1: readZone("z1"),
           z2: readZone("z2"),
+          z3: readZone("z3"),
           critical: {
             on_crit: readZone("z3e"),
             on_clear: readZone("z3c"),
@@ -3495,7 +3860,14 @@
         if (el && v != null) el.value = v;
       };
       if (cfg.t0 != null) setNum("thr-low", cfg.t0);
-      if (cfg.t1 != null) setNum("thr-high", cfg.t1);
+      if (cfg.t1 != null) setNum("thr-mid", cfg.t1);
+      if (cfg.t2 != null) setNum("thr-high", cfg.t2);
+      // legacy 3-zone: t1 was old high (no heat boundary)
+      if (cfg.t2 == null && cfg.t1 != null && cfg.t0 != null) {
+        setNum("thr-mid", cfg.t0);
+        setNum("thr-high", cfg.t1);
+        setNum("thr-low", Number(cfg.t0) - 2);
+      }
       if (cfg.h != null) setNum("thr-hyst", cfg.h);
       if (cfg.t_crit != null) setNum("thr-crit", cfg.t_crit);
       if (cfg.t_crit_clear != null) setNum("thr-crit-clear", cfg.t_crit_clear);
@@ -3504,6 +3876,11 @@
       if (cfg.streak != null) setNum("thr-streak", cfg.streak);
       if (cfg.min_write_interval_sec != null) setNum("thr-min-write", cfg.min_write_interval_sec);
       if (cfg.limit_tol_w != null) setNum("thr-limit-tol", cfg.limit_tol_w);
+      if (cfg.max_warmup_wait_min != null) setNum("warmup-max-wait", cfg.max_warmup_wait_min);
+      const we = document.getElementById("warmup-en");
+      if (we && "warmup_en" in cfg) we.checked = !!cfg.warmup_en;
+      const wd = document.getElementById("warmup-downward-only");
+      if (wd && "warmup_downward_only" in cfg) wd.checked = !!cfg.warmup_downward_only;
       // poll_sec moved to Подключение Whatsminer (settings-poll-interval)
 
       const applyZ = (p, z) => {
@@ -3518,15 +3895,24 @@
         if ("pct_en" in z) setCheck(p + "-pct", z.pct_en);
       };
       const zones = cfg.zones || {};
-      applyZ("z0", zones.z0);
-      applyZ("z1", zones.z1);
-      applyZ("z2", zones.z2);
+      // Server already migrates; still handle raw 3-zone UI payloads
+      if (zones.z3 == null && zones.z2 != null && zones.z0 != null && zones.z1 != null) {
+        applyZ("z1", zones.z0);
+        applyZ("z2", zones.z1);
+        applyZ("z3", zones.z2);
+        // z0 High keeps defaults unless provided
+        if (zones.z0 && zones.z0.mode === "high") applyZ("z0", zones.z0);
+      } else {
+        applyZ("z0", zones.z0);
+        applyZ("z1", zones.z1);
+        applyZ("z2", zones.z2);
+        applyZ("z3", zones.z3);
+      }
       const crit = zones.critical || {};
       if (crit.on_crit || crit.on_clear) {
         applyZ("z3e", crit.on_crit);
         applyZ("z3c", crit.on_clear);
       } else if (crit.mode_en != null || crit.mode != null || crit.work != null) {
-        // legacy single critical profile → on_crit; on_clear defaults Z1-like
         applyZ("z3e", crit);
         if (crit.sleep_en) {
           setSel("z3e-work-v", "suspend");
@@ -3682,17 +4068,19 @@
       if (!el) return true;
       const errs = [];
       if (!(th.t0 < th.t1)) errs.push("нужно T0 < T1");
-      if (!(th.t1 < th.crit)) errs.push("нужно T1 < T_crit (chip)");
+      if (!(th.t1 < th.t2)) errs.push("нужно T1 < T2");
+      if (!(th.t2 < th.crit)) errs.push("нужно T2 < T_crit (chip)");
       if (!(th.critClear < th.crit)) errs.push("нужно T_crit_clear < T_crit");
-      if (th.t1 - th.t0 < th.h) errs.push("T1−T0 должно быть ≥ h (" + th.h + " °C)");
+      if (th.t1 - th.t0 < th.h) errs.push("T1−T0 должно быть ≥ h");
+      if (th.t2 - th.t1 < th.h) errs.push("T2−T1 должно быть ≥ h");
       if (errs.length) {
         el.textContent = "⚠ " + errs.join(" · ");
         el.style.color = "var(--danger)";
         return false;
       }
       el.textContent =
-        "OK: Z0 ≤ " + th.t0 + " · Z1 mid · Z2 ≥ " + th.t1 +
-        " · h=" + th.h + " · chip crit ≥ " + th.crit;
+        "OK: Z0≤" + th.t0 + " · Z1≤" + th.t1 + " · Z2<" + th.t2 +
+        " · Z3≥" + th.t2 + " · h=" + th.h + " · chip ≥" + th.crit;
       el.style.color = "var(--ok)";
       return true;
     }
@@ -3713,28 +4101,80 @@
       const el1 = document.getElementById("z1-range-label");
       const el2 = document.getElementById("z2-range-label");
       const el3 = document.getElementById("z3-range-label");
+      const elC = document.getElementById("z-crit-range-label");
       if (el0) el0.textContent = "liquid ≤ " + th.t0 + " · exit ≥ " + (th.t0 + th.h).toFixed(1);
-      if (el1) el1.textContent = th.t0 + " < liquid < " + th.t1 + " · Reduced";
-      if (el2) el2.textContent = "liquid ≥ " + th.t1 + " · exit ≤ " + (th.t1 - th.h).toFixed(1);
-      if (el3) {
-        el3.textContent =
+      if (el1) el1.textContent = th.t0 + " < liquid ≤ " + th.t1 + " · Normal";
+      if (el2) el2.textContent = th.t1 + " < liquid < " + th.t2 + " · Reduced";
+      if (el3) el3.textContent = "liquid ≥ " + th.t2 + " · exit ≤ " + (th.t2 - th.h).toFixed(1);
+      if (elC) {
+        elC.textContent =
           "enter ≥ " + th.crit + " · clear ≤ " + th.critClear;
       }
       const sl = document.getElementById("scale-low");
+      const sm = document.getElementById("scale-mid");
       const sh = document.getElementById("scale-high");
       const sc = document.getElementById("scale-crit");
       if (sl) sl.textContent = String(th.t0);
-      if (sh) sh.textContent = String(th.t1);
+      if (sm) sm.textContent = String(th.t1);
+      if (sh) sh.textContent = String(th.t2);
       if (sc) sc.textContent = String(th.crit);
       const hh = document.getElementById("hint-hyst");
       if (hh) {
         hh.textContent =
-          "T0=" + th.t0 + "°C | T1=" + th.t1 + "°C | h=" + th.h + "°C";
+          "T0=" + th.t0 + " · T1=" + th.t1 + " · T2=" + th.t2 + " · h=" + th.h;
       }
+      paintLiquidScale(th);
+    }
+
+    /** Paint Z0–Z3 + Safety red on liquid scale (20–40 °C). */
+    function paintLiquidScale(th) {
+      const scale = document.getElementById("liquid-temp-scale");
+      if (!scale || !th) return;
+      const minT = 20;
+      const maxT = 40;
+      const span = maxT - minT;
+      const pct = (t) => {
+        const v = Number(t);
+        if (!Number.isFinite(v)) return 0;
+        return Math.min(100, Math.max(0, ((v - minT) / span) * 100));
+      };
+      let p0 = pct(th.t0);
+      let p1 = pct(th.t1);
+      let p2 = pct(th.t2);
+      // keep monotonic zone stops
+      if (p1 < p0) p1 = p0;
+      if (p2 < p1) p2 = p1;
+      // Safety red tip: chip T_crit rarely maps into 20–40 — always reserve
+      // a visible red strip after Z3 (numbers for T_crit stay in labels).
+      let pSafe = pct(th.crit);
+      const critOnScale = Number.isFinite(Number(th.crit)) &&
+        th.crit > minT && th.crit < maxT && th.crit > th.t2;
+      if (!critOnScale) {
+        // T_crit usually ~70 (chip) — fixed red tip after No-heat band
+        pSafe = Math.min(92, Math.max(p2 + 12, 80));
+      }
+      // red strip at least ~8% wide
+      if (pSafe > 92) pSafe = 92;
+      if (pSafe < p2 + 6) pSafe = Math.min(92, p2 + 10);
+      // Z0 saturated dark green · Z1 green · Z2 blue · Z3 amber · Safety red
+      scale.style.background =
+        "linear-gradient(90deg," +
+        " #00a63e 0%," +
+        " #00a63e " + p0 + "%," +
+        " #3ecf8e " + p0 + "%," +
+        " #3ecf8e " + p1 + "%," +
+        " #3d9cf0 " + p1 + "%," +
+        " #3d9cf0 " + p2 + "%," +
+        " #f0b429 " + p2 + "%," +
+        " #f0b429 " + pSafe + "%," +
+        " #f07178 " + pSafe + "%," +
+        " #f07178 100%)";
     }
 
     function resetPresetThresholds() {
-      document.getElementById("thr-low").value = 26;
+      document.getElementById("thr-low").value = 24;
+      const mid = document.getElementById("thr-mid");
+      if (mid) mid.value = 26;
       document.getElementById("thr-high").value = 28;
       const hystEl = document.getElementById("thr-hyst");
       if (hystEl) hystEl.value = 0.5;
@@ -3743,22 +4183,30 @@
       policyZone = null; // re-bootstrap
       syncZonesFromGlobal();
       recompute();
-      toastSuccess("Пресет: T0=26 · T1=28 · h=0.5 · chip crit 70");
+      toastSuccess("Пресет: T0=24 · T1=26 · T2=28 · h=0.5 · chip crit 70");
     }
 
-    /** resume | suspend — from live work_cmd / power+hash */
+    /** resume | suspend — measured from miner API (mineroff + hashrate; not work_cmd) */
     function inferWorkState(r) {
-      if (live && live.ok !== false) {
-        const wc = live.work_cmd;
-        if (wc === "sleep" || wc === "suspend") return "suspend";
-        if (wc === "resume") return "resume";
+      const src = r || live || {};
+      if (src.work_measured === "suspend" || src.work_measured === "sleep") return "suspend";
+      if (src.work_measured === "resume") return "resume";
+      const mo = String(src.mineroff != null ? src.mineroff : "").toLowerCase();
+      const p = Number(src.power);
+      const h = Number(src.hashrate_th);
+      const hashing = Number.isFinite(h) && h >= 1;
+      // mineroff=true → Suspend unless actually hashing (residual W is OK)
+      if (mo === "true" || mo === "1" || mo === "yes") {
+        return hashing ? "resume" : "suspend";
       }
-      const mn = String((r && r.mode) || (live && live.mode) || "").toLowerCase();
-      if (/sleep|off|suspend/.test(mn)) return "suspend";
-      const p = r && Number(r.power);
-      const h = r && Number(r.hashrate_th);
-      if (Number.isFinite(p) && p < 50 && (!Number.isFinite(h) || h < 1)) return "suspend";
-      if (Number.isFinite(p) && p >= 50) return "resume";
+      if (hashing) return "resume";
+      if (mo === "false" || mo === "0" || mo === "no") {
+        if (Number.isFinite(p) && p >= 200) return "resume";
+        if (Number.isFinite(p) && p < 80) return "suspend";
+        return "resume";
+      }
+      if (Number.isFinite(p) && p >= 200) return "resume";
+      if (Number.isFinite(p) && p < 50 && !hashing) return "suspend";
       return null;
     }
 
@@ -3830,12 +4278,16 @@
       }
       setText("[data-bind=eff]", eff);
 
-      // Power mode / limit / pct
-      const modeNow = r.mode || (live && live.mode) || "—";
+      // ── measured from miner API (not last command) ──
+      const src = live && live.ok !== false ? live : r;
+      const modeNow =
+        (src && (src.mode || src.mode_measured)) ||
+        r.mode ||
+        "—";
       setId("pw-mode-now", modeNow);
 
-      // Mining Control label
-      const workKey = inferWorkState(r);
+      // Mining Control — measured (mineroff / hash)
+      const workKey = inferWorkState(src);
       const workLabel = (v) => {
         if (v === "sleep" || v === "suspend") return "Suspend Mining";
         if (v === "resume") return "Resume Mining";
@@ -3843,45 +4295,62 @@
       };
       setId("wk-mode-now", workKey ? workLabel(workKey) : "—");
 
-      const limMeas = (live && live.power_limit != null) ? live.power_limit : (r.power_limit != null ? r.power_limit : null);
-      const limSet = (live && live.power_limit_set != null) ? live.power_limit_set : null;
-      setId("pw-lim-meas", limMeas != null ? Math.round(Number(limMeas)) : "—");
+      // Power Limit measured = power_limit_set on ASIC (summary Power Limit is 0 in Suspend)
+      const limSet =
+        src && src.power_limit_set != null && src.power_limit_set !== ""
+          ? Number(src.power_limit_set)
+          : src && src.power_limit_measured != null
+            ? Number(src.power_limit_measured)
+            : NaN;
+      const limEff =
+        src && src.power_limit != null && Number(src.power_limit) > 0
+          ? Number(src.power_limit)
+          : NaN;
+      const limShow = Number.isFinite(limSet)
+        ? limSet
+        : Number.isFinite(limEff)
+          ? limEff
+          : null;
+      setId("pw-lim-meas", limShow != null ? Math.round(limShow) : "—");
 
-      // pct set = last local command; meas = Power/Limit estimate (ASIC has no real pct read-back)
+      // pct: meas from Power / limit_set; set = last local cmd only as secondary
       let pctSet = "—";
-      if (live && live.power_pct_cmd != null && live.power_pct_cmd !== "") {
-        pctSet = String(Math.round(Number(live.power_pct_cmd)));
+      if (src && src.power_pct_cmd != null && src.power_pct_cmd !== "") {
+        pctSet = String(Math.round(Number(src.power_pct_cmd)));
       }
       setId("pw-pct-set", pctSet);
 
       let pctMeas = "—";
-      const pW = (live && live.power != null) ? Number(live.power) : (Number.isFinite(r.power) ? Number(r.power) : NaN);
-      const pLim = (live && live.power_limit != null) ? Number(live.power_limit)
-        : (live && live.power_limit_set != null) ? Number(live.power_limit_set) : NaN;
+      const pW = Number(src && src.power != null ? src.power : r.power);
+      const pLim = Number.isFinite(limSet)
+        ? limSet
+        : Number.isFinite(limEff)
+          ? limEff
+          : NaN;
       if (Number.isFinite(pW) && Number.isFinite(pLim) && pLim > 0) {
         pctMeas = String(Math.round((pW / pLim) * 100));
-      } else if (live && live.power_pct_reported != null) {
-        const hp = Number(live.power_pct_reported);
-        // hash_percent often stuck at 0 — only show if meaningful
+      } else if (src && src.power_pct_reported != null) {
+        const hp = Number(src.power_pct_reported);
         if (Number.isFinite(hp) && hp > 0) pctMeas = String(Math.round(hp));
       }
       setId("pw-pct-meas", pctMeas);
 
-      // sync form defaults from live (don't fight user mid-edit)
-      if (live && live.ok && !window.__pwFormDirty) {
-        const mn = (live.mode_norm || String(modeNow).toLowerCase());
+      // sync form defaults from measured live (not work_cmd)
+      if (live && live.ok !== false && !window.__pwFormDirty) {
+        const mn = String(
+          live.mode_norm || live.mode_measured || modeNow || ""
+        ).toLowerCase();
         const sel = document.getElementById("set-mode");
         if (sel && ["low", "normal", "high"].includes(mn)) sel.value = mn;
         const wsel = document.getElementById("set-work");
         if (wsel) {
-          if (workKey === "sleep" || workKey === "resume") wsel.value = workKey;
-          else if (live.work_cmd === "sleep" || live.work_cmd === "resume") wsel.value = live.work_cmd;
+          // select values: resume | sleep
+          if (workKey === "suspend" || workKey === "sleep") wsel.value = "sleep";
+          else if (workKey === "resume") wsel.value = "resume";
         }
-        if (limSet != null && limSet !== "") {
-          document.getElementById("set-limit").value = limSet;
-        }
-        if (live.power_pct_cmd != null) {
-          document.getElementById("set-pct").value = live.power_pct_cmd;
+        if (Number.isFinite(limSet)) {
+          const le = document.getElementById("set-limit");
+          if (le) le.value = Math.round(limSet);
         }
       }
 
@@ -4224,21 +4693,35 @@
           else tag.textContent = "off";
         }
         if (l.dataset.layer === "fail") tag.textContent = liveError ? "fail" : "ok";
-        if (l.dataset.layer === "override") tag.textContent = "off";
+        if (l.dataset.layer === "override") {
+          if (typeof overrideState !== "undefined" && overrideState.active) {
+            l.classList.add("on");
+            tag.textContent = fmtOverrideClock(overrideState.remainingSec);
+          } else {
+            tag.textContent = "off";
+          }
+        }
       });
 
       document.querySelectorAll(".zone").forEach((z) => z.classList.remove("active"));
-      ["zone-z0", "zone-z1", "zone-z2", "zone-critical"].forEach((id) => {
+      ["zone-z0", "zone-z1", "zone-z2", "zone-z3", "zone-critical"].forEach((id) => {
         const badge = document.querySelector("#" + id + " .badge");
         if (!badge) return;
-        const base = { "zone-z0": "Z0", "zone-z1": "Z1", "zone-z2": "Z2", "zone-critical": "Safety" }[id];
+        const base = {
+          "zone-z0": "Z0",
+          "zone-z1": "Z1",
+          "zone-z2": "Z2",
+          "zone-z3": "Z3",
+          "zone-critical": "Safety",
+        }[id];
         if (base) badge.textContent = base;
       });
 
       const NAMES = {
-        z0: "Z0 · Normal heat",
-        z1: "Z1 · Reduced heat",
-        z2: "Z2 · No heat",
+        z0: "Z0 · High Heat",
+        z1: "Z1 · Normal heat",
+        z2: "Z2 · Reduced heat",
+        z3: "Z3 · No heat",
         critical: "Safety · Critical",
       };
 
@@ -4286,32 +4769,39 @@
         const act = zoneActuators(heatZone);
 
         if (heatZone === "z0") {
-          zoneHint = "T_ctrl ≤ " + th.t0 + "°C · full heat";
+          zoneHint = "T_ctrl ≤ " + th.t0 + "°C · high heat";
           if (upfreq) {
             prevMode = "— blocked ↑";
             prevLim = "— blocked ↑";
             prevPct = "— blocked ↑";
-            reason = "Z0 нужен, но warmup блокирует upward (→ Normal)";
+            reason = "Z0 High Heat нужен, но warmup блокирует upward";
           } else {
             prevMode = act.mode;
             prevLim = act.lim;
             prevPct = act.pct;
-            reason = "Z0 Normal heat · liquid=" + fmt(tLiquid) + " ≤ T0=" + th.t0;
+            reason = "Z0 High Heat · liquid=" + fmt(tLiquid) + " ≤ T0=" + th.t0;
           }
-        } else if (heatZone === "z2") {
-          zoneHint = "T_ctrl ≥ " + th.t1 + "°C · no heat";
-          prevMode = act.mode;
-          prevLim = act.lim;
-          prevPct = act.workLabel || act.pct;
-          reason = "Z2 No heat · liquid=" + fmt(tLiquid) + " ≥ T1=" + th.t1 +
-            (act.work === "suspend" ? " · Suspend Mining" : "");
-        } else {
-          zoneHint = th.t0 + "°C < T_ctrl < " + th.t1 + "°C · reduced";
+        } else if (heatZone === "z1") {
+          zoneHint = th.t0 + "°C < T_ctrl ≤ " + th.t1 + "°C · normal";
           prevMode = act.mode;
           prevLim = act.lim;
           prevPct = act.pct;
-          reason = "Z1 Reduced heat · liquid=" + fmt(tLiquid) +
-            " ∈ (" + th.t0 + " … " + th.t1 + ") · h=" + th.h +
+          reason = "Z1 Normal heat · liquid=" + fmt(tLiquid) +
+            " ∈ (" + th.t0 + " … " + th.t1 + ")";
+        } else if (heatZone === "z3") {
+          zoneHint = "T_ctrl ≥ " + th.t2 + "°C · no heat";
+          prevMode = act.mode;
+          prevLim = act.lim;
+          prevPct = act.workLabel || act.pct;
+          reason = "Z3 No heat · liquid=" + fmt(tLiquid) + " ≥ T2=" + th.t2 +
+            (act.work === "suspend" ? " · Suspend Mining" : "");
+        } else {
+          zoneHint = th.t1 + "°C < T_ctrl < " + th.t2 + "°C · reduced";
+          prevMode = act.mode;
+          prevLim = act.lim;
+          prevPct = act.pct;
+          reason = "Z2 Reduced heat · liquid=" + fmt(tLiquid) +
+            " ∈ (" + th.t1 + " … " + th.t2 + ") · h=" + th.h +
             (act.workLabel && act.workLabel !== "— skip" ? " · " + act.workLabel : "");
         }
 
@@ -4343,8 +4833,9 @@
       const modePill = document.getElementById("pill-mode");
       if (modePill) {
         const cls = zone === "critical" ? "danger"
-          : zone === "z2" ? "warn"
+          : zone === "z3" ? "warn"
           : zone === "z0" ? "ok"
+          : zone === "z1" ? "ok"
           : "accent";
         modePill.className = "pill " + cls;
         modePill.innerHTML = '<span class="dot"></span> zone: ' +
@@ -4362,16 +4853,33 @@
         zone: zone,
       };
 
-      // server policy status line
+      // server policy status line + override banner sync
       const psl = document.getElementById("policy-status-line");
+      const pol = (live && live.policy) || {};
+      if (pol && (pol.override_active != null || pol.override_remaining_sec != null)) {
+        // light sync without resetting 1s clock if already active with similar rem
+        if (typeof updateOverrideUI === "function") {
+          if (
+            !!pol.override_active !== !!overrideState.active ||
+            Math.abs((pol.override_remaining_sec || 0) - (overrideState.remainingSec || 0)) > 5
+          ) {
+            updateOverrideUI(pol);
+          }
+        }
+      }
       if (psl) {
-        const pol = (live && live.policy) || {};
         const parts = [
           pol.server_side ? "server" : "—",
           dry ? "dry_run" : "zone_auto",
           "hz=" + (pol.heat_zone || heatZone || "—"),
           pol.safety_sticky ? "SAFETY" : "ok",
         ];
+        if (pol.override_active) {
+          parts.push(
+            "OVERRIDE " +
+              fmtOverrideClock(pol.override_remaining_sec || overrideState.remainingSec || 0)
+          );
+        }
         if (pol.last_event && pol.last_event.msg) {
           parts.push(String(pol.last_event.msg).slice(0, 60));
         }
@@ -4621,7 +5129,7 @@
     }
     document.getElementById("btn-toggle-pw-settings")?.addEventListener("click", togglePwSettings);
 
-    ["thr-low", "thr-high", "thr-hyst", "thr-crit", "thr-crit-clear"].forEach((id) => {
+    ["thr-low", "thr-mid", "thr-high", "thr-hyst", "thr-crit", "thr-crit-clear"].forEach((id) => {
       document.getElementById(id)?.addEventListener("input", () => {
         syncZonesFromGlobal();
         recompute();
@@ -5419,21 +5927,216 @@
         toastError("Нет связи: " + e.message);
       }
     });
-    document.getElementById("btn-pause")?.addEventListener("click", () => {
-      toastWarn("Pause: записи остановлены, майнер как есть (demo)");
+    let overrideState = {
+      active: false,
+      untilTs: 0, // ms epoch, client clock
+      remainingSec: 0,
+    };
+    let overrideTickTimer = null;
+
+    function fmtOverrideClock(sec) {
+      sec = Math.max(0, Math.floor(Number(sec) || 0));
+      const m = Math.floor(sec / 60);
+      const s = sec % 60;
+      return m + ":" + String(s).padStart(2, "0");
+    }
+
+    async function setOverride(minutesOrClear) {
+      try {
+        const body =
+          minutesOrClear === false || minutesOrClear === 0
+            ? { override_clear: true }
+            : { override_min: minutesOrClear == null ? 30 : minutesOrClear };
+        const res = await fetch("/api/policy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          cache: "no-store",
+        });
+        const j = await res.json();
+        if (!res.ok || j.ok === false) throw new Error(j.error || ("HTTP " + res.status));
+        updateOverrideUI(j);
+        if (j.override_active) {
+          const m = Math.ceil((j.override_remaining_sec || 0) / 60);
+          toastWarn(
+            "Override включён · " + m + " мин · zone auto off · Safety on",
+            5500
+          );
+          appendActionLog("warn", "OVERRIDE ON · " + m + "m · zone auto paused");
+        } else {
+          toastSuccess("Override отключён · zone auto on", 4000);
+          appendActionLog("ok", "OVERRIDE OFF · zone auto resumed");
+        }
+        return j;
+      } catch (e) {
+        toastError("Override: " + e.message);
+        return null;
+      }
+    }
+
+    function updateOverrideUI(pol) {
+      const active = !!(pol && pol.override_active);
+      let rem =
+        pol && pol.override_remaining_sec != null
+          ? Number(pol.override_remaining_sec)
+          : 0;
+      if (!Number.isFinite(rem) || rem < 0) rem = 0;
+
+      // anchor local countdown to server remaining
+      overrideState.active = active;
+      overrideState.remainingSec = rem;
+      overrideState.untilTs = active ? Date.now() + rem * 1000 : 0;
+
+      const banner = document.getElementById("banner-override");
+      const timerEl = document.getElementById("override-timer");
+      const btnOn = document.getElementById("btn-override");
+      const btnClear = document.getElementById("btn-override-clear");
+      const btnClear2 = document.getElementById("btn-override-clear-2");
+      const layer = document.querySelector('.layer[data-layer="override"]');
+      const pillMode = document.getElementById("pill-mode");
+
+      if (banner) {
+        if (active) {
+          banner.style.display = "flex";
+          banner.hidden = false;
+        } else {
+          banner.style.display = "none";
+          banner.hidden = true;
+        }
+      }
+      if (timerEl) timerEl.textContent = active ? fmtOverrideClock(rem) : "—:—";
+
+      if (btnOn) {
+        if (active) {
+          btnOn.disabled = true;
+          btnOn.textContent = "Override · " + fmtOverrideClock(rem);
+          btnOn.classList.add("primary");
+        } else {
+          btnOn.disabled = false;
+          btnOn.textContent = "Override 30m";
+          btnOn.classList.remove("primary");
+        }
+      }
+      // show clear buttons only while active
+      [btnClear, btnClear2].forEach((b) => {
+        if (!b) return;
+        if (active) {
+          b.hidden = false;
+          b.removeAttribute("hidden");
+        } else {
+          b.hidden = true;
+          b.setAttribute("hidden", "");
+        }
+      });
+
+      if (layer) {
+        layer.classList.toggle("on", active);
+        const tag = layer.querySelector(".tag");
+        if (tag) tag.textContent = active ? fmtOverrideClock(rem) : "off";
+      }
+
+      // header pill hint while override
+      if (pillMode && active) {
+        // don't overwrite permanently — recompute will refresh zone; stamp class
+        pillMode.classList.add("accent");
+      }
+
+      // 1s local tick while active
+      if (active && !overrideTickTimer) {
+        overrideTickTimer = setInterval(() => {
+          if (!overrideState.active || !overrideState.untilTs) {
+            clearInterval(overrideTickTimer);
+            overrideTickTimer = null;
+            return;
+          }
+          const left = Math.max(
+            0,
+            Math.ceil((overrideState.untilTs - Date.now()) / 1000)
+          );
+          overrideState.remainingSec = left;
+          const tEl = document.getElementById("override-timer");
+          if (tEl) tEl.textContent = fmtOverrideClock(left);
+          const bOn = document.getElementById("btn-override");
+          if (bOn && overrideState.active) {
+            bOn.textContent = "Override · " + fmtOverrideClock(left);
+          }
+          const lay = document.querySelector('.layer[data-layer="override"] .tag');
+          if (lay && overrideState.active) lay.textContent = fmtOverrideClock(left);
+          if (left <= 0) {
+            // expired — sync from server
+            clearInterval(overrideTickTimer);
+            overrideTickTimer = null;
+            fetch("/api/policy", { cache: "no-store" })
+              .then((r) => r.json())
+              .then((p) => {
+                updateOverrideUI(p);
+                if (!p.override_active) {
+                  toastInfo("Override истёк · zone auto on", 4000);
+                  appendActionLog("ok", "OVERRIDE expired");
+                }
+              })
+              .catch(() => {
+                updateOverrideUI({ override_active: false, override_remaining_sec: 0 });
+              });
+          }
+        }, 1000);
+      }
+      if (!active && overrideTickTimer) {
+        clearInterval(overrideTickTimer);
+        overrideTickTimer = null;
+      }
+    }
+
+    document.getElementById("btn-override")?.addEventListener("click", async () => {
+      if (overrideState.active) return; // use clear button
+      const ok = window.confirm(
+        "Включить Override на 30 минут?\n\n" +
+          "· Auto-зоны Z0–Z2 — пауза\n" +
+          "· Safety Critical (chip) — работает\n" +
+          "· Ручные кнопки режима — работают\n\n" +
+          "Отключить можно кнопкой «Отключить Override»."
+      );
+      if (!ok) return;
+      await setOverride(30);
     });
-    document.getElementById("btn-override")?.addEventListener("click", () => {
-      toastWarn("Override 30 мин: ручной режим (demo · UI confirm)");
-    });
+
+    async function clearOverrideConfirm() {
+      if (!overrideState.active) return;
+      const ok = window.confirm(
+        "Отключить Override и вернуть auto-зоны Z0–Z2?"
+      );
+      if (!ok) return;
+      await setOverride(false);
+    }
+    document
+      .getElementById("btn-override-clear")
+      ?.addEventListener("click", () => void clearOverrideConfirm());
+    document
+      .getElementById("btn-override-clear-2")
+      ?.addEventListener("click", () => void clearOverrideConfirm());
+
+    // sync override from server (status + remaining)
+    async function refreshOverrideFromServer() {
+      try {
+        const res = await fetch("/api/policy", { cache: "no-store" });
+        const pol = await res.json();
+        if (pol && pol.ok !== false) updateOverrideUI(pol);
+      } catch (_) { /* ignore */ }
+    }
+    void refreshOverrideFromServer();
+    setInterval(() => void refreshOverrideFromServer(), 10000);
     document.getElementById("btn-force-sleep")?.addEventListener("click", () => {
-      toastError("Force sleep — только после confirm в Настройки → Safety (demo)");
+      toastError("Force sleep — используйте Mining Control → Suspend или Safety on_crit");
     });
     document.getElementById("btn-export-log")?.addEventListener("click", () => {
       toastSuccess("Экспорт логов JSONL (demo)");
     });
     document.getElementById("btn-dry-goto")?.addEventListener("click", () => {
-      const tab = document.querySelector('nav.tabs button[data-tab="miner"]');
-      if (tab) tab.click();
+      if (typeof activateTab === "function") activateTab("miner");
+      else {
+        const tab = document.querySelector('nav.tabs button[data-tab="miner"]');
+        if (tab) tab.click();
+      }
       document.getElementById("panel-dry-run")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
@@ -5459,23 +6162,299 @@
       if (/^whatsminer/i.test(t)) return t;
       return "Whatsminer " + t;
     }
-    function updateBrandDevices(router, miner) {
-      const el = document.getElementById("brand-devices");
-      if (!el) return;
-      el.textContent = fmtRouterBrand(router) + " · " + fmtMinerBrand(miner);
-      // document title
+    const INFO_CACHE_KEY = "poolheat_wm_info_cache";
+
+    function restoreInfoCache() {
       try {
-        document.title =
-          "poolheat_wM · " + fmtRouterBrand(router) + " · " + fmtMinerBrand(miner);
+        const raw = localStorage.getItem(INFO_CACHE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (_) {
+        return null;
+      }
+    }
+    /** Persist full Info snapshot (models, versions, boards, resources). */
+    function saveFullInfoCache(body) {
+      if (!body || body.ok === false) return;
+      try {
+        const router = body.router || {};
+        const miner = body.miner || {};
+        const ph = body.poolheat || {};
+        const brandText = fmtRouterBrand(router) + " · " + fmtMinerBrand(miner);
+        localStorage.setItem(
+          INFO_CACHE_KEY,
+          JSON.stringify({
+            brandText,
+            router,
+            miner,
+            resources: body.resources || {},
+            poolheat: ph,
+            version: ph.version || null,
+            info_ts: body.ts || body.cached_at || null,
+            ts: Date.now(),
+            // full body for paint-from-cache
+            body: {
+              ok: true,
+              ts: body.ts || body.cached_at,
+              router,
+              miner,
+              resources: body.resources || {},
+              poolheat: ph,
+            },
+          })
+        );
+      } catch (_) { /* ignore quota */ }
+    }
+    function updateBrandDevices(router, miner, version) {
+      const el = document.getElementById("brand-devices");
+      const brandText = fmtRouterBrand(router) + " · " + fmtMinerBrand(miner);
+      if (el) el.textContent = brandText;
+      try {
+        document.title = "poolheat_WM · " + brandText;
       } catch (_) { /* ignore */ }
+      if (version) setFooterVersion(version);
+    }
+    /** Paint Info tab + header/footer from a system/info payload. */
+    function applySystemInfoToUI(body, opts) {
+      opts = opts || {};
+      if (!body || body.ok === false) return false;
+      const r = body.router || {};
+      const m = body.miner || {};
+      const resrc = body.resources || {};
+      const ph = body.poolheat || {};
+      const fromCache = !!opts.fromCache;
+
+      updateBrandDevices(r, m, ph.version);
+      renderUpdateCheck(lastUpdateCheck, ph);
+
+      const tsEl = document.getElementById("info-ts");
+      if (tsEl) {
+        // silent — no «из кэша / обновлено» labels
+        tsEl.textContent = "";
+      }
+
+      setTxt("info-router-model", r.model || r.device_tree_model || "—");
+      setTxt(
+        "info-router-code",
+        (r.model_code ? r.model_code : "KN-—") +
+          (r.vendor ? " · " + r.vendor : "")
+      );
+      setTxt("info-router-os", r.os_title || "—");
+      setTxt(
+        "info-router-release",
+        r.os_release ? "release " + r.os_release : "release —"
+      );
+      setTxt(
+        "info-router-host",
+        (r.hostname || "—") + (r.arch ? " · " + r.arch : "")
+      );
+      setTxt(
+        "info-router-hw",
+        r.hw_version ? "hw " + r.hw_version : r.device_tree_model || "hw —"
+      );
+
+      setTxt("info-miner-type", m.miner_type || "—");
+      setTxt(
+        "info-miner-platform",
+        m.platform ? "platform " + m.platform : "platform —"
+      );
+      setTxt("info-miner-fw", m.fw_ver || "—");
+      setTxt("info-miner-api", m.api_ver ? "api " + m.api_ver : "api —");
+      setTxt("info-miner-host", m.host || "—");
+      setTxt("info-miner-mac", m.mac ? "mac " + m.mac : "mac —");
+      setTxt(
+        "info-miner-sn",
+        m.minersn || (m.ok ? "не задан" : m.miner_type || m.mac ? "не задан" : "—")
+      );
+      setTxt("info-psu-sn", m.powersn || "—");
+      setTxt(
+        "info-psu-model",
+        m.psu_model
+          ? "model " +
+              m.psu_model +
+              (m.psu_hw_version ? " · hw " + m.psu_hw_version : "")
+          : "model —"
+      );
+      setTxt("info-miner-chip", m.chip || "—");
+      const errEl = document.getElementById("info-miner-err");
+      if (errEl) {
+        if (m.error && !fromCache) {
+          errEl.hidden = false;
+          errEl.textContent = "майнер: " + m.error;
+          errEl.style.color = "var(--warn)";
+        } else if (fromCache) {
+          errEl.hidden = true;
+          errEl.textContent = "";
+        } else {
+          errEl.hidden = true;
+          errEl.textContent = "";
+        }
+      }
+
+      const tbody = document.getElementById("info-boards-body");
+      if (tbody) {
+        const boards = Array.isArray(m.boards) ? m.boards : [];
+        if (!boards.length) {
+          tbody.innerHTML =
+            '<tr><td colspan="5" style="color:var(--muted)">' +
+            (fromCache ? "нет в кэше" : "нет данных") +
+            "</td></tr>";
+        } else {
+          tbody.innerHTML = boards
+            .map((b) => {
+              const temp =
+                b.temp_c != null && Number.isFinite(Number(b.temp_c))
+                  ? Number(b.temp_c).toFixed(1)
+                  : "—";
+              return (
+                "<tr>" +
+                '<td style="text-align:center">' +
+                (b.slot != null ? b.slot : "—") +
+                "</td>" +
+                '<td style="text-align:center;font-family:ui-monospace,monospace;font-size:0.82rem">' +
+                (b.pcb_sn || "—") +
+                "</td>" +
+                '<td style="text-align:center;font-size:0.78rem;word-break:break-all">' +
+                (b.chip_data || "—") +
+                "</td>" +
+                '<td style="text-align:center">' +
+                temp +
+                "</td>" +
+                '<td style="text-align:center">' +
+                (b.effective_chips != null ? b.effective_chips : "—") +
+                "</td>" +
+                "</tr>"
+              );
+            })
+            .join("");
+        }
+      }
+
+      const mem = resrc.memory || {};
+      if (mem.total_b) {
+        setTxt(
+          "info-ram",
+          fmtBytes(mem.used_b) +
+            " / " +
+            fmtBytes(mem.total_b) +
+            (mem.used_pct != null ? " · " + mem.used_pct + "%" : "")
+        );
+        setTxt(
+          "info-ram-hint",
+          mem.available_b != null
+            ? "available " + fmtBytes(mem.available_b)
+            : "available —"
+        );
+      } else if (!fromCache) {
+        setTxt("info-ram", "—");
+        setTxt("info-ram-hint", "available —");
+      }
+      if (resrc.uptime_sec != null || !fromCache) {
+        setTxt("info-uptime", fmtUptime(resrc.uptime_sec));
+      }
+      if (resrc.history_db_b != null || !fromCache) {
+        setTxt("info-db-size", fmtBytes(resrc.history_db_b));
+        setTxt("info-db-path", resrc.history_db_path || "—");
+      }
+
+      const disksEl = document.getElementById("info-disks");
+      if (disksEl) {
+        const disks = Array.isArray(resrc.disks) ? resrc.disks : [];
+        if (disks.length) {
+          disksEl.innerHTML = disks
+            .map((d) => {
+              const pct = d.used_pct != null ? d.used_pct + "%" : "—";
+              const free = fmtBytes(d.free_b);
+              const total = fmtBytes(d.total_b);
+              const bar =
+                d.used_pct != null
+                  ? Math.max(0, Math.min(100, Number(d.used_pct)))
+                  : 0;
+              const color =
+                bar >= 90
+                  ? "var(--danger, #e55)"
+                  : bar >= 75
+                    ? "var(--warn)"
+                    : "var(--ok)";
+              return (
+                '<div class="metric" style="margin:0">' +
+                "<label>" +
+                (d.label || d.path) +
+                " · свободно " +
+                free +
+                " / " +
+                total +
+                " · " +
+                pct +
+                "</label>" +
+                '<div style="height:6px;border-radius:4px;background:var(--border,rgba(255,255,255,0.08));margin-top:6px;overflow:hidden">' +
+                '<div style="height:100%;width:' +
+                bar +
+                "%;background:" +
+                color +
+                '"></div></div>' +
+                '<div class="hint" style="margin-top:4px">' +
+                (d.path || "") +
+                "</div></div>"
+              );
+            })
+            .join("");
+        } else if (!fromCache) {
+          disksEl.innerHTML =
+            '<p style="font-size:0.8rem;color:var(--muted);margin:0">диски: нет данных</p>';
+        }
+      }
+      return true;
+    }
+    function paintInfoFromLocalCache() {
+      const cached = restoreInfoCache();
+      if (!cached) return false;
+      if (cached.brandText) {
+        const el = document.getElementById("brand-devices");
+        if (el) el.textContent = cached.brandText;
+      }
+      if (cached.version) setFooterVersion(cached.version);
+      const body =
+        cached.body ||
+        (cached.router || cached.miner
+          ? {
+              ok: true,
+              ts: cached.info_ts,
+              router: cached.router || {},
+              miner: cached.miner || {},
+              resources: cached.resources || {},
+              poolheat: cached.poolheat || { version: cached.version },
+            }
+          : null);
+      if (body) {
+        applySystemInfoToUI(body, { fromCache: true });
+        return true;
+      }
+      return false;
     }
     async function loadHeaderIdentity(force) {
       if (headerIdentityLoaded && !force) return;
+      // 1) localStorage full Info (instant)
+      paintInfoFromLocalCache();
+      // 2) server Info cache
+      try {
+        const resC = await fetch("/api/system/info?cached=1", { cache: "no-store" });
+        if (resC.ok) {
+          const bodyC = await resC.json();
+          if (bodyC && bodyC.ok !== false) {
+            applySystemInfoToUI(bodyC, { fromCache: true });
+            saveFullInfoCache(bodyC);
+            headerIdentityLoaded = true;
+          }
+        }
+      } catch (_) { /* ignore */ }
+      // 3) live refresh
       try {
         const res = await fetch("/api/system/info", { cache: "no-store" });
         const body = await res.json();
         if (!res.ok || body.ok === false) return;
-        updateBrandDevices(body.router || {}, body.miner || {});
+        applySystemInfoToUI(body, { fromCache: false });
+        saveFullInfoCache(body);
         headerIdentityLoaded = true;
       } catch (_) { /* ignore */ }
     }
@@ -5632,205 +6611,69 @@
         }
       }
       if (notesEl) {
-        if (chk.notes) {
-          notesEl.style.display = "";
-          notesEl.style.color = "var(--muted)";
-          notesEl.textContent = "Release notes: " + chk.notes.slice(0, 400);
+        const bodyEl = document.getElementById("info-update-notes-body");
+        const raw = (chk.notes || "").replace(/\r\n/g, "\n").trim();
+        if (raw) {
+          notesEl.hidden = false;
+          notesEl.classList.add("is-visible");
+          // keep newlines; strip a leading single "# " title only if pure markdown noise
+          if (bodyEl) bodyEl.textContent = raw;
         } else {
-          notesEl.style.display = "none";
-          notesEl.textContent = "";
+          notesEl.hidden = true;
+          notesEl.classList.remove("is-visible");
+          if (bodyEl) bodyEl.textContent = "";
         }
       }
+      if (chk.current_version) setFooterVersion(chk.current_version);
     }
 
-    async function loadSystemInfo() {
+    function setFooterVersion(ver) {
+      const el = document.getElementById("footer-ver");
+      if (!el) return;
+      if (ver == null || ver === "") return; // keep cached / default, never "—"
+      el.textContent = String(ver).replace(/^v/i, "");
+    }
+
+    async function loadSystemInfo(opts) {
+      opts = opts || {};
+      const forceLive = opts.forceLive !== false;
       const tsEl = document.getElementById("info-ts");
-      if (tsEl) tsEl.textContent = "загрузка…";
+
+      // 1) instant paint from localStorage
+      const hadLocal = paintInfoFromLocalCache();
+
+      // 2) server cache (models/versions from last successful update)
+      try {
+        const resC = await fetch("/api/system/info?cached=1", { cache: "no-store" });
+        if (resC.ok) {
+          const bodyC = await resC.json();
+          if (bodyC && bodyC.ok !== false) {
+            applySystemInfoToUI(bodyC, { fromCache: true });
+            saveFullInfoCache(bodyC);
+            headerIdentityLoaded = true;
+          }
+        }
+      } catch (_) { /* ignore */ }
+
+      if (!forceLive) return;
+
+      // 3) live refresh → rewrite cache
       try {
         const res = await fetch("/api/system/info", { cache: "no-store" });
         const body = await res.json();
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || ("HTTP " + res.status));
         }
-        const r = body.router || {};
-        const m = body.miner || {};
-        const resrc = body.resources || {};
-        const ph = body.poolheat || {};
-
-        updateBrandDevices(r, m);
+        applySystemInfoToUI(body, { fromCache: false });
+        saveFullInfoCache(body);
         headerIdentityLoaded = true;
-        renderUpdateCheck(lastUpdateCheck, ph);
-        setTxt("info-ts", "обновлено: " + (body.ts || "—"));
-        setTxt(
-          "info-router-model",
-          r.model || r.device_tree_model || "—"
-        );
-        setTxt(
-          "info-router-code",
-          (r.model_code ? r.model_code : "KN-—") +
-            (r.vendor ? " · " + r.vendor : "")
-        );
-        setTxt("info-router-os", r.os_title || "—");
-        setTxt(
-          "info-router-release",
-          r.os_release ? "release " + r.os_release : "release —"
-        );
-        setTxt(
-          "info-router-host",
-          (r.hostname || "—") + (r.arch ? " · " + r.arch : "")
-        );
-        setTxt(
-          "info-router-hw",
-          r.hw_version ? "hw " + r.hw_version : r.device_tree_model || "hw —"
-        );
-
-        setTxt("info-miner-type", m.miner_type || "—");
-        setTxt(
-          "info-miner-platform",
-          m.platform ? "platform " + m.platform : "platform —"
-        );
-        setTxt("info-miner-fw", m.fw_ver || "—");
-        setTxt("info-miner-api", m.api_ver ? "api " + m.api_ver : "api —");
-        setTxt("info-miner-host", m.host || "—");
-        setTxt("info-miner-mac", m.mac ? "mac " + m.mac : "mac —");
-        setTxt(
-          "info-miner-sn",
-          m.minersn || (m.ok ? "не задан" : "—")
-        );
-        setTxt("info-psu-sn", m.powersn || "—");
-        setTxt(
-          "info-psu-model",
-          m.psu_model
-            ? "model " +
-                m.psu_model +
-                (m.psu_hw_version ? " · hw " + m.psu_hw_version : "")
-            : "model —"
-        );
-        setTxt("info-miner-chip", m.chip || "—");
-        const errEl = document.getElementById("info-miner-err");
-        if (errEl) {
-          if (m.error) {
-            errEl.hidden = false;
-            errEl.textContent = "майнер: " + m.error;
-            errEl.style.color = "var(--warn)";
-          } else {
-            errEl.hidden = true;
-            errEl.textContent = "";
-          }
-        }
-
-        const tbody = document.getElementById("info-boards-body");
-        if (tbody) {
-          const boards = Array.isArray(m.boards) ? m.boards : [];
-          if (!boards.length) {
-            tbody.innerHTML =
-              '<tr><td colspan="5" style="color:var(--muted)">нет данных</td></tr>';
-          } else {
-            tbody.innerHTML = boards
-              .map((b) => {
-                const temp =
-                  b.temp_c != null && Number.isFinite(Number(b.temp_c))
-                    ? Number(b.temp_c).toFixed(1)
-                    : "—";
-                return (
-                  "<tr>" +
-                  "<td>" +
-                  (b.slot != null ? b.slot : "—") +
-                  "</td>" +
-                  "<td style=\"font-family:ui-monospace,monospace;font-size:0.82rem\">" +
-                  (b.pcb_sn || "—") +
-                  "</td>" +
-                  "<td style=\"font-size:0.78rem;word-break:break-all\">" +
-                  (b.chip_data || "—") +
-                  "</td>" +
-                  "<td>" +
-                  temp +
-                  "</td>" +
-                  "<td>" +
-                  (b.effective_chips != null ? b.effective_chips : "—") +
-                  "</td>" +
-                  "</tr>"
-                );
-              })
-              .join("");
-          }
-        }
-
-        const mem = resrc.memory || {};
-        if (mem.total_b) {
-          setTxt(
-            "info-ram",
-            fmtBytes(mem.used_b) + " / " + fmtBytes(mem.total_b) +
-              (mem.used_pct != null ? " · " + mem.used_pct + "%" : "")
-          );
-          setTxt(
-            "info-ram-hint",
-            mem.available_b != null
-              ? "available " + fmtBytes(mem.available_b)
-              : "available —"
-          );
-        } else {
-          setTxt("info-ram", "—");
-          setTxt("info-ram-hint", "available —");
-        }
-        setTxt("info-uptime", fmtUptime(resrc.uptime_sec));
-        setTxt("info-db-size", fmtBytes(resrc.history_db_b));
-        setTxt("info-db-path", resrc.history_db_path || "—");
-
-        const disksEl = document.getElementById("info-disks");
-        if (disksEl) {
-          const disks = Array.isArray(resrc.disks) ? resrc.disks : [];
-          if (!disks.length) {
-            disksEl.innerHTML =
-              '<p style="font-size:0.8rem;color:var(--muted);margin:0">диски: нет данных</p>';
-          } else {
-            disksEl.innerHTML = disks
-              .map((d) => {
-                const pct = d.used_pct != null ? d.used_pct + "%" : "—";
-                const free = fmtBytes(d.free_b);
-                const total = fmtBytes(d.total_b);
-                const bar =
-                  d.used_pct != null
-                    ? Math.max(0, Math.min(100, Number(d.used_pct)))
-                    : 0;
-                const color =
-                  bar >= 90
-                    ? "var(--danger, #e55)"
-                    : bar >= 75
-                      ? "var(--warn)"
-                      : "var(--ok)";
-                return (
-                  '<div class="metric" style="margin:0">' +
-                  "<label>" +
-                  (d.label || d.path) +
-                  " · свободно " +
-                  free +
-                  " / " +
-                  total +
-                  " · " +
-                  pct +
-                  "</label>" +
-                  '<div style="height:6px;border-radius:4px;background:var(--border,rgba(255,255,255,0.08));margin-top:6px;overflow:hidden">' +
-                  '<div style="height:100%;width:' +
-                  bar +
-                  "%;background:" +
-                  color +
-                  '"></div></div>' +
-                  '<div class="hint" style="margin-top:4px">' +
-                  (d.path || "") +
-                  "</div></div>"
-                );
-              })
-              .join("");
-          }
-        }
       } catch (e) {
-        if (tsEl) tsEl.textContent = "ошибка: " + e.message;
-        toastError("Info: " + e.message);
+        // keep cached paint; toast only if no cache at all
+        if (!hadLocal) toastError("Info: " + e.message);
       }
     }
     document.getElementById("btn-info-refresh")?.addEventListener("click", () => {
-      void loadSystemInfo();
+      void loadSystemInfo({ forceLive: true });
     });
     document.getElementById("btn-update-check")?.addEventListener("click", async () => {
       const btn = document.getElementById("btn-update-check");
@@ -5855,7 +6698,7 @@
           toastWarn("Доступно обновление " + (body.latest_version || ""), 5000);
         } else if (body.status === "up_to_date") {
           toastSuccess(
-            "poolheat_wM актуален · " + (body.current_version || ""),
+            "poolheat_WM актуален · " + (body.current_version || ""),
             3500
           );
         } else if (body.status === "local_ahead") {
@@ -5951,6 +6794,17 @@
     function fmtWxTemp(v) {
       if (v == null || !Number.isFinite(Number(v))) return "—";
       return Number(v).toFixed(1);
+    }
+    /** 2026-08-03T13:45 → 03.08.2026 13:45 */
+    function fmtWxObserved(s) {
+      if (s == null || s === "") return "";
+      const m = String(s).trim().match(
+        /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/
+      );
+      if (m) {
+        return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5];
+      }
+      return String(s);
     }
 
     function renderWeatherDash(w) {
@@ -6204,6 +7058,11 @@
       const en = document.getElementById("wx-enabled");
       const st = document.getElementById("wx-status");
       if (en && cfg) en.checked = !!cfg.enabled;
+      const intEl = document.getElementById("wx-interval-min");
+      if (intEl && cfg && cfg.refresh_interval_sec != null) {
+        const mins = Math.max(1, Math.round(Number(cfg.refresh_interval_sec) / 60));
+        if (!window.__wxIntervalDirty) intEl.value = mins;
+      }
       if (city && cfg) {
         city.textContent = cfg.city || "—";
       }
@@ -6212,6 +7071,10 @@
         if (cfg.admin1) parts.push(cfg.admin1);
         if (cfg.country) parts.push(cfg.country);
         parts.push(Number(cfg.latitude).toFixed(3) + ", " + Number(cfg.longitude).toFixed(3));
+        const ri = Number(cfg.refresh_interval_sec);
+        if (Number.isFinite(ri) && ri > 0) {
+          parts.push("обновл. " + (ri >= 60 ? Math.round(ri / 60) + " мин" : ri + " с"));
+        }
         meta.textContent = parts.join(" · ");
       }
       if (st) {
@@ -6219,7 +7082,7 @@
           st.textContent =
             "сейчас: " + fmtWxTemp(w.temp_c) + " °C" +
             (w.weather_text ? " · " + w.weather_text : "") +
-            (w.observed_at ? " · " + w.observed_at : "");
+            (w.observed_at ? " · " + fmtWxObserved(w.observed_at) : "");
         } else if (w && w.error) {
           st.textContent = "ошибка погоды: " + w.error;
         } else {
@@ -6257,6 +7120,7 @@
         weatherCfg = body.config;
         renderPresets(body.presets || []);
         renderWeatherSettings(body.config, null);
+        scheduleWeatherRefresh();
         return body.config;
       } catch (e) {
         const st = document.getElementById("wx-status");
@@ -6279,6 +7143,30 @@
       }
     }
 
+    function weatherIntervalSecFromUI() {
+      const el = document.getElementById("wx-interval-min");
+      let mins = el ? parseFloat(el.value) : 10;
+      if (!Number.isFinite(mins) || mins < 1) mins = 10;
+      if (mins > 1440) mins = 1440;
+      return Math.round(mins * 60);
+    }
+    let weatherRefreshTimer = null;
+    function scheduleWeatherRefresh() {
+      if (weatherRefreshTimer) {
+        clearInterval(weatherRefreshTimer);
+        weatherRefreshTimer = null;
+      }
+      let sec = 600;
+      if (weatherCfg && weatherCfg.refresh_interval_sec != null) {
+        sec = Number(weatherCfg.refresh_interval_sec);
+      }
+      if (!Number.isFinite(sec) || sec < 60) sec = 60;
+      if (sec > 86400) sec = 86400;
+      weatherRefreshTimer = setInterval(() => {
+        loadWeather(false).then(() => updateHeatLoss());
+      }, sec * 1000);
+    }
+
     async function saveWeatherCity(place, extra) {
       const payload = {
         enabled: document.getElementById("wx-enabled")
@@ -6290,6 +7178,7 @@
         latitude: place.latitude,
         longitude: place.longitude,
         timezone: place.timezone || "auto",
+        refresh_interval_sec: weatherIntervalSecFromUI(),
       };
       if (extra) Object.assign(payload, extra);
       try {
@@ -6302,8 +7191,10 @@
         if (!body.ok) throw new Error(body.error || "save fail");
         weatherCfg = body.config;
         weatherData = body.weather;
+        window.__wxIntervalDirty = false;
         renderWeatherSettings(body.config, body.weather);
         renderWeatherDash(body.weather);
+        scheduleWeatherRefresh();
         const box = document.getElementById("wx-results");
         if (box) { box.hidden = true; box.innerHTML = ""; }
         toastSuccess("Город: " + (body.config.city || "") +
@@ -6353,6 +7244,45 @@
     }
 
     document.getElementById("btn-wx-search")?.addEventListener("click", searchWeatherCities);
+    document.getElementById("wx-interval-min")?.addEventListener("input", () => {
+      window.__wxIntervalDirty = true;
+    });
+    document.getElementById("btn-wx-interval-save")?.addEventListener("click", async () => {
+      if (!weatherCfg) {
+        toastWarn("Сначала загрузите/выберите город");
+        return;
+      }
+      try {
+        const res = await fetch("/api/weather/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enabled: document.getElementById("wx-enabled")
+              ? document.getElementById("wx-enabled").checked
+              : true,
+            city: weatherCfg.city,
+            country: weatherCfg.country || "",
+            admin1: weatherCfg.admin1 || "",
+            latitude: weatherCfg.latitude,
+            longitude: weatherCfg.longitude,
+            timezone: weatherCfg.timezone || "auto",
+            refresh_interval_sec: weatherIntervalSecFromUI(),
+          }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        weatherCfg = body.config;
+        weatherData = body.weather || weatherData;
+        window.__wxIntervalDirty = false;
+        renderWeatherSettings(body.config, body.weather || weatherData);
+        if (body.weather) renderWeatherDash(body.weather);
+        scheduleWeatherRefresh();
+        const mins = Math.round((body.config.refresh_interval_sec || 600) / 60);
+        toastSuccess("Интервал погоды: " + mins + " мин");
+      } catch (e) {
+        toastError("Интервал погоды: " + e.message);
+      }
+    });
     document.getElementById("wx-search")?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -6561,7 +7491,9 @@
     try {
       if (!sessionStorage.getItem("poolheat_toast_hi")) {
         sessionStorage.setItem("poolheat_toast_hi", "1");
-        toastInfo("poolheat_wM · наведите на T_crit, dry_run, upward… — есть подсказки", 4200);
+        toastInfo("poolheat_WM · наведите на T_crit, dry_run, upward… — есть подсказки", 4200);
+        // instant models/versions from last Info cache, then refresh
+        paintInfoFromLocalCache();
         void loadHeaderIdentity(true);
       }
     } catch (_) { /* ignore */ }
@@ -6588,13 +7520,16 @@
     loadHistoryCharts(); // charts on Обзор
     loadMinerErrorLog();
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
-    Promise.all([loadPoolConfig(), loadWeatherConfig().then(() => loadWeather(false))])
+    Promise.all([
+      loadPoolConfig(),
+      loadWeatherConfig().then(() => loadWeather(false)).then(() => scheduleWeatherRefresh()),
+    ])
       .then(() => {
         updateHeatLoss();
         if (typeof recompute === "function") recompute();
       })
       .catch(() => { updateHeatLoss(); });
-    setInterval(() => { loadWeather(false).then(() => updateHeatLoss()); }, 10 * 60 * 1000);
+    // weather poll interval from config (default 10 min) — see scheduleWeatherRefresh()
     // refresh error journal periodically (collector may add rows)
     setInterval(() => { loadMinerErrorLog(); }, 60 * 1000);
   </script>

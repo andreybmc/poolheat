@@ -1,104 +1,64 @@
-# poolheat на Keenetic Peak (OPKG / Entware)
+# poolheat_WM на Keenetic (установка с GitHub)
 
-Да, размещать можно **пакетом Entware (`.ipk`)** — это как раз то, что Keenetic называет OPKG.
+Репозиторий: **https://github.com/andreybmc/poolheat**  
+Версия: см. файл [`VERSION`](./VERSION) в корне (сейчас **0.3.0**).
 
-## Установка с GitHub (рекомендуется)
+Контроллер Whatsminer (pool heat) ставится в **Entware** на Peak / совместимый Keenetic.  
+UI: `http://<ip-роутера>:8787/`
 
-Репозиторий: `https://github.com/andreybmc/poolheat`  
-(если URL другой — подставьте свой после `gh repo create`)
+---
 
-На роутере (Entware уже стоит):
+## 1. Что нужно
+
+| Требование | Комментарий |
+|------------|-------------|
+| OPKG / Entware | Компонент OPKG в прошивке + Entware (USB или internal storage) |
+| Сеть | `opkg` и `git`/`wget` до GitHub; LAN до майнера `:4028` |
+| Python 3 | `opkg install python3 python3-pip` |
+| Зависимости API | `pycryptodome`, `passlib` (ставит install-скрипт) |
+
+Installer Entware для Peak (aarch64), ориентир:
+
+```text
+https://bin.entware.net/aarch64-k3.10/installer/aarch64-installer.tar.gz
+```
+
+(точный URL — [документация Keenetic OPKG](https://support.keenetic.com/) для вашей модели.)
+
+---
+
+## 2. Первая установка с GitHub (рекомендуется)
+
+SSH на роутер (shell Entware):
 
 ```sh
 opkg update
 opkg install git git-http ca-certificates python3 python3-pip
 
 cd /opt
-# если каталог уже есть: cd /opt/poolheat && git pull
+# если каталог уже есть — см. «Обновление» ниже
 git clone https://github.com/andreybmc/poolheat.git
 cd poolheat
 sh packaging/entware/install-from-git.sh
 ```
 
-Обновление:
+Скрипт:
 
-```sh
-cd /opt/poolheat
-git pull
-sh packaging/entware/install-from-git.sh
-```
+- копирует `ui-demo/serve.py` → `/opt/lib/poolheat/serve.py`
+- копирует `ui-demo/index.html` → `/opt/share/poolheat/www/index.html`
+- ставит `VERSION`, launcher `poolheatd`, init `S99poolheat*`
+- **не** перезаписывает существующий `/opt/etc/poolheat/config.json`
+- ставит Python-зависимости и перезапускает сервис
 
-UI: `http://<ip-keenetic>:8787/`  
-Конфиг: `/opt/etc/poolheat/config.json`
-
-## Схема
-
-```
-Keenetic Peak (aarch64 + Entware)
-  /opt/bin/poolheatd              → launcher
-  /opt/lib/poolheat/serve.py      → сервис
-  /opt/share/poolheat/www/        → UI
-  /opt/etc/poolheat/config.json   → miner IP, port, password
-  /opt/var/poolheat/              → history.db, logs
-  :8787                           → Web UI (LAN)
-         │
-         └── TCP 4028 ──► Whatsminer M63 (192.168.1.10)
-```
-
-## 0. Что нужно на Peak
-
-1. Компонент **OPKG** в прошивке Keenetic.
-2. **Entware** на USB **или** во встроенную storage (KeeneticOS 3.7+).
-3. Для Peak / aarch64 installer обычно:
+Открыть UI:
 
 ```text
-https://bin.entware.net/aarch64-k3.10/installer/aarch64-installer.tar.gz
+http://192.168.1.1:8787/
 ```
 
-(точный URL — из [документации Keenetic OPKG](https://support.keenetic.com/) под вашу модель)
+(подставьте IP вашего Keenetic)
 
-4. После Entware:
-
-```sh
-opkg update
-opkg install python3 python3-pip
-```
-
-## 1. Собрать `.ipk` (на Mac)
-
-```bash
-cd ~/Documents/poolheat/packaging/entware
-chmod +x build-ipk.sh
-./build-ipk.sh
-```
-
-Готовый файл:
-
-```text
-~/Documents/poolheat/dist/poolheat_0.1.0-1_aarch64-3.10.ipk
-```
-
-Если нет `ar`, скрипт положит `.tar.gz` — тогда ручная установка (ниже).
-
-## 2. Установка на роутер
-
-Скопировать ipk на роутер (USB / scp) и:
-
-```sh
-opkg install /path/to/poolheat_0.1.0-1_aarch64-3.10.ipk
-```
-
-Или:
-
-```sh
-opkg install python3 python3-pip
-pip3 install pycryptodome passlib
-opkg install ./poolheat_0.1.0-1_aarch64-3.10.ipk
-```
-
-`postinst` сам поставит crypto-зависимости и попробует стартовать сервис.
-
-## 3. Конфиг
+### Конфиг майнера
 
 ```sh
 vi /opt/etc/poolheat/config.json
@@ -118,25 +78,78 @@ vi /opt/etc/poolheat/config.json
 
 ```sh
 /opt/etc/init.d/S99poolheat-standalone restart
-# или
+# или, если есть rc.func:
 /opt/etc/init.d/S99poolheat restart
 ```
 
-## 4. Открыть UI
+---
 
-С ПК в LAN:
+## 3. Обновление
 
-```text
-http://<ip-keenetic>:8787/
+### A) Через SSH (git)
+
+```sh
+cd /opt/poolheat
+git pull
+sh packaging/entware/install-from-git.sh
 ```
 
-IP роутера — обычно `192.168.1.1`.
+### B) Через Web UI (без SSH)
 
-### Firewall
+Начиная с **0.2+** (и **0.3.0**):
 
-Если UI не открывается — в Keenetic может понадобиться разрешить входящий TCP **8787** на LAN (или OPKG «в интернет-центр» / firewall rules). Для LAN-only часто хватает bind `0.0.0.0`.
+1. Вкладка **Инфо**
+2. **Проверить обновления** — сравнение локального `VERSION` с GitHub:
+   - latest **Release**
+   - **tags** (`v0.3.0` …)
+   - файл **`VERSION`** на ветке `main`
+3. **Установить** — скачивается tarball с GitHub (`codeload` / archive), обновляются `serve.py`, UI, `VERSION`, сервис перезапускается
 
-**Не** пробрасывайте 8787 в интернет без auth/VPN.
+Конфиг `/opt/etc/poolheat/` и данные `/opt/var/poolheat/` **сохраняются**.
+
+Если кнопка «Установить» неактивна:
+
+- на GitHub должен быть свежий **`VERSION`** / **tag** / **Release** выше локальной версии;
+- роутер должен достучаться до `api.github.com` и `codeload.github.com` (или `github.com`).
+
+### C) Конкретный tag
+
+```sh
+cd /opt/poolheat
+git fetch --tags
+git checkout v0.3.0
+sh packaging/entware/install-from-git.sh
+```
+
+Или в UI после «Проверить» — установка выбранного ref (latest / tag / branch).
+
+---
+
+## 4. Схема файлов
+
+```text
+Keenetic (Entware)
+  /opt/bin/poolheatd                 launcher
+  /opt/lib/poolheat/serve.py         backend
+  /opt/lib/poolheat/VERSION          installed version
+  /opt/share/poolheat/www/index.html UI
+  /opt/etc/poolheat/config.json      miner IP, password, bind
+  /opt/var/poolheat/                 history.db, logs, zone_map_config.json
+  :8787  → Web UI (LAN only recommended)
+         └── TCP 4028 → Whatsminer
+```
+
+Клон репозитория (для git-обновлений):
+
+```text
+/opt/poolheat/                       git clone
+  ui-demo/                           исходники
+  packaging/entware/install-from-git.sh
+  VERSION
+  KEENETIC.md
+```
+
+---
 
 ## 5. Управление сервисом
 
@@ -146,49 +159,90 @@ IP роутера — обычно `192.168.1.1`.
 /opt/etc/init.d/S99poolheat-standalone stop
 /opt/etc/init.d/S99poolheat-standalone restart
 
-# лог
 tail -f /opt/var/poolheat/poolheat.log
 ```
 
-## 6. Ручная установка без `.ipk` (если ar/ipk не собрался)
+Проверка версии:
+
+```sh
+cat /opt/lib/poolheat/VERSION
+# или
+wget -qO- http://127.0.0.1:8787/api/version
+```
+
+---
+
+## 6. Альтернатива: `.ipk` пакет
+
+На Mac/PC из клона репо:
+
+```bash
+cd packaging/entware
+chmod +x build-ipk.sh
+./build-ipk.sh
+```
+
+Артефакты в `dist/`:
+
+```text
+poolheat_0.3.0-1_aarch64-3.10.ipk
+poolheat-0.3.0-opt.tar.gz
+```
 
 На роутере:
 
 ```sh
-mkdir -p /opt/lib/poolheat /opt/share/poolheat/www /opt/etc/poolheat /opt/var/poolheat /opt/bin
-# скопировать файлы из packaging/entware/opt/ ...
-chmod +x /opt/bin/poolheatd /opt/etc/init.d/S99poolheat-standalone
 opkg install python3 python3-pip
-pip3 install pycryptodome passlib
-/opt/etc/init.d/S99poolheat-standalone start
+opkg install /path/to/poolheat_0.3.0-1_aarch64-3.10.ipk
 ```
 
-## 7. Ограничения Peak
+`postinst` поднимает зависимости и сервис.
+
+---
+
+## 7. Firewall / безопасность
+
+- UI на **8787** — только LAN (или VPN / WireGuard).
+- **Не** пробрасывайте 8787 в интернет без auth.
+- Смените `api_password` майнера и не держите Dry Run выкл. без thr-настроек.
+- Рекомендуется 24–48h **Dry Run** перед live writes.
+
+---
+
+## 8. Ограничения Peak
 
 | Тема | Замечание |
 |------|-----------|
-| CPU/RAM | Один poller + лёгкий UI — ок; не 10 майнеров |
-| USB | Если Entware на USB — SPOF; лучше internal storage |
-| Python | Тяжелее Go-бинаря; для MVP нормально |
+| CPU/RAM | Один poller + UI — нормально |
+| USB Entware | SPOF при отвале диска; лучше internal storage |
 | Write API | Нужны `pycryptodome` + `passlib` |
-| power_pct | Temporary / LOW_HASH — предпочтительнее mode |
+| GitHub update | Нужен исходящий HTTPS с роутера |
 
-## 8. Дальше (production)
+---
 
-1. Сменить `api_password` и UI token.
-2. Только LAN / WireGuard / Keenetic Cloud.
-3. 48h `dry_run` перед thrashing writes.
-4. Опционально: переписать сервис на **static Go arm64** — один файл, без pip.
+## 9. Быстрый чеклист «с нуля»
 
-## Файлы в репо
+```sh
+# 1) Entware + пакеты
+opkg update
+opkg install git git-http ca-certificates python3 python3-pip
 
-```text
-Documents/poolheat/
-  ui-demo/                 # разработка на Mac
-  packaging/entware/       # дерево OPKG
-    CONTROL/
-    opt/
-    build-ipk.sh
-  dist/                    # готовый .ipk после сборки
-  KEENETIC.md              # этот runbook
+# 2) Клон и установка
+cd /opt && git clone https://github.com/andreybmc/poolheat.git
+cd poolheat && sh packaging/entware/install-from-git.sh
+
+# 3) Майнер
+vi /opt/etc/poolheat/config.json
+/opt/etc/init.d/S99poolheat-standalone restart
+
+# 4) Браузер
+# http://<keenetic-ip>:8787/
 ```
+
+Обновление позже:
+
+```sh
+cd /opt/poolheat && git pull && sh packaging/entware/install-from-git.sh
+```
+
+или **Инфо → Проверить обновления → Установить** в UI.

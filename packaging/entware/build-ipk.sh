@@ -57,7 +57,7 @@ out.write_bytes(blob)
 # also opt tarball for manual install
 ver_core = Path(sys.argv[1]).parent.parent.joinpath("VERSION")
 # keep tarball name in sync with VERSION when present
-core = "0.2.0"
+core = "0.3.0"
 try:
     root_ver = Path(sys.argv[1]).resolve().parents[1] / "VERSION"
     if root_ver.is_file():
