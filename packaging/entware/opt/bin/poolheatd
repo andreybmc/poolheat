@@ -6,8 +6,8 @@ export POOLHEAT_WWW=/opt/share/poolheat/www
 export POOLHEAT_DATA=/opt/var/poolheat
 export POOLHEAT_CONFIG=/opt/etc/poolheat/config.json
 
-# common Entware site-packages locations
-export PYTHONPATH=/opt/lib/python3.11/site-packages:/opt/lib/python3.10/site-packages:/opt/lib/python3.9/site-packages:$PYTHONPATH
+# Entware site-packages
+export PYTHONPATH=/opt/lib/python3.13/site-packages:/opt/lib/python3.11/site-packages:/opt/lib/python3.10/site-packages:$PYTHONPATH
 
 PY=/opt/bin/python3
 if [ ! -x "$PY" ]; then

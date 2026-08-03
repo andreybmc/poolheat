@@ -14,6 +14,10 @@ mkdir -p /opt/bin /opt/lib/poolheat /opt/share/poolheat/www \
 # app files
 cp -f "$ROOT/ui-demo/serve.py" /opt/lib/poolheat/serve.py
 cp -f "$ROOT/ui-demo/index.html" /opt/share/poolheat/www/index.html
+if [ -f "$ROOT/VERSION" ]; then
+  cp -f "$ROOT/VERSION" /opt/lib/poolheat/VERSION
+  cp -f "$ROOT/VERSION" /opt/share/poolheat/VERSION
+fi
 chmod 755 /opt/lib/poolheat/serve.py
 
 # launcher

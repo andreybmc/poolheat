@@ -1,32 +1,54 @@
 #!/bin/sh
-# Fallback start/stop without Entware rc.func
-# Usage: S99poolheat-standalone {start|stop|restart|status}
+# Fallback start/stop without Entware rc.func / nohup
+# Usage: S99poolheat {start|stop|restart|status}
 
 PIDFILE=/opt/var/run/poolheatd.pid
 BIN=/opt/bin/poolheatd
 LOG=/opt/var/poolheat/poolheat.log
+export PATH=/opt/bin:/opt/sbin:$PATH
 
 start() {
   mkdir -p /opt/var/poolheat /opt/var/run
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    echo "poolheat already running pid=$(cat "$PIDFILE")"
-    return 0
+  if [ -f "$PIDFILE" ]; then
+    old=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+      echo "poolheat already running pid=$old"
+      return 0
+    fi
+    rm -f "$PIDFILE"
   fi
+  # also kill any leftover python serve
+  for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}'); do
+    kill "$p" 2>/dev/null || true
+  done
   echo "starting poolheat..."
-  nohup "$BIN" >>"$LOG" 2>&1 &
+  # busybox: redirect + background, no nohup needed under init
+  "$BIN" >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
-  echo "started pid=$(cat "$PIDFILE") log=$LOG"
+  sleep 1
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "started pid=$(cat "$PIDFILE") log=$LOG"
+  else
+    echo "FAILED to start — see $LOG"
+    tail -20 "$LOG" 2>/dev/null
+    return 1
+  fi
 }
 
 stop() {
   if [ -f "$PIDFILE" ]; then
     pid=$(cat "$PIDFILE")
     kill "$pid" 2>/dev/null
+    # also kill child python if wrapper already exited
+    for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}'); do
+      kill "$p" 2>/dev/null || true
+    done
     rm -f "$PIDFILE"
     echo "stopped $pid"
   else
-    # avoid killall name collision: match wrapper only
-    killall poolheatd 2>/dev/null || true
+    for p in $(ps w 2>/dev/null | grep -E '[p]oolheatd|[s]erve.py' | awk '{print $1}'); do
+      kill "$p" 2>/dev/null || true
+    done
     echo "stopped"
   fi
 }
@@ -35,8 +57,14 @@ status() {
   if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     echo "running pid=$(cat "$PIDFILE")"
   else
-    echo "stopped"
-    return 1
+    # check python process
+    p=$(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}' | head -1)
+    if [ -n "$p" ]; then
+      echo "running pid=$p (no pidfile)"
+    else
+      echo "stopped"
+      return 1
+    fi
   fi
 }
 

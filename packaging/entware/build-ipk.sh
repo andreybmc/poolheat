@@ -55,7 +55,17 @@ blob = (
 )
 out.write_bytes(blob)
 # also opt tarball for manual install
-(out.parent / "poolheat-0.1.0-opt.tar.gz").write_bytes(data)
+ver_core = Path(sys.argv[1]).parent.parent.joinpath("VERSION")
+# keep tarball name in sync with VERSION when present
+core = "0.2.0"
+try:
+    root_ver = Path(sys.argv[1]).resolve().parents[1] / "VERSION"
+    if root_ver.is_file():
+        core = root_ver.read_text(encoding="utf-8").strip().split("-")[0] or core
+except Exception:
+    pass
+tgz = out.parent / ("poolheat-%s-opt.tar.gz" % core)
+tgz.write_bytes(data)
 print("Built:", out, "(%d bytes)" % out.stat().st_size)
-print("Also:", out.parent / "poolheat-0.1.0-opt.tar.gz")
+print("Also:", tgz)
 PY
