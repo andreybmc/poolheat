@@ -132,7 +132,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.0"
+_DEFAULT_APP_VERSION = "0.3.1"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -2220,51 +2220,69 @@ def _is_entware_layout() -> bool:
 
 
 def _restart_poolheat_later() -> None:
+    """
+    Restart after GitHub apply. Must outlive this process: killing serve.py
+    would otherwise abort an in-process restart (or a timed-out foreground
+    poolheatd) and leave the service dead.
+    """
     def _run() -> None:
-        time.sleep(1.5)
-        candidates = [
-            ["/opt/etc/init.d/S99poolheat", "restart"],
-            ["/opt/etc/init.d/S99poolheat", "stop"],
-            ["/opt/etc/init.d/S99poolheat-standalone", "restart"],
-        ]
-        # try restart first
-        for cmd in candidates:
-            try:
-                if not Path(cmd[0]).exists() and not Path(cmd[0]).is_file():
-                    # still try — may be on PATH scripts
-                    pass
-                r = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=20,
-                    check=False,
-                )
-                if r.returncode == 0:
-                    # if we only stopped, start again
-                    if cmd[-1] == "stop":
-                        subprocess.run(
-                            [cmd[0], "start"],
-                            capture_output=True,
-                            text=True,
-                            timeout=20,
-                            check=False,
-                        )
-                    return
-            except Exception:
-                continue
-        # last resort: kill and re-exec (best-effort)
+        time.sleep(1.2)
+        log = "/opt/var/poolheat/poolheat.log"
+        # Detached shell in a new session — survives kill of current serve.py
+        script = f"""
+exec >>{log} 2>&1
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart begin"
+sleep 1
+# stop any serve.py / tracked pid
+if [ -x /opt/etc/init.d/S99poolheat-standalone ]; then
+  /opt/etc/init.d/S99poolheat-standalone stop || true
+elif [ -x /opt/etc/init.d/S99poolheat ]; then
+  /opt/etc/init.d/S99poolheat stop || true
+fi
+for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{{print $1}}'); do
+  kill "$p" 2>/dev/null || true
+done
+sleep 1
+# start (prefer standalone — no rc.func / PROCS=poolheatd mismatch)
+ok=0
+if [ -x /opt/etc/init.d/S99poolheat-standalone ]; then
+  if /opt/etc/init.d/S99poolheat-standalone start; then ok=1; fi
+fi
+if [ "$ok" -eq 0 ] && [ -x /opt/etc/init.d/S99poolheat ]; then
+  if /opt/etc/init.d/S99poolheat start; then ok=1; fi
+fi
+if [ "$ok" -eq 0 ]; then
+  mkdir -p /opt/var/poolheat /opt/var/run
+  if [ -x /opt/bin/poolheatd ]; then
+    /opt/bin/poolheatd >>{log} 2>&1 &
+    echo $! > /opt/var/run/poolheatd.pid
+  else
+    /opt/bin/python3 /opt/lib/poolheat/serve.py >>{log} 2>&1 &
+    echo $! > /opt/var/run/poolheatd.pid
+  fi
+  sleep 1
+fi
+if ps w 2>/dev/null | grep -q '[s]erve.py'; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart OK"
+else
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart FAILED — no serve.py"
+fi
+"""
         try:
-            subprocess.run(
-                ["sh", "-c", "kill $(ps | grep '[s]erve.py' | awk '{print $1}') 2>/dev/null; "
-                 "sleep 1; /opt/bin/poolheatd start 2>/dev/null || "
-                 "nohup /opt/bin/python3 /opt/lib/poolheat/serve.py "
-                 ">>/opt/var/poolheat/poolheat.log 2>&1 &"],
-                timeout=25,
-                check=False,
+            subprocess.Popen(
+                ["sh", "-c", script],
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                with open(log, "a", encoding="utf-8") as fh:
+                    fh.write(f"poolheat update: spawn restart failed: {e}\n")
+            except Exception:
+                pass
 
     threading.Thread(target=_run, name="poolheat-restart", daemon=True).start()
 

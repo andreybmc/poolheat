@@ -1528,7 +1528,7 @@
 
     <div class="banner dry" id="banner-dry">
       <strong>DRY RUN</strong>
-      <span>Автоматическая смена режима не происходит — только Safety + лог.</span>
+      <span>Авто-зоны не пишутся · Safety работает · лог only</span>
       <button class="btn ghost" type="button" style="margin-left:auto" id="btn-dry-goto">Майнер · Dry Run</button>
     </div>
 
@@ -1781,29 +1781,20 @@
         <div class="card" id="panel-dry-run">
           <div class="card-h">
             <div>
-              <h2>Dry Run</h2>
-              <div class="sub">авто-смена Power Mode / зон · Safety отдельно</div>
+              <h2 class="tip" data-tip-key="dry_run">Dry Run</h2>
+              <div class="sub">авто-зоны · Safety всегда · после галки — Сохранить</div>
             </div>
             <div class="btn-row" style="gap:10px;align-items:center">
               <label class="check" style="margin:0">
                 <input type="checkbox" id="dry-run" checked />
-                <span>Dry Run включён</span>
+                <span>Dry Run</span>
               </label>
               <button class="btn primary" type="button" id="btn-dry-save" hidden>Сохранить</button>
             </div>
           </div>
           <div class="card-b">
-            <p style="font-size:0.85rem;color:var(--muted);margin:0;line-height:1.45">
-              Управление <strong>на сервере</strong> (poolheat policy loop), не только в браузере.
-              Галка меняет только локально — на сервер уходит по <strong>Сохранить</strong>.
-              <br />
-              <strong>Вкл:</strong> Z0–Z3 auto <em>не</em> пишется (лог would).
-              <strong>Safety</strong> (chip ≥ T_crit) — <em>пишется всегда</em>.
-              <br />
-              <strong>Выкл:</strong> auto-apply зон + Safety. Ручные кнопки — галка «Разрешить write».
-            </p>
-            <p style="font-size:0.78rem;margin:10px 0 0" id="dry-run-save-status">на сервере: —</p>
-            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="policy-status-line">policy: —</p>
+            <p style="font-size:0.78rem;margin:0" id="dry-run-save-status">на сервере: —</p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:6px 0 0" id="policy-status-line">policy: —</p>
           </div>
         </div>
 
@@ -2947,7 +2938,7 @@
     </section>
 
     <footer class="demo-note" id="app-footer">
-      Powered by poolheat_WM <span class="footer-ver" id="footer-ver">0.3.0</span>.
+      Powered by poolheat_WM <span class="footer-ver" id="footer-ver">0.3.1</span>.
       (с) 2025–<span id="footer-year"></span> BMC mining solutions.
     </footer>
     <script>
@@ -2965,7 +2956,7 @@
           }
           var el = document.getElementById("footer-ver");
           if (el && ver) el.textContent = String(ver).replace(/^v/i, "");
-        } catch (e) { /* keep default 0.3.0 */ }
+        } catch (e) { /* keep default 0.3.1 */ }
       })();
     </script>
   </div>
@@ -3106,7 +3097,7 @@
       },
       dry_run: {
         title: "Dry Run",
-        body: "Вкл: Z0/Z1/Z2 auto-apply на ASIC не идёт (только лог would).\nSafety Critical (chip ≥ T_crit) — пишется всегда.\nВыкл: auto-apply зон + Safety.\nМайнер → Dry Run: галка локально, на сервер — «Сохранить».",
+        body: "Серверная галка (после «Сохранить»).\nВкл — авто-зоны только в лог, на ASIC не пишутся.\nВыкл — зоны применяются сами.\nSafety (chip ≥ T_crit) — всегда.\nРучные кнопки — отдельно, «Разрешить write».",
       },
       warmup: {
         title: "Warmup / upfreq",
