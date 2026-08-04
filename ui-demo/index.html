@@ -3198,23 +3198,30 @@
               <label class="check">
                 <input type="checkbox" id="filt-auto-mining" checked />
                 <span>Auto ON при майнинге
-                  <span class="desc">MC Resume → фильтрация обязательно ВКЛ</span>
+                  <span class="desc">MC Resume → насос ВКЛ</span>
                 </span>
               </label>
               <label class="check">
                 <input type="checkbox" id="filt-auto-suspend" />
                 <span>Auto OFF при Suspend
-                  <span class="desc">опционально выключать насос когда не майним</span>
+                  <span class="desc">Suspend → насос ВЫКЛ</span>
                 </span>
               </label>
             </div>
+            <label class="check" style="margin-top:8px">
+              <input type="checkbox" id="filt-allow-off-mining" />
+              <span>OFF при mining
+                <span class="desc">не блокировать «Выключить» пока mining</span>
+              </span>
+            </label>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
               <button class="btn primary" type="button" id="btn-filt-on">Включить насос</button>
               <button class="btn danger" type="button" id="btn-filt-off">Выключить насос</button>
               <span id="filt-status" style="font-size:0.78rem;color:var(--muted)">статус: —</span>
             </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45">
-              При <strong>Resume Mining</strong> + Auto ON — выключить нельзя (policy снова включит).
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" id="filt-off-hint">
+              Без «OFF при mining» — Выкл. при Resume блокируется.
+              С «OFF при mining» + Auto ON — policy может снова включить насос.
             </p>
           </div>
         </div>
@@ -9688,6 +9695,7 @@
         setV("filt-ha-entity", body.ha_entity_id || "");
         setC("filt-auto-mining", body.auto_on_mining !== false);
         setC("filt-auto-suspend", body.auto_off_suspend);
+        setC("filt-allow-off-mining", !!body.allow_off_while_mining);
         syncFiltBackendPanels();
         syncFiltrationStatusUI(body);
         return body;
@@ -9730,6 +9738,8 @@
         backend: be,
         auto_on_mining: !!document.getElementById("filt-auto-mining")?.checked,
         auto_off_suspend: !!document.getElementById("filt-auto-suspend")?.checked,
+        allow_off_while_mining: !!document.getElementById("filt-allow-off-mining")
+          ?.checked,
       };
       if (be === "tapo") {
         payload.ip = (document.getElementById("filt-ip")?.value || "").trim();

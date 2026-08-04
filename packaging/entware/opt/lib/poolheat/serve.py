@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.26"
+_DEFAULT_APP_VERSION = "0.3.27"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -848,6 +848,8 @@ DEFAULT_FILTRATION_CFG: dict = {
     # policy
     "auto_on_mining": True,
     "auto_off_suspend": False,
+    # allow manual pump OFF while Mining Control = Resume
+    "allow_off_while_mining": False,
     # runtime
     "last_on": None,
     "last_error": None,
@@ -935,6 +937,9 @@ def _load_filtration_cfg() -> None:
         cfg["shelly_gen"] = sg if sg in ("auto", "1", "2") else "auto"
         cfg["auto_on_mining"] = _as_bool(cfg.get("auto_on_mining", True))
         cfg["auto_off_suspend"] = _as_bool(cfg.get("auto_off_suspend", False))
+        cfg["allow_off_while_mining"] = _as_bool(
+            cfg.get("allow_off_while_mining", False)
+        )
         if "last_on" in raw:
             cfg["last_on"] = (
                 None if raw.get("last_on") is None else bool(raw.get("last_on"))
@@ -1033,6 +1038,10 @@ def apply_filtration_cfg(req: dict) -> dict:
             _filtration_cfg["auto_on_mining"] = _as_bool(req.get("auto_on_mining"))
         if "auto_off_suspend" in req:
             _filtration_cfg["auto_off_suspend"] = _as_bool(req.get("auto_off_suspend"))
+        if "allow_off_while_mining" in req:
+            _filtration_cfg["allow_off_while_mining"] = _as_bool(
+                req.get("allow_off_while_mining")
+            )
         _filtration_session["token"] = None
         _filtration_session["cookie"] = None
     _save_filtration_cfg()
@@ -1987,16 +1996,19 @@ def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> 
             raise RuntimeError("filtration disabled in settings")
         be = str(_filtration_cfg.get("backend") or "tapo")
     if not on and not force:
-        try:
-            live = fetch_live()
-            if _live_work(live) == "resume":
-                raise RuntimeError(
-                    "нельзя выключить фильтрацию при майнинге"
-                )
-        except RuntimeError:
-            raise
-        except Exception:
-            pass
+        with _filtration_lock:
+            allow_off = bool(_filtration_cfg.get("allow_off_while_mining", False))
+        if not allow_off:
+            try:
+                live = fetch_live()
+                if _live_work(live) == "resume":
+                    raise RuntimeError(
+                        "нельзя выключить фильтрацию при майнинге"
+                    )
+            except RuntimeError:
+                raise
+            except Exception:
+                pass
     try:
         out = _filtration_dispatch(on)
         got = out.get("on")
@@ -2104,6 +2116,7 @@ def get_filtration_status() -> dict:
         "mining": mining,
         "auto_on_mining": bool(cfg.get("auto_on_mining", True)),
         "auto_off_suspend": bool(cfg.get("auto_off_suspend", False)),
+        "allow_off_while_mining": bool(cfg.get("allow_off_while_mining", False)),
         "ip": cfg.get("ip"),
         "email": cfg.get("email"),
         "device_id": cfg.get("device_id"),
@@ -2123,7 +2136,9 @@ def get_filtration_status() -> dict:
         "last_error": cfg.get("last_error"),
         "last_ok_ts": cfg.get("last_ok_ts"),
         "last_action": cfg.get("last_action"),
-        "can_turn_off": not (bool(cfg.get("enabled")) and mining is True),
+        # OFF blocked while mining unless allow_off_while_mining
+        "can_turn_off": bool(cfg.get("allow_off_while_mining", False))
+        or not (bool(cfg.get("enabled")) and mining is True),
     }
 
 
@@ -7853,8 +7868,8 @@ def _tg_status_fail_lines(
             body = f"FAIL {body}"
     if not body:
         body = "FAIL"
-    em = _tg_ctrl_err_emoji_html()
-    return [f"{em} {body}"]
+    # Exactly one custom emoji (no extra 🚫 unicode outside the tag).
+    return [f"{_tg_ctrl_err_emoji_html()} {body}"]
 
 
 def _tg_zone_line(zone_id, *, safety: bool = False) -> str:
