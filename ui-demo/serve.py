@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.10"
+_DEFAULT_APP_VERSION = "0.3.11"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -7211,8 +7211,11 @@ def _tg_pretty_last_event(msg: str | None) -> str | None:
             return f"Dry Run · {z} → {act} (без записи)"
         except Exception:
             return "Dry Run · preview (без записи)"
+    # APPLY / AUTO — not for Status card (noise); Action log keeps them
     if m.startswith("AUTO ") or m.startswith("APPLY "):
-        return m
+        return None
+    if m.upper().startswith("FORCE_STOP"):
+        return None
     return m
 
 
@@ -7636,13 +7639,27 @@ def _tg_status_text(lang: str = "ru") -> str:
     host = live.get("host") or f"{HOST_MINER}:{PORT_MINER}"
     up_s = _tg_fmt_dur_sec(live.get("uptime"))
     if online:
-        link = (
-            f"🟢 online · uptime {up_s}"
-            if en
-            else f"🟢 online · uptime {up_s}"
-        )
+        link = f"🟢 online · uptime {up_s}"
     else:
         link = "🔴 offline"
+
+    # work line under uptime: suspend  |  mining · 1ч 4м
+    work_m = str(live.get("work_measured") or "").strip().lower()
+    if not work_m:
+        try:
+            work_m = "suspend" if _measured_work_state(live) == "sleep" else "mining"
+        except Exception:
+            work_m = ""
+    if work_m in ("sleep", "suspend"):
+        work_line = "suspend"
+    elif work_m in ("resume", "mining") or online:
+        el_s = _tg_fmt_dur_sec(live.get("elapsed"))
+        if el_s and el_s != "—":
+            work_line = f"mining · {el_s}"
+        else:
+            work_line = "mining"
+    else:
+        work_line = "—"
 
     # J/T = W / (TH/s)
     try:
@@ -7663,6 +7680,7 @@ def _tg_status_text(lang: str = "ru") -> str:
         "",
         _tg_miner_host_line_html(str(host)),
         link,
+        work_line,
         "",
         power_line,
         "",
@@ -7686,7 +7704,7 @@ def _tg_status_text(lang: str = "ru") -> str:
         lines.append("")
         lines.extend(err_lines)
 
-    # last_event: skip Dry Run noise; skip stale offline when currently online
+    # last_event: skip Dry Run / APPLY / FORCE_STOP noise; only real alerts
     le = pol.get("last_event") or {}
     raw_ev = str(le.get("msg") or "")
     raw_l = raw_ev.lower()
@@ -7699,19 +7717,29 @@ def _tg_status_text(lang: str = "ru") -> str:
         or "unreachable" in raw_l
         or "name or service not known" in raw_l
     )
+    is_apply_noise = (
+        raw_l.startswith("apply ")
+        or raw_l.startswith("auto ")
+        or "apply working" in raw_l
+        or raw_l.startswith("force_stop")
+        or "force stop" in raw_l
+    )
     skip_ev = (
         not raw_ev
         or "dry_run" in raw_l
         or raw_l.startswith("dry run")
+        or is_apply_noise
         or (is_offline_ev and online)  # was offline blip; status already 🟢 online
     )
     if not skip_ev:
         pretty = _tg_pretty_last_event(raw_ev)
         pretty_l = str(pretty or "").lower()
         if pretty and "dry run" not in pretty_l and not pretty_l.startswith("dry_run"):
-            # if online, never re-show offline pretty-print either
-            if online and (
-                "asic offline" in pretty_l or "offline" in pretty_l and "timeout" in pretty_l
+            if pretty_l.startswith("apply ") or pretty_l.startswith("auto "):
+                pass
+            elif online and (
+                "asic offline" in pretty_l
+                or ("offline" in pretty_l and "timeout" in pretty_l)
             ):
                 pass
             else:
