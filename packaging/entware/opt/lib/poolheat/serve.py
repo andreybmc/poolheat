@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.18"
+_DEFAULT_APP_VERSION = "0.3.19"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -8101,6 +8101,37 @@ def _tg_policy_block_lines(
     ]
 
 
+def _tg_t_ctrl_sensor_label(sensor: str, lang: str = "ru") -> str:
+    """Short sensor name for Telegram (status Liquid / T_ctrl line)."""
+    en = str(lang or "ru").lower().startswith("en")
+    s = _normalize_t_ctrl_sensor(sensor)
+    if en:
+        return {
+            "liquid": "liquid",
+            "env": "env",
+            "chip_avg": "chip avg",
+            "chip_max": "chip max",
+            "board_max": "board max",
+        }.get(s, s)
+    return {
+        "liquid": "liquid",
+        "env": "env",
+        "chip_avg": "chip avg",
+        "chip_max": "chip max",
+        "board_max": "board max",
+    }.get(s, s)
+
+
+def _tg_t_ctrl_from_live(live: dict | None = None) -> tuple[float | None, str]:
+    """Selected T_ctrl °C + sensor id (from zone map config)."""
+    try:
+        zc = get_zone_cfg()
+        sens = zc.get("t_ctrl_sensor")
+    except Exception:
+        sens = "liquid"
+    return resolve_t_ctrl(live if isinstance(live, dict) else {}, sens)
+
+
 def _tg_status_text(lang: str = "ru") -> str:
     en = str(lang or "ru").lower().startswith("en")
     proj = get_project_name()
@@ -8150,19 +8181,21 @@ def _tg_status_text(lang: str = "ru") -> str:
         return "\n".join(lines)
 
     pol = get_policy_status()
-    liq = live.get("liquid")
+    # Status "Liquid" line = selected T_ctrl (may be env / chip / board)
+    t_ctrl, t_ctrl_sensor = _tg_t_ctrl_from_live(live)
     chip = live.get("chip_max")
     pw = live.get("power")
     hr = live.get("hashrate_th")
     street = _tg_street_c()
+    sens_lab = _tg_t_ctrl_sensor_label(t_ctrl_sensor, lang)
 
     hz = pol.get("heat_zone")
     safety = bool(pol.get("safety_sticky"))
-    if not hz and not safety and liq is not None:
+    if not hz and not safety and t_ctrl is not None:
         try:
             zc = get_zone_cfg()
             hz = _place_heat_zone(
-                float(liq),
+                float(t_ctrl),
                 float(zc.get("t0", 24)),
                 float(zc.get("t1", 26)),
                 float(zc.get("t2", 28)),
@@ -8178,23 +8211,41 @@ def _tg_status_text(lang: str = "ru") -> str:
         _tg_zone_profile_for_status(hz, safety=safety), lang
     )
 
+    # Liquid line shows T_ctrl value; name sensor when not liquid
+    if t_ctrl_sensor == "liquid":
+        if en:
+            tctrl_line = f"Liquid: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
+        else:
+            tctrl_line = f"Жидкость: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
+    else:
+        if en:
+            tctrl_line = (
+                f"T_ctrl ({_tg_html_esc(sens_lab)}): "
+                f"<b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
+            )
+        else:
+            tctrl_line = (
+                f"T_ctrl ({_tg_html_esc(sens_lab)}): "
+                f"<b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
+            )
+
     if en:
         temps_h = "🌡  <b>Temperatures:</b>"
-        # Liquid: 1sp · Street/Chips: 2sp after colon
+        # T_ctrl/Liquid: 1sp · Street/Chips: 2sp after colon
         temp_lines = [
-            f"Liquid: <b>{_tg_fmt_num(liq, 1)} °C</b>",
+            tctrl_line,
             f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>",
             f"Chips:  <b>{_tg_fmt_num(chip, 1)} °C</b>",
         ]
         lab_ov, lab_left = "Override", "left"
     else:
         # 🌡  <b>Температуры:</b>
-        # Жидкость: <b>…</b>   (1 space)
-        # Улица:  <b>…</b>     (2 spaces)
-        # Чипы:  <b>…</b>      (2 spaces)
+        # Жидкость / T_ctrl: <b>…</b>
+        # Улица:  <b>…</b>
+        # Чипы:  <b>…</b>
         temps_h = "🌡  <b>Температуры:</b>"
         temp_lines = [
-            f"Жидкость: <b>{_tg_fmt_num(liq, 1)} °C</b>",
+            tctrl_line,
             f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>",
             f"Чипы:  <b>{_tg_fmt_num(chip, 1)} °C</b>",
         ]
@@ -8452,17 +8503,21 @@ def _tg_info_text(lang: str = "ru") -> str:
         if bits:
             lines.append(f"  {' · '.join(bits)}")
 
-    liq = live.get("liquid")
+    t_ctrl, t_ctrl_sensor = _tg_t_ctrl_from_live(live)
     chip_max = live.get("chip_max")
     env = live.get("env")
+    sens_lab = _tg_t_ctrl_sensor_label(t_ctrl_sensor, lang)
     lines.append("")
+    # T_ctrl first (zone map); env/chip for context
     if en:
         lines.append(
-            f"Liquid {_tg_fmt_num(liq, 1)} °C · Env {_tg_fmt_num(env, 1)} °C · Chip {_tg_fmt_num(chip_max, 1)} °C"
+            f"T_ctrl ({sens_lab}) {_tg_fmt_num(t_ctrl, 1)} °C · "
+            f"Env {_tg_fmt_num(env, 1)} °C · Chip {_tg_fmt_num(chip_max, 1)} °C"
         )
     else:
         lines.append(
-            f"Жидкость {_tg_fmt_num(liq, 1)} °C · Env {_tg_fmt_num(env, 1)} °C · Чип {_tg_fmt_num(chip_max, 1)} °C"
+            f"T_ctrl ({sens_lab}) {_tg_fmt_num(t_ctrl, 1)} °C · "
+            f"Env {_tg_fmt_num(env, 1)} °C · Чип {_tg_fmt_num(chip_max, 1)} °C"
         )
 
     err_lines = _tg_active_errors_lines(live, lang)
