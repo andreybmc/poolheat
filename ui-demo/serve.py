@@ -29,6 +29,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -113,12 +114,20 @@ HTTP_BIND = _APP["bind"]
 HTTP_PORT = _APP["http_port"]
 ROOT = _APP["www"]  # static files root
 DATA = _APP["data"]
+# Project display name (UI header / Telegram) — from config.json
+PROJECT_NAME = str(
+    (_APP.get("file_cfg") or {}).get("project_name") or "poolheat_WM"
+).strip() or "poolheat_WM"
 STATE_FILE = DATA / "last_commands.json"
 DB_FILE = DATA / "history.db"
 CONFIG_FILE = DATA / "history_config.json"
 WEATHER_CFG_FILE = DATA / "weather_config.json"
 POOL_CFG_FILE = DATA / "pool_config.json"
 ZONE_CFG_FILE = DATA / "zone_map_config.json"
+ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
+FILTRATION_CFG_FILE = DATA / "filtration_config.json"
+CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
+TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 DEFAULT_API_PASSWORD = _APP["api_password"]
 # Live / control poll of miner API (UI + future policy loop). Not history sample interval.
 POLL_INTERVAL_SEC = int(
@@ -127,12 +136,13 @@ POLL_INTERVAL_SEC = int(
     or 5
 )
 POLL_INTERVAL_SEC = max(2, min(300, POLL_INTERVAL_SEC))
-# Dry Run: block Z0–Z2 auto writes; Safety Critical still applies
+# Dry Run: ignore heat-zone auto (mode/limit/pct/MC); keep current miner mode.
+# Only Safety Critical (chip temp) still writes.
 _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.1"
+_DEFAULT_APP_VERSION = "0.3.5"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -167,6 +177,8 @@ _policy_ctrl: dict = {
     "override_until_ts": 0.0,
     # Warmup (upfreq) started at (for max_warmup_wait_min)
     "warmup_since_ts": None,
+    # Force Stop (emergency): sticky Suspend — above zones & Dry Run
+    "force_stop": bool((_APP.get("file_cfg") or {}).get("force_stop", False)),
 }
 
 DEFAULT_ZONE_CFG: dict = {
@@ -416,6 +428,1522 @@ def get_zone_cfg() -> dict:
         return json.loads(json.dumps(_zone_cfg))  # deep copy
 
 
+# ── Zone map presets (named snapshots of zone_map_config) ───────────────────
+
+_zone_presets_lock = threading.Lock()
+_zone_presets: dict = {"presets": [], "active_id": None}
+
+
+def _new_preset_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _load_zone_presets() -> None:
+    global _zone_presets
+    with _zone_presets_lock:
+        raw = _load_json(ZONE_PRESETS_FILE, {"presets": [], "active_id": None})
+        if not isinstance(raw, dict):
+            raw = {"presets": [], "active_id": None}
+        presets = raw.get("presets") if isinstance(raw.get("presets"), list) else []
+        clean: list[dict] = []
+        for p in presets:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id") or "").strip() or _new_preset_id()
+            name = str(p.get("name") or "").strip() or "Пресет"
+            if len(name) > 64:
+                name = name[:64]
+            cfg = p.get("config") if isinstance(p.get("config"), dict) else {}
+            clean.append(
+                {
+                    "id": pid,
+                    "name": name,
+                    "updated_ts": p.get("updated_ts")
+                    or datetime.now().isoformat(timespec="seconds"),
+                    "config": cfg,
+                }
+            )
+        # seed default if empty
+        if not clean:
+            clean.append(
+                {
+                    "id": _new_preset_id(),
+                    "name": "По умолчанию 24/26/28",
+                    "updated_ts": datetime.now().isoformat(timespec="seconds"),
+                    "config": json.loads(json.dumps(DEFAULT_ZONE_CFG)),
+                }
+            )
+        _zone_presets = {
+            "presets": clean,
+            "active_id": raw.get("active_id") if raw.get("active_id") else None,
+        }
+        try:
+            _save_json(ZONE_PRESETS_FILE, _zone_presets)
+        except Exception:
+            pass
+
+
+def _save_zone_presets() -> None:
+    with _zone_presets_lock:
+        _save_json(ZONE_PRESETS_FILE, _zone_presets)
+
+
+def list_zone_presets() -> dict:
+    with _zone_presets_lock:
+        items = []
+        for p in _zone_presets.get("presets") or []:
+            items.append(
+                {
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "updated_ts": p.get("updated_ts"),
+                    # lightweight: thresholds summary for UI
+                    "summary": _preset_summary(p.get("config") or {}),
+                }
+            )
+        return {
+            "ok": True,
+            "presets": items,
+            "active_id": _zone_presets.get("active_id"),
+        }
+
+
+def _preset_summary(cfg: dict) -> str:
+    try:
+        t0 = cfg.get("t0", "—")
+        t1 = cfg.get("t1", "—")
+        t2 = cfg.get("t2", "—")
+        h = cfg.get("h", "—")
+        return f"T0={t0} T1={t1} T2={t2} h={h}"
+    except Exception:
+        return "—"
+
+
+def get_zone_preset(preset_id: str) -> dict | None:
+    pid = str(preset_id or "").strip()
+    with _zone_presets_lock:
+        for p in _zone_presets.get("presets") or []:
+            if p.get("id") == pid:
+                return json.loads(json.dumps(p))
+    return None
+
+
+def save_zone_preset(
+    name: str,
+    config: dict | None = None,
+    *,
+    preset_id: str | None = None,
+) -> dict:
+    """
+    Create or update a named zone-map preset.
+    config=None → snapshot current active zone map.
+    """
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("name empty")
+    if len(name) > 64:
+        name = name[:64]
+    if config is None:
+        config = get_zone_cfg()
+    if not isinstance(config, dict):
+        raise ValueError("config must be object")
+    # normalize via same path as active map
+    cfg = _coerce_zone_config_dict(config)
+    now = datetime.now().isoformat(timespec="seconds")
+    with _zone_presets_lock:
+        presets = list(_zone_presets.get("presets") or [])
+        if preset_id:
+            pid = str(preset_id).strip()
+            found = False
+            for i, p in enumerate(presets):
+                if p.get("id") == pid:
+                    presets[i] = {
+                        "id": pid,
+                        "name": name,
+                        "updated_ts": now,
+                        "config": cfg,
+                    }
+                    found = True
+                    break
+            if not found:
+                raise ValueError(f"preset not found: {pid}")
+            out_id = pid
+        else:
+            out_id = _new_preset_id()
+            presets.append(
+                {
+                    "id": out_id,
+                    "name": name,
+                    "updated_ts": now,
+                    "config": cfg,
+                }
+            )
+        _zone_presets["presets"] = presets
+    _save_zone_presets()
+    return {"ok": True, "id": out_id, **list_zone_presets()}
+
+
+def delete_zone_preset(preset_id: str) -> dict:
+    pid = str(preset_id or "").strip()
+    if not pid:
+        raise ValueError("id empty")
+    with _zone_presets_lock:
+        presets = [p for p in (_zone_presets.get("presets") or []) if p.get("id") != pid]
+        if len(presets) == len(_zone_presets.get("presets") or []):
+            raise ValueError(f"preset not found: {pid}")
+        _zone_presets["presets"] = presets
+        if _zone_presets.get("active_id") == pid:
+            _zone_presets["active_id"] = None
+    _save_zone_presets()
+    return list_zone_presets()
+
+
+def apply_zone_preset(preset_id: str) -> dict:
+    """Load preset into active zone map (persist zone_map_config.json)."""
+    p = get_zone_preset(preset_id)
+    if not p:
+        raise ValueError(f"preset not found: {preset_id}")
+    cfg = _coerce_zone_config_dict(p.get("config") or {})
+    with _zone_cfg_lock:
+        _zone_cfg.clear()
+        _zone_cfg.update(cfg)
+    _save_zone_cfg()
+    with _zone_presets_lock:
+        _zone_presets["active_id"] = p.get("id")
+    _save_zone_presets()
+    return {
+        "ok": True,
+        "id": p.get("id"),
+        "name": p.get("name"),
+        "config": get_zone_cfg(),
+        "active_id": p.get("id"),
+    }
+
+
+def _coerce_zone_config_dict(req: dict) -> dict:
+    """Normalize a zone-map payload (same rules as POST /api/zone/config)."""
+    if not isinstance(req, dict):
+        raise ValueError("expected object")
+    cfg = dict(DEFAULT_ZONE_CFG)
+    # start from current so partial updates still work when used that way
+    with _zone_cfg_lock:
+        base = dict(_zone_cfg) if _zone_cfg else dict(DEFAULT_ZONE_CFG)
+    cfg.update({k: base.get(k) for k in DEFAULT_ZONE_CFG if k != "zones"})
+    cfg["zones"] = json.loads(json.dumps(base.get("zones") or DEFAULT_ZONE_CFG["zones"]))
+    for key in (
+        "t0",
+        "t1",
+        "t2",
+        "h",
+        "t_crit",
+        "t_crit_clear",
+        "dwell_sec",
+        "settle_sec",
+        "streak",
+        "min_write_interval_sec",
+        "limit_tol_w",
+        "max_warmup_wait_min",
+    ):
+        if key in req and req[key] is not None:
+            try:
+                if key in (
+                    "dwell_sec",
+                    "settle_sec",
+                    "streak",
+                    "min_write_interval_sec",
+                    "limit_tol_w",
+                    "max_warmup_wait_min",
+                ):
+                    cfg[key] = int(float(req[key]))
+                else:
+                    cfg[key] = float(req[key])
+            except (TypeError, ValueError):
+                pass
+    for bkey in ("warmup_en", "warmup_downward_only"):
+        if bkey in req:
+            cfg[bkey] = bool(req[bkey])
+    cfg["min_write_interval_sec"] = max(
+        10, min(3600, int(cfg.get("min_write_interval_sec", 60) or 60))
+    )
+    cfg["limit_tol_w"] = max(10, min(2000, int(cfg.get("limit_tol_w", 100) or 100)))
+    cfg["max_warmup_wait_min"] = max(
+        1, min(240, int(cfg.get("max_warmup_wait_min", 30) or 30))
+    )
+    cfg["warmup_en"] = bool(cfg.get("warmup_en", True))
+    cfg["warmup_downward_only"] = bool(cfg.get("warmup_downward_only", True))
+    cfg["h"] = max(0.2, min(5.0, float(cfg.get("h", 0.5))))
+    if "t2" not in cfg or cfg.get("t2") is None:
+        cfg["t2"] = float(cfg.get("t1", 28)) + max(2.0, float(cfg["h"]))
+    if float(cfg["t0"]) >= float(cfg["t1"]):
+        raise ValueError("need t0 < t1")
+    if float(cfg["t1"]) >= float(cfg["t2"]):
+        raise ValueError("need t1 < t2")
+    if float(cfg["t_crit_clear"]) >= float(cfg["t_crit"]):
+        raise ValueError("need t_crit_clear < t_crit")
+    zones_in = req.get("zones") if isinstance(req.get("zones"), dict) else {}
+    zones_out = dict(cfg.get("zones") or {})
+    for name, default in DEFAULT_ZONE_CFG["zones"].items():
+        base_z = zones_out.get(name) or default
+        zin = zones_in.get(name, base_z)
+        if name == "critical":
+            if not isinstance(base_z, dict):
+                base_z = default
+            if isinstance(zin, dict) and ("on_crit" in zin or "on_clear" in zin):
+                zones_out[name] = {
+                    "on_crit": _normalize_zone_entry(
+                        zin.get("on_crit", base_z.get("on_crit")),
+                        default["on_crit"],
+                    ),
+                    "on_clear": _normalize_zone_entry(
+                        zin.get("on_clear", base_z.get("on_clear")),
+                        default["on_clear"],
+                    ),
+                }
+            else:
+                zones_out[name] = {
+                    "on_crit": _normalize_zone_entry(
+                        zin if isinstance(zin, dict) else base_z.get("on_crit"),
+                        default["on_crit"],
+                    ),
+                    "on_clear": _normalize_zone_entry(
+                        base_z.get("on_clear") if isinstance(base_z, dict) else None,
+                        default["on_clear"],
+                    ),
+                }
+        else:
+            zones_out[name] = _normalize_zone_entry(zin, default)
+    cfg["zones"] = zones_out
+    cfg["zone_map_version"] = 2
+    return cfg
+
+
+# ── Filtration pump · multi-backend ───────────────────────────────────────────
+# Backends: tapo (P100/P110) · ewelink (Sonoff DIY LAN) · webhook · shelly · homeassistant
+# Rule: MC Resume + auto_on_mining → force ON; optional auto_off_suspend.
+
+FILTRATION_BACKENDS: list[dict] = [
+    {
+        "id": "tapo",
+        "label": "Tapo P100 / P110",
+        "hint": "LAN · email/password аккаунта Tapo · IP розетки",
+    },
+    {
+        "id": "ewelink",
+        "label": "eWeLink / Sonoff DIY",
+        "hint": "LAN DIY mode · IP + deviceid (облако eWeLink — через Webhook)",
+    },
+    {
+        "id": "webhook",
+        "label": "Webhook (HTTP)",
+        "hint": "URL on/off · IFTTT, n8n, Node-RED, eWeLink scene, …",
+    },
+    {
+        "id": "shelly",
+        "label": "Shelly",
+        "hint": "LAN HTTP · Gen1 relay / Gen2 RPC",
+    },
+    {
+        "id": "homeassistant",
+        "label": "Home Assistant",
+        "hint": "REST · long-lived token · switch/entity",
+    },
+]
+_FILTRATION_BACKEND_IDS = {b["id"] for b in FILTRATION_BACKENDS}
+
+DEFAULT_FILTRATION_CFG: dict = {
+    "enabled": False,
+    "backend": "tapo",
+    # common / tapo / ewelink / shelly
+    "ip": "",
+    "email": "",
+    "password": "",
+    "device_id": "",  # eWeLink DIY deviceid
+    "ewelink_port": 8081,
+    # webhook
+    "webhook_on_url": "",
+    "webhook_off_url": "",
+    "webhook_method": "GET",  # GET | POST
+    "webhook_body_on": "",
+    "webhook_body_off": "",
+    "webhook_headers": "",  # JSON object as string
+    # shelly
+    "shelly_channel": 0,
+    "shelly_gen": "auto",  # auto | 1 | 2
+    # homeassistant
+    "ha_url": "",
+    "ha_token": "",
+    "ha_entity_id": "",
+    # policy
+    "auto_on_mining": True,
+    "auto_off_suspend": False,
+    # runtime
+    "last_on": None,
+    "last_error": None,
+    "last_ok_ts": None,
+    "last_sync_ts": None,
+    "last_action": None,
+}
+
+_filtration_lock = threading.Lock()
+_filtration_cfg: dict = dict(DEFAULT_FILTRATION_CFG)
+_filtration_session: dict = {
+    "cookie": None,
+    "token": None,
+    "last_try_ts": 0.0,
+}
+
+
+def list_filtration_backends() -> list[dict]:
+    return list(FILTRATION_BACKENDS)
+
+
+def _load_filtration_cfg() -> None:
+    global _filtration_cfg
+    with _filtration_lock:
+        raw = _load_json(FILTRATION_CFG_FILE, DEFAULT_FILTRATION_CFG)
+        if not isinstance(raw, dict):
+            raw = {}
+        cfg = dict(DEFAULT_FILTRATION_CFG)
+        for k in DEFAULT_FILTRATION_CFG:
+            if k not in raw:
+                continue
+            cfg[k] = raw[k]
+        cfg["enabled"] = bool(cfg.get("enabled", False))
+        be = str(cfg.get("backend") or "tapo").strip().lower()
+        if be not in _FILTRATION_BACKEND_IDS:
+            be = "tapo"
+        cfg["backend"] = be
+        for sk in (
+            "ip",
+            "email",
+            "password",
+            "device_id",
+            "webhook_on_url",
+            "webhook_off_url",
+            "webhook_method",
+            "webhook_body_on",
+            "webhook_body_off",
+            "webhook_headers",
+            "shelly_gen",
+            "ha_url",
+            "ha_token",
+            "ha_entity_id",
+        ):
+            cfg[sk] = str(cfg.get(sk) or "").strip() if sk != "password" and sk != "ha_token" else str(cfg.get(sk) or "")
+        # keep secrets as-is
+        cfg["password"] = str(raw.get("password") or cfg.get("password") or "")
+        cfg["ha_token"] = str(raw.get("ha_token") or cfg.get("ha_token") or "")
+        try:
+            cfg["ewelink_port"] = max(1, min(65535, int(cfg.get("ewelink_port") or 8081)))
+        except (TypeError, ValueError):
+            cfg["ewelink_port"] = 8081
+        try:
+            cfg["shelly_channel"] = max(0, min(3, int(cfg.get("shelly_channel") or 0)))
+        except (TypeError, ValueError):
+            cfg["shelly_channel"] = 0
+        wm = str(cfg.get("webhook_method") or "GET").upper()
+        cfg["webhook_method"] = "POST" if wm == "POST" else "GET"
+        sg = str(cfg.get("shelly_gen") or "auto").lower()
+        cfg["shelly_gen"] = sg if sg in ("auto", "1", "2") else "auto"
+        cfg["auto_on_mining"] = bool(cfg.get("auto_on_mining", True))
+        cfg["auto_off_suspend"] = bool(cfg.get("auto_off_suspend", False))
+        if "last_on" in raw:
+            cfg["last_on"] = (
+                None if raw.get("last_on") is None else bool(raw.get("last_on"))
+            )
+        _filtration_cfg = cfg
+
+
+def _save_filtration_cfg() -> None:
+    with _filtration_lock:
+        _save_json(FILTRATION_CFG_FILE, _filtration_cfg)
+
+
+def get_filtration_cfg(*, redact: bool = True) -> dict:
+    with _filtration_lock:
+        cfg = dict(_filtration_cfg)
+    if redact:
+        if cfg.get("password"):
+            p = str(cfg["password"])
+            cfg["password_set"] = True
+            cfg["password"] = (p[:2] + "…" + p[-2:]) if len(p) > 6 else "••••"
+        else:
+            cfg["password_set"] = False
+        if cfg.get("ha_token"):
+            t = str(cfg["ha_token"])
+            cfg["ha_token_set"] = True
+            cfg["ha_token"] = (t[:4] + "…" + t[-4:]) if len(t) > 10 else "••••"
+        else:
+            cfg["ha_token_set"] = False
+    else:
+        cfg["password_set"] = bool(cfg.get("password"))
+        cfg["ha_token_set"] = bool(cfg.get("ha_token"))
+    cfg["backends"] = list_filtration_backends()
+    return cfg
+
+
+def apply_filtration_cfg(req: dict) -> dict:
+    """Update filtration settings from Settings UI."""
+    if not isinstance(req, dict):
+        raise ValueError("expected object")
+    with _filtration_lock:
+        if "enabled" in req:
+            _filtration_cfg["enabled"] = bool(req["enabled"])
+        if "backend" in req and req["backend"] is not None:
+            be = str(req["backend"]).strip().lower()
+            if be not in _FILTRATION_BACKEND_IDS:
+                raise ValueError(f"unknown backend: {be}")
+            _filtration_cfg["backend"] = be
+        for sk in (
+            "ip",
+            "email",
+            "device_id",
+            "webhook_on_url",
+            "webhook_off_url",
+            "webhook_body_on",
+            "webhook_body_off",
+            "webhook_headers",
+            "shelly_gen",
+            "ha_url",
+            "ha_entity_id",
+        ):
+            if sk in req and req[sk] is not None:
+                _filtration_cfg[sk] = str(req[sk]).strip()
+        if "password" in req and req["password"] is not None and str(req["password"]) != "":
+            _filtration_cfg["password"] = str(req["password"])
+        if "ha_token" in req and req["ha_token"] is not None and str(req["ha_token"]) != "":
+            _filtration_cfg["ha_token"] = str(req["ha_token"])
+        if "webhook_method" in req and req["webhook_method"] is not None:
+            wm = str(req["webhook_method"]).upper()
+            _filtration_cfg["webhook_method"] = "POST" if wm == "POST" else "GET"
+        if "ewelink_port" in req and req["ewelink_port"] is not None:
+            try:
+                _filtration_cfg["ewelink_port"] = max(
+                    1, min(65535, int(req["ewelink_port"]))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "shelly_channel" in req and req["shelly_channel"] is not None:
+            try:
+                _filtration_cfg["shelly_channel"] = max(
+                    0, min(3, int(req["shelly_channel"]))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "auto_on_mining" in req:
+            _filtration_cfg["auto_on_mining"] = bool(req["auto_on_mining"])
+        if "auto_off_suspend" in req:
+            _filtration_cfg["auto_off_suspend"] = bool(req["auto_off_suspend"])
+        _filtration_session["token"] = None
+        _filtration_session["cookie"] = None
+    _save_filtration_cfg()
+    return get_filtration_cfg(redact=True)
+
+
+def _pkcs7_pad(data: bytes, block: int = 16) -> bytes:
+    n = block - (len(data) % block)
+    return data + bytes([n] * n)
+
+
+def _pkcs7_unpad(data: bytes) -> bytes:
+    if not data:
+        return data
+    n = data[-1]
+    if n < 1 or n > 16 or data[-n:] != bytes([n] * n):
+        return data.rstrip(b"\x00")
+    return data[:-n]
+
+
+def _tapo_aes_encrypt(key: bytes, iv: bytes, plain: str) -> str:
+    from Crypto.Cipher import AES  # type: ignore
+
+    raw = _pkcs7_pad(plain.encode("utf-8"))
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    return base64.b64encode(cipher.encrypt(raw)).decode("ascii")
+
+
+def _tapo_aes_decrypt(key: bytes, iv: bytes, b64: str) -> str:
+    from Crypto.Cipher import AES  # type: ignore
+
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    raw = cipher.decrypt(base64.b64decode(b64))
+    return _pkcs7_unpad(raw).decode("utf-8", errors="replace")
+
+
+def _tapo_sha1_hex(s: str) -> str:
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
+
+
+def _tapo_http_json(
+    url: str,
+    payload: dict,
+    *,
+    cookie: str | None = None,
+    timeout: float = 5.0,
+) -> tuple[dict, str | None]:
+    """POST JSON; return (body, set-cookie value for TP_SESSIONID if any)."""
+    data = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "poolheat-tapo/1.0",
+    }
+    if cookie:
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+        set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie")
+    cookie_out = None
+    if set_cookie:
+        # TP_SESSIONID=...; Path=...
+        for part in set_cookie.split(","):
+            part = part.strip()
+            if "TP_SESSIONID=" in part or "TP_SESSIONID" in part.upper():
+                # take first pair
+                pair = part.split(";")[0].strip()
+                if "=" in pair:
+                    cookie_out = pair
+                    break
+        if not cookie_out:
+            cookie_out = set_cookie.split(";")[0].strip()
+    try:
+        j = json.loads(body)
+    except Exception as e:
+        raise RuntimeError(f"tapo bad json: {e}: {body[:120]}") from e
+    if not isinstance(j, dict):
+        raise RuntimeError("tapo response not object")
+    return j, cookie_out
+
+
+class _TapoP100Local:
+    """Minimal local Tapo P100 client (handshake + securePassthrough)."""
+
+    def __init__(self, ip: str, email: str, password: str):
+        self.ip = ip.strip()
+        self.email = email.strip()
+        self.password = password
+        self.terminal_uuid = str(uuid.uuid4())
+        self.cookie: str | None = None
+        self.token: str | None = None
+        self.key: bytes | None = None
+        self.iv: bytes | None = None
+        from Crypto.PublicKey import RSA  # type: ignore
+
+        self._rsa = RSA.generate(1024)
+        self._pub_pem = self._rsa.publickey().export_key("PEM").decode("utf-8")
+        self._priv_pem = self._rsa.export_key("PEM")
+
+    def _url(self, with_token: bool = False) -> str:
+        base = f"http://{self.ip}/app"
+        if with_token and self.token:
+            return f"{base}?token={self.token}"
+        return base
+
+    def handshake(self) -> None:
+        from Crypto.Cipher import PKCS1_v1_5  # type: ignore
+        from Crypto.PublicKey import RSA  # type: ignore
+
+        payload = {
+            "method": "handshake",
+            "params": {"key": self._pub_pem, "requestTimeMils": 0},
+        }
+        j, cookie = _tapo_http_json(self._url(), payload, timeout=4.0)
+        if j.get("error_code") not in (0, None) and j.get("error_code") != 0:
+            raise RuntimeError(f"handshake error_code={j.get('error_code')}")
+        key_b64 = (j.get("result") or {}).get("key")
+        if not key_b64:
+            raise RuntimeError("handshake: no key (firmware may need KLAP / update)")
+        if cookie:
+            self.cookie = cookie
+        enc = base64.b64decode(key_b64)
+        cipher = PKCS1_v1_5.new(RSA.import_key(self._priv_pem))
+        dec = cipher.decrypt(enc, None)
+        if not dec or len(dec) < 32:
+            raise RuntimeError("handshake decrypt failed")
+        self.key = dec[:16]
+        self.iv = dec[16:32]
+
+    def _encode_creds(self) -> tuple[str, str]:
+        # PyP100: password = base64(plain); username = base64(sha1hex(email))
+        enc_pw = base64.b64encode(self.password.encode("utf-8")).decode("ascii")
+        enc_em = base64.b64encode(_tapo_sha1_hex(self.email).encode("utf-8")).decode(
+            "ascii"
+        )
+        return enc_em, enc_pw
+
+    def login(self) -> None:
+        if not self.key or not self.iv:
+            raise RuntimeError("handshake first")
+        enc_em, enc_pw = self._encode_creds()
+        payload = {
+            "method": "login_device",
+            "params": {"password": enc_pw, "username": enc_em},
+            "requestTimeMils": 0,
+        }
+        secure = {
+            "method": "securePassthrough",
+            "params": {"request": _tapo_aes_encrypt(self.key, self.iv, json.dumps(payload))},
+        }
+        j, cookie = _tapo_http_json(
+            self._url(), secure, cookie=self.cookie, timeout=4.0
+        )
+        if cookie:
+            self.cookie = cookie
+        if j.get("error_code") not in (0, None) and int(j.get("error_code") or 0) != 0:
+            raise RuntimeError(f"login passthrough error_code={j.get('error_code')}")
+        resp_b64 = (j.get("result") or {}).get("response")
+        if not resp_b64:
+            raise RuntimeError("login: empty response")
+        inner = json.loads(_tapo_aes_decrypt(self.key, self.iv, resp_b64))
+        if int(inner.get("error_code") or 0) != 0:
+            # retry with sha1 password encoding (some firmwares)
+            enc_pw2 = base64.b64encode(
+                hashlib.sha1(self.password.encode("utf-8")).digest()
+            ).decode("ascii")
+            payload2 = {
+                "method": "login_device",
+                "params": {"password": enc_pw2, "username": enc_em},
+                "requestTimeMils": 0,
+            }
+            secure2 = {
+                "method": "securePassthrough",
+                "params": {
+                    "request": _tapo_aes_encrypt(self.key, self.iv, json.dumps(payload2))
+                },
+            }
+            j2, _ = _tapo_http_json(
+                self._url(), secure2, cookie=self.cookie, timeout=4.0
+            )
+            resp_b64 = (j2.get("result") or {}).get("response")
+            if not resp_b64:
+                raise RuntimeError(
+                    f"login error_code={inner.get('error_code')} (bad email/password?)"
+                )
+            inner = json.loads(_tapo_aes_decrypt(self.key, self.iv, resp_b64))
+            if int(inner.get("error_code") or 0) != 0:
+                raise RuntimeError(
+                    f"login error_code={inner.get('error_code')} (bad email/password?)"
+                )
+        self.token = (inner.get("result") or {}).get("token")
+        if not self.token:
+            raise RuntimeError("login: no token")
+
+    def _device_request(self, method: str, params: dict | None = None) -> dict:
+        if not self.token or not self.key or not self.iv:
+            raise RuntimeError("not logged in")
+        payload = {
+            "method": method,
+            "params": params or {},
+            "requestTimeMils": 0,
+            "terminalUUID": self.terminal_uuid,
+        }
+        secure = {
+            "method": "securePassthrough",
+            "params": {"request": _tapo_aes_encrypt(self.key, self.iv, json.dumps(payload))},
+        }
+        j, _ = _tapo_http_json(
+            self._url(with_token=True), secure, cookie=self.cookie, timeout=4.0
+        )
+        if int(j.get("error_code") or 0) != 0:
+            raise RuntimeError(f"{method} error_code={j.get('error_code')}")
+        resp_b64 = (j.get("result") or {}).get("response")
+        if not resp_b64:
+            raise RuntimeError(f"{method}: empty response")
+        inner = json.loads(_tapo_aes_decrypt(self.key, self.iv, resp_b64))
+        if int(inner.get("error_code") or 0) != 0:
+            raise RuntimeError(f"{method} inner error_code={inner.get('error_code')}")
+        return inner
+
+    def connect(self) -> None:
+        self.handshake()
+        self.login()
+
+    def get_on(self) -> bool:
+        inner = self._device_request("get_device_info")
+        res = inner.get("result") or {}
+        return bool(res.get("device_on"))
+
+    def set_on(self, on: bool) -> None:
+        self._device_request("set_device_info", {"device_on": bool(on)})
+
+
+def _filtration_cfg_snapshot() -> dict:
+    with _filtration_lock:
+        return dict(_filtration_cfg)
+
+
+def _filtration_http(
+    url: str,
+    *,
+    method: str = "GET",
+    body: str | bytes | None = None,
+    headers: dict | None = None,
+    timeout: float = 6.0,
+) -> tuple[int, str]:
+    method = (method or "GET").upper()
+    hdrs = {"User-Agent": "poolheat-filtration/1.0"}
+    if headers:
+        hdrs.update(headers)
+    data = None
+    if body is not None and method in ("POST", "PUT", "PATCH"):
+        if isinstance(body, str):
+            data = body.encode("utf-8")
+        else:
+            data = body
+        hdrs.setdefault("Content-Type", "application/json")
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return int(resp.status), resp.read().decode("utf-8", errors="replace")
+
+
+def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
+    """on=None → read only; else set."""
+    ip = str(cfg.get("ip") or "").strip()
+    email = str(cfg.get("email") or "").strip()
+    password = str(cfg.get("password") or "")
+    if not ip:
+        raise ValueError("Tapo IP empty")
+    if not email or not password:
+        raise ValueError("Tapo email/password empty")
+    c = _TapoP100Local(ip, email, password)
+    c.connect()
+    if on is None:
+        return {"on": c.get_on(), "backend": "tapo", "ip": ip}
+    c.set_on(bool(on))
+    try:
+        got = c.get_on()
+    except Exception:
+        got = bool(on)
+    return {"on": bool(got), "backend": "tapo", "ip": ip}
+
+
+def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
+    """Sonoff DIY LAN (eWeLink DIY mode) · port 8081."""
+    ip = str(cfg.get("ip") or "").strip()
+    device_id = str(cfg.get("device_id") or "").strip()
+    port = int(cfg.get("ewelink_port") or 8081)
+    if not ip:
+        raise ValueError("eWeLink IP empty")
+    if not device_id:
+        raise ValueError("eWeLink device_id empty (DIY deviceid)")
+    base = f"http://{ip}:{port}"
+    if on is None:
+        # info
+        url = f"{base}/zeroconf/info"
+        payload = json.dumps({"deviceid": device_id, "data": {}})
+        code, text = _filtration_http(url, method="POST", body=payload)
+        j = json.loads(text) if text else {}
+        data = j.get("data") if isinstance(j, dict) else {}
+        sw = None
+        if isinstance(data, dict):
+            sw = data.get("switch")
+        on_v = str(sw).lower() in ("on", "1", "true") if sw is not None else None
+        return {"on": on_v, "backend": "ewelink", "ip": ip, "http": code}
+    url = f"{base}/zeroconf/switch"
+    payload = json.dumps(
+        {"deviceid": device_id, "data": {"switch": "on" if on else "off"}}
+    )
+    code, text = _filtration_http(url, method="POST", body=payload)
+    j = json.loads(text) if text.strip().startswith("{") else {}
+    err = j.get("error") if isinstance(j, dict) else None
+    if err not in (0, None, "0"):
+        raise RuntimeError(f"eWeLink DIY error={err}: {text[:120]}")
+    return {"on": bool(on), "backend": "ewelink", "ip": ip, "http": code}
+
+
+def _filtration_backend_webhook(on: bool | None, cfg: dict) -> dict:
+    if on is None:
+        # no reliable read for generic webhooks
+        return {
+            "on": cfg.get("last_on"),
+            "backend": "webhook",
+            "note": "webhook has no state read",
+        }
+    url = str(
+        cfg.get("webhook_on_url") if on else cfg.get("webhook_off_url") or ""
+    ).strip()
+    if not url:
+        raise ValueError("webhook URL empty (on/off)")
+    method = str(cfg.get("webhook_method") or "GET").upper()
+    body = str(
+        cfg.get("webhook_body_on") if on else cfg.get("webhook_body_off") or ""
+    )
+    headers = {}
+    raw_h = str(cfg.get("webhook_headers") or "").strip()
+    if raw_h:
+        try:
+            h = json.loads(raw_h)
+            if isinstance(h, dict):
+                headers = {str(k): str(v) for k, v in h.items()}
+        except Exception as e:
+            raise ValueError(f"webhook_headers JSON: {e}") from e
+    code, text = _filtration_http(
+        url,
+        method=method if body or method == "POST" else method,
+        body=body if method == "POST" else None,
+        headers=headers or None,
+    )
+    if code >= 400:
+        raise RuntimeError(f"webhook HTTP {code}: {text[:120]}")
+    return {"on": bool(on), "backend": "webhook", "http": code}
+
+
+def _filtration_backend_shelly(on: bool | None, cfg: dict) -> dict:
+    ip = str(cfg.get("ip") or "").strip()
+    if not ip:
+        raise ValueError("Shelly IP empty")
+    ch = int(cfg.get("shelly_channel") or 0)
+    gen = str(cfg.get("shelly_gen") or "auto").lower()
+
+    def gen1_set(turn: bool) -> tuple[int, str]:
+        t = "on" if turn else "off"
+        return _filtration_http(f"http://{ip}/relay/{ch}?turn={t}")
+
+    def gen1_get() -> bool | None:
+        try:
+            code, text = _filtration_http(f"http://{ip}/relay/{ch}")
+            j = json.loads(text)
+            if isinstance(j, dict) and "ison" in j:
+                return bool(j["ison"])
+        except Exception:
+            return None
+        return None
+
+    def gen2_set(turn: bool) -> tuple[int, str]:
+        # Shelly Gen2 RPC
+        payload = json.dumps(
+            {"id": 1, "method": "Switch.Set", "params": {"id": ch, "on": bool(turn)}}
+        )
+        return _filtration_http(
+            f"http://{ip}/rpc", method="POST", body=payload
+        )
+
+    def gen2_get() -> bool | None:
+        try:
+            payload = json.dumps(
+                {"id": 1, "method": "Switch.GetStatus", "params": {"id": ch}}
+            )
+            code, text = _filtration_http(
+                f"http://{ip}/rpc", method="POST", body=payload
+            )
+            j = json.loads(text)
+            res = j.get("result") if isinstance(j, dict) else None
+            if isinstance(res, dict) and "output" in res:
+                return bool(res["output"])
+        except Exception:
+            return None
+        return None
+
+    if on is None:
+        if gen in ("1", "auto"):
+            v = gen1_get()
+            if v is not None:
+                return {"on": v, "backend": "shelly", "gen": "1", "ip": ip}
+        if gen in ("2", "auto"):
+            v = gen2_get()
+            if v is not None:
+                return {"on": v, "backend": "shelly", "gen": "2", "ip": ip}
+        return {"on": cfg.get("last_on"), "backend": "shelly", "ip": ip}
+
+    if gen == "1":
+        code, text = gen1_set(bool(on))
+        if code >= 400:
+            raise RuntimeError(f"Shelly gen1 HTTP {code}: {text[:80]}")
+        return {"on": bool(on), "backend": "shelly", "gen": "1", "ip": ip}
+    if gen == "2":
+        code, text = gen2_set(bool(on))
+        if code >= 400:
+            raise RuntimeError(f"Shelly gen2 HTTP {code}: {text[:80]}")
+        return {"on": bool(on), "backend": "shelly", "gen": "2", "ip": ip}
+    # auto: try gen1 then gen2
+    try:
+        code, text = gen1_set(bool(on))
+        if code < 400:
+            return {"on": bool(on), "backend": "shelly", "gen": "1", "ip": ip}
+    except Exception:
+        pass
+    code, text = gen2_set(bool(on))
+    if code >= 400:
+        raise RuntimeError(f"Shelly HTTP {code}: {text[:80]}")
+    return {"on": bool(on), "backend": "shelly", "gen": "2", "ip": ip}
+
+
+def _filtration_backend_ha(on: bool | None, cfg: dict) -> dict:
+    base = str(cfg.get("ha_url") or "").rstrip("/")
+    token = str(cfg.get("ha_token") or "")
+    entity = str(cfg.get("ha_entity_id") or "").strip()
+    if not base:
+        raise ValueError("Home Assistant URL empty")
+    if not token:
+        raise ValueError("Home Assistant token empty")
+    if not entity:
+        raise ValueError("Home Assistant entity_id empty")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    if on is None:
+        code, text = _filtration_http(
+            f"{base}/api/states/{urllib.parse.quote(entity, safe='')}",
+            method="GET",
+            headers=headers,
+        )
+        j = json.loads(text) if text else {}
+        st = str(j.get("state") or "").lower() if isinstance(j, dict) else ""
+        on_v = st in ("on", "open", "true", "1")
+        return {"on": on_v, "backend": "homeassistant", "entity": entity, "http": code}
+    domain = entity.split(".", 1)[0] if "." in entity else "switch"
+    service = "turn_on" if on else "turn_off"
+    payload = json.dumps({"entity_id": entity})
+    code, text = _filtration_http(
+        f"{base}/api/services/{domain}/{service}",
+        method="POST",
+        body=payload,
+        headers=headers,
+    )
+    if code >= 400:
+        raise RuntimeError(f"HA HTTP {code}: {text[:120]}")
+    return {"on": bool(on), "backend": "homeassistant", "entity": entity, "http": code}
+
+
+def _filtration_dispatch(on: bool | None) -> dict:
+    """on=None read; else set. Uses current cfg backend."""
+    cfg = _filtration_cfg_snapshot()
+    be = str(cfg.get("backend") or "tapo").lower()
+    if be == "tapo":
+        return _filtration_backend_tapo(on, cfg)
+    if be in ("ewelink", "sonoff", "sonoff_diy"):
+        return _filtration_backend_ewelink(on, cfg)
+    if be == "webhook":
+        return _filtration_backend_webhook(on, cfg)
+    if be == "shelly":
+        return _filtration_backend_shelly(on, cfg)
+    if be in ("homeassistant", "ha"):
+        return _filtration_backend_ha(on, cfg)
+    raise ValueError(f"unknown backend: {be}")
+
+
+def filtration_test() -> dict:
+    """Backend connectivity + optional state read."""
+    try:
+        with _filtration_lock:
+            if not _filtration_cfg.get("enabled"):
+                # allow test even if disabled for setup
+                pass
+            be = str(_filtration_cfg.get("backend") or "tapo")
+        out = _filtration_dispatch(None)
+        on = out.get("on")
+        with _filtration_lock:
+            if on is not None:
+                _filtration_cfg["last_on"] = bool(on)
+            _filtration_cfg["last_error"] = None
+            _filtration_cfg["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
+            _filtration_cfg["last_action"] = f"test:{be}"
+        _save_filtration_cfg()
+        return {"ok": True, "backend": be, **out}
+    except Exception as e:
+        with _filtration_lock:
+            _filtration_cfg["last_error"] = str(e)
+            _filtration_cfg["last_action"] = "test_fail"
+        _save_filtration_cfg()
+        return {"ok": False, "error": str(e)}
+
+
+def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> dict:
+    """
+    Turn filtration on/off via selected backend.
+    OFF while mining is refused unless force (auto-sync / internal).
+    """
+    on = bool(on)
+    with _filtration_lock:
+        if not _filtration_cfg.get("enabled"):
+            raise RuntimeError("filtration disabled in settings")
+        be = str(_filtration_cfg.get("backend") or "tapo")
+    if not on and not force:
+        try:
+            live = fetch_live()
+            if _live_work(live) == "resume":
+                raise RuntimeError(
+                    "нельзя выключить фильтрацию при майнинге"
+                )
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+    try:
+        out = _filtration_dispatch(on)
+        got = out.get("on")
+        if got is None:
+            got = on
+        with _filtration_lock:
+            _filtration_cfg["last_on"] = bool(got)
+            _filtration_cfg["last_error"] = None
+            _filtration_cfg["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
+            _filtration_cfg["last_sync_ts"] = _filtration_cfg["last_ok_ts"]
+            _filtration_cfg["last_action"] = f"{source}:{be}:{'on' if on else 'off'}"
+        _save_filtration_cfg()
+        return {"ok": True, "on": bool(got), "source": source, "backend": be, **out}
+    except Exception as e:
+        with _filtration_lock:
+            _filtration_cfg["last_error"] = str(e)
+            _filtration_cfg["last_action"] = f"{source}_fail"
+        _save_filtration_cfg()
+        return {"ok": False, "error": str(e), "source": source, "backend": be}
+
+
+def filtration_sync_with_mining(measured_work: str | None) -> None:
+    """
+    Called from policy_tick.
+    - mining (resume) + auto_on_mining → ensure ON
+    - suspend + auto_off_suspend → ensure OFF
+    """
+    now = time.time()
+    with _filtration_lock:
+        if not _filtration_cfg.get("enabled"):
+            return
+        auto_on = bool(_filtration_cfg.get("auto_on_mining", True))
+        auto_off = bool(_filtration_cfg.get("auto_off_suspend", False))
+        last_on = _filtration_cfg.get("last_on")
+        be = str(_filtration_cfg.get("backend") or "tapo")
+        # readiness check per backend
+        if be == "tapo" and not str(_filtration_cfg.get("ip") or "").strip():
+            return
+        if be == "ewelink" and (
+            not str(_filtration_cfg.get("ip") or "").strip()
+            or not str(_filtration_cfg.get("device_id") or "").strip()
+        ):
+            return
+        if be == "webhook" and not (
+            str(_filtration_cfg.get("webhook_on_url") or "").strip()
+            or str(_filtration_cfg.get("webhook_off_url") or "").strip()
+        ):
+            return
+        if be == "shelly" and not str(_filtration_cfg.get("ip") or "").strip():
+            return
+        if be == "homeassistant" and not (
+            str(_filtration_cfg.get("ha_url") or "").strip()
+            and str(_filtration_cfg.get("ha_entity_id") or "").strip()
+        ):
+            return
+        last_err = _filtration_cfg.get("last_error")
+        last_act = str(_filtration_cfg.get("last_action") or "")
+        if last_err and last_act.endswith("_fail"):
+            try:
+                last_try = float(_filtration_session.get("last_try_ts") or 0)
+            except Exception:
+                last_try = 0.0
+            if now - last_try < 20.0:
+                return
+        _filtration_session["last_try_ts"] = now
+    work = str(measured_work or "").lower()
+    want: bool | None = None
+    src = "auto"
+    if work == "resume" and auto_on:
+        if last_on is not True:
+            want = True
+            src = "auto_mining"
+    elif work in ("suspend", "sleep") and auto_off:
+        if last_on is not False:
+            want = False
+            src = "auto_suspend"
+    if want is None:
+        return
+    try:
+        filtration_set(want, source=src, force=True)
+    except Exception as e:
+        print(f"[filtration] sync fail: {e}")
+
+
+def get_filtration_status() -> dict:
+    cfg = get_filtration_cfg(redact=True)
+    mining = None
+    try:
+        live = fetch_live()
+        mining = _live_work(live) == "resume"
+    except Exception:
+        pass
+    return {
+        "ok": True,
+        "enabled": bool(cfg.get("enabled")),
+        "backend": cfg.get("backend") or "tapo",
+        "backends": cfg.get("backends") or list_filtration_backends(),
+        "on": cfg.get("last_on"),
+        "mining": mining,
+        "auto_on_mining": bool(cfg.get("auto_on_mining", True)),
+        "auto_off_suspend": bool(cfg.get("auto_off_suspend", False)),
+        "ip": cfg.get("ip"),
+        "email": cfg.get("email"),
+        "device_id": cfg.get("device_id"),
+        "ewelink_port": cfg.get("ewelink_port"),
+        "webhook_on_url": cfg.get("webhook_on_url"),
+        "webhook_off_url": cfg.get("webhook_off_url"),
+        "webhook_method": cfg.get("webhook_method"),
+        "webhook_body_on": cfg.get("webhook_body_on"),
+        "webhook_body_off": cfg.get("webhook_body_off"),
+        "webhook_headers": cfg.get("webhook_headers"),
+        "shelly_channel": cfg.get("shelly_channel"),
+        "shelly_gen": cfg.get("shelly_gen"),
+        "ha_url": cfg.get("ha_url"),
+        "ha_entity_id": cfg.get("ha_entity_id"),
+        "password_set": bool(cfg.get("password_set")),
+        "ha_token_set": bool(cfg.get("ha_token_set")),
+        "last_error": cfg.get("last_error"),
+        "last_ok_ts": cfg.get("last_ok_ts"),
+        "last_action": cfg.get("last_action"),
+        "can_turn_off": not (bool(cfg.get("enabled")) and mining is True),
+    }
+
+
+# ── Chip map (LuCI Miner API Log scrape) ─────────────────────────────────────
+# Source: https://<miner>/cgi-bin/luci/admin/status/btminerapi
+# Per-chip: C0..C263 × slot 0..3 · temp · freq · vol · nonce · pct · err
+# Hash map metric = nonce (work found); pct is a separate API field, not hashrate.
+
+DEFAULT_CHIPMAP_CFG: dict = {
+    "enabled": True,
+    "poll_interval_sec": 30,  # separate from miner live poll
+    "web_user": "admin",
+    "web_password": "",  # empty → DEFAULT_API_PASSWORD
+    "web_scheme": "https",  # https | http
+    "verify_tls": False,
+}
+
+_chipmap_lock = threading.Lock()
+_chipmap_cfg: dict = dict(DEFAULT_CHIPMAP_CFG)
+_chipmap_cache: dict = {
+    "ok": False,
+    "ts": None,
+    "fetch_ms": None,
+    "error": None,
+    "boards": [],
+    "chip_count": 0,
+    "temp_min": None,
+    "temp_max": None,
+    "temp_avg": None,
+}
+_chipmap_stop = threading.Event()
+
+_CHIP_LINE_RE = re.compile(
+    r"C(\d+)\s+freq:(\d+)\s+vol:(\d+)\s+temp:([\d.]+)\s+"
+    r"nonce:(\d+)\s+err:(\d+)\s+crc:(\d+)\s+"
+    r"x:(\d+)\s*/\s*(\d+)\s+repeat:(\d+)\s+"
+    r"pct:\s*([\d.]+)\s*%\s*/\s*([\d.]+)\s*%",
+    re.I,
+)
+_SLOT_HDR_RE = re.compile(
+    r"slot:\s*(\d+)\s*,\s*freq:\s*([\d.]+)\s*,\s*temp:\s*([\d.]+)",
+    re.I,
+)
+
+
+def _load_chipmap_cfg() -> None:
+    global _chipmap_cfg
+    with _chipmap_lock:
+        raw = _load_json(CHIPMAP_CFG_FILE, DEFAULT_CHIPMAP_CFG)
+        if not isinstance(raw, dict):
+            raw = {}
+        cfg = dict(DEFAULT_CHIPMAP_CFG)
+        cfg["enabled"] = bool(raw.get("enabled", True))
+        try:
+            pi = int(raw.get("poll_interval_sec", 30) or 30)
+        except (TypeError, ValueError):
+            pi = 30
+        cfg["poll_interval_sec"] = max(10, min(600, pi))
+        cfg["web_user"] = str(raw.get("web_user") or "admin").strip() or "admin"
+        cfg["web_password"] = str(raw.get("web_password") or "")
+        sch = str(raw.get("web_scheme") or "https").strip().lower()
+        cfg["web_scheme"] = "http" if sch == "http" else "https"
+        cfg["verify_tls"] = bool(raw.get("verify_tls", False))
+        _chipmap_cfg = cfg
+
+
+def _save_chipmap_cfg() -> None:
+    with _chipmap_lock:
+        _save_json(CHIPMAP_CFG_FILE, _chipmap_cfg)
+
+
+def get_chipmap_cfg(*, redact: bool = True) -> dict:
+    with _chipmap_lock:
+        cfg = dict(_chipmap_cfg)
+    if redact:
+        if cfg.get("web_password"):
+            p = str(cfg["web_password"])
+            cfg["web_password_set"] = True
+            cfg["web_password"] = (p[:2] + "…" + p[-2:]) if len(p) > 6 else "••••"
+        else:
+            # empty means fallback to miner API password
+            cfg["web_password_set"] = bool(DEFAULT_API_PASSWORD)
+            cfg["web_password"] = ""
+            cfg["web_password_uses_miner"] = True
+    else:
+        cfg["web_password_set"] = bool(cfg.get("web_password") or DEFAULT_API_PASSWORD)
+    return cfg
+
+
+def apply_chipmap_cfg(req: dict) -> dict:
+    if not isinstance(req, dict):
+        raise ValueError("expected object")
+    with _chipmap_lock:
+        if "enabled" in req:
+            _chipmap_cfg["enabled"] = bool(req["enabled"])
+        if "poll_interval_sec" in req and req["poll_interval_sec"] is not None:
+            try:
+                _chipmap_cfg["poll_interval_sec"] = max(
+                    10, min(600, int(req["poll_interval_sec"]))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "web_user" in req and req["web_user"] is not None:
+            _chipmap_cfg["web_user"] = str(req["web_user"]).strip() or "admin"
+        if "web_password" in req and req["web_password"] is not None and str(req["web_password"]) != "":
+            _chipmap_cfg["web_password"] = str(req["web_password"])
+        if "web_scheme" in req and req["web_scheme"] is not None:
+            sch = str(req["web_scheme"]).strip().lower()
+            _chipmap_cfg["web_scheme"] = "http" if sch == "http" else "https"
+        if "verify_tls" in req:
+            _chipmap_cfg["verify_tls"] = bool(req["verify_tls"])
+    _save_chipmap_cfg()
+    return get_chipmap_cfg(redact=True)
+
+
+def _chipmap_web_password() -> str:
+    with _chipmap_lock:
+        pw = str(_chipmap_cfg.get("web_password") or "").strip()
+    return pw if pw else str(DEFAULT_API_PASSWORD or "admin")
+
+
+def _chipmap_base_url() -> str:
+    with _chipmap_lock:
+        scheme = _chipmap_cfg.get("web_scheme") or "https"
+    with _miner_cfg_lock:
+        host = HOST_MINER
+    return f"{scheme}://{host}"
+
+
+def parse_chipmap_log(text: str) -> dict:
+    """Parse LuCI Miner API Log textarea into boards/chips structure."""
+    boards_map: dict[int, dict] = {}
+    current_slot: int | None = None
+    temps: list[float] = []
+
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        mh = _SLOT_HDR_RE.search(line)
+        if mh:
+            current_slot = int(mh.group(1))
+            if current_slot not in boards_map:
+                boards_map[current_slot] = {
+                    "slot": current_slot,
+                    "board_freq": _f(mh.group(2)),
+                    "board_temp": _f(mh.group(3)),
+                    "chips": [],
+                }
+            else:
+                boards_map[current_slot]["board_freq"] = _f(mh.group(2))
+                boards_map[current_slot]["board_temp"] = _f(mh.group(3))
+            continue
+        mc = _CHIP_LINE_RE.search(line)
+        if mc and current_slot is not None:
+            if current_slot not in boards_map:
+                boards_map[current_slot] = {
+                    "slot": current_slot,
+                    "board_freq": None,
+                    "board_temp": None,
+                    "chips": [],
+                }
+            temp = _f(mc.group(4))
+            pct = _f(mc.group(11))
+            chip = {
+                "id": int(mc.group(1)),
+                "freq": int(mc.group(2)),
+                "vol": int(mc.group(3)),
+                "temp": temp,
+                "nonce": int(mc.group(5)),
+                "err": int(mc.group(6)),
+                "crc": int(mc.group(7)),
+                "x": int(mc.group(8)),
+                "x2": int(mc.group(9)),
+                "repeat": int(mc.group(10)),
+                "pct": pct,
+                "pct2": _f(mc.group(12)),
+            }
+            boards_map[current_slot]["chips"].append(chip)
+            if temp is not None:
+                temps.append(float(temp))
+
+    boards = [boards_map[k] for k in sorted(boards_map.keys())]
+    for b in boards:
+        b["chips"].sort(key=lambda c: c["id"])
+        b["chip_count"] = len(b["chips"])
+        cts = [c["temp"] for c in b["chips"] if c.get("temp") is not None]
+        b["temp_min"] = min(cts) if cts else None
+        b["temp_max"] = max(cts) if cts else None
+        b["temp_avg"] = (sum(cts) / len(cts)) if cts else None
+        nsum = sum(int(c.get("nonce") or 0) for c in b["chips"])
+        b["nonce_sum"] = nsum
+        # relative share of board hash work (nonce / board total)
+        for c in b["chips"]:
+            try:
+                n = int(c.get("nonce") or 0)
+            except (TypeError, ValueError):
+                n = 0
+            c["hash_share"] = (
+                round(100.0 * n / nsum, 3) if nsum > 0 else 0.0
+            )
+
+    chip_count = sum(b["chip_count"] for b in boards)
+    total_nonce = sum(int(b.get("nonce_sum") or 0) for b in boards)
+    return {
+        "boards": boards,
+        "chip_count": chip_count,
+        "board_count": len(boards),
+        "nonce_total": total_nonce,
+        "temp_min": min(temps) if temps else None,
+        "temp_max": max(temps) if temps else None,
+        "temp_avg": (sum(temps) / len(temps)) if temps else None,
+    }
+
+
+def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
+    """
+    Login to miner LuCI and scrape Miner API Log.
+    Returns cache-shaped dict with ok/error.
+    """
+    t0 = time.time()
+    with _chipmap_lock:
+        enabled = bool(_chipmap_cfg.get("enabled", True))
+        user = str(_chipmap_cfg.get("web_user") or "admin")
+        verify = bool(_chipmap_cfg.get("verify_tls", False))
+    if not enabled and not force:
+        with _chipmap_lock:
+            out = dict(_chipmap_cache)
+        out["ok"] = False
+        out["error"] = "chipmap disabled"
+        return out
+
+    password = _chipmap_web_password()
+    base = _chipmap_base_url()
+    try:
+        import ssl as _ssl
+        import http.cookiejar
+
+        ctx = _ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx),
+            urllib.request.HTTPHandler(),
+            urllib.request.HTTPCookieProcessor(cj),
+        )
+        opener.addheaders = [("User-Agent", "poolheat-chipmap/1.0")]
+
+        # login
+        login_body = urllib.parse.urlencode(
+            {"luci_username": user, "luci_password": password}
+        ).encode("utf-8")
+        login_req = urllib.request.Request(
+            f"{base}/cgi-bin/luci",
+            data=login_body,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with opener.open(login_req, timeout=10) as resp:
+            _ = resp.read(8192)
+
+        # API log page
+        page_req = urllib.request.Request(
+            f"{base}/cgi-bin/luci/admin/status/btminerapi",
+            method="GET",
+        )
+        with opener.open(page_req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+
+        # extract textarea#syslog
+        m = re.search(
+            r'<textarea[^>]*id=["\']syslog["\'][^>]*>(.*?)</textarea>',
+            html,
+            re.I | re.S,
+        )
+        if not m:
+            # fallback: whole page text
+            log_text = re.sub(r"<[^>]+>", "\n", html)
+        else:
+            log_text = m.group(1)
+            # unescape basic HTML entities
+            log_text = (
+                log_text.replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replace("&quot;", '"')
+            )
+
+        parsed = parse_chipmap_log(log_text)
+        if not parsed.get("chip_count"):
+            raise RuntimeError(
+                "no chip lines parsed — check web password / page content"
+            )
+
+        ms = int((time.time() - t0) * 1000)
+        out = {
+            "ok": True,
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "fetch_ms": ms,
+            "error": None,
+            "source": "luci:btminerapi",
+            "host": base,
+            **parsed,
+        }
+        with _chipmap_lock:
+            _chipmap_cache.clear()
+            _chipmap_cache.update(out)
+        return dict(out)
+    except Exception as e:
+        ms = int((time.time() - t0) * 1000)
+        with _chipmap_lock:
+            prev = dict(_chipmap_cache)
+            _chipmap_cache["ok"] = False
+            _chipmap_cache["error"] = str(e)
+            _chipmap_cache["fetch_ms"] = ms
+            _chipmap_cache["ts"] = datetime.now().isoformat(timespec="seconds")
+            # keep last good boards if any
+            out = dict(_chipmap_cache)
+            if prev.get("boards"):
+                out["boards"] = prev["boards"]
+                out["chip_count"] = prev.get("chip_count")
+                out["stale"] = True
+        return out
+
+
+def get_chipmap(*, force: bool = False) -> dict:
+    """Return cached chipmap; optionally force refresh."""
+    if force:
+        return fetch_chipmap_from_luci(force=True)
+    with _chipmap_lock:
+        if _chipmap_cache.get("boards"):
+            return dict(_chipmap_cache)
+    # cold cache
+    return fetch_chipmap_from_luci(force=True)
+
+
+def chipmap_loop() -> None:
+    """Background poll of LuCI chip log — own interval, independent of live poll."""
+    _chipmap_stop.wait(timeout=4.0)
+    while not _chipmap_stop.is_set():
+        with _chipmap_lock:
+            enabled = bool(_chipmap_cfg.get("enabled", True))
+            interval = max(10, int(_chipmap_cfg.get("poll_interval_sec") or 30))
+        if enabled:
+            try:
+                fetch_chipmap_from_luci(force=True)
+            except Exception as e:
+                print(f"[chipmap] poll: {e}")
+        _chipmap_stop.wait(timeout=interval)
+
+
 def _miner_config_path() -> Path:
     """Where to persist miner host/port/password."""
     cfg = _APP.get("cfg_path") or ""
@@ -427,7 +1955,28 @@ def _miner_config_path() -> Path:
     return DATA / "config.json"
 
 
+def get_project_name() -> str:
+    """Runtime name; re-sync from config.json if file has a value."""
+    global PROJECT_NAME
+    with _miner_cfg_lock:
+        n = str(PROJECT_NAME or "").strip()
+        path = _miner_config_path()
+        if path.is_file():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and raw.get("project_name") is not None:
+                    fn = str(raw.get("project_name") or "").strip()
+                    if fn:
+                        PROJECT_NAME = fn
+                        n = fn
+            except Exception:
+                pass
+        return n or "poolheat_WM"
+
+
 def get_miner_settings() -> dict:
+    # ensure project_name is fresh from disk
+    pname = get_project_name()
     with _miner_cfg_lock:
         return {
             "miner_host": HOST_MINER,
@@ -435,6 +1984,7 @@ def get_miner_settings() -> dict:
             "api_password": DEFAULT_API_PASSWORD,
             "poll_interval_sec": int(POLL_INTERVAL_SEC),
             "dry_run": bool(DRY_RUN),
+            "project_name": pname,
             "host": f"{HOST_MINER}:{PORT_MINER}",
             "config_path": str(_miner_config_path()),
         }
@@ -446,11 +1996,13 @@ def apply_miner_settings(
     password: str | None = None,
     poll_interval_sec: int | None = None,
     dry_run: bool | None = None,
+    project_name: str | None = None,
     *,
     persist: bool = True,
 ) -> dict:
     """Update runtime miner target; optionally write config.json."""
-    global HOST_MINER, PORT_MINER, DEFAULT_API_PASSWORD, POLL_INTERVAL_SEC, DRY_RUN, _cache, _cache_ts
+    global HOST_MINER, PORT_MINER, DEFAULT_API_PASSWORD, POLL_INTERVAL_SEC, DRY_RUN
+    global PROJECT_NAME, _cache, _cache_ts
 
     with _miner_cfg_lock:
         if host is not None:
@@ -475,6 +2027,11 @@ def apply_miner_settings(
             POLL_INTERVAL_SEC = pi
         if dry_run is not None:
             DRY_RUN = bool(dry_run)
+        if project_name is not None:
+            pn = str(project_name).strip() or "poolheat_WM"
+            if len(pn) > 64:
+                pn = pn[:64]
+            PROJECT_NAME = pn
 
         settings = {
             "miner_host": HOST_MINER,
@@ -482,6 +2039,7 @@ def apply_miner_settings(
             "api_password": DEFAULT_API_PASSWORD,
             "poll_interval_sec": int(POLL_INTERVAL_SEC),
             "dry_run": bool(DRY_RUN),
+            "project_name": str(PROJECT_NAME or "poolheat_WM"),
             "host": f"{HOST_MINER}:{PORT_MINER}",
         }
 
@@ -501,6 +2059,16 @@ def apply_miner_settings(
             existing["api_password"] = DEFAULT_API_PASSWORD
             existing["poll_interval_sec"] = int(POLL_INTERVAL_SEC)
             existing["dry_run"] = bool(DRY_RUN)
+            # project_name: only overwrite when explicitly provided in this call;
+            # otherwise keep file value (don't clobber via dry_run-only saves)
+            if project_name is not None:
+                existing["project_name"] = str(PROJECT_NAME or "poolheat_WM")
+            elif existing.get("project_name"):
+                PROJECT_NAME = str(existing["project_name"]).strip() or PROJECT_NAME
+                existing["project_name"] = str(PROJECT_NAME or "poolheat_WM")
+            else:
+                existing["project_name"] = str(PROJECT_NAME or "poolheat_WM")
+            settings["project_name"] = str(existing.get("project_name") or "poolheat_WM")
             # keep other keys (bind, http_port, comment…)
             if "bind" not in existing:
                 existing["bind"] = HTTP_BIND
@@ -511,6 +2079,7 @@ def apply_miner_settings(
                 encoding="utf-8",
             )
             settings["config_path"] = str(path)
+            settings["saved"] = True
             settings["saved"] = True
         else:
             settings["saved"] = False
@@ -952,6 +2521,9 @@ _load_hist_cfg()
 _load_weather_cfg()
 _load_pool_cfg()
 _load_zone_cfg()
+_load_zone_presets()
+_load_filtration_cfg()
+_load_chipmap_cfg()
 
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
@@ -1006,6 +2578,10 @@ def init_db() -> None:
                 conn.execute("ALTER TABLE samples ADD COLUMN work_state TEXT")
             if "upfreq_ok" not in cols:
                 conn.execute("ALTER TABLE samples ADD COLUMN upfreq_ok INTEGER")
+            if "outdoor_c" not in cols:
+                conn.execute("ALTER TABLE samples ADD COLUMN outdoor_c REAL")
+            if "eff_jt" not in cols:
+                conn.execute("ALTER TABLE samples ADD COLUMN eff_jt REAL")
             # Miner error journal (last 100 kept by app logic)
             conn.execute(
                 """
@@ -1458,8 +3034,8 @@ def insert_sample(row: dict) -> None:
                     board0, board1, board2, board3,
                     power, power_limit, power_limit_set, power_pct_cmd,
                     freq, hashrate_th, mode, hash_stable, online, work_state,
-                    upfreq_ok
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    upfreq_ok, outdoor_c, eff_jt
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     row["ts"],
@@ -1484,6 +3060,8 @@ def insert_sample(row: dict) -> None:
                     0 if row.get("online") in (0, False, "0") else 1,
                     row.get("work_state"),
                     uf_db,
+                    row.get("outdoor_c"),
+                    row.get("eff_jt"),
                 ),
             )
             conn.commit()
@@ -2994,7 +4572,7 @@ def fetch_live() -> dict:
         factory_ghs=factory_ghs,
     )
 
-    return {
+    body = {
         "ok": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "host": f"{HOST_MINER}:{PORT_MINER}",
@@ -3056,6 +4634,15 @@ def fetch_live() -> dict:
         "dry_run": bool(DRY_RUN),
         "policy": get_policy_status(),
     }
+    # lifecycle status (starting / stopping / tuning / running / stopped)
+    try:
+        rs = mining_run_status(body)
+        body["run_status"] = rs.get("key")
+        body["run_status_ru"] = rs.get("label_ru")
+        body["run_status_en"] = rs.get("label_en")
+    except Exception:
+        body["run_status"] = None
+    return body
 
 
 def _measured_work_state(live: dict) -> str:
@@ -3102,6 +4689,160 @@ def _infer_work_state(live: dict) -> str:
     return _measured_work_state(live)
 
 
+def _fmt_last_share_time(v) -> str:
+    """Whatsminer Last Share Time: 0 → Never; else unix or elapsed."""
+    if v is None or v == "" or v == 0 or v == "0":
+        return "Never"
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        s = str(v).strip()
+        return s if s else "Never"
+    if n <= 0:
+        return "Never"
+    # absolute unix seconds
+    if n > 1_000_000_000:
+        try:
+            return datetime.fromtimestamp(n).strftime("%d.%m.%Y %H:%M:%S")
+        except Exception:
+            return str(int(n))
+    # relative seconds since last share
+    sec = int(n)
+    if sec < 60:
+        return f"{sec}s ago"
+    if sec < 3600:
+        return f"{sec // 60}m ago"
+    if sec < 86400:
+        return f"{sec // 3600}h ago"
+    return f"{sec // 86400}d ago"
+
+
+def _normalize_pool_row(p: dict, idx: int = 0) -> dict:
+    """Map Whatsminer POOLS[] entry → UI row (hash2cash-style columns)."""
+    active = p.get("Stratum Active")
+    if active is None:
+        active = p.get("stratum_active")
+    if isinstance(active, str):
+        active = active.strip().lower() in ("true", "1", "yes")
+    else:
+        active = bool(active)
+
+    lst_raw = p.get("Last Share Time", p.get("last_share_time"))
+    diff = p.get("Stratum Difficulty", p.get("Difficulty", p.get("difficulty")))
+    try:
+        diff_f = float(diff) if diff not in (None, "") else None
+    except (TypeError, ValueError):
+        diff_f = None
+
+    def _i(key_a, key_b=None, default=0):
+        v = p.get(key_a)
+        if v is None and key_b:
+            v = p.get(key_b)
+        try:
+            return int(float(v)) if v not in (None, "") else default
+        except (TypeError, ValueError):
+            return default
+
+    pool_n = p.get("POOL", p.get("pool", idx + 1))
+    try:
+        pool_n = int(pool_n)
+    except (TypeError, ValueError):
+        pool_n = idx + 1
+
+    return {
+        "pool": pool_n,
+        "url": p.get("URL") or p.get("url") or "—",
+        "active": active,
+        "user": p.get("User") or p.get("user") or "—",
+        "status": p.get("Status") or p.get("status") or "—",
+        "difficulty": diff_f,
+        "getworks": _i("Getworks", "getworks"),
+        "accepted": _i("Accepted", "accepted"),
+        "rejected": _i("Rejected", "rejected"),
+        "stale": _i("Stale", "stale"),
+        "discarded": _i("Discarded", "discarded"),
+        "lst": lst_raw,
+        "lst_label": _fmt_last_share_time(lst_raw),
+        "priority": _i("Priority", "priority", default=idx),
+        "rejected_pct": _f(
+            p["Pool Rejected%"]
+            if "Pool Rejected%" in p
+            else p.get("rejected_pct")
+        ),
+        "stale_pct": _f(
+            p["Pool Stale%"] if "Pool Stale%" in p else p.get("stale_pct")
+        ),
+    }
+
+
+_pools_cache_lock = threading.Lock()
+_pools_cache: dict | None = None
+_pools_cache_ts = 0.0
+_POOLS_CACHE_TTL = 15.0
+
+
+def fetch_mining_pools(*, force: bool = False) -> dict:
+    """
+    Mining pool list + share stats from Whatsminer `pools` command.
+    Cached briefly to avoid hammering :4028.
+    """
+    global _pools_cache, _pools_cache_ts
+    now = time.time()
+    with _pools_cache_lock:
+        if (
+            not force
+            and _pools_cache is not None
+            and (now - _pools_cache_ts) < _POOLS_CACHE_TTL
+        ):
+            out = dict(_pools_cache)
+            out["cached"] = True
+            return out
+
+    try:
+        raw = miner_cmd({"cmd": "pools"}, timeout=6)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "pools": [],
+            "host": f"{HOST_MINER}:{PORT_MINER}",
+            "ts": datetime.now().isoformat(timespec="seconds"),
+        }
+
+    pools_raw = None
+    if isinstance(raw, dict):
+        pools_raw = raw.get("POOLS") or raw.get("pools")
+        if pools_raw is None:
+            msg = raw.get("Msg")
+            if isinstance(msg, list):
+                pools_raw = msg
+            elif isinstance(msg, dict) and isinstance(msg.get("POOLS"), list):
+                pools_raw = msg["POOLS"]
+    if not isinstance(pools_raw, list):
+        pools_raw = []
+
+    pools = []
+    for i, p in enumerate(pools_raw):
+        if isinstance(p, dict):
+            pools.append(_normalize_pool_row(p, i))
+
+    # active first, then pool number
+    pools.sort(key=lambda r: (0 if r.get("active") else 1, r.get("pool") or 99))
+
+    body = {
+        "ok": True,
+        "pools": pools,
+        "count": len(pools),
+        "host": f"{HOST_MINER}:{PORT_MINER}",
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "cached": False,
+    }
+    with _pools_cache_lock:
+        _pools_cache = dict(body)
+        _pools_cache_ts = now
+    return body
+
+
 def _infer_upfreq_ok(live: dict) -> int | None:
     """1 = all boards Upfreq Complete, 0 = tuning (any board still 0)."""
     up = live.get("upfreq")
@@ -3115,6 +4856,40 @@ def _infer_upfreq_ok(live: dict) -> int | None:
     return 1 if all(v == 1 for v in vals) else 0
 
 
+def _sample_outdoor_c() -> float | None:
+    """Outdoor °C from Open-Meteo cache (refresh if TTL expired)."""
+    try:
+        w = fetch_weather_current(force=False)
+        if not w or w.get("enabled") is False:
+            return None
+        if w.get("ok") or w.get("stale"):
+            return _f(w.get("temp_c"))
+    except Exception:
+        pass
+    return None
+
+
+def _sample_eff_jt(power, hashrate_th) -> float | None:
+    """
+    J/TH = W / (TH/s).
+    Undefined (no hash, div-by-zero, offline ramp) → 0 for clean charts.
+    """
+    p = _f(power)
+    h = _f(hashrate_th)
+    if p is None and h is None:
+        return 0.0
+    if p is None:
+        p = 0.0
+    if h is None or h <= 0.05:
+        return 0.0
+    if p <= 0:
+        return 0.0
+    try:
+        return round(p / h, 3)
+    except Exception:
+        return 0.0
+
+
 def live_to_sample(live: dict) -> dict:
     boards = live.get("boards") or [None, None, None, None]
     lim_set = live.get("power_limit_set")
@@ -3124,6 +4899,8 @@ def live_to_sample(live: dict) -> dict:
         lim_set_f = None
     now = time.time()
     online = 1 if live.get("ok") is not False else 0
+    power = _f(live.get("power"))
+    hashrate_th = _f(live.get("hashrate_th"))
     return {
         "ts": now,
         "ts_iso": datetime.now().isoformat(timespec="seconds"),
@@ -3136,17 +4913,20 @@ def live_to_sample(live: dict) -> dict:
         "board1": _f(boards[1] if len(boards) > 1 else None),
         "board2": _f(boards[2] if len(boards) > 2 else None),
         "board3": _f(boards[3] if len(boards) > 3 else None),
-        "power": _f(live.get("power")),
+        "power": power,
         "power_limit": _f(live.get("power_limit")),
         "power_limit_set": lim_set_f,
         "power_pct_cmd": _f(live.get("power_pct_cmd")),
         "freq": _f(live.get("freq_avg")),
-        "hashrate_th": _f(live.get("hashrate_th")),
+        "hashrate_th": hashrate_th,
         "mode": live.get("mode"),
         "hash_stable": live.get("hash_stable_i", 0),
         "online": online,
         "work_state": _infer_work_state(live) if online else None,
         "upfreq_ok": _infer_upfreq_ok(live) if online else None,
+        "outdoor_c": _sample_outdoor_c(),
+        # always store a number for chart (0 = undefined / no hash)
+        "eff_jt": _sample_eff_jt(power, hashrate_th) if online else 0.0,
     }
 
 
@@ -3176,6 +4956,9 @@ def offline_sample(err: str | None = None) -> dict:
         "online": 0,
         "work_state": None,
         "upfreq_ok": None,
+        # weather is independent of miner link
+        "outdoor_c": _sample_outdoor_c(),
+        "eff_jt": None,
     }
 
 
@@ -3353,6 +5136,26 @@ def apply_set(action: str, value, password: str) -> dict:
             warning="adjust_power_limit may reboot / restart mining",
         )
 
+    # Full device reboot (Whatsminer privileged "reboot")
+    if action in ("reboot", "reboot_asic", "system_reboot"):
+        resp = privileged_cmd({"cmd": "reboot"}, password)
+        return _record_write(
+            "reboot",
+            "asic",
+            resp,
+            warning="ASIC rebooting — offline for several minutes",
+        )
+
+    # Restart mining process only (btminer), not full OS reboot
+    if action in ("restart", "restart_miner", "restart_btminer", "btminer_restart"):
+        resp = privileged_cmd({"cmd": "restart_btminer"}, password)
+        return _record_write(
+            "restart_miner",
+            "btminer",
+            resp,
+            warning="btminer restarting — hash rate rebuilds after upfreq",
+        )
+
     raise ValueError(f"unknown action: {action}")
 
 
@@ -3361,6 +5164,3929 @@ def _invalidate_cache() -> None:
     with _cache_lock:
         _cache = None
         _cache_ts = 0.0
+
+
+# ─── Telegram bot (getUpdates long-poll) ──────────────────────────────────────
+
+# Default prefs for each chat_id (copied when chat is first seen)
+DEFAULT_CHAT_PREFS = {
+    "lang": "ru",  # ru | en
+    "notify_policy": True,
+    "notify_offline": True,
+    "notify_safety": True,
+    "notify_zone": True,
+    "commands_en": True,
+    # main reply-keyboard sections (Status + Profile always shown)
+    "show_miner": True,
+    "show_policy": True,
+    "show_force_stop": True,
+    "show_filtration": True,
+    "show_settings": True,
+    "show_help": True,
+}
+
+# bool prefs stored per chat (besides lang)
+_TG_BOOL_PREF_KEYS = (
+    "notify_policy",
+    "notify_offline",
+    "notify_safety",
+    "notify_zone",
+    "commands_en",
+    "show_miner",
+    "show_policy",
+    "show_force_stop",
+    "show_filtration",
+    "show_settings",
+    "show_help",
+)
+
+# callback id → pref key for menu section visibility
+_TG_SECTION_TOG = {
+    "miner": "show_miner",
+    "policy": "show_policy",
+    "force_stop": "show_force_stop",
+    "filtration": "show_filtration",
+    "settings": "show_settings",
+    "help": "show_help",
+}
+
+DEFAULT_TELEGRAM_CFG = {
+    "enabled": False,
+    "bot_token": "",
+    # chat ids allowed for commands + receive notifications (ints or str digits)
+    "chat_ids": [],
+    # per-chat prefs: { "123456": { lang, notify_* , commands_en } }
+    "chats": {},
+    # global defaults for NEW chats (and fallback)
+    "notify_policy": True,  # AUTO apply / FAIL
+    "notify_offline": True,  # ASIC offline (after N consecutive poll fails)
+    "notify_offline_streak": 3,  # in a row timeouts before TG (reset on any ok poll)
+    "notify_safety": True,  # Safety Critical
+    "notify_zone": True,  # zone change apply
+    "commands_en": True,  # /status /suspend …
+    "default_lang": "ru",
+    "offset": 0,  # last processed update_id + 1
+    # seen chats from bot traffic: [{id, username, first_name, last_name, title, type, nick, seen_ts}]
+    "chat_history": [],
+}
+_TG_HISTORY_MAX = 40
+
+_tg_cfg_lock = threading.Lock()
+_tg_cfg: dict = dict(DEFAULT_TELEGRAM_CFG)
+_tg_stop = threading.Event()
+_tg_state_lock = threading.Lock()
+_tg_state: dict = {
+    "ok": False,
+    "last_error": None,
+    "last_update_ts": None,
+    "last_send_ts": None,
+    "me": None,  # bot username
+    "polls": 0,
+}
+_tg_notify_lock = threading.Lock()
+_tg_last_msg_sig: dict[str, float] = {}  # debounce identical messages
+# ASIC offline streak: only TG after N consecutive fails; reset on success
+_tg_offline_streak = 0
+_tg_offline_notified = False
+
+
+def _load_telegram_cfg() -> None:
+    global _tg_cfg
+    with _tg_cfg_lock:
+        raw = _load_json(TELEGRAM_CFG_FILE, DEFAULT_TELEGRAM_CFG)
+        cfg = dict(DEFAULT_TELEGRAM_CFG)
+        cfg.update(raw if isinstance(raw, dict) else {})
+        cfg["enabled"] = bool(cfg.get("enabled", False))
+        cfg["bot_token"] = str(cfg.get("bot_token") or "").strip()
+        ids = cfg.get("chat_ids") or []
+        if isinstance(ids, str):
+            ids = [x.strip() for x in ids.replace(";", ",").split(",") if x.strip()]
+        out_ids: list = []
+        for x in ids if isinstance(ids, list) else []:
+            try:
+                out_ids.append(int(str(x).strip()))
+            except (TypeError, ValueError):
+                s = str(x).strip()
+                if s:
+                    out_ids.append(s)
+        cfg["chat_ids"] = out_ids
+        for k in _TG_BOOL_PREF_KEYS:
+            if k.startswith("show_"):
+                cfg[k] = bool(cfg.get(k, True))
+            else:
+                cfg[k] = bool(cfg.get(k, True))
+        lang0 = str(cfg.get("default_lang") or "ru").lower()
+        cfg["default_lang"] = "en" if lang0.startswith("en") else "ru"
+        # per-chat map
+        chats_in = cfg.get("chats") if isinstance(cfg.get("chats"), dict) else {}
+        chats_out: dict = {}
+        for cid in out_ids:
+            key = str(cid)
+            base = dict(DEFAULT_CHAT_PREFS)
+            base["lang"] = cfg["default_lang"]
+            for nk in _TG_BOOL_PREF_KEYS:
+                # global defaults only for notify_*/commands_en; show_* always default True
+                if nk.startswith("show_"):
+                    base[nk] = True
+                else:
+                    base[nk] = bool(cfg.get(nk, True))
+            prev = chats_in.get(key) if isinstance(chats_in.get(key), dict) else {}
+            # also try int key as string already
+            merged = dict(base)
+            for pk, pv in prev.items():
+                if pk == "lang":
+                    merged["lang"] = "en" if str(pv).lower().startswith("en") else "ru"
+                elif pk in _TG_BOOL_PREF_KEYS or str(pk).startswith("show_"):
+                    merged[pk] = bool(pv)
+            chats_out[key] = merged
+        # keep orphan prefs? drop — only allowlisted chats
+        cfg["chats"] = chats_out
+        try:
+            cfg["offset"] = max(0, int(cfg.get("offset") or 0))
+        except (TypeError, ValueError):
+            cfg["offset"] = 0
+        try:
+            cfg["notify_offline_streak"] = max(
+                1, min(30, int(cfg.get("notify_offline_streak") or 3))
+            )
+        except (TypeError, ValueError):
+            cfg["notify_offline_streak"] = 3
+        # chat history (id + nick) for UI helper
+        hist_in = cfg.get("chat_history") if isinstance(cfg.get("chat_history"), list) else []
+        hist_out: list = []
+        seen_h: set = set()
+        for h in hist_in:
+            if not isinstance(h, dict):
+                continue
+            try:
+                hid = int(h.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if hid in seen_h:
+                continue
+            seen_h.add(hid)
+            nick = str(h.get("nick") or "").strip()
+            uname = str(h.get("username") or "").strip().lstrip("@")
+            fn = str(h.get("first_name") or "").strip()
+            ln = str(h.get("last_name") or "").strip()
+            title = str(h.get("title") or "").strip()
+            if not nick:
+                if uname:
+                    nick = "@" + uname
+                elif title:
+                    nick = title
+                elif fn or ln:
+                    nick = (fn + " " + ln).strip()
+                else:
+                    nick = str(hid)
+            hist_out.append(
+                {
+                    "id": hid,
+                    "username": uname,
+                    "first_name": fn,
+                    "last_name": ln,
+                    "title": title,
+                    "type": str(h.get("type") or "private"),
+                    "nick": nick,
+                    "seen_ts": str(h.get("seen_ts") or ""),
+                }
+            )
+        # also seed from allowlisted chat_ids if not in history
+        for cid in out_ids:
+            try:
+                hid = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if hid in seen_h:
+                continue
+            seen_h.add(hid)
+            hist_out.append(
+                {
+                    "id": hid,
+                    "username": "",
+                    "first_name": "",
+                    "last_name": "",
+                    "title": "",
+                    "type": "private",
+                    "nick": str(hid),
+                    "seen_ts": "",
+                }
+            )
+        cfg["chat_history"] = hist_out[:_TG_HISTORY_MAX]
+        _tg_cfg = cfg
+
+
+def _save_telegram_cfg() -> None:
+    with _tg_cfg_lock:
+        _save_json(TELEGRAM_CFG_FILE, _tg_cfg)
+
+
+def get_telegram_cfg(*, redact: bool = True) -> dict:
+    with _tg_cfg_lock:
+        cfg = dict(_tg_cfg)
+        # deep-ish copy chats
+        if isinstance(cfg.get("chats"), dict):
+            cfg["chats"] = {
+                k: dict(v) if isinstance(v, dict) else v
+                for k, v in cfg["chats"].items()
+            }
+    if redact and cfg.get("bot_token"):
+        t = str(cfg["bot_token"])
+        cfg["bot_token_set"] = True
+        cfg["bot_token"] = (t[:6] + "…" + t[-4:]) if len(t) > 12 else "••••"
+    else:
+        cfg["bot_token_set"] = bool(cfg.get("bot_token"))
+    with _tg_state_lock:
+        cfg["status"] = dict(_tg_state)
+    return cfg
+
+
+def _tg_remember_chat(chat: dict | None, user: dict | None = None) -> None:
+    """
+    Record chat id + nick into chat_history (for UI picker).
+    Called on every inbound message / callback.
+    """
+    if not isinstance(chat, dict):
+        return
+    try:
+        hid = int(chat.get("id"))
+    except (TypeError, ValueError):
+        return
+    ctype = str(chat.get("type") or "private")
+    uname = ""
+    fn = ""
+    ln = ""
+    title = str(chat.get("title") or "").strip()
+    # prefer user for private chats
+    src = user if isinstance(user, dict) else None
+    if ctype == "private" and src:
+        uname = str(src.get("username") or "").strip().lstrip("@")
+        fn = str(src.get("first_name") or "").strip()
+        ln = str(src.get("last_name") or "").strip()
+    elif src:
+        uname = str(src.get("username") or chat.get("username") or "").strip().lstrip("@")
+        fn = str(src.get("first_name") or "").strip()
+        ln = str(src.get("last_name") or "").strip()
+    else:
+        uname = str(chat.get("username") or "").strip().lstrip("@")
+    if uname:
+        nick = "@" + uname
+    elif title:
+        nick = title
+    elif fn or ln:
+        nick = (fn + " " + ln).strip()
+    else:
+        nick = str(hid)
+    entry = {
+        "id": hid,
+        "username": uname,
+        "first_name": fn,
+        "last_name": ln,
+        "title": title,
+        "type": ctype,
+        "nick": nick,
+        "seen_ts": datetime.now().isoformat(timespec="seconds"),
+    }
+    with _tg_cfg_lock:
+        hist = _tg_cfg.get("chat_history")
+        if not isinstance(hist, list):
+            hist = []
+        # move to front / update
+        hist = [h for h in hist if not (isinstance(h, dict) and h.get("id") == hid)]
+        hist.insert(0, entry)
+        _tg_cfg["chat_history"] = hist[:_TG_HISTORY_MAX]
+    # persist lightly (ok to write often — small file)
+    try:
+        _save_telegram_cfg()
+    except Exception:
+        pass
+
+
+def _tg_cid_key(chat_id) -> str:
+    try:
+        return str(int(chat_id))
+    except (TypeError, ValueError):
+        return str(chat_id)
+
+
+def _tg_ensure_chat_prefs(chat_id) -> dict:
+    """Create default prefs for chat_id if missing. Caller holds no lock required."""
+    key = _tg_cid_key(chat_id)
+    with _tg_cfg_lock:
+        chats = _tg_cfg.setdefault("chats", {})
+        if not isinstance(chats, dict):
+            chats = {}
+            _tg_cfg["chats"] = chats
+        if key not in chats or not isinstance(chats.get(key), dict):
+            prefs = dict(DEFAULT_CHAT_PREFS)
+            prefs["lang"] = str(_tg_cfg.get("default_lang") or "ru")
+            for nk in _TG_BOOL_PREF_KEYS:
+                if nk.startswith("show_"):
+                    prefs[nk] = True
+                else:
+                    prefs[nk] = bool(_tg_cfg.get(nk, True))
+            chats[key] = prefs
+        # ensure chat_id in allowlist when we have prefs from active user
+        ids = list(_tg_cfg.get("chat_ids") or [])
+        try:
+            cid_i = int(key)
+        except ValueError:
+            cid_i = key
+        if cid_i not in ids and key not in {str(x) for x in ids}:
+            # do not auto-allow; only ensure structure for allowed chats
+            pass
+        return dict(chats[key])
+
+
+def _tg_get_chat_prefs(chat_id) -> dict:
+    key = _tg_cid_key(chat_id)
+    with _tg_cfg_lock:
+        chats = _tg_cfg.get("chats") if isinstance(_tg_cfg.get("chats"), dict) else {}
+        p = chats.get(key)
+        if isinstance(p, dict):
+            out = dict(DEFAULT_CHAT_PREFS)
+            out.update(p)
+            return out
+        # fallback global defaults
+        out = dict(DEFAULT_CHAT_PREFS)
+        out["lang"] = str(_tg_cfg.get("default_lang") or "ru")
+        for nk in _TG_BOOL_PREF_KEYS:
+            if nk.startswith("show_"):
+                out[nk] = True
+            else:
+                out[nk] = bool(_tg_cfg.get(nk, True))
+        return out
+
+
+def _tg_remove_chat(chat_id, *, history: bool = False) -> dict:
+    """
+    Remove chat from allowlist + per-chat prefs.
+    history=True also drops entry from chat_history picker.
+    """
+    key = _tg_cid_key(chat_id)
+    with _tg_cfg_lock:
+        ids = list(_tg_cfg.get("chat_ids") or [])
+        _tg_cfg["chat_ids"] = [
+            x
+            for x in ids
+            if str(x) != key and str(x) != str(chat_id)
+        ]
+        chats = _tg_cfg.get("chats")
+        if isinstance(chats, dict):
+            chats.pop(key, None)
+            chats.pop(str(chat_id), None)
+        if history:
+            hist = _tg_cfg.get("chat_history")
+            if isinstance(hist, list):
+                try:
+                    hid = int(key)
+                except ValueError:
+                    hid = None
+                _tg_cfg["chat_history"] = [
+                    h
+                    for h in hist
+                    if not (
+                        isinstance(h, dict)
+                        and (
+                            str(h.get("id")) == key
+                            or (hid is not None and h.get("id") == hid)
+                        )
+                    )
+                ]
+    try:
+        _save_telegram_cfg()
+    except Exception:
+        pass
+    _load_telegram_cfg()
+    return get_telegram_cfg(redact=True)
+
+
+def _tg_set_chat_prefs(chat_id, **updates) -> dict:
+    key = _tg_cid_key(chat_id)
+    with _tg_cfg_lock:
+        chats = _tg_cfg.setdefault("chats", {})
+        if not isinstance(chats, dict):
+            chats = {}
+            _tg_cfg["chats"] = chats
+        cur = dict(DEFAULT_CHAT_PREFS)
+        if isinstance(chats.get(key), dict):
+            cur.update(chats[key])
+        for k, v in updates.items():
+            if k == "lang":
+                cur["lang"] = "en" if str(v).lower().startswith("en") else "ru"
+            elif k in _TG_BOOL_PREF_KEYS or str(k).startswith("show_"):
+                cur[k] = bool(v)
+        chats[key] = cur
+        # ensure allowlisted
+        ids = list(_tg_cfg.get("chat_ids") or [])
+        try:
+            cid_i = int(key)
+        except ValueError:
+            cid_i = key
+        if cid_i not in ids and str(cid_i) not in {str(x) for x in ids}:
+            ids.append(cid_i)
+            _tg_cfg["chat_ids"] = ids
+        out = dict(cur)
+    try:
+        _save_telegram_cfg()
+    except Exception:
+        pass
+    return out
+
+
+def _tg_chat_wants(chat_id, notify_kind: str) -> bool:
+    """notify_kind: policy | offline | safety | zone"""
+    prefs = _tg_get_chat_prefs(chat_id)
+    key = {
+        "policy": "notify_policy",
+        "offline": "notify_offline",
+        "safety": "notify_safety",
+        "zone": "notify_zone",
+    }.get(notify_kind)
+    if not key:
+        return True
+    return bool(prefs.get(key, True))
+
+
+def _tg_api(method: str, payload: dict | None = None, *, timeout: float = 35.0) -> dict:
+    with _tg_cfg_lock:
+        token = str(_tg_cfg.get("bot_token") or "").strip()
+    if not token:
+        raise RuntimeError("bot_token empty")
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    data = None
+    headers = {"User-Agent": f"poolheat/{get_app_version()} telegram"}
+    if payload is not None:
+        raw = json.dumps(payload).encode("utf-8")
+        data = raw
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST" if data else "GET")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = json.loads(resp.read().decode("utf-8", errors="replace"))
+    if not isinstance(body, dict):
+        raise RuntimeError("bad telegram response")
+    if not body.get("ok"):
+        raise RuntimeError(body.get("description") or "telegram api error")
+    return body
+
+
+def _tg_chat_allowed(chat_id) -> bool:
+    with _tg_cfg_lock:
+        ids = list(_tg_cfg.get("chat_ids") or [])
+    if not ids:
+        return False
+    try:
+        cid = int(chat_id)
+    except (TypeError, ValueError):
+        cid = str(chat_id)
+    return cid in ids or str(cid) in {str(x) for x in ids}
+
+
+def _tg_target_chats() -> list:
+    with _tg_cfg_lock:
+        return list(_tg_cfg.get("chat_ids") or [])
+
+
+def tg_send_message(
+    chat_id,
+    text: str,
+    *,
+    silent: bool = False,
+    reply_markup: dict | None = None,
+    parse_mode: str | None = None,
+) -> bool:
+    text = (text or "")[:3900]
+    if not text:
+        return False
+    try:
+        payload: dict = {
+            "chat_id": chat_id,
+            "text": text,
+            "disable_notification": bool(silent),
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        _tg_api("sendMessage", payload, timeout=20)
+        with _tg_state_lock:
+            _tg_state["last_send_ts"] = datetime.now().isoformat(timespec="seconds")
+            _tg_state["ok"] = True
+            _tg_state["last_error"] = None
+        return True
+    except Exception as e:
+        with _tg_state_lock:
+            _tg_state["ok"] = False
+            _tg_state["last_error"] = str(e)
+        print(f"[tg] send fail chat={chat_id}: {e}")
+        return False
+
+
+def tg_edit_message(
+    chat_id,
+    message_id: int,
+    text: str,
+    *,
+    reply_markup: dict | None = None,
+    parse_mode: str | None = None,
+) -> bool:
+    text = (text or "")[:3900]
+    try:
+        payload: dict = {
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+            "text": text,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        _tg_api("editMessageText", payload, timeout=15)
+        return True
+    except Exception as e:
+        err = str(e).lower()
+        # text identical — still try to swap keyboard only
+        if "not modified" in err and reply_markup is not None:
+            return tg_edit_reply_markup(chat_id, message_id, reply_markup)
+        if "not modified" in err:
+            return True
+        print(f"[tg] edit fail: {e}")
+        # last resort: keyboard-only edit
+        if reply_markup is not None:
+            return tg_edit_reply_markup(chat_id, message_id, reply_markup)
+        return False
+
+
+def tg_edit_reply_markup(
+    chat_id, message_id: int, reply_markup: dict | None
+) -> bool:
+    """Update inline keyboard without changing message text."""
+    try:
+        payload: dict = {
+            "chat_id": chat_id,
+            "message_id": int(message_id),
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        else:
+            payload["reply_markup"] = {"inline_keyboard": []}
+        _tg_api("editMessageReplyMarkup", payload, timeout=15)
+        return True
+    except Exception as e:
+        if "not modified" in str(e).lower():
+            return True
+        print(f"[tg] edit markup fail: {e}")
+        return False
+
+
+def tg_answer_callback(callback_query_id: str, text: str = "", *, alert: bool = False) -> None:
+    try:
+        _tg_api(
+            "answerCallbackQuery",
+            {
+                "callback_query_id": callback_query_id,
+                "text": (text or "")[:180],
+                "show_alert": bool(alert),
+            },
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+def _tg_dry_run_on() -> bool:
+    try:
+        return bool(get_miner_settings().get("dry_run"))
+    except Exception:
+        return bool(DRY_RUN)
+
+
+def _tg_force_stop_btn_label(lang: str = "ru") -> str:
+    """Main-menu toggle: Stop when off, Continue when Force Stop is active."""
+    en = str(lang or "ru").lower().startswith("en")
+    on = get_force_stop()
+    # ▶️ continue · ⏹ stop (same “transport” style)
+    if en:
+        return "▶️ Continue mining" if on else "⏹ Stop mining"
+    return "▶️ Продолжить майнинг" if on else "⏹ Остановить майнинг"
+
+
+def _tg_filtration_btn_label(lang: str = "ru") -> str:
+    """
+    Main-menu filtration toggle label.
+    OFF is locked while mining (🔒) — Telegram cannot disable a reply key,
+    so the lock is shown on the label and the handler refuses OFF.
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    try:
+        st = get_filtration_status()
+    except Exception:
+        st = {}
+    if not st.get("enabled"):
+        return "💧 Filtration · —" if en else "💧 Фильтрация · —"
+    on = st.get("on") is True
+    mining = st.get("mining") is True
+    if en:
+        if on and mining:
+            return "🔒 Filtration ON"
+        return "💧 Filtration ON" if on else "💧 Filtration OFF"
+    if on and mining:
+        return "🔒 Фильтрация ВКЛ"
+    return "💧 Фильтрация ВКЛ" if on else "💧 Фильтрация ВЫКЛ"
+
+
+def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
+    """
+    Persistent reply keyboard — main navigation.
+    Per-chat show_* prefs hide optional sections (Status + Profile always on).
+    """
+    prefs: dict = {}
+    if chat_id is not None:
+        try:
+            prefs = _tg_get_chat_prefs(chat_id)
+            if not lang:
+                lang = str(prefs.get("lang") or "ru")
+        except Exception:
+            prefs = {}
+    en = str(lang or "ru").lower().startswith("en")
+
+    def _show(key: str) -> bool:
+        # default visible if pref missing
+        return bool(prefs.get(key, True)) if prefs else True
+
+    # Info + Pools live under Miner (inline), not on the main keyboard.
+    fs_btn = _tg_force_stop_btn_label(lang)
+    fl_btn = _tg_filtration_btn_label(lang)
+
+    # Row 1: Status always · Miner optional
+    row1 = [{"text": "📊 Status" if en else "📊 Статус"}]
+    if _show("show_miner"):
+        row1.append({"text": "⛏ Miner" if en else "⛏ Майнер"})
+
+    # Row 2: Profile always · Policy optional
+    row2 = [{"text": "👤 Profile" if en else "👤 Профайл"}]
+    if _show("show_policy"):
+        row2.append({"text": "📋 Policy"})
+
+    rows: list[list[dict]] = [row1, row2]
+    if _show("show_force_stop"):
+        rows.append([{"text": fs_btn}])
+    if _show("show_filtration"):
+        rows.append([{"text": fl_btn}])
+
+    # Settings / Help
+    tail: list[dict] = []
+    if _show("show_settings"):
+        tail.append({"text": "⚙️ Settings" if en else "⚙️ Настройки"})
+    if _show("show_help"):
+        tail.append({"text": "❓ Help" if en else "❓ Справка"})
+    if tail:
+        rows.append(tail)
+
+    return {
+        "keyboard": rows,
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def _tg_on_mark(v: bool, en: bool) -> str:
+    if en:
+        return "✅ ON" if v else "⬜ OFF"
+    return "✅ ВКЛ" if v else "⬜ ВЫКЛ"
+
+
+def _tg_settings_inline(
+    chat_id, prefs: dict | None = None, *, view: str = "root"
+) -> dict:
+    """
+    Inline keyboard for personal settings.
+    view:
+      root     — language · Notifications · Menu sections · Control · nav
+      notify   — expand notification toggles + Back
+      sections — expand main-menu section visibility + Back
+    """
+    p = prefs or _tg_get_chat_prefs(chat_id)
+    en = str(p.get("lang") or "ru").lower().startswith("en")
+    v = str(view or "root").lower()
+    if v.startswith("notif"):
+        view = "notify"
+    elif v.startswith("sec") or v in ("menu", "sections", "menu_sec"):
+        view = "sections"
+    else:
+        view = "root"
+
+    def on_mark(key: str, default: bool = True) -> str:
+        return _tg_on_mark(bool(p.get(key, default)), en)
+
+    if view == "notify":
+        # Expanded: each notification toggle + back to profile root
+        rows = [
+            [
+                {
+                    "text": (
+                        f"Zone {on_mark('notify_zone')}"
+                        if en
+                        else f"Зоны {on_mark('notify_zone')}"
+                    ),
+                    "callback_data": "s:tog:zone",
+                }
+            ],
+            [
+                {
+                    "text": f"Safety {on_mark('notify_safety')}",
+                    "callback_data": "s:tog:safety",
+                }
+            ],
+            [
+                {
+                    "text": f"Offline {on_mark('notify_offline')}",
+                    "callback_data": "s:tog:offline",
+                }
+            ],
+            [
+                {
+                    "text": f"Policy {on_mark('notify_policy')}",
+                    "callback_data": "s:tog:policy",
+                }
+            ],
+            [
+                {
+                    "text": "◀️ " + ("Back" if en else "Назад"),
+                    "callback_data": "s:notify:back",
+                }
+            ],
+        ]
+        return {"inline_keyboard": rows}
+
+    if view == "sections":
+        # Which main-menu buttons to show (Status + Profile always on)
+        def sec_btn(sid: str, label_en: str, label_ru: str) -> dict:
+            key = _TG_SECTION_TOG[sid]
+            return {
+                "text": f"{label_en if en else label_ru} {on_mark(key)}",
+                "callback_data": f"s:togsec:{sid}",
+            }
+
+        rows = [
+            [sec_btn("miner", "⛏ Miner", "⛏ Майнер")],
+            [sec_btn("policy", "📋 Policy", "📋 Policy")],
+            [sec_btn("force_stop", "⏹ Force Stop", "⏹ Force Stop")],
+            [sec_btn("filtration", "💧 Filtration", "💧 Фильтрация")],
+            [sec_btn("settings", "⚙️ Settings", "⚙️ Настройки")],
+            [sec_btn("help", "❓ Help", "❓ Справка")],
+            [
+                {
+                    "text": "◀️ " + ("Back" if en else "Назад"),
+                    "callback_data": "s:sections:back",
+                }
+            ],
+        ]
+        return {"inline_keyboard": rows}
+
+    # Root profile keyboard
+    lang_ru = "● RU" if not en else "RU"
+    lang_en = "● EN" if en else "EN"
+    # compact status of all notify flags on the folder button
+    n_on = sum(
+        1
+        for k in (
+            "notify_zone",
+            "notify_safety",
+            "notify_offline",
+            "notify_policy",
+        )
+        if bool(p.get(k, True))
+    )
+    notify_btn = (
+        f"🔔 Notifications · {n_on}/4"
+        if en
+        else f"🔔 Уведомления · {n_on}/4"
+    )
+    sec_keys = list(_TG_SECTION_TOG.values())
+    s_on = sum(1 for k in sec_keys if bool(p.get(k, True)))
+    s_tot = len(sec_keys)
+    sections_btn = (
+        f"📱 Menu sections · {s_on}/{s_tot}"
+        if en
+        else f"📱 Разделы меню · {s_on}/{s_tot}"
+    )
+    rows = [
+        [
+            {"text": f"🌐 {lang_ru}", "callback_data": "s:lang:ru"},
+            {"text": f"🌐 {lang_en}", "callback_data": "s:lang:en"},
+        ],
+        [
+            {
+                "text": notify_btn,
+                "callback_data": "s:notify",
+            }
+        ],
+        [
+            {
+                "text": sections_btn,
+                "callback_data": "s:sections",
+            }
+        ],
+        [
+            {
+                "text": (
+                    f"Control {on_mark('commands_en')}"
+                    if en
+                    else f"Управление {on_mark('commands_en')}"
+                ),
+                "callback_data": "s:tog:commands",
+            }
+        ],
+        [
+            {
+                "text": "🔄 " + ("Refresh" if en else "Обновить"),
+                "callback_data": "s:refresh",
+            },
+            {
+                "text": "◀️ " + ("Settings" if en else "Настройки"),
+                "callback_data": "cfg:home",
+            },
+            {
+                "text": "🏠 " + ("Menu" if en else "Меню"),
+                "callback_data": "s:menu",
+            },
+        ],
+    ]
+    return {"inline_keyboard": rows}
+
+
+def _tg_normalize_incoming_text(text: str) -> str:
+    """
+    Button label → /command; leave real commands as-is.
+    Match by keyword (emoji variants differ across clients).
+    """
+    t = (text or "").strip()
+    if not t:
+        return t
+    if t.startswith("/"):
+        return t
+    low = t.lower()
+    # strip common emoji / symbols for matching
+    bare = low
+    for ch in (
+        "📊", "⚙️", "⚙", "⏸", "⏸️", "▶️", "▶", "⏹", "⏹️", "🛑",
+        "📋", "🏊", "ℹ️", "ℹ", "🏠", "⛏", "⛏️", "❓", "🧪", "🔴", "🟢",
+        "💧", "🔒",
+    ):
+        bare = bare.replace(ch, " ")
+    bare = " ".join(bare.split())
+    if "status" in bare or bare in ("статус",):
+        return "/status"
+    if "miner" in bare or "майнер" in bare:
+        return "/miner"
+    if "dry" in bare or "dry_run" in bare or "dryrun" in bare:
+        return "/dry_run"
+    if bare in ("info", "инфо", "информ", "information") or "инфо" in bare:
+        return "/info"
+    if "профайл" in bare or "profile" in bare or bare == "prefs":
+        return "/profile"
+    if "setting" in bare or "настрой" in bare:
+        return "/settings"
+    if "update" in bare or "обновл" in bare:
+        return "/update"
+    # Filtration before bare "mining" match
+    if (
+        "filtr" in bare
+        or "фильтр" in bare
+        or bare in ("filter", "filtration", "фильтрация")
+    ):
+        return "/filtration"
+    if (
+        "stop mining" in bare
+        or "stop work" in bare
+        or "остановить майнинг" in bare
+        or "остановить работу" in bare
+        or bare in ("остановить", "stop", "force stop", "forcestop")
+        or "force_stop" in bare
+        or "останов" in bare
+    ):
+        return "/force_stop"
+    if (
+        "continue mining" in bare
+        or "continue work" in bare
+        or "продолжить майнинг" in bare
+        or "продолжить работу" in bare
+        or bare in ("продолжить", "continue")
+        or "продолж" in bare
+    ):
+        # Continue mining = clear Force Stop (not plain resume)
+        return "/force_stop"
+    if "suspend" in bare or "sleep" in bare or "приостанов" in bare:
+        return "/force_stop"
+    if "resume" in bare or bare in ("mining", "майнинг"):
+        return "/force_stop"
+    if "policy" in bare or "политик" in bare:
+        return "/policy"
+    if "pool" in bare or "пул" in bare:
+        return "/pools"
+    if "help" in bare or "справк" in bare or "помощ" in bare:
+        return "/help"
+    if "menu" in bare or "меню" in bare:
+        return "/start"
+    return t
+
+
+def tg_broadcast(
+    text: str,
+    *,
+    silent: bool = False,
+    debounce_key: str | None = None,
+    notify_kind: str | None = None,
+    text_by_lang: dict | None = None,
+) -> int:
+    """
+    Send to configured chat_ids.
+    notify_kind: policy|offline|safety|zone — filtered by per-chat prefs.
+    text_by_lang: optional { "ru": "...", "en": "..." } overrides text per lang.
+    """
+    if debounce_key:
+        now = time.time()
+        with _tg_notify_lock:
+            last = float(_tg_last_msg_sig.get(debounce_key) or 0)
+            if now - last < 45.0:
+                return 0
+            _tg_last_msg_sig[debounce_key] = now
+    n = 0
+    for cid in _tg_target_chats():
+        if notify_kind and not _tg_chat_wants(cid, notify_kind):
+            continue
+        prefs = _tg_get_chat_prefs(cid)
+        lang = prefs.get("lang") or "ru"
+        msg = text
+        if text_by_lang and isinstance(text_by_lang, dict):
+            msg = text_by_lang.get(lang) or text_by_lang.get("ru") or text_by_lang.get("en") or text
+        if tg_send_message(cid, msg, silent=silent):
+            n += 1
+    return n
+
+
+def _fmt_asic_offline_msg(err, lang: str = "ru") -> str:
+    """Laconic ASIC offline line for Telegram."""
+    s = str(err or "").strip()
+    low = s.lower()
+    en = str(lang or "ru").lower().startswith("en")
+    if "timed out" in low or "timeout" in low:
+        return "⚠️ ASIC offline · timeout" if en else "⚠️ ASIC offline · timeout"
+    if "refused" in low or "reset" in low:
+        return (
+            "⚠️ ASIC offline · connection refused"
+            if en
+            else "⚠️ ASIC offline · нет соединения"
+        )
+    if "unreachable" in low or "no route" in low:
+        return (
+            "⚠️ ASIC offline · unreachable"
+            if en
+            else "⚠️ ASIC offline · недоступен"
+        )
+    if "name or service" in low or "nodename" in low or "resolve" in low:
+        return (
+            "⚠️ ASIC offline · host unresolved"
+            if en
+            else "⚠️ ASIC offline · хост не найден"
+        )
+    if s:
+        brief = s.replace("live poll fail:", "").strip()
+        if len(brief) > 60:
+            brief = brief[:57] + "…"
+        return f"⚠️ ASIC offline · {brief}"
+    return "⚠️ ASIC offline"
+
+
+def tg_note_live_poll_ok() -> None:
+    """Any successful miner poll resets offline streak (no spam after blips)."""
+    global _tg_offline_streak, _tg_offline_notified
+    with _tg_notify_lock:
+        _tg_offline_streak = 0
+        _tg_offline_notified = False
+
+
+def tg_note_live_poll_fail(err) -> None:
+    """
+    Count consecutive ASIC poll failures.
+    Telegram only after notify_offline_streak in a row (default 3).
+    One message per outage; resets when poll succeeds again.
+    Per-chat notify_offline is applied in tg_broadcast.
+    """
+    global _tg_offline_streak, _tg_offline_notified
+    with _tg_cfg_lock:
+        if not _tg_cfg.get("enabled") or not _tg_cfg.get("bot_token"):
+            return
+        if not _tg_cfg.get("chat_ids"):
+            return
+        try:
+            need = max(1, min(30, int(_tg_cfg.get("notify_offline_streak") or 3)))
+        except (TypeError, ValueError):
+            need = 3
+
+    with _tg_notify_lock:
+        _tg_offline_streak += 1
+        streak = _tg_offline_streak
+        already = _tg_offline_notified
+        if streak < need or already:
+            return
+        _tg_offline_notified = True
+
+    def _msg(lang: str) -> str:
+        t = _fmt_asic_offline_msg(err, lang=lang)
+        if need > 1:
+            t = f"{t} ({streak}×)"
+        return t
+
+    tg_broadcast(
+        _msg("ru"),
+        debounce_key=None,
+        notify_kind="offline",
+        text_by_lang={"ru": _msg("ru"), "en": _msg("en")},
+    )
+
+
+def tg_on_policy_event(kind: str, msg: str, extra: dict | None = None) -> None:
+    with _tg_cfg_lock:
+        if not _tg_cfg.get("enabled") or not _tg_cfg.get("bot_token"):
+            return
+        if not _tg_cfg.get("chat_ids"):
+            return
+
+    msg_l = (msg or "").lower()
+    kind = (kind or "info").lower()
+    extra = extra or {}
+
+    # ASIC offline handled by tg_note_live_poll_fail (streak) — skip here
+    if "live poll fail" in msg_l:
+        return
+
+    if "safety" in msg_l or str(extra.get("source") or "").startswith("safety"):
+        icon = "🛑" if kind in ("ok", "err", "warn") else "ℹ️"
+        tg_broadcast(
+            f"{icon} Safety\n{msg}",
+            debounce_key="safety:" + msg[:40],
+            notify_kind="safety",
+            text_by_lang={
+                "ru": f"{icon} Safety\n{msg}",
+                "en": f"{icon} Safety\n{msg}",
+            },
+        )
+        return
+
+    if kind == "err" or "fail" in msg_l:
+        tg_broadcast(
+            f"❌ {msg}",
+            debounce_key="err:" + msg[:50],
+            notify_kind="policy",
+        )
+        return
+
+    if kind == "ok" and (
+        msg.startswith("AUTO ") or msg.startswith("APPLY ") or "fix working" in msg_l
+    ):
+        if "working=suspend" in msg_l or "enforce:suspend" in msg_l:
+            tg_broadcast(
+                f"⏸ Suspend\n{msg}",
+                debounce_key="susp:" + msg[:40],
+                notify_kind="zone",
+                text_by_lang={
+                    "ru": f"⏸ Suspend\n{msg}",
+                    "en": f"⏸ Suspend\n{msg}",
+                },
+            )
+            return
+        if "working=resume" in msg_l:
+            tg_broadcast(
+                f"▶️ Resume\n{msg}",
+                debounce_key="res:" + msg[:40],
+                notify_kind="zone",
+            )
+            return
+        src = str(extra.get("source") or "")
+        if src in ("z0", "z1", "z2", "z3") or any(
+            f" {z}" in msg or msg.startswith(f"AUTO {z}") for z in ("z0", "z1", "z2", "z3")
+        ):
+            tg_broadcast(
+                f"📐 Zone\n{msg}",
+                debounce_key="zone:" + msg[:50],
+                notify_kind="zone",
+            )
+        else:
+            tg_broadcast(
+                f"✅ {msg}",
+                debounce_key="pol:" + msg[:50],
+                notify_kind="policy",
+            )
+
+
+# Human titles for heat zones (UI header + Telegram)
+ZONE_TITLES = {
+    "z0": "Z0 · High Heat",
+    "z1": "Z1 · Normal heat",
+    "z2": "Z2 · Reduced heat",
+    "z3": "Z3 · No heat",
+    "critical": "Safety · Critical",
+    "safety": "Safety · Critical",
+}
+
+
+def zone_title(zone_id) -> str:
+    """z3 → 'Z3 · No heat'; safety sticky → full Safety title."""
+    if zone_id is None or zone_id == "":
+        return "—"
+    k = str(zone_id).strip().lower()
+    if k in ZONE_TITLES:
+        return ZONE_TITLES[k]
+    # allow already-pretty strings
+    if "·" in str(zone_id) or " " in str(zone_id):
+        return str(zone_id)
+    return str(zone_id).upper()
+
+
+def _tg_fmt_num(v, digits: int = 1, empty: str = "—") -> str:
+    try:
+        if v is None or v == "":
+            return empty
+        n = float(v)
+        if not (n == n):  # NaN
+            return empty
+        if digits == 0:
+            return str(int(round(n)))
+        s = f"{n:.{digits}f}".rstrip("0").rstrip(".")
+        return s if s else "0"
+    except (TypeError, ValueError):
+        return empty
+
+
+def _tg_zone_emoji(zone_id, *, safety: bool = False) -> str:
+    if safety:
+        return "🛑"
+    k = str(zone_id or "").strip().lower()
+    return {
+        "z0": "🔥",
+        "z1": "🟢",
+        "z2": "🔵",
+        "z3": "🧊",
+        "critical": "🛑",
+    }.get(k, "📍")
+
+
+def _tg_pretty_last_event(msg: str | None) -> str | None:
+    if not msg:
+        return None
+    m = str(msg).strip()
+    low = m.lower()
+    if "live poll fail" in low or "timed out" in low or "timeout" in low:
+        return "⚠️ ASIC offline · timeout"
+    if "connection refused" in low:
+        return "⚠️ ASIC offline · no connection"
+    # Dry Run preview — keep short (full cmd list is noisy)
+    if low.startswith("dry_run would"):
+        # "DRY_RUN would z3: working=suspend, … · no write (Dry Run)"
+        try:
+            rest = m.split("would", 1)[1].strip()
+            z = rest.split(":", 1)[0].strip().upper()
+            body = rest.split(":", 1)[1] if ":" in rest else rest
+            body = body.split("·")[0].strip()
+            # first action only
+            first = body.split(",")[0].strip()
+            if "working=suspend" in first.lower() or "working=sleep" in first.lower():
+                act = "Suspend"
+            elif "working=resume" in first.lower():
+                act = "Mining"
+            else:
+                act = first.replace("working=", "").replace("mode=", "mode ")
+            return f"Dry Run · {z} → {act} (без записи)"
+        except Exception:
+            return "Dry Run · preview (без записи)"
+    if m.startswith("AUTO ") or m.startswith("APPLY "):
+        return m
+    return m
+
+
+def _tg_zone_line(zone_id, *, safety: bool = False) -> str:
+    """'🧊  Zone: Z3 – No heat'"""
+    if safety:
+        title = zone_title("critical").replace(" · ", " – ")
+        return f"🛑  Zone: {title}"
+    title = zone_title(zone_id).replace(" · ", " – ")
+    return f"{_tg_zone_emoji(zone_id)}  Zone: {title}"
+
+
+def _tg_active_preset_name() -> str:
+    """Name of last applied zone-map preset, or —."""
+    try:
+        with _zone_presets_lock:
+            aid = _zone_presets.get("active_id")
+            if not aid:
+                return "—"
+            for p in _zone_presets.get("presets") or []:
+                if p.get("id") == aid:
+                    name = str(p.get("name") or "").strip()
+                    return name if name else "—"
+    except Exception:
+        pass
+    return "—"
+
+
+def _tg_zone_label(zone_id, *, safety: bool = False) -> str:
+    """Compact: Z3 (No heat) · Safety."""
+    if safety:
+        return "Safety"
+    k = str(zone_id or "").strip().lower()
+    return {
+        "z0": "Z0 (High Heat)",
+        "z1": "Z1 (Normal heat)",
+        "z2": "Z2 (Reduced heat)",
+        "z3": "Z3 (No heat)",
+        "critical": "Safety",
+        "safety": "Safety",
+    }.get(k) or (zone_title(zone_id).replace(" · ", " (") + ")" if zone_id else "—")
+
+
+def _tg_zone_profile_for_status(zone_id, *, safety: bool = False) -> dict:
+    """Profile that defines «Режим зоны» (Safety → on_crit)."""
+    try:
+        zc = get_zone_cfg()
+        zones = zc.get("zones") if isinstance(zc, dict) else {}
+        zones = zones if isinstance(zones, dict) else {}
+        if safety:
+            crit = zones.get("critical") or {}
+            if isinstance(crit, dict) and isinstance(crit.get("on_crit"), dict):
+                return dict(crit["on_crit"])
+            return dict(crit) if isinstance(crit, dict) else {}
+        z = zones.get(str(zone_id or "").strip().lower()) or {}
+        return dict(z) if isinstance(z, dict) else {}
+    except Exception:
+        return {}
+
+
+def _tg_format_zone_mode(profile: dict | None, lang: str = "ru") -> str:
+    """
+    Suspend
+    or Mining · Low Power Mode · 1800W · 90% PCT
+    (only flags enabled on the zone profile).
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    p = profile if isinstance(profile, dict) else {}
+    if not p:
+        return "—"
+
+    work_en = bool(p.get("work_en"))
+    work = str(p.get("work") or "").strip().lower()
+    if work_en and work in ("suspend", "sleep"):
+        return "Suspend"
+
+    parts: list[str] = []
+    if work_en and work in ("resume", "mining"):
+        parts.append("Mining")
+    elif work_en:
+        parts.append(work.capitalize() if work else "Mining")
+
+    if p.get("mode_en"):
+        m = str(p.get("mode") or "").strip().lower()
+        if m in ("low", "normal", "high"):
+            parts.append(f"{m.capitalize()} Power Mode")
+        elif m:
+            parts.append(m)
+
+    if p.get("lim_en"):
+        try:
+            lim = int(round(float(p.get("lim"))))
+            parts.append(f"{lim}W")
+        except (TypeError, ValueError):
+            pass
+
+    if p.get("pct_en"):
+        try:
+            pct = int(round(float(p.get("pct"))))
+            parts.append(f"{pct}% PCT")
+        except (TypeError, ValueError):
+            pass
+
+    if not parts:
+        return "—" if en else "—"
+    return " · ".join(parts)
+
+
+def _tg_street_c() -> float | None:
+    """Outdoor °C from weather cache (Open-Meteo)."""
+    try:
+        w = fetch_weather_current(force=False)
+        if not w or w.get("enabled") is False:
+            return None
+        if w.get("ok") or w.get("stale"):
+            return _f(w.get("temp_c"))
+    except Exception:
+        pass
+    return None
+
+
+# Pool surface U-value for heat-loss model (same as UI dashboard)
+POOL_U_W_M2K = 25.0
+
+
+def compute_heat_balance(
+    live: dict | None = None,
+    street_c: float | None = None,
+) -> dict | None:
+    """
+    Same model as UI «Нагрев / остывание»:
+      Tw = T_liquid − hex_delta_c
+      Q_loss = U · S · max(0, Tw − Ta)
+      Q_in   = min(P_miner, HEX capacity)   [HEX = ṁ·c·ΔT if known]
+      Q_net  = Q_in − Q_loss
+      rate   = Q_net / (m·c) · 3600   °C/h   (+ heat, − cool)
+    Returns None if inputs incomplete.
+    """
+    try:
+        der = pool_derived()
+    except Exception:
+        return None
+    S = _f(der.get("surface_m2"))
+    mass = _f(der.get("mass_kg"))
+    if S is None or S <= 0 or mass is None or mass <= 0:
+        return None
+
+    live = live or {}
+    Tliq = _f(live.get("liquid"))
+    if Tliq is None:
+        return None
+    hex_dt = _f(der.get("hex_delta_c")) or 0.0
+    if hex_dt < 0:
+        hex_dt = 0.0
+    Tw = float(Tliq) - float(hex_dt)
+
+    Ta = street_c
+    if Ta is None:
+        Ta = _tg_street_c()
+    if Ta is None:
+        return None
+
+    P_W = _f(live.get("power"))
+    if P_W is None or P_W < 0:
+        return None
+
+    dT = Tw - float(Ta)
+    Q_loss_W = POOL_U_W_M2K * float(S) * max(0.0, dT)
+
+    hex_cap_W = None
+    hp = _f(der.get("hex_power_kw"))
+    if hp is not None and hp > 0:
+        hex_cap_W = float(hp) * 1000.0
+    else:
+        flow = _f(der.get("flow_m3h"))
+        if flow is not None and flow > 0 and hex_dt > 0:
+            m_dot = float(flow) * 1000.0 / 3600.0
+            hex_cap_W = m_dot * 4186.0 * float(hex_dt)
+
+    Q_in_W = float(P_W)
+    limited = False
+    if hex_cap_W is not None and hex_cap_W > 0 and Q_in_W > hex_cap_W:
+        Q_in_W = hex_cap_W
+        limited = True
+
+    Q_net_W = Q_in_W - Q_loss_W
+    c = 4186.0
+    rate = (Q_net_W / (float(mass) * c)) * 3600.0  # °C/h
+
+    if Q_net_W > 50:
+        bal = "heat"  # нагрев / избыток
+    elif Q_net_W < -50:
+        bal = "cool"  # остывание / недостаток
+    else:
+        bal = "hold"
+
+    return {
+        "ok": True,
+        "rate_c_per_h": rate,
+        "q_net_kw": Q_net_W / 1000.0,
+        "q_in_kw": Q_in_W / 1000.0,
+        "q_loss_kw": Q_loss_W / 1000.0,
+        "tw_c": Tw,
+        "ta_c": float(Ta),
+        "dt_c": dT,
+        "limited_by_hex": limited,
+        "balance": bal,  # heat | cool | hold
+    }
+
+
+def _tg_heat_balance_lines(
+    live: dict | None,
+    street_c: float | None = None,
+    lang: str = "ru",
+) -> list[str]:
+    """Telegram lines for heating / cooling block."""
+    en = str(lang or "ru").lower().startswith("en")
+    hb = compute_heat_balance(live, street_c)
+    if not hb:
+        return []
+    rate = float(hb["rate_c_per_h"])
+    qn = float(hb["q_net_kw"])
+    qi = float(hb["q_in_kw"])
+    ql = float(hb["q_loss_kw"])
+    bal = hb.get("balance") or "hold"
+
+    def sgn(v: float, dig: int) -> str:
+        s = f"{v:.{dig}f}"
+        if v > 0:
+            return "+" + s
+        return s
+
+    if bal == "heat":
+        icon = "🔥"
+        bal_lab = "Heating" if en else "Нагрев"
+    elif bal == "cool":
+        icon = "❄️"
+        bal_lab = "Cooling" if en else "Остывание"
+    else:
+        icon = "⚖️"
+        bal_lab = "Balance" if en else "Баланс"
+
+    # Exact layout (Telegram):
+    # ❄️ Остывание
+    # -0.075 °C/h  ·  -2.12 kW
+    # in: 1.99 kW · loss: 4.11 kW
+    cap = " · HEX cap" if hb.get("limited_by_hex") else ""
+    head = f"{icon} {bal_lab}"
+    line1 = f"{sgn(rate, 3)} °C/h  ·  {sgn(qn, 2)} kW"
+    line2 = f"in: {_tg_fmt_num(qi, 2)} kW · loss: {_tg_fmt_num(ql, 2)} kW{cap}"
+    return [head, line1, line2]
+
+
+def _tg_active_errors_lines(live: dict | None, lang: str = "ru", *, limit: int = 6) -> list[str]:
+    """Active ASIC firmware errors (get_error_code) for TG status/info."""
+    en = str(lang or "ru").lower().startswith("en")
+    errs = (live or {}).get("miner_errors") or []
+    if not errs:
+        return []
+    out = ["⚠️ Errors:" if en else "⚠️ Ошибки:"]
+    for e in errs[: max(1, int(limit))]:
+        if isinstance(e, dict):
+            code = e.get("code") or e.get("error_code") or ""
+            cause = e.get("cause") or e.get("msg") or e.get("message") or ""
+            line = f"  {code}  {cause}".strip()
+            if not line or line == "—":
+                line = f"  {e}"
+            out.append(line[:100])
+        else:
+            out.append(f"  {str(e)[:100]}")
+    more = len(errs) - limit
+    if more > 0:
+        out.append(f"  … +{more}" if en else f"  … ещё {more}")
+    return out
+
+
+def _tg_status_text(lang: str = "ru") -> str:
+    en = str(lang or "ru").lower().startswith("en")
+    proj = get_project_name()
+    try:
+        live = fetch_live()
+        online = True
+        err = None
+    except Exception as e:
+        online = False
+        err = e
+        live = {}
+        try:
+            pol = get_policy_status()
+        except Exception:
+            pol = {}
+        host = f"{HOST_MINER}:{PORT_MINER}"
+        street = _tg_street_c()
+        hz = pol.get("heat_zone")
+        safety = bool(pol.get("safety_sticky"))
+        dry = bool(pol.get("dry_run"))
+        fs = bool(pol.get("force_stop"))
+        preset = _tg_active_preset_name()
+        z_lab = _tg_zone_label(hz, safety=safety)
+        z_mode = _tg_format_zone_mode(
+            _tg_zone_profile_for_status(hz, safety=safety), lang
+        )
+        if en:
+            dry_s = (
+                "on · manual control"
+                if dry
+                else "off · automatic control"
+            )
+            fs_s = "on" if fs else "off"
+            policy_block = [
+                f"Preset: {preset}",
+                f"Temp zone: {z_lab}",
+                f"Zone mode: {z_mode}",
+                f"Dry Run: {dry_s}",
+                f"Force Stop: {fs_s}",
+            ]
+        else:
+            dry_s = (
+                "включен · регулирование в ручном режиме"
+                if dry
+                else "выключен · автоматическое регулирование"
+            )
+            fs_s = "включен" if fs else "выключен"
+            policy_block = [
+                f"Пресет: {preset}",
+                f"Температурная зона: {z_lab}",
+                f"Режим зоны: {z_mode}",
+                f"Dry Run: {dry_s}",
+                f"Force Stop: {fs_s}",
+            ]
+        lines = [
+            f"🏠 {proj}",
+            "————————————",
+            "",
+            f"🖥  {host}",
+            "🔴 offline",
+            "",
+            f"   {_fmt_asic_offline_msg(err, lang=lang)}",
+        ]
+        if street is not None:
+            lines.append("")
+            lines.append(
+                f"Street: {_tg_fmt_num(street, 1)} °C"
+                if en
+                else f"Улица: {_tg_fmt_num(street, 1)} °C"
+            )
+        lines.append("")
+        lines.extend(policy_block)
+        return "\n".join(lines)
+
+    pol = get_policy_status()
+    liq = live.get("liquid")
+    chip = live.get("chip_max")
+    pw = live.get("power")
+    hr = live.get("hashrate_th")
+    street = _tg_street_c()
+
+    hz = pol.get("heat_zone")
+    safety = bool(pol.get("safety_sticky"))
+    if not hz and not safety and liq is not None:
+        try:
+            zc = get_zone_cfg()
+            hz = _place_heat_zone(
+                float(liq),
+                float(zc.get("t0", 24)),
+                float(zc.get("t1", 26)),
+                float(zc.get("t2", 28)),
+            )
+        except Exception:
+            hz = None
+
+    dry = bool(pol.get("dry_run"))
+    fs = bool(pol.get("force_stop"))
+    preset = _tg_active_preset_name()
+    z_lab = _tg_zone_label(hz, safety=safety)
+    z_mode = _tg_format_zone_mode(
+        _tg_zone_profile_for_status(hz, safety=safety), lang
+    )
+
+    if en:
+        dry_s = (
+            "on · manual control"
+            if dry
+            else "off · automatic control"
+        )
+        fs_s = "on" if fs else "off"
+        temps_h = "🌡  Temperatures:"
+        lab_liq, lab_str, lab_chip = "Liquid:", "Street:", "Chip:"
+        lab_ov, lab_left = "Override", "left"
+        policy_block = [
+            f"Preset: {preset}",
+            f"Temp zone: {z_lab}",
+            f"Zone mode: {z_mode}",
+            f"Dry Run: {dry_s}",
+            f"Force Stop: {fs_s}",
+        ]
+    else:
+        dry_s = (
+            "включен · регулирование в ручном режиме"
+            if dry
+            else "выключен · автоматическое регулирование"
+        )
+        fs_s = "включен" if fs else "выключен"
+        temps_h = "🌡  Температуры:"
+        lab_liq, lab_str, lab_chip = "Жидкость:", "Улица:", "Чип:"
+        lab_ov, lab_left = "Override", "осталось"
+        policy_block = [
+            f"Пресет: {preset}",
+            f"Температурная зона: {z_lab}",
+            f"Режим зоны: {z_mode}",
+            f"Dry Run: {dry_s}",
+            f"Force Stop: {fs_s}",
+        ]
+
+    host = live.get("host") or f"{HOST_MINER}:{PORT_MINER}"
+    up_s = _tg_fmt_dur_sec(live.get("uptime"))
+    if online:
+        link = (
+            f"🟢 online · uptime {up_s}"
+            if en
+            else f"🟢 online · uptime {up_s}"
+        )
+    else:
+        link = "🔴 offline"
+
+    # J/T = W / (TH/s)
+    try:
+        eff = _sample_eff_jt(pw, hr)
+    except Exception:
+        eff = None
+    if eff is not None and float(eff) > 0:
+        power_line = (
+            f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s  ·  "
+            f"{_tg_fmt_num(eff, 1)} J/T"
+        )
+    else:
+        power_line = f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s"
+
+    lines = [
+        f"🏠 {proj}",
+        "————————————",
+        "",
+        f"🖥  {host}",
+        link,
+        "",
+        power_line,
+        "",
+        temps_h,
+        f"{lab_liq} {_tg_fmt_num(liq, 1)} °C",
+        f"{lab_str} {_tg_fmt_num(street, 1)} °C",
+        f"{lab_chip} {_tg_fmt_num(chip, 1)} °C",
+    ]
+
+    hb_lines = _tg_heat_balance_lines(live, street, lang)
+    if hb_lines:
+        lines.append("")
+        lines.extend(hb_lines)
+
+    if pol.get("override_active"):
+        rem = int(pol.get("override_remaining_sec") or 0)
+        mm, ss = divmod(max(0, rem), 60)
+        lines.append("")
+        lines.append(f"🎛  {lab_ov} {mm}m {ss:02d}s {lab_left}")
+
+    err_lines = _tg_active_errors_lines(live, lang)
+    if err_lines:
+        lines.append("")
+        lines.extend(err_lines)
+
+    # last_event: skip Dry Run noise; skip stale offline when currently online
+    le = pol.get("last_event") or {}
+    raw_ev = str(le.get("msg") or "")
+    raw_l = raw_ev.lower()
+    is_offline_ev = (
+        "live poll fail" in raw_l
+        or "timed out" in raw_l
+        or "timeout" in raw_l
+        or "connection refused" in raw_l
+        or "asic offline" in raw_l
+        or "unreachable" in raw_l
+        or "name or service not known" in raw_l
+    )
+    skip_ev = (
+        not raw_ev
+        or "dry_run" in raw_l
+        or raw_l.startswith("dry run")
+        or (is_offline_ev and online)  # was offline blip; status already 🟢 online
+    )
+    if not skip_ev:
+        pretty = _tg_pretty_last_event(raw_ev)
+        pretty_l = str(pretty or "").lower()
+        if pretty and "dry run" not in pretty_l and not pretty_l.startswith("dry_run"):
+            # if online, never re-show offline pretty-print either
+            if online and (
+                "asic offline" in pretty_l or "offline" in pretty_l and "timeout" in pretty_l
+            ):
+                pass
+            else:
+                lines.append("")
+                lines.append(f"📝  {pretty}")
+
+    # policy summary at the bottom
+    lines.append("")
+    lines.extend(policy_block)
+
+    return "\n".join(lines)
+
+
+def _tg_fmt_mac(mac) -> str:
+    """AA:BB:CC:DD:EE:FF from raw Whatsminer mac string."""
+    s = re.sub(r"[^0-9A-Fa-f]", "", str(mac or ""))
+    if len(s) == 12:
+        return ":".join(s[i : i + 2].upper() for i in range(0, 12, 2))
+    raw = str(mac or "").strip()
+    return raw.upper() if raw else "—"
+
+
+def _tg_pretty_mode(mode) -> str:
+    if mode is None or mode == "":
+        return "—"
+    s = str(mode).strip()
+    if s.lower() in ("low", "normal", "high"):
+        return s.capitalize()
+    return s
+
+
+def _tg_pretty_work(work, en: bool = True) -> str:
+    w = str(work or "").strip().lower()
+    if w in ("sleep", "suspend"):
+        return "⏸️  Suspend Mining"
+    if w in ("resume", "mining"):
+        return "▶️  Resume Mining"
+    return f"⚙️  {work or '—'}"
+
+
+def _tg_info_inline(lang: str = "ru") -> dict:
+    en = str(lang or "ru").lower().startswith("en")
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🔄 Refresh" if en else "🔄 Обновить",
+                    "callback_data": "i:refresh",
+                },
+                {
+                    "text": "⛏ Miner" if en else "⛏ Майнер",
+                    "callback_data": "i:miner",
+                },
+            ]
+        ]
+    }
+
+
+def _tg_info_text(lang: str = "ru") -> str:
+    """Info tab: identity, boards, PSU (like UI #info miner block)."""
+    en = str(lang or "ru").lower().startswith("en")
+    proj = get_project_name()
+    try:
+        live = fetch_live()
+        online = True
+        err = None
+    except Exception as e:
+        online = False
+        err = e
+        live = {}
+
+    try:
+        ident = get_miner_identity_cached(force=False) or {}
+    except Exception:
+        ident = {}
+
+    host = (live.get("host") if online else None) or ident.get("host") or f"{HOST_MINER}:{PORT_MINER}"
+    mtype = (ident.get("miner_type") or "").strip() or "—"
+    mac = _tg_fmt_mac(ident.get("mac"))
+    sn = (ident.get("minersn") or "").strip() or "—"
+    fw = (ident.get("fw_ver") or "").strip() or "—"
+    api_ver = (ident.get("api_ver") or "").strip() or "—"
+    platform = (ident.get("platform") or "").strip() or "—"
+    chip = (ident.get("chip") or "").strip() or "—"
+
+    lines = [
+        f"ℹ️  {'Info' if en else 'Инфо'} · {proj}",
+        "————————————",
+        "",
+        f"🖥  {host}",
+        ("🟢 online" if online else "🔴 offline"),
+        "",
+        f"{'Type' if en else 'Модель'}:  {mtype}",
+        f"Platform:  {platform}",
+        f"Chip:  {chip}",
+        f"MAC:  {mac}",
+        f"SN:  {sn}",
+        f"FW:  {fw}",
+        f"API:  {api_ver}",
+    ]
+
+    if not online:
+        lines.append("")
+        lines.append(_fmt_asic_offline_msg(err, lang=lang))
+        return "\n".join(lines)
+
+    boards_t = live.get("boards") or []
+    upfreq = live.get("upfreq") or []
+    id_boards = ident.get("boards") or []
+    if boards_t or id_boards:
+        lines.append("")
+        lines.append("Hashboards · PCB SN:" if en else "Хешплаты · PCB SN:")
+        n = max(len(boards_t), len(id_boards), 3)
+        for i in range(min(n, 4)):
+            t = boards_t[i] if i < len(boards_t) else None
+            uf = upfreq[i] if i < len(upfreq) else None
+            pcb = "—"
+            if i < len(id_boards) and isinstance(id_boards[i], dict):
+                pcb = (id_boards[i].get("pcb_sn") or "").strip() or "—"
+            uf_s = "upfreq ✓" if uf and int(uf) else "upfreq …"
+            lines.append(
+                f"  HB{i}  {_tg_fmt_num(t, 1)} °C · {uf_s} · {pcb}"
+            )
+
+    psu_t = live.get("psu_temp")
+    psu_fan = live.get("psu_fan")
+    psu_model = live.get("psu_model") or ident.get("psu_model")
+    powersn = (ident.get("powersn") or "").strip()
+    if psu_t is not None or psu_fan is not None or psu_model or powersn:
+        lines.append("")
+        lines.append("PSU:")
+        if psu_model:
+            lines.append(f"  {psu_model}")
+        if powersn:
+            lines.append(f"  SN  {powersn}")
+        bits = []
+        if psu_t is not None:
+            bits.append(f"{_tg_fmt_num(psu_t, 0)} °C")
+        if psu_fan is not None:
+            bits.append(f"{_tg_fmt_num(psu_fan, 0)} rpm")
+        if bits:
+            lines.append(f"  {' · '.join(bits)}")
+
+    liq = live.get("liquid")
+    chip_max = live.get("chip_max")
+    env = live.get("env")
+    lines.append("")
+    if en:
+        lines.append(
+            f"Liquid {_tg_fmt_num(liq, 1)} °C · Env {_tg_fmt_num(env, 1)} °C · Chip {_tg_fmt_num(chip_max, 1)} °C"
+        )
+    else:
+        lines.append(
+            f"Жидкость {_tg_fmt_num(liq, 1)} °C · Env {_tg_fmt_num(env, 1)} °C · Чип {_tg_fmt_num(chip_max, 1)} °C"
+        )
+
+    err_lines = _tg_active_errors_lines(live, lang)
+    if err_lines:
+        lines.append("")
+        lines.extend(err_lines)
+
+    return "\n".join(lines)
+
+
+def _tg_send_info(
+    chat_id,
+    lang: str = "ru",
+    *,
+    edit_message_id: int | None = None,
+) -> None:
+    text = _tg_info_text(lang=lang)
+    markup = _tg_info_inline(lang)
+    if edit_message_id is not None:
+        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup)
+
+
+def _tg_miner_inline(lang: str = "ru", live: dict | None = None) -> dict:
+    """Control panel like UI #miner — Power Mode / Mining Control / Limit / pct."""
+    en = str(lang or "ru").lower().startswith("en")
+    live = live or {}
+    mode = str(live.get("mode_norm") or live.get("mode") or "").strip().lower()
+    work = str(live.get("work_measured") or "").strip().lower()
+    lim = _f(live.get("power_limit_measured") or live.get("power_limit"))
+    pct_set = _f(live.get("power_pct_cmd"))
+    # mark current mode/work with ·
+    def mlab(v: str, label: str) -> str:
+        return f"· {label}" if mode == v else label
+
+    def wlab(is_sleep: bool, label: str) -> str:
+        cur_sleep = work in ("sleep", "suspend")
+        if is_sleep == cur_sleep and work not in ("", "—", "none"):
+            return f"· {label}"
+        return label
+
+    low_l = mlab("low", "Low")
+    norm_l = mlab("normal", "Normal")
+    high_l = mlab("high", "High")
+    sus_l = wlab(True, "⏸ Suspend" if en else "⏸ Suspend")
+    res_l = wlab(False, "▶️ Resume" if en else "▶️ Resume")
+    lim_s = f"{int(lim)} W" if lim is not None else "Limit"
+    dry = _tg_dry_run_on()
+    if en:
+        dry_l = "🧪 Dry Run · ON" if dry else "🧪 Dry Run · OFF"
+    else:
+        dry_l = "🧪 Dry Run · ВКЛ" if dry else "🧪 Dry Run · ВЫКЛ"
+
+    return {
+        "inline_keyboard": [
+            [
+                {"text": sus_l, "callback_data": "m:work:sleep"},
+                {"text": res_l, "callback_data": "m:work:resume"},
+            ],
+            [
+                {"text": low_l, "callback_data": "m:mode:low"},
+                {"text": norm_l, "callback_data": "m:mode:normal"},
+                {"text": high_l, "callback_data": "m:mode:high"},
+            ],
+            [
+                {"text": "−500 W", "callback_data": "m:limd:-500"},
+                {"text": lim_s, "callback_data": "m:refresh"},
+                {"text": "+500 W", "callback_data": "m:limd:500"},
+            ],
+            [
+                {"text": "50%", "callback_data": "m:pct:50"},
+                {"text": "80%", "callback_data": "m:pct:80"},
+                {"text": "100%", "callback_data": "m:pct:100"},
+            ],
+            [
+                {"text": dry_l, "callback_data": "m:dry:toggle"},
+            ],
+            [
+                {
+                    "text": "🔁 Reboot ASIC" if en else "🔁 Reboot ASIC",
+                    "callback_data": "m:reboot",
+                },
+                {
+                    "text": "🔃 Restart miner" if en else "🔃 Restart miner",
+                    "callback_data": "m:restart",
+                },
+            ],
+            [
+                {"text": "🏊 Pools" if en else "🏊 Пулы", "callback_data": "m:pools"},
+                {
+                    "text": "🔄 Refresh" if en else "🔄 Обновить",
+                    "callback_data": "m:refresh",
+                },
+                {
+                    "text": "ℹ️ Info" if en else "ℹ️ Инфо",
+                    "callback_data": "m:info",
+                },
+            ],
+        ]
+    }
+
+
+def _tg_fmt_ts_local(ts) -> str:
+    """ISO / epoch → DD.MM.YYYY HH:MM:SS for TG cards."""
+    if ts is None or ts == "":
+        return "—"
+    try:
+        if isinstance(ts, (int, float)):
+            dt = datetime.fromtimestamp(float(ts))
+        else:
+            s = str(ts).strip().replace("Z", "+00:00")
+            try:
+                dt = datetime.fromisoformat(s)
+            except ValueError:
+                # "2026-08-03T19:55:25" already handled; other formats fall through
+                return str(ts)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone().replace(tzinfo=None)
+        return dt.strftime("%d.%m.%Y %H:%M:%S")
+    except Exception:
+        return str(ts)
+
+
+def _tg_fmt_dur_sec(raw) -> str:
+    """
+    Seconds (int/float) → compact RU-style duration for TG.
+    1д 8ч · 5ч 12м · 42м · 15с
+    """
+    if raw is None or raw == "":
+        return "—"
+    try:
+        sec = float(raw)
+    except (TypeError, ValueError):
+        return str(raw)
+    if sec < 0 or sec != sec:  # NaN
+        return "—"
+    s = int(sec)
+    d = s // 86400
+    s %= 86400
+    h = s // 3600
+    s %= 3600
+    m = s // 60
+    s %= 60
+    if d > 0:
+        return f"{d}д {h}ч"
+    if h > 0:
+        return f"{h}ч {m}м"
+    if m > 0:
+        return f"{m}м"
+    return f"{s}с"
+
+
+def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = True, err=None) -> str:
+    """Miner control card — laconic measured + last write (UI #miner)."""
+    en = str(lang or "ru").lower().startswith("en")
+    if live is None:
+        try:
+            live = fetch_live()
+            online = True
+            err = None
+        except Exception as e:
+            online = False
+            err = e
+            live = {}
+
+    host = live.get("host") or f"{HOST_MINER}:{PORT_MINER}"
+    up_m = _tg_fmt_dur_sec(live.get("uptime")) if online else "—"
+    if online:
+        link = f"🟢 online · uptime {up_m}"
+    else:
+        link = "🔴 offline"
+    lines = [
+        f"🖥  {host}",
+        link,
+    ]
+    if not online:
+        lines.append("")
+        lines.append(_fmt_asic_offline_msg(err, lang=lang))
+        return "\n".join(lines)
+
+    pw = live.get("power")
+    hr = live.get("hashrate_th")
+    mode = _tg_pretty_mode(live.get("mode") or live.get("mode_norm"))
+    work = _tg_pretty_work(live.get("work_measured"), en)
+    lim = live.get("power_limit_measured") or live.get("power_limit")
+    pct_set = live.get("power_pct_cmd")
+    pct_meas = live.get("power_pct_reported")
+    freq = live.get("freq_avg")
+
+    dry = _tg_dry_run_on()
+    # Spacing tuned in Telegram (proportional font) — keep exact gaps:
+    # Power Mode:        Low
+    # Mining Control:   ▶️  Resume Mining
+    # Статус:                  Тюнинг
+    # Power Limit :        2000 W
+    # Power pct :           set 100%  |  meas 0%
+    # Dry Run:                вкл.
+    # Force Stop:           выкл.
+    if en:
+        dry_s = "on." if dry else "off."
+        fs_s = "on." if get_force_stop() else "off."
+        st_lab = "Status:"
+    else:
+        dry_s = "вкл." if dry else "выкл."
+        fs_s = "вкл." if get_force_stop() else "выкл."
+        st_lab = "Статус:"
+
+    # lifecycle: starting / stopping / tuning / running / stopped
+    try:
+        rs = mining_run_status(live)
+        run_st = rs.get("label_en") if en else rs.get("label_ru")
+    except Exception:
+        run_st = live.get("run_status_en" if en else "run_status_ru") or "—"
+    # Elapsed = mining session time (summary.Elapsed)
+    el_s = _tg_fmt_dur_sec(live.get("elapsed"))
+    if el_s and el_s != "—":
+        run_st = f"{run_st} · {el_s}"
+
+    try:
+        eff_m = _sample_eff_jt(pw, hr)
+    except Exception:
+        eff_m = None
+    if eff_m is not None and float(eff_m) > 0:
+        miner_pw = (
+            f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s  ·  "
+            f"{_tg_fmt_num(eff_m, 1)} J/T"
+        )
+    else:
+        miner_pw = f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s"
+
+    lines += [
+        "",
+        miner_pw,
+        f"Freq  {_tg_fmt_num(freq, 0)} MHz",
+        "",
+        f"Power Mode:        {mode}",
+        f"Mining Control:   {work}",
+        f"{st_lab}{' ' * 18}{run_st}",
+        f"Power Limit :        {_tg_fmt_num(lim, 0)} W",
+        (
+            f"Power pct :           set {_tg_fmt_num(pct_set, 0)}%  |  "
+            f"meas {_tg_fmt_num(pct_meas, 0)}%"
+        ),
+        f"Dry Run:                {dry_s}",
+        f"Force Stop:           {fs_s}",
+    ]
+
+    lw = live.get("last_write") or {}
+    if isinstance(lw, dict) and (lw.get("ts") or lw.get("action") is not None):
+        ok = lw.get("ok")
+        mark = "✅" if ok else "❌"
+        action = lw.get("action")
+        value = lw.get("value")
+        lines.append("")
+        lines.append(f"last write: {_tg_fmt_ts_local(lw.get('ts'))}")
+        if action is not None:
+            lines.append(f"{mark} {action}={value}")
+        else:
+            lines.append(mark)
+        if lw.get("error"):
+            lines.append(str(lw.get("error")))
+
+    return "\n".join(lines)
+
+
+def _tg_send_miner(
+    chat_id,
+    lang: str = "ru",
+    *,
+    edit_message_id: int | None = None,
+) -> None:
+    try:
+        live = fetch_live()
+        online = True
+        err = None
+    except Exception as e:
+        live = {}
+        online = False
+        err = e
+    text = _tg_miner_text(lang=lang, live=live, online=online, err=err)
+    markup = _tg_miner_inline(lang, live if online else None)
+    if edit_message_id is not None:
+        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup)
+
+
+def _tg_apply_miner_write(action: str, value, lang: str = "ru") -> str:
+    """apply_set wrapper → short OK / error string for callback toast."""
+    en = str(lang or "ru").lower().startswith("en")
+    try:
+        out = apply_set(action, value, DEFAULT_API_PASSWORD)
+        if action == "mode":
+            return f"Power Mode: {str(value).upper()}"
+        if action in ("working", "working_mode", "work", "mining"):
+            v = str(value).lower()
+            if v in ("sleep", "suspend"):
+                return "Mining Control: Suspend"
+            return "Mining Control: Resume"
+        if action in ("power_limit", "set_power_limit", "adjust_power_limit"):
+            return f"Power Limit: {value} W"
+        if action == "power_pct":
+            return f"Power pct: {value}%"
+        if action in ("reboot", "reboot_asic", "system_reboot"):
+            return (
+                "🔁 Reboot ASIC sent · offline a few min"
+                if en
+                else "🔁 Reboot ASIC отправлен · offline несколько мин"
+            )
+        if action in ("restart", "restart_miner", "restart_btminer", "btminer_restart"):
+            return (
+                "🔃 Restart miner sent · upfreq…"
+                if en
+                else "🔃 Restart miner отправлен · upfreq…"
+            )
+        warn = (out or {}).get("warning") if isinstance(out, dict) else None
+        if warn:
+            return f"✅ OK · {warn}"
+        return "✅ OK" if en else "✅ OK"
+    except Exception as e:
+        return f"❌ {e}"
+
+
+def _tg_dry_run_inline(lang: str = "ru", dry: bool | None = None) -> dict:
+    en = str(lang or "ru").lower().startswith("en")
+    if dry is None:
+        dry = _tg_dry_run_on()
+    if en:
+        on_l = "● ON" if dry else "ON"
+        off_l = "● OFF" if not dry else "OFF"
+    else:
+        on_l = "● ВКЛ" if dry else "ВКЛ"
+        off_l = "● ВЫКЛ" if not dry else "ВЫКЛ"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": f"🧪 {on_l}", "callback_data": "d:on"},
+                {"text": f"⚡️ {off_l}", "callback_data": "d:off"},
+            ],
+            [
+                {
+                    "text": "🔄 Refresh" if en else "🔄 Обновить",
+                    "callback_data": "d:refresh",
+                },
+            ],
+        ]
+    }
+
+
+def _tg_dry_run_text(lang: str = "ru", dry: bool | None = None) -> str:
+    en = str(lang or "ru").lower().startswith("en")
+    if dry is None:
+        dry = _tg_dry_run_on()
+    if en:
+        if dry:
+            return (
+                "🧪 Dry Run · ON\n"
+                "————————————\n"
+                "Heat zones: ignored (keep current mode)\n"
+                "Safety Critical (chip): still writes\n"
+                "Manual Miner controls: still work\n"
+                "\n"
+                "Turn OFF → zone auto writes to ASIC"
+            )
+        return (
+            "🧪 Dry Run · OFF\n"
+            "————————————\n"
+            "Heat zones: auto write to ASIC\n"
+            "Safety Critical (chip): writes\n"
+            "\n"
+            "Turn ON → keep current mode · zones preview only"
+        )
+    if dry:
+        return (
+            "🧪 Dry Run · ВКЛ\n"
+            "————————————\n"
+            "Зоны: игнорируются (режим как есть)\n"
+            "Safety Critical (чип): пишет\n"
+            "Ручное управление Майнер: работает\n"
+            "\n"
+            "ВЫКЛ → авто-зоны пишут на ASIC"
+        )
+    return (
+        "🧪 Dry Run · ВЫКЛ\n"
+        "————————————\n"
+        "Зоны: авто-запись на ASIC\n"
+        "Safety Critical (чип): пишет\n"
+        "\n"
+        "ВКЛ → режим как есть · зоны только preview"
+    )
+
+
+def _tg_set_dry_run(on: bool, lang: str = "ru") -> str:
+    en = str(lang or "ru").lower().startswith("en")
+    try:
+        apply_miner_settings(dry_run=bool(on), persist=True)
+        if on:
+            return (
+                "✅ Dry Run ON · manual mode"
+                if en
+                else "✅ Dry Run ВКЛ · ручной режим"
+            )
+        return (
+            "⚠️ Dry Run OFF · zone auto ON"
+            if en
+            else "⚠️ Dry Run ВЫКЛ · авто-зоны ВКЛ"
+        )
+    except Exception as e:
+        return f"❌ Dry Run: {e}"
+
+
+def _tg_send_dry_run(
+    chat_id,
+    lang: str = "ru",
+    *,
+    edit_message_id: int | None = None,
+    note: str | None = None,
+    refresh_keyboard: bool = False,
+) -> None:
+    dry = _tg_dry_run_on()
+    text = _tg_dry_run_text(lang, dry)
+    if note:
+        text = f"{note}\n\n{text}"
+    markup = _tg_dry_run_inline(lang, dry)
+    if edit_message_id is not None:
+        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup)
+    if refresh_keyboard:
+        # reply keyboard label shows · ON/OFF
+        tg_send_message(
+            chat_id,
+            "⌨️ " + ("Menu updated" if str(lang).lower().startswith("en") else "Меню обновлено"),
+            reply_markup=_tg_main_keyboard(lang, chat_id),
+        )
+
+
+def _tg_commands_help(lang: str = "ru") -> str:
+    """Line-by-line command list with short descriptions (/help, /start)."""
+    en = str(lang or "ru").lower().startswith("en")
+    if en:
+        return (
+            "Available commands:\n"
+            "/status — heat status\n"
+            "/miner — control · info · pools\n"
+            "/info — ASIC info\n"
+            "/pools — mining pools\n"
+            "/dry_run [on|off] — Dry Run\n"
+            "/mode low|normal|high\n"
+            "/limit <W> — power limit\n"
+            "/pct <0-100> — power pct\n"
+            "/reboot_asic — full device reboot\n"
+            "/restart_miner — restart btminer\n"
+            "/settings — settings hub\n"
+            "/update — check / install software update\n"
+            "/profile — language & notifies\n"
+            "/policy — zones & limits\n"
+            "\n"
+            "Force Stop (no arg = toggle)\n"
+            "/force_stop [on|off] — emergency stop\n"
+            "⏹ Stop mining · ▶️ Continue mining\n"
+            "/filtration [on|off] — pump filter (OFF locked while mining)\n"
+            "/lang_ru — Russian\n"
+            "/lang_en — English\n"
+            "\n"
+            "Notifications (no arg = toggle)\n"
+            "/notify_zone [on|off] — zones\n"
+            "/notify_safety [on|off] — safety\n"
+            "/notify_offline [on|off] — offline ASIC\n"
+            "/notify_policy [on|off] — policy writes\n"
+            "/notify_all [on|off] — all notifications"
+        )
+    return (
+        "Доступные команды:\n"
+        "/status — статус (тепло)\n"
+        "/miner — управление · инфо · пулы\n"
+        "/info — инфо ASIC\n"
+        "/pools — пулы\n"
+        "/dry_run [on|off] — Dry Run\n"
+        "/mode low|normal|high\n"
+        "/limit <W> — power limit\n"
+        "/pct <0-100> — power pct\n"
+        "/reboot_asic — полный reboot ASIC\n"
+        "/restart_miner — restart btminer\n"
+        "/settings — настройки бота\n"
+        "/update — проверка / установка обновления\n"
+        "/profile — язык и уведомления\n"
+        "/policy — зоны и лимиты\n"
+        "\n"
+        "Force Stop (без arg = переключить)\n"
+        "/force_stop [on|off] — экстренная остановка\n"
+        "⏹ Остановить майнинг · ▶️ Продолжить майнинг\n"
+        "/filtration [on|off] — фильтрация (ВЫКЛ недоступно при майнинге)\n"
+        "/lang_ru — русский\n"
+        "/lang_en — English\n"
+        "\n"
+        "Уведомления (без arg = переключить)\n"
+        "/notify_zone [on|off] — зоны\n"
+        "/notify_safety [on|off] — safety\n"
+        "/notify_offline [on|off] — offline ASIC\n"
+        "/notify_policy [on|off] — запись policy\n"
+        "/notify_all [on|off] — все уведомления"
+    )
+
+
+def _tg_prefs_text(
+    chat_id, prefs: dict | None = None, *, view: str = "root"
+) -> str:
+    """Profile card text (HTML parse_mode — <b> headers)."""
+    p = prefs or _tg_get_chat_prefs(chat_id)
+    en = str(p.get("lang") or "ru").lower().startswith("en")
+    on = (lambda v: "on." if v else "off.") if en else (lambda v: "вкл." if v else "выкл.")
+    lang_label = "English" if en else "Русский"
+    v = str(view or "root").lower()
+    expanded_notify = v.startswith("notif")
+    expanded_sec = v.startswith("sec") or v in ("menu", "sections", "menu_sec")
+
+    def _sec(key: str) -> str:
+        return on(p.get(key, True))
+
+    if en:
+        n_head = (
+            "🔔 <b>Notifications</b> · edit below"
+            if expanded_notify
+            else "🔔 <b>Notifications</b>"
+        )
+        s_head = (
+            "📱 <b>Menu sections</b> · edit below"
+            if expanded_sec
+            else "📱 <b>Menu sections</b>"
+        )
+        return (
+            f"👤 Profile (chat {chat_id})\n"
+            f"————————————\n"
+            f"🌐 Language: {lang_label}\n"
+            f"\n"
+            f"{n_head}\n"
+            f"Zone notifications: {on(p.get('notify_zone'))}\n"
+            f"Safety notifications: {on(p.get('notify_safety'))}\n"
+            f"Offline notifications: {on(p.get('notify_offline'))}\n"
+            f"Policy notifications: {on(p.get('notify_policy'))}\n"
+            f"\n"
+            f"{s_head}\n"
+            f"Miner: {_sec('show_miner')}\n"
+            f"Policy: {_sec('show_policy')}\n"
+            f"Force Stop: {_sec('show_force_stop')}\n"
+            f"Filtration: {_sec('show_filtration')}\n"
+            f"Settings: {_sec('show_settings')}\n"
+            f"Help: {_sec('show_help')}\n"
+            f"\n"
+            f"Control: {on(p.get('commands_en'))}"
+        )
+    n_head = (
+        "🔔 <b>Уведомления</b> · настройте ниже"
+        if expanded_notify
+        else "🔔 <b>Уведомления</b>"
+    )
+    s_head = (
+        "📱 <b>Разделы меню</b> · настройте ниже"
+        if expanded_sec
+        else "📱 <b>Разделы меню</b>"
+    )
+    return (
+        f"👤 Профайл (chat {chat_id})\n"
+        f"————————————\n"
+        f"🌐 Язык: {lang_label}\n"
+        f"\n"
+        f"{n_head}\n"
+        f"Уведомления зоны: {on(p.get('notify_zone'))}\n"
+        f"Уведомления Safety: {on(p.get('notify_safety'))}\n"
+        f"Уведомления Offline: {on(p.get('notify_offline'))}\n"
+        f"Уведомления Policy: {on(p.get('notify_policy'))}\n"
+        f"\n"
+        f"{s_head}\n"
+        f"Майнер: {_sec('show_miner')}\n"
+        f"Policy: {_sec('show_policy')}\n"
+        f"Force Stop: {_sec('show_force_stop')}\n"
+        f"Фильтрация: {_sec('show_filtration')}\n"
+        f"Настройки: {_sec('show_settings')}\n"
+        f"Справка: {_sec('show_help')}\n"
+        f"\n"
+        f"Управление: {on(p.get('commands_en'))}"
+    )
+
+
+def _tg_parse_onoff(s: str) -> bool | None:
+    v = str(s or "").strip().lower()
+    if v in ("1", "on", "true", "yes", "вкл", "да", "enable", "enabled"):
+        return True
+    if v in ("0", "off", "false", "no", "выкл", "нет", "disable", "disabled"):
+        return False
+    return None
+
+
+def _tg_apply_notify_cmd(chat_id, what: str, arg: str | None, prefs: dict) -> dict:
+    """
+    what: zone|safety|offline|policy|all|commands
+    arg: on|off|None (None = toggle)
+    """
+    key_map = {
+        "zone": "notify_zone",
+        "safety": "notify_safety",
+        "offline": "notify_offline",
+        "policy": "notify_policy",
+        "commands": "commands_en",
+        "cmd": "commands_en",
+    }
+    onoff = _tg_parse_onoff(arg) if arg else None
+    if what in ("all", "все", "*"):
+        if onoff is None:
+            # toggle all based on majority / zone as reference
+            onoff = not bool(prefs.get("notify_zone", True))
+        return _tg_set_chat_prefs(
+            chat_id,
+            notify_zone=onoff,
+            notify_safety=onoff,
+            notify_offline=onoff,
+            notify_policy=onoff,
+        )
+    pk = key_map.get(what)
+    if not pk:
+        return prefs
+    if onoff is None:
+        onoff = not bool(prefs.get(pk, True))
+    return _tg_set_chat_prefs(chat_id, **{pk: onoff})
+
+
+def _tg_send_profile(
+    chat_id,
+    prefs: dict | None = None,
+    *,
+    edit_message_id: int | None = None,
+    view: str = "root",
+) -> None:
+    """Personal prefs: language + notifications + control kill-switch."""
+    p = prefs or _tg_get_chat_prefs(chat_id)
+    text = _tg_prefs_text(chat_id, p, view=view)
+    markup = _tg_settings_inline(chat_id, p, view=view)
+    if edit_message_id is not None:
+        ok = tg_edit_message(
+            chat_id, edit_message_id, text, reply_markup=markup, parse_mode="HTML"
+        )
+        if not ok:
+            # fallback: send a fresh card if edit rejected
+            tg_send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup, parse_mode="HTML")
+
+
+# Back-compat alias (older call sites)
+def _tg_send_settings(
+    chat_id, prefs: dict | None = None, *, edit_message_id: int | None = None
+) -> None:
+    _tg_send_profile(chat_id, prefs, edit_message_id=edit_message_id)
+
+
+def _tg_bot_settings_text(lang: str = "ru") -> str:
+    en = str(lang or "ru").lower().startswith("en")
+    ver = get_app_version()
+    if en:
+        return (
+            "⚙️ Settings\n"
+            "————————————\n"
+            f"Version: {ver}\n"
+            "\n"
+            "Choose a section:"
+        )
+    return (
+        "⚙️ Настройки\n"
+        "————————————\n"
+        f"Версия: {ver}\n"
+        "\n"
+        "Выберите раздел:"
+    )
+
+
+def _tg_bot_settings_inline(lang: str = "ru") -> dict:
+    en = str(lang or "ru").lower().startswith("en")
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🔄 Update" if en else "🔄 Обновление",
+                    "callback_data": "cfg:update",
+                }
+            ],
+            [
+                {
+                    "text": "👤 Profile" if en else "👤 Профайл",
+                    "callback_data": "cfg:profile",
+                }
+            ],
+            [
+                {
+                    "text": "🏠 Menu" if en else "🏠 Меню",
+                    "callback_data": "cfg:menu",
+                }
+            ],
+        ]
+    }
+
+
+def _tg_send_bot_settings(
+    chat_id, lang: str = "ru", *, edit_message_id: int | None = None
+) -> None:
+    text = _tg_bot_settings_text(lang)
+    markup = _tg_bot_settings_inline(lang)
+    if edit_message_id is not None:
+        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup)
+
+
+def _tg_update_status_phrase(st: str | None, en: bool) -> str:
+    st = str(st or "unknown")
+    if en:
+        return {
+            "up_to_date": "up to date",
+            "update_available": "update available",
+            "local_ahead": "local ahead of GitHub",
+            "branch_only": "no release tag — branch install only",
+            "error": "check error",
+            "unknown": "not checked yet",
+        }.get(st, st)
+    return {
+        "up_to_date": "актуально",
+        "update_available": "есть обновление",
+        "local_ahead": "локально новее GitHub",
+        "branch_only": "нет release/tag — только ветка",
+        "error": "ошибка проверки",
+        "unknown": "ещё не проверяли",
+    }.get(st, st)
+
+
+def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
+    en = str(lang or "ru").lower().startswith("en")
+    cur = get_app_version()
+    chk = check if isinstance(check, dict) else None
+    # read state without holding _update_lock (install holds it for a long time)
+    busy = bool(_update_state.get("busy"))
+    if chk is None:
+        last = _update_state.get("last_check")
+        chk = last if isinstance(last, dict) else None
+
+    lines: list[str] = []
+    if en:
+        lines.append("🔄 Update")
+        lines.append("————————————")
+        lines.append(f"Installed:  {cur}")
+        lines.append(f"Repo:       {GITHUB_REPO}")
+        lines.append(f"Branch:     {GITHUB_BRANCH}")
+    else:
+        lines.append("🔄 Обновление")
+        lines.append("————————————")
+        lines.append(f"Установлено:  {cur}")
+        lines.append(f"Репозиторий:  {GITHUB_REPO}")
+        lines.append(f"Ветка:        {GITHUB_BRANCH}")
+
+    if busy:
+        lines.append("")
+        lines.append("⏳ " + ("install in progress…" if en else "установка…"))
+
+    if not chk:
+        lines.append("")
+        lines.append(
+            "Press «Check» to query GitHub."
+            if en
+            else "Нажмите «Проверить» для запроса к GitHub."
+        )
+        return "\n".join(lines)
+
+    latest = chk.get("latest_version") or "—"
+    st = _tg_update_status_phrase(chk.get("status"), en)
+    lines.append("")
+    if en:
+        lines.append(f"GitHub:     {latest}")
+        lines.append(f"Status:     {st}")
+    else:
+        lines.append(f"GitHub:       {latest}")
+        lines.append(f"Статус:       {st}")
+
+    if chk.get("source"):
+        lines.append(
+            f"Source:     {chk.get('source')}"
+            if en
+            else f"Источник:     {chk.get('source')}"
+        )
+    if chk.get("tag"):
+        lines.append(f"Tag:        {chk.get('tag')}" if en else f"Tag:         {chk.get('tag')}")
+    if chk.get("commit_sha"):
+        lines.append(
+            f"Commit:     {chk.get('commit_sha')}"
+            if en
+            else f"Commit:      {chk.get('commit_sha')}"
+        )
+    if chk.get("checked_at"):
+        lines.append(
+            f"Checked:    {_tg_fmt_ts_local(chk.get('checked_at'))}"
+            if en
+            else f"Проверка:    {_tg_fmt_ts_local(chk.get('checked_at'))}"
+        )
+    if chk.get("error"):
+        lines.append("")
+        lines.append(f"❌ {chk.get('error')}")
+    notes = chk.get("notes")
+    if notes and chk.get("status") in ("branch_only", "update_available"):
+        # short note
+        note = str(notes).replace("\n", " ").strip()
+        if len(note) > 220:
+            note = note[:217] + "…"
+        lines.append("")
+        lines.append(note)
+    if chk.get("status") == "update_available":
+        lines.append("")
+        lines.append(
+            "Install will replace serve.py + UI, then restart."
+            if en
+            else "Установка заменит serve.py + UI и перезапустит сервис."
+        )
+    return "\n".join(lines)
+
+
+def _tg_update_inline(lang: str = "ru", check: dict | None = None) -> dict:
+    en = str(lang or "ru").lower().startswith("en")
+    chk = check if isinstance(check, dict) else None
+    busy = bool(_update_state.get("busy"))
+    if chk is None:
+        last = _update_state.get("last_check")
+        chk = last if isinstance(last, dict) else {}
+    st = str((chk or {}).get("status") or "")
+    can_install = (not busy) and st in (
+        "update_available",
+        "branch_only",
+        "up_to_date",
+        "local_ahead",
+    )
+    # Always offer install when we have a check result (reinstall / branch)
+    # but hide while busy
+    rows: list[list[dict]] = [
+        [
+            {
+                "text": (
+                    "🔍 Check again" if en else "🔍 Проверить"
+                )
+                if chk
+                else ("🔍 Check for updates" if en else "🔍 Проверить обновления"),
+                "callback_data": "cfg:update:check",
+            }
+        ]
+    ]
+    if can_install or (not busy and st == "update_available"):
+        label = "⬇️ Install" if en else "⬇️ Установить"
+        if st == "update_available":
+            lv = (chk or {}).get("latest_version")
+            if lv:
+                label = (
+                    f"⬇️ Install {lv}" if en else f"⬇️ Установить {lv}"
+                )
+        rows.append([{"text": label, "callback_data": "cfg:update:install"}])
+    elif busy:
+        rows.append(
+            [
+                {
+                    "text": "⏳ Working…" if en else "⏳ Идёт установка…",
+                    "callback_data": "cfg:update:refresh",
+                }
+            ]
+        )
+    rows.append(
+        [
+            {
+                "text": "🔄 Refresh" if en else "🔄 Обновить",
+                "callback_data": "cfg:update:refresh",
+            },
+            {
+                "text": "◀️ Back" if en else "◀️ Назад",
+                "callback_data": "cfg:home",
+            },
+        ]
+    )
+    return {"inline_keyboard": rows}
+
+
+def _tg_update_confirm_inline(lang: str = "ru") -> dict:
+    en = str(lang or "ru").lower().startswith("en")
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✅ Yes, install" if en else "✅ Да, установить",
+                    "callback_data": "cfg:update:install_yes",
+                }
+            ],
+            [
+                {
+                    "text": "❌ Cancel" if en else "❌ Отмена",
+                    "callback_data": "cfg:update",
+                }
+            ],
+        ]
+    }
+
+
+def _tg_send_update(
+    chat_id,
+    lang: str = "ru",
+    *,
+    edit_message_id: int | None = None,
+    check: dict | None = None,
+) -> None:
+    text = _tg_update_text(lang, check=check)
+    markup = _tg_update_inline(lang, check=check)
+    if edit_message_id is not None:
+        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup)
+
+
+def _tg_handle_callback(cq: dict) -> None:
+    """Inline button presses on settings screen."""
+    data = str(cq.get("data") or "")
+    cq_id = str(cq.get("id") or "")
+    msg = cq.get("message") or {}
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    mid = msg.get("message_id")
+    # ALWAYS answer immediately — otherwise Telegram shows a spinning clock
+    if not cq_id:
+        return
+    if chat_id is None:
+        tg_answer_callback(cq_id)
+        return
+    if not _tg_chat_allowed(chat_id):
+        tg_answer_callback(cq_id, "⛔ not allowed", alert=True)
+        return
+
+    try:
+        prefs = _tg_ensure_chat_prefs(chat_id)
+        en = str(prefs.get("lang") or "ru").lower().startswith("en")
+        lang = prefs.get("lang") or "ru"
+        parts = data.split(":")
+        # cfg: — bot Settings hub + Update subsection
+        # cfg:home | cfg:menu | cfg:profile | cfg:update | cfg:update:check | …
+        if len(parts) >= 2 and parts[0] == "cfg":
+            action = parts[1]
+            if action in ("home", "settings"):
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_bot_settings(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "menu":
+                tg_answer_callback(cq_id)
+                tg_send_message(
+                    chat_id,
+                    "🏠 " + ("Main menu" if en else "Главное меню"),
+                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                )
+                return
+            if action == "profile":
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_profile(chat_id, prefs, edit_message_id=mid)
+                return
+            if action == "update":
+                sub = parts[2] if len(parts) >= 3 else ""
+                if not sub:
+                    tg_answer_callback(cq_id, "OK")
+                    _tg_send_update(chat_id, lang, edit_message_id=mid)
+                    return
+                if sub == "refresh":
+                    tg_answer_callback(cq_id, "OK")
+                    _tg_send_update(chat_id, lang, edit_message_id=mid)
+                    return
+                if sub == "check":
+                    tg_answer_callback(
+                        cq_id,
+                        "Checking…" if en else "Проверка…",
+                    )
+                    # show spinner-ish state
+                    try:
+                        tg_edit_message(
+                            chat_id,
+                            mid,
+                            (
+                                "🔄 Update\n————————————\n⏳ Checking GitHub…"
+                                if en
+                                else "🔄 Обновление\n————————————\n⏳ Проверка GitHub…"
+                            ),
+                            reply_markup={
+                                "inline_keyboard": [
+                                    [
+                                        {
+                                            "text": "◀️ Back" if en else "◀️ Назад",
+                                            "callback_data": "cfg:home",
+                                        }
+                                    ]
+                                ]
+                            },
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        chk = check_github_update()
+                    except Exception as e:
+                        chk = {
+                            "ok": False,
+                            "status": "error",
+                            "error": str(e),
+                            "current_version": get_app_version(),
+                            "checked_at": datetime.now().isoformat(timespec="seconds"),
+                        }
+                    _tg_send_update(chat_id, lang, edit_message_id=mid, check=chk)
+                    return
+                if sub == "install":
+                    # confirmation step
+                    tg_answer_callback(cq_id)
+                    with _update_lock:
+                        last = _update_state.get("last_check") or {}
+                    lv = (last or {}).get("latest_version") or (last or {}).get("tag") or GITHUB_BRANCH
+                    conf = (
+                        f"⬇️ Install update?\n"
+                        f"————————————\n"
+                        f"Target: {lv}\n"
+                        f"serve.py + UI will be replaced.\n"
+                        f"Service restarts after install."
+                        if en
+                        else f"⬇️ Установить обновление?\n"
+                        f"————————————\n"
+                        f"Цель: {lv}\n"
+                        f"Будут заменены serve.py + UI.\n"
+                        f"После установки сервис перезапустится."
+                    )
+                    tg_edit_message(
+                        chat_id,
+                        mid,
+                        conf,
+                        reply_markup=_tg_update_confirm_inline(lang),
+                    )
+                    return
+                if sub == "install_yes":
+                    with _update_lock:
+                        if _update_state.get("busy"):
+                            tg_answer_callback(
+                                cq_id,
+                                "Already running" if en else "Уже идёт",
+                                alert=True,
+                            )
+                            return
+                    tg_answer_callback(
+                        cq_id,
+                        "Installing…" if en else "Установка…",
+                    )
+                    try:
+                        tg_edit_message(
+                            chat_id,
+                            mid,
+                            (
+                                "⬇️ Installing from GitHub…\n"
+                                "Bot may go quiet for ~30–60s, then come back."
+                                if en
+                                else "⬇️ Установка с GitHub…\n"
+                                "Бот может замолчать на ~30–60 с, затем вернётся."
+                            ),
+                            reply_markup={
+                                "inline_keyboard": [
+                                    [
+                                        {
+                                            "text": "🏠 Menu" if en else "🏠 Меню",
+                                            "callback_data": "cfg:menu",
+                                        }
+                                    ]
+                                ]
+                            },
+                        )
+                    except Exception:
+                        pass
+
+                    def _do_install() -> None:
+                        try:
+                            result = apply_github_update(None)
+                            ok = bool(result.get("ok"))
+                            if ok:
+                                msg = (
+                                    f"✅ Installed {result.get('to_version') or '?'}\n"
+                                    f"Restarting…"
+                                    if en
+                                    else f"✅ Установлено {result.get('to_version') or '?'}\n"
+                                    f"Перезапуск…"
+                                )
+                            else:
+                                msg = (
+                                    f"❌ Install failed: {result.get('error') or result}"
+                                    if en
+                                    else f"❌ Ошибка установки: {result.get('error') or result}"
+                                )
+                            try:
+                                tg_send_message(
+                                    chat_id,
+                                    msg,
+                                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                                )
+                            except Exception:
+                                pass
+                        except Exception as e:
+                            try:
+                                tg_send_message(
+                                    chat_id,
+                                    f"❌ update: {e}",
+                                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                                )
+                            except Exception:
+                                pass
+
+                    threading.Thread(
+                        target=_do_install, name="tg-update-install", daemon=True
+                    ).start()
+                    return
+                tg_answer_callback(cq_id)
+                _tg_send_update(chat_id, lang, edit_message_id=mid)
+                return
+            tg_answer_callback(cq_id)
+            return
+
+        # s:lang:ru | s:notify | s:notify:back | s:tog:zone | s:refresh | s:menu
+        if len(parts) >= 2 and parts[0] == "s":
+            action = parts[1]
+            if action == "lang" and len(parts) >= 3:
+                new_lang = "en" if parts[2].startswith("en") else "ru"
+                tg_answer_callback(
+                    cq_id, "English" if new_lang == "en" else "Русский"
+                )
+                prefs = _tg_set_chat_prefs(chat_id, lang=new_lang)
+                _tg_send_profile(chat_id, prefs, edit_message_id=mid, view="root")
+                tg_send_message(
+                    chat_id,
+                    "⌨️ " + ("Menu updated" if new_lang == "en" else "Меню обновлено"),
+                    reply_markup=_tg_main_keyboard(new_lang, chat_id),
+                )
+                return
+            if action == "notify":
+                # s:notify | s:notify:back | s:notify:open
+                sub = parts[2] if len(parts) >= 3 else "open"
+                prefs = _tg_get_chat_prefs(chat_id)
+                view = "root" if sub in ("back", "close", "root") else "notify"
+                toast = (
+                    ("Notifications" if view == "notify" else "Back")
+                    if en
+                    else ("Уведомления" if view == "notify" else "Назад")
+                )
+                tg_answer_callback(cq_id, toast)
+                try:
+                    _tg_send_profile(
+                        chat_id, prefs, edit_message_id=mid, view=view
+                    )
+                except Exception as e:
+                    print(f"[tg] notify panel: {e}")
+                    try:
+                        _tg_send_profile(chat_id, prefs, view=view)
+                    except Exception as e2:
+                        print(f"[tg] notify panel send: {e2}")
+                return
+            if action == "sections":
+                # s:sections | s:sections:back
+                sub = parts[2] if len(parts) >= 3 else "open"
+                prefs = _tg_get_chat_prefs(chat_id)
+                view = "root" if sub in ("back", "close", "root") else "sections"
+                toast = (
+                    ("Menu sections" if view == "sections" else "Back")
+                    if en
+                    else ("Разделы меню" if view == "sections" else "Назад")
+                )
+                tg_answer_callback(cq_id, toast)
+                try:
+                    _tg_send_profile(
+                        chat_id, prefs, edit_message_id=mid, view=view
+                    )
+                except Exception as e:
+                    print(f"[tg] sections panel: {e}")
+                    try:
+                        _tg_send_profile(chat_id, prefs, view=view)
+                    except Exception as e2:
+                        print(f"[tg] sections panel send: {e2}")
+                return
+            if action == "togsec" and len(parts) >= 3:
+                # s:togsec:miner|policy|force_stop|filtration|settings|help
+                sid = parts[2]
+                pk = _TG_SECTION_TOG.get(sid)
+                tg_answer_callback(cq_id, "OK")
+                if pk:
+                    cur = bool(prefs.get(pk, True))
+                    prefs = _tg_set_chat_prefs(chat_id, **{pk: not cur})
+                else:
+                    prefs = _tg_get_chat_prefs(chat_id)
+                _tg_send_profile(
+                    chat_id, prefs, edit_message_id=mid, view="sections"
+                )
+                # push updated main keyboard
+                try:
+                    tg_send_message(
+                        chat_id,
+                        "⌨️ " + ("Menu updated" if en else "Меню обновлено"),
+                        reply_markup=_tg_main_keyboard(lang, chat_id),
+                    )
+                except Exception:
+                    pass
+                return
+            if action == "tog" and len(parts) >= 3:
+                what = parts[2]
+                tg_answer_callback(cq_id, "OK")
+                prefs = _tg_apply_notify_cmd(chat_id, what, None, prefs)
+                # stay inside notifications panel when toggling notify flags
+                view = (
+                    "notify"
+                    if what in ("zone", "safety", "offline", "policy")
+                    else "root"
+                )
+                _tg_send_profile(
+                    chat_id, prefs, edit_message_id=mid, view=view
+                )
+                return
+            if action == "refresh":
+                tg_answer_callback(cq_id, "OK")
+                prefs = _tg_get_chat_prefs(chat_id)
+                _tg_send_profile(chat_id, prefs, edit_message_id=mid, view="root")
+                return
+            if action == "menu":
+                tg_answer_callback(cq_id)
+                tg_send_message(
+                    chat_id,
+                    "🏠 " + ("Main menu" if en else "Главное меню"),
+                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                )
+                return
+        # d:on | d:off | d:refresh — Dry Run
+        if len(parts) >= 2 and parts[0] == "d":
+            action = parts[1]
+            if action == "refresh":
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_dry_run(chat_id, lang, edit_message_id=mid)
+                return
+            if action in ("on", "off", "toggle"):
+                if action == "toggle":
+                    want = not _tg_dry_run_on()
+                else:
+                    want = action == "on"
+                note = _tg_set_dry_run(want, lang)
+                tg_answer_callback(cq_id, note[:180], alert=note.startswith("❌") or note.startswith("⚠️"))
+                _tg_send_dry_run(
+                    chat_id,
+                    lang,
+                    edit_message_id=mid,
+                    note=note,
+                    refresh_keyboard=True,
+                )
+                return
+            tg_answer_callback(cq_id)
+            return
+
+        # i:refresh | i:miner  — Info card
+        if len(parts) >= 2 and parts[0] == "i":
+            action = parts[1]
+            if action == "refresh":
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_info(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "miner":
+                tg_answer_callback(cq_id)
+                _tg_send_miner(chat_id, lang)
+                return
+            tg_answer_callback(cq_id)
+            return
+
+        # m: — Miner control (UI #miner)
+        # m:refresh | m:work:sleep|resume | m:mode:low|normal|high
+        # m:limd:±500 | m:pct:N | m:dry:… | m:pools | m:info
+        if len(parts) >= 2 and parts[0] == "m":
+            action = parts[1]
+            if action == "refresh":
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "info":
+                tg_answer_callback(cq_id)
+                _tg_send_info(chat_id, lang)
+                return
+            if action == "dry":
+                # m:dry | m:dry:toggle | m:dry:on | m:dry:off
+                sub = parts[2] if len(parts) >= 3 else "toggle"
+                if sub in ("toggle", "tog", ""):
+                    want = not _tg_dry_run_on()
+                elif sub in ("on", "1", "true"):
+                    want = True
+                elif sub in ("off", "0", "false"):
+                    want = False
+                else:
+                    want = not _tg_dry_run_on()
+                note = _tg_set_dry_run(want, lang)
+                tg_answer_callback(
+                    cq_id,
+                    note[:180],
+                    alert=note.startswith("❌") or note.startswith("⚠️"),
+                )
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            # m:reboot | m:reboot:yes | m:restart | m:restart:yes
+            if action in ("reboot", "restart"):
+                sub = parts[2] if len(parts) >= 3 else ""
+                if sub in ("no", "cancel", "0"):
+                    tg_answer_callback(cq_id, "OK" if en else "Отмена")
+                    return
+                if sub not in ("yes", "go", "1", "ok"):
+                    # ask confirm
+                    tg_answer_callback(cq_id)
+                    if action == "reboot":
+                        q = (
+                            "🔁 Reboot ASIC?\nFull device reboot · offline several minutes."
+                            if en
+                            else "🔁 Reboot ASIC?\nПолный reboot устройства · offline несколько минут."
+                        )
+                        yes_l = "✅ Reboot" if en else "✅ Reboot"
+                        no_l = "❌ Cancel" if en else "❌ Отмена"
+                        yes_cb, no_cb = "m:reboot:yes", "m:reboot:no"
+                    else:
+                        q = (
+                            "🔃 Restart miner?\nRestarts btminer only · upfreq after."
+                            if en
+                            else "🔃 Restart miner?\nТолько btminer · затем upfreq."
+                        )
+                        yes_l = "✅ Restart" if en else "✅ Restart"
+                        no_l = "❌ Cancel" if en else "❌ Отмена"
+                        yes_cb, no_cb = "m:restart:yes", "m:restart:no"
+                    tg_send_message(
+                        chat_id,
+                        q,
+                        reply_markup={
+                            "inline_keyboard": [
+                                [
+                                    {"text": yes_l, "callback_data": yes_cb},
+                                    {"text": no_l, "callback_data": no_cb},
+                                ]
+                            ]
+                        },
+                    )
+                    return
+                # confirmed
+                if action == "reboot":
+                    msg = _tg_apply_miner_write("reboot", "asic", lang)
+                else:
+                    msg = _tg_apply_miner_write("restart_miner", "btminer", lang)
+                tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
+                tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+                return
+            if action == "work" and len(parts) >= 3:
+                want = "sleep" if parts[2] in ("sleep", "suspend") else "resume"
+                msg = _tg_apply_miner_write("working", want, lang)
+                tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            # legacy
+            if action in ("suspend", "resume"):
+                want = "sleep" if action == "suspend" else "resume"
+                msg = _tg_apply_miner_write("working", want, lang)
+                tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "mode" and len(parts) >= 3:
+                mode = parts[2].lower()
+                if mode not in ("low", "normal", "high"):
+                    tg_answer_callback(cq_id, "mode?", alert=True)
+                    return
+                msg = _tg_apply_miner_write("mode", mode, lang)
+                tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "limd" and len(parts) >= 3:
+                try:
+                    delta = int(parts[2])
+                except ValueError:
+                    tg_answer_callback(cq_id, "bad delta", alert=True)
+                    return
+                try:
+                    live = fetch_live()
+                except Exception as e:
+                    tg_answer_callback(cq_id, f"❌ {e}", alert=True)
+                    return
+                cur = _f(live.get("power_limit_measured") or live.get("power_limit")) or 0
+                new_lim = max(0, min(20000, int(cur) + delta))
+                msg = _tg_apply_miner_write("power_limit", new_lim, lang)
+                tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "pct" and len(parts) >= 3:
+                try:
+                    pct = int(parts[2])
+                except ValueError:
+                    tg_answer_callback(cq_id, "pct?", alert=True)
+                    return
+                msg = _tg_apply_miner_write("power_pct", pct, lang)
+                tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
+                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                return
+            if action == "pools":
+                tg_answer_callback(cq_id)
+                try:
+                    body = fetch_mining_pools(force=True)
+                    pools = body.get("pools") or []
+                    if not pools:
+                        tg_send_message(
+                            chat_id,
+                            "pools: empty" if en else "pools: пусто",
+                            reply_markup=_tg_main_keyboard(lang, chat_id),
+                        )
+                    else:
+                        lines = ["Pools:" if en else "Пулы:"]
+                        for p in pools:
+                            act = "●" if p.get("active") else "○"
+                            lines.append(
+                                f"{act} #{p.get('pool')} {p.get('url')}\n"
+                                f"  {p.get('user')} · {p.get('status')} · "
+                                f"A={p.get('accepted')} R={p.get('rejected')}"
+                            )
+                        tg_send_message(
+                            chat_id,
+                            "\n".join(lines),
+                            reply_markup=_tg_main_keyboard(lang, chat_id),
+                        )
+                except Exception as e:
+                    tg_send_message(
+                        chat_id,
+                        f"pools error: {e}",
+                        reply_markup=_tg_main_keyboard(lang, chat_id),
+                    )
+                return
+            tg_answer_callback(cq_id)
+            return
+        tg_answer_callback(cq_id)
+    except Exception as e:
+        print(f"[tg] callback error: {e}")
+        try:
+            tg_answer_callback(cq_id, "error", alert=True)
+        except Exception:
+            pass
+
+
+def _tg_handle_command(chat_id, text: str, from_user: dict | None) -> None:
+    raw = (text or "").strip()
+    text = _tg_normalize_incoming_text(raw)
+    if not text:
+        return
+    # plain text that is not a button → short hint (don't hang silently)
+    if not text.startswith("/"):
+        if _tg_chat_allowed(chat_id):
+            prefs = _tg_get_chat_prefs(chat_id)
+            lang = prefs.get("lang") or "ru"
+            en = str(lang).lower().startswith("en")
+            tg_send_message(
+                chat_id,
+                "Use the buttons below 👇" if en else "Используйте кнопки внизу 👇",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        return
+    # /cmd@BotName → /cmd
+    parts = text.split()
+    cmd = parts[0].split("@", 1)[0].lower()
+    args = parts[1:]
+
+    with _tg_cfg_lock:
+        has_ids = bool(_tg_cfg.get("chat_ids"))
+
+    prefs = _tg_get_chat_prefs(chat_id) if _tg_chat_allowed(chat_id) else dict(DEFAULT_CHAT_PREFS)
+    lang = prefs.get("lang") or "ru"
+    en = str(lang).lower().startswith("en")
+
+    if cmd in ("/start", "/help", "/chatid"):
+        uname = (from_user or {}).get("username") or ""
+        intro = f"🏠 {get_project_name()} bot\nchat_id: {chat_id}"
+        if uname:
+            intro += f"\nuser: @{uname}"
+        if not has_ids or not _tg_chat_allowed(chat_id):
+            intro += (
+                "\n\nAdd this chat_id in Settings → Telegram → Chat IDs, enable bot, Save."
+                if en
+                else "\n\nДобавьте chat_id в Настройки → Telegram → Chat IDs, включите бота, Сохранить."
+            )
+            tg_send_message(chat_id, intro)
+            return
+        _tg_ensure_chat_prefs(chat_id)
+        prefs = _tg_get_chat_prefs(chat_id)
+        lang = prefs.get("lang") or "ru"
+        en = str(lang).lower().startswith("en")
+        intro += "\n\n" + _tg_commands_help(lang)
+        tg_send_message(chat_id, intro, reply_markup=_tg_main_keyboard(lang, chat_id))
+        return
+
+    if not _tg_chat_allowed(chat_id):
+        tg_send_message(
+            chat_id,
+            (
+                f"⛔ chat_id {chat_id} not in allowlist.\nAdd it in Settings → Telegram."
+                if en
+                else f"⛔ chat_id {chat_id} не в allowlist.\nДобавьте в Настройки → Telegram."
+            ),
+        )
+        return
+
+    prefs = _tg_ensure_chat_prefs(chat_id)
+    lang = prefs.get("lang") or "ru"
+    en = str(lang).lower().startswith("en")
+
+    # ── personal settings / language / notify (always allowed) ──
+    if cmd in ("/settings", "/настройки", "/config", "/setup"):
+        _tg_send_bot_settings(chat_id, lang)
+        return
+
+    if cmd in ("/update", "/updates", "/обновление", "/обновления"):
+        _tg_send_update(chat_id, lang)
+        return
+
+    if cmd in ("/prefs", "/my", "/profile", "/профайл", "/prof"):
+        _tg_send_profile(chat_id, prefs)
+        return
+
+    if cmd in ("/lang_ru", "/lang_en"):
+        new_lang = "en" if cmd.endswith("_en") else "ru"
+        prefs = _tg_set_chat_prefs(chat_id, lang=new_lang)
+        tg_send_message(
+            chat_id,
+            ("✅ Language: English" if new_lang == "en" else "✅ Язык: Русский"),
+            reply_markup=_tg_main_keyboard(new_lang, chat_id),
+        )
+        _tg_send_profile(chat_id, prefs)
+        return
+
+    if cmd in ("/lang", "/language", "/язык"):
+        # legacy: /lang ru | /lang en
+        if args:
+            new_lang = "en" if str(args[0]).lower().startswith("en") else "ru"
+            prefs = _tg_set_chat_prefs(chat_id, lang=new_lang)
+            tg_send_message(
+                chat_id,
+                ("✅ Language: English" if new_lang == "en" else "✅ Язык: Русский"),
+                reply_markup=_tg_main_keyboard(new_lang, chat_id),
+            )
+            _tg_send_profile(chat_id, prefs)
+        else:
+            tg_send_message(chat_id, "/lang_ru  or  /lang_en")
+        return
+
+    # /notify_zone [on|off]  ·  /notify_zone  (toggle)
+    notify_cmds = {
+        "/notify_zone": "zone",
+        "/notify_safety": "safety",
+        "/notify_offline": "offline",
+        "/notify_policy": "policy",
+        "/notify_all": "all",
+        "/notify_commands": "commands",
+    }
+    if cmd in notify_cmds:
+        arg = args[0] if args else None
+        prefs = _tg_apply_notify_cmd(chat_id, notify_cmds[cmd], arg, prefs)
+        tg_send_message(
+            chat_id,
+            ("✅ Saved" if en else "✅ Сохранено"),
+        )
+        _tg_send_profile(chat_id, prefs)
+        return
+
+    # legacy: /notify zone on
+    if cmd in ("/notify", "/уведомления"):
+        if not args:
+            _tg_send_profile(chat_id, prefs)
+            return
+        what = str(args[0]).lower().replace("-", "_")
+        arg = args[1] if len(args) > 1 else None
+        # allow /notify zone  or /notify_zone style in second form already handled
+        prefs = _tg_apply_notify_cmd(chat_id, what, arg, prefs)
+        _tg_send_profile(chat_id, prefs)
+        return
+
+    # global / per-chat kill-switch for control commands
+    with _tg_cfg_lock:
+        global_cmd = bool(_tg_cfg.get("commands_en", True))
+    if (not global_cmd or not prefs.get("commands_en", True)) and cmd not in (
+        "/start",
+        "/help",
+        "/chatid",
+        "/settings",
+        "/настройки",
+        "/config",
+        "/setup",
+        "/update",
+        "/updates",
+        "/обновление",
+        "/обновления",
+        "/prefs",
+        "/my",
+        "/profile",
+        "/профайл",
+        "/prof",
+        "/lang",
+        "/lang_ru",
+        "/lang_en",
+        "/notify",
+        "/notify_zone",
+        "/notify_safety",
+        "/notify_offline",
+        "/notify_policy",
+        "/notify_all",
+        "/notify_commands",
+    ):
+        tg_send_message(
+            chat_id,
+            "Control OFF — open /profile to enable"
+            if en
+            else "Управление ВЫКЛ — откройте /profile чтобы включить",
+            reply_markup=_tg_main_keyboard(lang, chat_id),
+        )
+        return
+
+    if cmd == "/status":
+        tg_send_message(
+            chat_id,
+            _tg_status_text(lang=lang),
+            reply_markup=_tg_main_keyboard(lang, chat_id),
+        )
+        return
+
+    if cmd in ("/miner", "/майнер"):
+        _tg_send_miner(chat_id, lang)
+        return
+
+    if cmd in ("/info", "/инфо", "/asic"):
+        _tg_send_info(chat_id, lang)
+        return
+
+    if cmd in ("/dry_run", "/dryrun", "/dry"):
+        # /dry_run [on|off] — lives in Miner section; no arg → open miner
+        if args:
+            onoff = _tg_parse_onoff(str(args[0]))
+            if onoff is None:
+                tg_send_message(
+                    chat_id,
+                    "Usage: /dry_run [on|off]" if en else "Использование: /dry_run [on|off]",
+                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                )
+                return
+            note = _tg_set_dry_run(onoff, lang)
+            tg_send_message(chat_id, note, reply_markup=_tg_main_keyboard(lang, chat_id))
+            _tg_send_miner(chat_id, lang)
+            return
+        _tg_send_miner(chat_id, lang)
+        return
+
+    if cmd in ("/mode", "/powermode"):
+        if not args or str(args[0]).lower() not in ("low", "normal", "high"):
+            tg_send_message(
+                chat_id,
+                "Usage: /mode low|normal|high" if en else "Использование: /mode low|normal|high",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        msg = _tg_apply_miner_write("mode", str(args[0]).lower(), lang)
+        tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        _tg_send_miner(chat_id, lang)
+        return
+
+    if cmd in ("/limit", "/power_limit", "/pwlimit"):
+        if not args:
+            tg_send_message(
+                chat_id,
+                "Usage: /limit <W>" if en else "Использование: /limit <Вт>",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        try:
+            watts = int(float(args[0]))
+        except ValueError:
+            tg_send_message(chat_id, "bad W", reply_markup=_tg_main_keyboard(lang, chat_id))
+            return
+        msg = _tg_apply_miner_write("power_limit", watts, lang)
+        tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        _tg_send_miner(chat_id, lang)
+        return
+
+    if cmd in ("/pct", "/power_pct", "/pwpct"):
+        if not args:
+            tg_send_message(
+                chat_id,
+                "Usage: /pct <0-100>" if en else "Использование: /pct <0-100>",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        try:
+            pct = int(float(args[0]))
+        except ValueError:
+            tg_send_message(chat_id, "bad %", reply_markup=_tg_main_keyboard(lang, chat_id))
+            return
+        msg = _tg_apply_miner_write("power_pct", pct, lang)
+        tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        _tg_send_miner(chat_id, lang)
+        return
+
+    if cmd in ("/reboot_asic", "/reboot", "/reboot_miner"):
+        # require explicit confirm arg for slash command safety
+        conf = str(args[0]).lower() if args else ""
+        if conf not in ("yes", "go", "1", "ok", "confirm", "да"):
+            tg_send_message(
+                chat_id,
+                (
+                    "🔁 Reboot ASIC — full device reboot.\n"
+                    "Confirm: /reboot_asic yes"
+                    if en
+                    else "🔁 Reboot ASIC — полный reboot устройства.\n"
+                    "Подтверждение: /reboot_asic yes"
+                ),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        msg = _tg_apply_miner_write("reboot", "asic", lang)
+        tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        return
+
+    if cmd in ("/restart_miner", "/restart_btminer", "/restart"):
+        conf = str(args[0]).lower() if args else ""
+        if conf not in ("yes", "go", "1", "ok", "confirm", "да"):
+            tg_send_message(
+                chat_id,
+                (
+                    "🔃 Restart miner — btminer only.\n"
+                    "Confirm: /restart_miner yes"
+                    if en
+                    else "🔃 Restart miner — только btminer.\n"
+                    "Подтверждение: /restart_miner yes"
+                ),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        msg = _tg_apply_miner_write("restart_miner", "btminer", lang)
+        tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        return
+
+    if cmd == "/policy":
+        pol = get_policy_status()
+        evs = pol.get("events") or []
+        zlab = (
+            zone_title("critical")
+            if pol.get("safety_sticky")
+            else zone_title(pol.get("heat_zone"))
+        )
+        lines = [
+            f"policy · zone={zlab} · want={pol.get('want_work')} have={pol.get('measured_work')}"
+        ]
+        for e in evs[:8]:
+            lines.append(f"{e.get('ts','')} [{e.get('kind')}] {e.get('msg')}")
+        tg_send_message(
+            chat_id,
+            "\n".join(lines) if len(lines) > 1 else ("no events" if en else "нет событий"),
+            reply_markup=_tg_main_keyboard(lang, chat_id),
+        )
+        return
+
+    if cmd == "/pools":
+        try:
+            body = fetch_mining_pools(force=True)
+            pools = body.get("pools") or []
+            if not pools:
+                tg_send_message(
+                    chat_id,
+                    "pools: empty / " + str(body.get("error") or "—")
+                    if en
+                    else "pools: пусто / " + str(body.get("error") or "—"),
+                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                )
+                return
+            lines = ["Pools:"]
+            for p in pools:
+                act = "●" if p.get("active") else "○"
+                lines.append(
+                    f"{act} #{p.get('pool')} {p.get('url')}\n"
+                    f"  {p.get('user')} · {p.get('status')} · "
+                    f"A={p.get('accepted')} R={p.get('rejected')}"
+                )
+            tg_send_message(
+                chat_id,
+                "\n".join(lines),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        except Exception as e:
+            tg_send_message(chat_id, f"pools error: {e}", reply_markup=_tg_main_keyboard(lang, chat_id))
+        return
+
+    if cmd in (
+        "/force_stop",
+        "/forcestop",
+        "/stop_work",
+        "/stopwork",
+        "/suspend",
+        "/resume",
+        "/sleep",
+        "/mining",
+        "/остановить",
+        "/продолжить",
+    ):
+        # One control: Force Stop (sticky Suspend). Toggle if no arg.
+        # /suspend|/stop → ON; /resume|/continue → OFF; bare button → toggle.
+        arg0 = str(args[0]).lower() if args else ""
+        onoff = _tg_parse_onoff(arg0) if arg0 else None
+        if onoff is None:
+            if cmd in ("/suspend", "/sleep", "/stop_work", "/stopwork", "/остановить"):
+                onoff = True
+            elif cmd in ("/resume", "/mining", "/продолжить"):
+                onoff = False
+            elif arg0 in ("stop", "halt"):
+                onoff = True
+            elif arg0 in ("continue", "clear", "go"):
+                onoff = False
+            else:
+                onoff = not get_force_stop()
+        try:
+            set_force_stop(bool(onoff), apply_now=True)
+            if onoff:
+                msg = (
+                    "🛑 Force Stop ON · mining suspended\n"
+                    "Zones & Dry Run ignored until Continue mining"
+                    if en
+                    else "🛑 Force Stop ВКЛ · майнинг остановлен\n"
+                    "Зоны и Dry Run игнорируются до «Продолжить майнинг»"
+                )
+            else:
+                msg = (
+                    "▶️ Force Stop OFF · Continue mining\n"
+                    "Zone auto / Dry Run rules apply again"
+                    if en
+                    else "▶️ Force Stop ВЫКЛ · Продолжить майнинг\n"
+                    "Снова действуют зоны / Dry Run"
+                )
+            tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        except Exception as e:
+            tg_send_message(
+                chat_id,
+                f"❌ Force Stop: {e}",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        return
+
+    if cmd in ("/filtration", "/filter", "/фильтрация", "/фильтр"):
+        try:
+            st = get_filtration_status()
+        except Exception as e:
+            tg_send_message(
+                chat_id,
+                f"❌ filtration: {e}",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        if not st.get("enabled"):
+            tg_send_message(
+                chat_id,
+                (
+                    "💧 Filtration disabled in Settings"
+                    if en
+                    else "💧 Фильтрация отключена в настройках"
+                ),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        arg0 = str(args[0]).lower() if args else ""
+        onoff = _tg_parse_onoff(arg0) if arg0 else None
+        if onoff is None:
+            # bare button / no arg → toggle
+            onoff = not (st.get("on") is True)
+        # OFF locked while mining
+        if not onoff and st.get("mining") is True:
+            tg_send_message(
+                chat_id,
+                (
+                    "🔒 Filtration OFF unavailable while mining\n"
+                    "Stop mining first, then turn filtration off"
+                    if en
+                    else "🔒 Фильтрация ВЫКЛ недоступна при майнинге\n"
+                    "Сначала остановите майнинг, затем выключите фильтрацию"
+                ),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        try:
+            out = filtration_set(bool(onoff), source="telegram", force=False)
+            if not out.get("ok"):
+                err = out.get("error") or "fail"
+                tg_send_message(
+                    chat_id,
+                    f"❌ filtration: {err}",
+                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                )
+                return
+            be = out.get("backend") or st.get("backend") or "?"
+            if onoff:
+                msg = (
+                    f"💧 Filtration ON · {be}"
+                    if en
+                    else f"💧 Фильтрация ВКЛ · {be}"
+                )
+            else:
+                msg = (
+                    f"💧 Filtration OFF · {be}"
+                    if en
+                    else f"💧 Фильтрация ВЫКЛ · {be}"
+                )
+            tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+        except Exception as e:
+            tg_send_message(
+                chat_id,
+                f"❌ filtration: {e}",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        return
+
+    if cmd == "/override":
+        mins = 30.0
+        if args:
+            try:
+                mins = float(args[0])
+            except ValueError:
+                pass
+        try:
+            set_policy_override(minutes=mins, clear=False)
+            tg_send_message(
+                chat_id,
+                f"✅ Override {mins:.0f} min" if en else f"✅ Override {mins:.0f} мин",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        except Exception as e:
+            tg_send_message(chat_id, f"❌ override: {e}")
+        return
+
+    if cmd == "/override_off":
+        try:
+            set_policy_override(clear=True)
+            tg_send_message(
+                chat_id,
+                "✅ Override cleared" if en else "✅ Override снят",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        except Exception as e:
+            tg_send_message(chat_id, f"❌ {e}")
+        return
+
+    tg_send_message(
+        chat_id,
+        "Unknown. Use buttons or /help" if en else "Неизвестно. Кнопки или /help",
+        reply_markup=_tg_main_keyboard(lang, chat_id),
+    )
+
+
+def _tg_process_update(upd: dict) -> None:
+    # inline button callback
+    cq = upd.get("callback_query")
+    if isinstance(cq, dict):
+        try:
+            msg = cq.get("message") or {}
+            _tg_remember_chat(msg.get("chat"), cq.get("from"))
+            _tg_handle_callback(cq)
+        except Exception as e:
+            print(f"[tg] callback: {e}")
+        return
+
+    msg = upd.get("message") or upd.get("edited_message")
+    if not isinstance(msg, dict):
+        return
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id is None:
+        return
+    try:
+        _tg_remember_chat(chat, msg.get("from"))
+    except Exception:
+        pass
+    text = msg.get("text") or ""
+    if text:
+        _tg_handle_command(chat_id, text, msg.get("from"))
+
+
+def telegram_loop() -> None:
+    """Long-poll getUpdates. Independent of browser UI."""
+    _tg_stop.wait(timeout=3.0)
+    while not _tg_stop.is_set():
+        with _tg_cfg_lock:
+            enabled = bool(_tg_cfg.get("enabled"))
+            token = str(_tg_cfg.get("bot_token") or "").strip()
+            offset = int(_tg_cfg.get("offset") or 0)
+        if not enabled or not token:
+            _tg_stop.wait(timeout=5.0)
+            continue
+        try:
+            # resolve bot identity once
+            with _tg_state_lock:
+                need_me = _tg_state.get("me") is None
+            if need_me:
+                try:
+                    me = _tg_api("getMe", timeout=15).get("result") or {}
+                    with _tg_state_lock:
+                        _tg_state["me"] = me.get("username") or me.get("id")
+                        _tg_state["ok"] = True
+                    print(f"[tg] bot @{_tg_state.get('me')}")
+                except Exception as e:
+                    with _tg_state_lock:
+                        _tg_state["last_error"] = str(e)
+                        _tg_state["ok"] = False
+                    print(f"[tg] getMe fail: {e}")
+                    _tg_stop.wait(timeout=10.0)
+                    continue
+
+            # IMPORTANT: must include callback_query or inline buttons spin forever
+            body = _tg_api(
+                "getUpdates",
+                {
+                    "offset": offset,
+                    "timeout": 25,
+                    "allowed_updates": [
+                        "message",
+                        "edited_message",
+                        "callback_query",
+                    ],
+                },
+                timeout=35,
+            )
+            updates = body.get("result") or []
+            with _tg_state_lock:
+                _tg_state["polls"] = int(_tg_state.get("polls") or 0) + 1
+                _tg_state["last_update_ts"] = datetime.now().isoformat(timespec="seconds")
+                _tg_state["ok"] = True
+                _tg_state["last_error"] = None
+
+            max_id = offset
+            for upd in updates:
+                if not isinstance(upd, dict):
+                    continue
+                uid = int(upd.get("update_id") or 0)
+                if uid >= max_id:
+                    max_id = uid + 1
+                try:
+                    _tg_process_update(upd)
+                except Exception as e:
+                    print(f"[tg] handle update: {e}")
+            if max_id != offset:
+                with _tg_cfg_lock:
+                    _tg_cfg["offset"] = max_id
+                # persist offset occasionally
+                try:
+                    _save_telegram_cfg()
+                except Exception:
+                    pass
+        except Exception as e:
+            with _tg_state_lock:
+                _tg_state["ok"] = False
+                _tg_state["last_error"] = str(e)
+            print(f"[tg] poll: {e}")
+            _tg_stop.wait(timeout=5.0)
+
+
+def tg_test_send() -> dict:
+    """Send a test message to all chat_ids."""
+    with _tg_cfg_lock:
+        if not _tg_cfg.get("bot_token"):
+            return {"ok": False, "error": "bot_token empty"}
+        if not _tg_cfg.get("chat_ids"):
+            return {"ok": False, "error": "chat_ids empty — write /start to bot and add chat_id"}
+    n = tg_broadcast(
+        f"✅ Test · {get_project_name()}\n"
+        f"{datetime.now().isoformat(timespec='seconds')}\n\n"
+        + _tg_status_text()
+    )
+    return {"ok": n > 0, "sent": n, "status": get_telegram_cfg(redact=True).get("status")}
+
+
+_load_telegram_cfg()
 
 
 # ─── server-side policy control ───────────────────────────────────────────────
@@ -3379,6 +9105,11 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
         events.insert(0, ev)
         _policy_ctrl["events"] = events[:40]
     print(f"[policy] {ev['ts']} {kind}: {msg}")
+    # Telegram notify (best-effort, non-blocking)
+    try:
+        tg_on_policy_event(kind, msg, extra)
+    except Exception:
+        pass
 
 
 def _place_heat_zone(liq: float, t0: float, t1: float, t2: float) -> str:
@@ -3456,6 +9187,76 @@ def _upfreq_block(live: dict) -> bool:
         return any(int(u) != 1 for u in up)
     except (TypeError, ValueError):
         return False
+
+
+def _normalize_work_side(v) -> str | None:
+    """suspend | resume | None from work_cmd / work_measured."""
+    s = str(v or "").strip().lower()
+    if s in ("sleep", "suspend", "power_off", "off"):
+        return "suspend"
+    if s in ("resume", "mining", "power_on", "on"):
+        return "resume"
+    return None
+
+
+def mining_run_status(live: dict | None) -> dict:
+    """
+    Miner lifecycle for UI / Telegram:
+      starting  — commanded Resume, API still Suspend
+      stopping  — commanded Suspend, API still Resume
+      tuning    — mining, boards still Upfreq
+      running   — mining, Upfreq complete
+      stopped   — Suspend (stable)
+    """
+    live = live or {}
+    meas = _normalize_work_side(live.get("work_measured"))
+    if meas is None:
+        try:
+            mw = _measured_work_state(live)
+            meas = "suspend" if mw == "sleep" else "resume"
+        except Exception:
+            meas = None
+    cmd = _normalize_work_side(live.get("work_cmd"))
+
+    # commanded vs measured mismatch = transitional
+    if cmd == "resume" and meas == "suspend":
+        return {
+            "key": "starting",
+            "label_ru": "Запускается",
+            "label_en": "Starting",
+        }
+    if cmd == "suspend" and meas == "resume":
+        return {
+            "key": "stopping",
+            "label_ru": "Останавливается",
+            "label_en": "Stopping",
+        }
+
+    if meas == "resume":
+        try:
+            tuning = _upfreq_block(live)
+        except Exception:
+            tuning = False
+        if tuning:
+            return {
+                "key": "tuning",
+                "label_ru": "Тюнинг",
+                "label_en": "Tuning",
+            }
+        return {
+            "key": "running",
+            "label_ru": "Работает",
+            "label_en": "Running",
+        }
+
+    if meas == "suspend":
+        return {
+            "key": "stopped",
+            "label_ru": "Остановлен",
+            "label_en": "Stopped",
+        }
+
+    return {"key": "unknown", "label_ru": "—", "label_en": "—"}
 
 
 _MODE_RANK = {"low": 0, "normal": 1, "high": 2}
@@ -3539,6 +9340,59 @@ def set_policy_override(minutes: float | None = None, *, clear: bool = False) ->
             _policy_ctrl["override_until_ts"] = time.time() + mins * 60.0
             msg = f"OVERRIDE {mins:.0f}m · zone auto off · Safety on"
     _policy_log("ok", msg)
+    return get_policy_status()
+
+
+def _persist_force_stop(on: bool) -> None:
+    """Write force_stop into config.json (keep other keys)."""
+    try:
+        path = _miner_config_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing: dict = {}
+        if path.is_file():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(existing, dict):
+                    existing = {}
+            except Exception:
+                existing = {}
+        existing["force_stop"] = bool(on)
+        path.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[policy] force_stop persist fail: {e}")
+
+
+def get_force_stop() -> bool:
+    with _policy_lock:
+        return bool(_policy_ctrl.get("force_stop"))
+
+
+def set_force_stop(on: bool, *, apply_now: bool = True) -> dict:
+    """
+    Emergency Force Stop: sticky Suspend.
+    Ignores heat-zone auto and Dry Run until cleared.
+    Safety Critical still may write (also suspend-oriented).
+    """
+    on = bool(on)
+    with _policy_lock:
+        prev = bool(_policy_ctrl.get("force_stop"))
+        _policy_ctrl["force_stop"] = on
+    _persist_force_stop(on)
+    if on and not prev:
+        _policy_log("ok", "FORCE_STOP ON · Suspend enforced · zones/Dry Run ignored")
+        if apply_now:
+            try:
+                apply_set("working", "sleep", DEFAULT_API_PASSWORD)
+                _policy_log("ok", "APPLY working=suspend", source="force_stop")
+            except Exception as e:
+                _policy_log("err", f"FORCE_STOP write fail: {e}", source="force_stop")
+    elif not on and prev:
+        _policy_log("ok", "FORCE_STOP OFF · zone auto / Dry Run rules resume")
+    elif on:
+        _policy_log("info", "FORCE_STOP already ON")
     return get_policy_status()
 
 
@@ -3677,10 +9531,18 @@ def get_policy_status() -> dict:
         "dry_run": dry,
         "poll_interval_sec": poll,
         "heat_zone": ctrl.get("heat_zone"),
+        "heat_zone_title": (
+            zone_title("critical")
+            if ctrl.get("safety_sticky")
+            else zone_title(ctrl.get("heat_zone"))
+        ),
         "safety_sticky": bool(ctrl.get("safety_sticky")),
         "last_key": ctrl.get("last_key"),
         "streak_key": ctrl.get("streak_key"),
         "streak_count": int(ctrl.get("streak_count") or 0),
+        "want_work": ctrl.get("want_work"),
+        "measured_work": ctrl.get("measured_work"),
+        "force_stop": bool(ctrl.get("force_stop")),
         "last_apply_ts": ctrl.get("last_apply_ts"),
         "last_event": ctrl.get("last_event"),
         "events": events[:20],
@@ -3729,8 +9591,13 @@ def policy_tick() -> None:
             global _cache, _cache_ts
             _cache = live
             _cache_ts = time.time()
+        tg_note_live_poll_ok()
     except Exception as e:
         _policy_log("warn", f"live poll fail: {e}")
+        try:
+            tg_note_live_poll_fail(e)
+        except Exception:
+            pass
         return
 
     liquid = _f(live.get("liquid"))
@@ -3784,6 +9651,8 @@ def policy_tick() -> None:
 
     with _miner_cfg_lock:
         dry = bool(DRY_RUN)
+    with _policy_lock:
+        force_stop = bool(_policy_ctrl.get("force_stop"))
 
     desired: str | None = None
     profile: dict | None = None
@@ -3794,12 +9663,24 @@ def policy_tick() -> None:
         crit = zones.get("critical") or {}
         profile = crit.get("on_crit") if isinstance(crit, dict) else None
         is_safety = True
-    elif was_safety and not safety_sticky:
-        # after Critical: on_clear is downward-ish; still apply (not blocked by override)
+    elif was_safety and not safety_sticky and not force_stop:
+        # after Critical: on_clear — blocked while Force Stop (would resume)
         desired = "safety:on_clear"
         crit = zones.get("critical") or {}
         profile = crit.get("on_clear") if isinstance(crit, dict) else None
         is_safety = True
+    elif force_stop:
+        # Emergency: no zone auto; Suspend enforced later (above Dry Run)
+        desired = None
+        profile = None
+        if last_key != "force_stop":
+            _policy_log(
+                "info",
+                "FORCE_STOP active · Suspend enforced · zones & Dry Run ignored",
+            )
+            with _policy_lock:
+                _policy_ctrl["last_key"] = "force_stop"
+            last_key = "force_stop"
     elif override_on:
         # Manual Override: no zone auto; Safety still handled above
         desired = None
@@ -3832,7 +9713,10 @@ def policy_tick() -> None:
             if warmup_active and warmup_expired:
                 pass  # allow full profile after max wait
     else:
-        # dry run: zone would — only if desired cmds would differ from live
+        # Dry Run: keep current miner mode — zones are preview only (no auto write).
+        # Safety Critical (chip) still applies via is_safety branch above.
+        desired = None
+        profile = None
         dry_tag = "dry:" + str(heat_zone)
         if last_key != dry_tag:
             would = _diff_commands_vs_live(
@@ -3842,14 +9726,20 @@ def policy_tick() -> None:
             )
             if warmup_active and warmup_downward_only and would:
                 would = _filter_downward_cmds(would, live)
+            # also note zone MC if it would change work
+            wp = zones.get(heat_zone)
+            ww = _desired_work_from_profile(wp)
+            mw = _live_work(live)
+            if ww and mw and ww != mw:
+                would = list(would) + [("working", ww)]
             if would:
                 _policy_log(
                     "info",
                     f"DRY_RUN would {heat_zone}: "
-                    + ", ".join(f"{a}={v}" for a, v in would),
+                    + ", ".join(f"{a}={v}" for a, v in would)
+                    + " · no write (Dry Run)",
                     heat_zone=heat_zone,
                 )
-            # else silent — zone OK and miner already matches
             with _policy_lock:
                 _policy_ctrl["last_key"] = dry_tag
             last_key = dry_tag
@@ -3859,7 +9749,7 @@ def policy_tick() -> None:
         _policy_ctrl["heat_zone"] = heat_zone
         _policy_ctrl["safety_sticky"] = safety_sticky
 
-    # Desired profile for this tick (may be None in dry_run — still enforce suspend drift)
+    # Desired profile for this tick (None in dry_run unless Safety)
     desired_cmds = _zone_entry_commands(profile) if desired else []
     # Diff vs measured — heart of "don't spam if already correct"
     need_cmds = (
@@ -3891,39 +9781,96 @@ def policy_tick() -> None:
                 _policy_ctrl["last_key"] = "block:warmup_up"
             last_key = "block:warmup_up"
 
-    # If miner should be Suspend but woke up (hash/power) — force re-suspend.
-    # Sources: zone/safety profile work=suspend, or last work_cmd = sleep/suspend.
-    # Skip during Override (operator owns control), except Safety handled above.
+    # ── Mining Control compliance every poll ─────────────────────────────
+    # Zone/Safety profile work_en defines desired Suspend|Resume.
+    # Force Stop: always Suspend (above zones & Dry Run).
+    # Dry Run: do NOT enforce zone MC — operator keeps current mode.
+    # Override: operator owns control (Safety still uses is_safety profile above).
     measured_work = _live_work(live)
-    want_work = _desired_work_from_profile(profile) if desired else None
-    last_wc = str(live.get("work_cmd") or "").strip().lower()
-    if want_work is None and last_wc in ("sleep", "suspend") and not override_on:
+    work_profile = profile
+    if work_profile is None and not is_safety and heat_zone and not dry and not force_stop:
+        work_profile = zones.get(heat_zone)
+    if force_stop:
         want_work = "suspend"
-    if (
-        want_work == "suspend"
-        and measured_work == "resume"
+    elif dry and not is_safety:
+        # zones ignored: no want_work from map / sticky last suspend
+        want_work = None
+    else:
+        want_work = _desired_work_from_profile(work_profile)
+        last_wc = str(live.get("work_cmd") or "").strip().lower()
+        # sticky last suspend cmd (manual Force Suspend) if zone has no work_en
+        if want_work is None and last_wc in ("sleep", "suspend") and not override_on:
+            want_work = "suspend"
+
+    # always expose for UI /api/policy (even when already matched)
+    with _policy_lock:
+        _policy_ctrl["want_work"] = want_work
+        _policy_ctrl["measured_work"] = measured_work
+
+    work_mismatch = bool(
+        want_work
+        and measured_work
+        and want_work != measured_work
         and not override_on
-    ):
+        and not (dry and not is_safety and not force_stop)
+    )
+    if work_mismatch:
         already = any(
-            a == "working" and str(v).lower() in ("suspend", "sleep")
+            a == "working"
+            and (
+                (want_work == "suspend" and str(v).lower() in ("suspend", "sleep"))
+                or (want_work == "resume" and str(v).lower() in ("resume", "power_on"))
+            )
             for a, v in need_cmds
         )
         if not already:
-            need_cmds = list(need_cmds) + [("working", "suspend")]
+            need_cmds = list(need_cmds) + [("working", want_work)]
+        # name the source for logs / streak
         if not desired:
-            desired = "enforce:suspend"
+            desired = "force_stop" if force_stop else f"enforce:{want_work}"
+        elif want_work == "suspend" and measured_work == "resume":
+            # keep zone name but mark as work re-enforce in log via desired
+            pass
 
-    # dry_run: only Safety profile + suspend re-enforce may write
-    if dry and need_cmds and not is_safety:
+    # Dry Run hard stop: no zone auto-writes at all (MC included).
+    # Only Safety Critical (is_safety) may write — unless Force Stop (below).
+    if dry and not is_safety and not force_stop:
+        need_cmds = []
+
+    # Force Stop: always Suspend; strip resume; ignore Dry Run for this write
+    if force_stop:
         need_cmds = [
             (a, v)
             for a, v in need_cmds
-            if a == "working" and str(v).lower() in ("suspend", "sleep")
+            if not (
+                a == "working"
+                and str(v).lower() in ("resume", "power_on", "mining")
+            )
         ]
-        if need_cmds:
-            desired = "enforce:suspend"
+        if measured_work and measured_work != "suspend":
+            if not any(
+                a == "working" and str(v).lower() in ("suspend", "sleep")
+                for a, v in need_cmds
+            ):
+                need_cmds = list(need_cmds) + [("working", "suspend")]
+            desired = "force_stop"
         else:
-            need_cmds = []
+            # already suspended — stay silent (no resume from zones/safety on_clear)
+            need_cmds = [
+                (a, v)
+                for a, v in need_cmds
+                if a != "working"
+            ]
+            # under force_stop, also skip non-safety power nudges
+            if not is_safety:
+                need_cmds = []
+            desired = desired or "force_stop"
+
+    # Filtration (Tapo P100): force ON while mining; optional OFF on suspend
+    try:
+        filtration_sync_with_mining(measured_work)
+    except Exception as e:
+        print(f"[filtration] sync: {e}")
 
     if not need_cmds:
         # Already matches miner — no write, no notification
@@ -3945,12 +9892,15 @@ def policy_tick() -> None:
     else:
         streak_key = mismatch_sig
         streak_count = 1
-    # re-suspend / safety: faster confirm (2 samples); pure suspend enforce: 2
+    # Mining Control only / safety / re-enforce: faster confirm (1–2 samples)
+    work_only = all(a == "working" for a, v in need_cmds) and bool(need_cmds)
     suspend_only = all(
         a == "working" and str(v).lower() in ("suspend", "sleep") for a, v in need_cmds
     )
-    if is_safety or suspend_only or str(desired).startswith("enforce:"):
-        need = min(2, streak_need)
+    work_enforce = work_only or str(desired or "").startswith("enforce:")
+    if is_safety or suspend_only or work_enforce:
+        # suspend after reboot: act on 1–2 polls, not full streak=3
+        need = 1 if suspend_only else min(2, streak_need)
     else:
         need = streak_need
     with _policy_lock:
@@ -3961,17 +9911,24 @@ def policy_tick() -> None:
         return
 
     now = time.time()
-    # After write: wait settle (miner ramping) before next reconcile write
-    # Suspend re-enforce: shorter settle (miner may ignore power_off if settle too long)
-    settle_use = min(settle_sec, 60) if suspend_only else settle_sec
+    # After write: wait settle before next reconcile.
+    # Work re-enforce (esp. Suspend after power-on): short settle so miner
+    # cannot free-run for minutes while Z3 expects No heat.
+    if suspend_only or (work_enforce and want_work == "suspend"):
+        settle_use = min(settle_sec, 20)
+        min_write_use = min(min_write, 15)
+    elif work_only:
+        settle_use = min(settle_sec, 45)
+        min_write_use = min(min_write, 20)
+    else:
+        settle_use = settle_sec
+        min_write_use = min_write
     if last_apply_ts and (now - last_apply_ts) < settle_use:
         return
-    # Absolute min gap between any auto writes
-    min_write_use = min(min_write, 30) if suspend_only else min_write
     if last_apply_ts and (now - last_apply_ts) < min_write_use:
         return
-    # Dwell only when *changing* zone profile (z1→z2), not when re-fixing same zone
-    same_profile = last_key == desired or suspend_only
+    # Dwell only when *changing* zone profile (z1→z2), not work re-fix
+    same_profile = last_key == desired or suspend_only or work_only
     if (
         not is_safety
         and not same_profile
@@ -3984,8 +9941,9 @@ def policy_tick() -> None:
         "ok",
         f"AUTO {desired} · fix "
         + ", ".join(f"{a}={v}" for a, v in need_cmds)
-        + f" (have mode={_live_mode(live)} work={measured_work} "
-        f"P={_f(live.get('power'))} TH={_f(live.get('hashrate_th'))} "
+        + f" (have mode={_live_mode(live)} work={measured_work}"
+        + (f" want_work={want_work}" if want_work else "")
+        + f" P={_f(live.get('power'))} TH={_f(live.get('hashrate_th'))} "
         f"lim={_live_limit_w(live)})",
         dry_run=dry,
         liquid=liquid,
@@ -4100,17 +10058,46 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/weather/presets":
             self._json_response(200, {"ok": True, "presets": WEATHER_PRESETS})
             return
+        if path in ("/api/telegram/config", "/api/telegram"):
+            self._json_response(200, {"ok": True, "config": get_telegram_cfg(redact=True)})
+            return
+        if path == "/api/telegram/status":
+            self._json_response(200, {"ok": True, **get_telegram_cfg(redact=True)})
+            return
         if path == "/api/pool/config":
             self._api_pool_config_get()
             return
         if path == "/api/zone/config":
             self._api_zone_config_get()
             return
+        if path in ("/api/zone/presets", "/api/zone/preset"):
+            self._api_zone_presets_get()
+            return
+        if path in ("/api/filtration", "/api/filtration/status", "/api/filtration/config"):
+            self._json_response(200, get_filtration_status())
+            return
+        if path in ("/api/chipmap", "/api/chips", "/api/chipmap/status"):
+            qs = parse_qs(urlparse(self.path).query)
+            force = str((qs.get("force") or ["0"])[0]).lower() in ("1", "true", "yes")
+            self._json_response(200, get_chipmap(force=force))
+            return
+        if path in ("/api/chipmap/config",):
+            self._json_response(200, {"ok": True, "config": get_chipmap_cfg(redact=True)})
+            return
         if path in ("/api/miner/errors", "/api/errors/log"):
             self._api_miner_error_log()
             return
         if path == "/api/miner/config":
             self._api_miner_config_get()
+            return
+        if path in ("/api/miner/pools", "/api/pools"):
+            qs = parse_qs(urlparse(self.path).query)
+            force = str((qs.get("force") or ["0"])[0]).lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            self._json_response(200, fetch_mining_pools(force=force))
             return
         if path in ("/api/policy", "/api/policy/status"):
             self._json_response(200, get_policy_status())
@@ -4161,7 +10148,7 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
-        # SPA tab routes: /miner, /map, … → index.html (client uses #miner too)
+        # SPA tab routes: / · /dashboard · /miner · # handled client-side
         spa_tabs = {
             "miner",
             "map",
@@ -4170,6 +10157,7 @@ class Handler(SimpleHTTPRequestHandler):
             "info",
             "logs",
             "dash",
+            "dashboard",
             "overview",
             "zones",
             "zone",
@@ -4191,11 +10179,43 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/weather/config":
             self._api_weather_config_post()
             return
+        if path in ("/api/telegram/config", "/api/telegram"):
+            self._api_telegram_config_post()
+            return
+        if path in ("/api/telegram/test", "/api/telegram/send_test"):
+            try:
+                self._json_response(200, tg_test_send())
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
         if path == "/api/pool/config":
             self._api_pool_config_post()
             return
         if path == "/api/zone/config":
             self._api_zone_config_post()
+            return
+        if path in ("/api/zone/presets", "/api/zone/preset"):
+            self._api_zone_presets_post()
+            return
+        if path in ("/api/filtration", "/api/filtration/config"):
+            self._api_filtration_post()
+            return
+        if path in ("/api/filtration/set", "/api/filtration/on", "/api/filtration/off"):
+            self._api_filtration_set()
+            return
+        if path == "/api/filtration/test":
+            self._api_filtration_test()
+            return
+        if path in ("/api/chipmap/config",):
+            try:
+                req = self._read_json_body() or {}
+                cfg = apply_chipmap_cfg(req if isinstance(req, dict) else {})
+                self._json_response(200, {"ok": True, "config": cfg})
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/chipmap/refresh", "/api/chipmap/poll"):
+            self._json_response(200, get_chipmap(force=True))
             return
         if path == "/api/miner/config":
             self._api_miner_config_post()
@@ -4453,6 +10473,136 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(502, {"ok": False, "error": str(e), "results": []})
 
+    def _api_telegram_config_post(self) -> None:
+        global _tg_cfg
+        try:
+            req = self._read_json_body()
+            if not isinstance(req, dict):
+                raise ValueError("JSON object required")
+            pending_rm = None
+            with _tg_cfg_lock:
+                if "enabled" in req:
+                    _tg_cfg["enabled"] = bool(req["enabled"])
+                if "bot_token" in req and req["bot_token"] is not None:
+                    tok = str(req["bot_token"]).strip()
+                    # keep previous if client sent redacted placeholder
+                    if tok and "…" not in tok and not tok.startswith("••••"):
+                        _tg_cfg["bot_token"] = tok
+                if "chat_ids" in req:
+                    raw = req["chat_ids"]
+                    if isinstance(raw, str):
+                        raw = [
+                            x.strip()
+                            for x in raw.replace(";", ",").split(",")
+                            if x.strip()
+                        ]
+                    ids: list = []
+                    for x in raw if isinstance(raw, list) else []:
+                        try:
+                            ids.append(int(str(x).strip()))
+                        except (TypeError, ValueError):
+                            s = str(x).strip()
+                            if s:
+                                ids.append(s)
+                    _tg_cfg["chat_ids"] = ids
+                for k in (
+                    "notify_policy",
+                    "notify_offline",
+                    "notify_safety",
+                    "notify_zone",
+                    "commands_en",
+                ):
+                    if k in req:
+                        _tg_cfg[k] = bool(req[k])
+                if "notify_offline_streak" in req and req["notify_offline_streak"] is not None:
+                    try:
+                        _tg_cfg["notify_offline_streak"] = max(
+                            1, min(30, int(req["notify_offline_streak"]))
+                        )
+                    except (TypeError, ValueError):
+                        pass
+                if "default_lang" in req and req["default_lang"] is not None:
+                    dl = str(req["default_lang"]).lower()
+                    _tg_cfg["default_lang"] = "en" if dl.startswith("en") else "ru"
+                # remove one chat (allowlist + prefs); optional history wipe
+                if "remove_chat_id" in req and req["remove_chat_id"] is not None:
+                    rid = req["remove_chat_id"]
+                    drop_hist = bool(req.get("remove_chat_history", False))
+                    # apply inside lock later via helper — set flag
+                    _tg_cfg["_pending_remove"] = (rid, drop_hist)
+                # optional web merge of per-chat prefs
+                if "chats" in req and isinstance(req["chats"], dict):
+                    cur_chats = _tg_cfg.setdefault("chats", {})
+                    if not isinstance(cur_chats, dict):
+                        cur_chats = {}
+                        _tg_cfg["chats"] = cur_chats
+                    for ck, cv in req["chats"].items():
+                        if not isinstance(cv, dict):
+                            continue
+                        key = str(ck)
+                        base = dict(DEFAULT_CHAT_PREFS)
+                        if isinstance(cur_chats.get(key), dict):
+                            base.update(cur_chats[key])
+                        if "lang" in cv:
+                            base["lang"] = (
+                                "en"
+                                if str(cv["lang"]).lower().startswith("en")
+                                else "ru"
+                            )
+                        for nk in (
+                            "notify_policy",
+                            "notify_offline",
+                            "notify_safety",
+                            "notify_zone",
+                            "commands_en",
+                        ):
+                            if nk in cv:
+                                base[nk] = bool(cv[nk])
+                        cur_chats[key] = base
+                # force getMe refresh on token change
+                if "bot_token" in req:
+                    with _tg_state_lock:
+                        _tg_state["me"] = None
+                pending_rm = _tg_cfg.pop("_pending_remove", None)
+            if pending_rm:
+                rid, drop_hist = pending_rm
+                cfg_out = _tg_remove_chat(rid, history=drop_hist)
+            else:
+                _save_telegram_cfg()
+                # rebuild chats map from chat_ids + saved prefs
+                _load_telegram_cfg()
+                cfg_out = get_telegram_cfg(redact=True)
+            # optional immediate getMe
+            me = None
+            with _tg_cfg_lock:
+                en = bool(_tg_cfg.get("enabled") and _tg_cfg.get("bot_token"))
+            if en:
+                try:
+                    me = _tg_api("getMe", timeout=12).get("result")
+                    with _tg_state_lock:
+                        _tg_state["me"] = (me or {}).get("username") or (me or {}).get(
+                            "id"
+                        )
+                        _tg_state["ok"] = True
+                        _tg_state["last_error"] = None
+                except Exception as e:
+                    with _tg_state_lock:
+                        _tg_state["ok"] = False
+                        _tg_state["last_error"] = str(e)
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "config": cfg_out if pending_rm else get_telegram_cfg(redact=True),
+                    "me": me,
+                    "removed_chat_id": (
+                        str(pending_rm[0]) if pending_rm else None
+                    ),
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_pool_config_get(self) -> None:
         with _pool_cfg_lock:
             cfg = dict(_pool_cfg)
@@ -4512,105 +10662,112 @@ class Handler(SimpleHTTPRequestHandler):
             req = self._read_json_body()
             if not isinstance(req, dict):
                 raise ValueError("expected JSON object")
+            cfg = _coerce_zone_config_dict(req)
             with _zone_cfg_lock:
-                cfg = dict(_zone_cfg)
-                for key in (
-                    "t0",
-                    "t1",
-                    "t2",
-                    "h",
-                    "t_crit",
-                    "t_crit_clear",
-                    "dwell_sec",
-                    "settle_sec",
-                    "streak",
-                    "min_write_interval_sec",
-                    "limit_tol_w",
-                    "max_warmup_wait_min",
-                ):
-                    if key in req and req[key] is not None:
-                        try:
-                            if key in (
-                                "dwell_sec",
-                                "settle_sec",
-                                "streak",
-                                "min_write_interval_sec",
-                                "limit_tol_w",
-                                "max_warmup_wait_min",
-                            ):
-                                cfg[key] = int(float(req[key]))
-                            else:
-                                cfg[key] = float(req[key])
-                        except (TypeError, ValueError):
-                            pass
-                for bkey in ("warmup_en", "warmup_downward_only"):
-                    if bkey in req:
-                        cfg[bkey] = bool(req[bkey])
-                cfg["min_write_interval_sec"] = max(
-                    10, min(3600, int(cfg.get("min_write_interval_sec", 60) or 60))
-                )
-                cfg["limit_tol_w"] = max(
-                    10, min(2000, int(cfg.get("limit_tol_w", 100) or 100))
-                )
-                cfg["max_warmup_wait_min"] = max(
-                    1, min(240, int(cfg.get("max_warmup_wait_min", 30) or 30))
-                )
-                if "warmup_en" in req or "warmup_en" not in cfg:
-                    cfg["warmup_en"] = bool(cfg.get("warmup_en", True))
-                if "warmup_downward_only" in req or "warmup_downward_only" not in cfg:
-                    cfg["warmup_downward_only"] = bool(
-                        cfg.get("warmup_downward_only", True)
-                    )
-                cfg["h"] = max(0.2, min(5.0, float(cfg.get("h", 0.5))))
-                if "t2" not in cfg or cfg.get("t2") is None:
-                    cfg["t2"] = float(cfg.get("t1", 28)) + max(2.0, float(cfg["h"]))
-                if float(cfg["t0"]) >= float(cfg["t1"]):
-                    raise ValueError("need t0 < t1")
-                if float(cfg["t1"]) >= float(cfg["t2"]):
-                    raise ValueError("need t1 < t2")
-                if float(cfg["t_crit_clear"]) >= float(cfg["t_crit"]):
-                    raise ValueError("need t_crit_clear < t_crit")
-                zones_in = req.get("zones") if isinstance(req.get("zones"), dict) else {}
-                zones_out = dict(cfg.get("zones") or {})
-                for name, default in DEFAULT_ZONE_CFG["zones"].items():
-                    base = zones_out.get(name) or default
-                    zin = zones_in.get(name, base)
-                    if name == "critical":
-                        if not isinstance(base, dict):
-                            base = default
-                        if isinstance(zin, dict) and (
-                            "on_crit" in zin or "on_clear" in zin
-                        ):
-                            zones_out[name] = {
-                                "on_crit": _normalize_zone_entry(
-                                    zin.get("on_crit", base.get("on_crit")),
-                                    default["on_crit"],
-                                ),
-                                "on_clear": _normalize_zone_entry(
-                                    zin.get("on_clear", base.get("on_clear")),
-                                    default["on_clear"],
-                                ),
-                            }
-                        else:
-                            zones_out[name] = {
-                                "on_crit": _normalize_zone_entry(
-                                    zin if isinstance(zin, dict) else base.get("on_crit"),
-                                    default["on_crit"],
-                                ),
-                                "on_clear": _normalize_zone_entry(
-                                    base.get("on_clear")
-                                    if isinstance(base, dict)
-                                    else None,
-                                    default["on_clear"],
-                                ),
-                            }
-                    else:
-                        zones_out[name] = _normalize_zone_entry(zin, default)
-                cfg["zones"] = zones_out
                 _zone_cfg.clear()
                 _zone_cfg.update(cfg)
             _save_zone_cfg()
             self._json_response(200, {"ok": True, "config": get_zone_cfg()})
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_zone_presets_get(self) -> None:
+        self._json_response(200, list_zone_presets())
+
+    def _api_filtration_post(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            cfg = apply_filtration_cfg(req if isinstance(req, dict) else {})
+            self._json_response(200, {"ok": True, "config": cfg, **get_filtration_status()})
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_filtration_set(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                req = {}
+            if "on" in req:
+                on = bool(req["on"])
+            else:
+                # path-based
+                path = urlparse(self.path).path.rstrip("/")
+                if path.endswith("/off"):
+                    on = False
+                elif path.endswith("/on"):
+                    on = True
+                else:
+                    raise ValueError("need {on: true|false}")
+            out = filtration_set(on, source=str(req.get("source") or "manual"), force=False)
+            code = 200 if out.get("ok") else 400
+            self._json_response(code, out)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_filtration_test(self) -> None:
+        out = filtration_test()
+        self._json_response(200 if out.get("ok") else 400, out)
+
+    def _api_zone_presets_post(self) -> None:
+        """
+        Zone map presets:
+          {action: list}
+          {action: save, name, config?}          — create (config defaults to current map)
+          {action: update, id, name?, config?}   — rename and/or overwrite config
+          {action: delete, id}
+          {action: apply, id}                    — load preset into active map
+          {action: get, id}                      — full preset with config
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            action = str(req.get("action") or "list").strip().lower()
+            if action in ("list", "ls"):
+                self._json_response(200, list_zone_presets())
+                return
+            if action in ("get", "one"):
+                p = get_zone_preset(str(req.get("id") or ""))
+                if not p:
+                    raise ValueError("preset not found")
+                self._json_response(200, {"ok": True, "preset": p})
+                return
+            if action in ("save", "create", "add"):
+                name = req.get("name")
+                cfg = req.get("config") if isinstance(req.get("config"), dict) else None
+                out = save_zone_preset(str(name or ""), cfg, preset_id=None)
+                self._json_response(200, out)
+                return
+            if action in ("update", "edit", "rename"):
+                pid = str(req.get("id") or "").strip()
+                if not pid:
+                    raise ValueError("id required")
+                existing = get_zone_preset(pid)
+                if not existing:
+                    raise ValueError("preset not found")
+                name = req.get("name")
+                if name is None or str(name).strip() == "":
+                    name = existing.get("name")
+                cfg = (
+                    req.get("config")
+                    if isinstance(req.get("config"), dict)
+                    else existing.get("config")
+                )
+                # if update_config_from_form: true → use current map
+                if req.get("from_current") or req.get("use_current"):
+                    cfg = get_zone_cfg()
+                out = save_zone_preset(str(name), cfg, preset_id=pid)
+                self._json_response(200, out)
+                return
+            if action in ("delete", "remove", "del"):
+                out = delete_zone_preset(str(req.get("id") or ""))
+                self._json_response(200, out)
+                return
+            if action in ("apply", "load", "select"):
+                out = apply_zone_preset(str(req.get("id") or ""))
+                self._json_response(200, out)
+                return
+            raise ValueError(f"unknown action: {action}")
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
@@ -4627,12 +10784,14 @@ class Handler(SimpleHTTPRequestHandler):
             password = req.get("api_password")
             poll = req.get("poll_interval_sec")
             dry = req.get("dry_run") if "dry_run" in req else None
+            proj = req.get("project_name") if "project_name" in req else None
             if (
                 host is None
                 and port is None
                 and password is None
                 and poll is None
                 and dry is None
+                and proj is None
             ):
                 raise ValueError("nothing to save")
             settings = apply_miner_settings(
@@ -4641,6 +10800,7 @@ class Handler(SimpleHTTPRequestHandler):
                 password=str(password) if password is not None else None,
                 poll_interval_sec=int(poll) if poll is not None and str(poll) != "" else None,
                 dry_run=bool(dry) if dry is not None else None,
+                project_name=str(proj) if proj is not None else None,
                 persist=True,
             )
             self._json_response(200, {"ok": True, "config": settings})
@@ -4673,6 +10833,12 @@ class Handler(SimpleHTTPRequestHandler):
                 if isinstance(req["override"], (int, float)) and float(req["override"]) > 0:
                     mins = float(req["override"])
                 self._json_response(200, set_policy_override(minutes=mins))
+                return
+            # Force Stop (emergency sticky Suspend)
+            if "force_stop" in req:
+                self._json_response(
+                    200, set_force_stop(bool(req["force_stop"]), apply_now=True)
+                )
                 return
             self._json_response(200, get_policy_status())
         except Exception as e:
@@ -4740,6 +10906,10 @@ def main() -> None:
     t.start()
     tp = threading.Thread(target=policy_loop, name="policy-control", daemon=True)
     tp.start()
+    tt = threading.Thread(target=telegram_loop, name="telegram-bot", daemon=True)
+    tt.start()
+    tc = threading.Thread(target=chipmap_loop, name="chipmap-poll", daemon=True)
+    tc.start()
 
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), Handler)
     print(f"poolheat UI:       http://{HTTP_BIND}:{HTTP_PORT}/")
@@ -4751,12 +10921,20 @@ def main() -> None:
     print(f"weather:           GET  /api/weather")
     print(f"pool:              GET  /api/pool/config")
     print(f"zone map:          GET/POST /api/zone/config")
+    print(f"zone presets:      GET/POST /api/zone/presets")
+    print(f"filtration:        GET/POST /api/filtration · /set · /test")
+    print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
     print(f"policy:            GET/POST /api/policy · server-side control")
     print(f"system info:       GET  /api/system/info")
     print(f"version/update:    GET  /api/version · /api/update/check · POST /api/update/apply")
     print(f"app version:       {get_app_version()} · repo {GITHUB_REPO}")
     print(f"miner:             {HOST_MINER}:{PORT_MINER}")
     print(f"miner config:      GET/POST /api/miner/config · {_miner_config_path()}")
+    print(f"miner pools:       GET  /api/miner/pools")
+    print(f"telegram:          GET/POST /api/telegram/config · getUpdates")
+    with _tg_cfg_lock:
+        tg_on = bool(_tg_cfg.get("enabled") and _tg_cfg.get("bot_token"))
+    print(f"telegram bot:      {'enabled' if tg_on else 'disabled'}")
     print(f"dry_run:           {DRY_RUN}")
     print(f"policy poll:       every {POLL_INTERVAL_SEC}s")
     print(f"db:                {DB_FILE}")
@@ -4769,6 +10947,7 @@ def main() -> None:
     except KeyboardInterrupt:
         _collector_stop.set()
         _policy_stop.set()
+        _tg_stop.set()
         print("\nstop")
 
 

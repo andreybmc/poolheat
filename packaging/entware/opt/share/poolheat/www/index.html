@@ -322,6 +322,88 @@
       font-weight: 650;
     }
 
+    /* Chip map (LuCI scrape) */
+    .chip-board {
+      margin-bottom: 16px;
+    }
+    .chip-board-h {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 10px 16px;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+    }
+    .chip-board-h .title {
+      font-weight: 650;
+      font-size: 0.95rem;
+    }
+    .chip-board-h .meta {
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .chip-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+      gap: 3px;
+      max-width: 100%;
+    }
+    .chip-cell {
+      aspect-ratio: 1;
+      min-width: 26px;
+      min-height: 26px;
+      border-radius: 3px;
+      background: var(--border2);
+      cursor: default;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.62rem;
+      font-weight: 650;
+      line-height: 1;
+      color: rgba(255, 255, 255, 0.92);
+      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
+      user-select: none;
+    }
+    .chip-cell.empty {
+      opacity: 0.22;
+      color: transparent;
+      text-shadow: none;
+    }
+    .chip-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 10px;
+      align-items: center;
+    }
+    .chip-legend i {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    .chip-tip {
+      position: fixed;
+      z-index: 50;
+      pointer-events: none;
+      background: var(--panel);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      box-shadow: 0 8px 24px rgba(0,0,0,.35);
+      max-width: 220px;
+      display: none;
+    }
+    .chip-tip.show { display: block; }
+
     .collapse-toggle {
       display: inline-flex;
       align-items: center;
@@ -378,6 +460,7 @@
     input[type="text"],
     input[type="number"],
     input[type="password"],
+    input[type="email"],
     select,
     textarea {
       width: 100%;
@@ -878,6 +961,40 @@
       padding-left: 8px;
       padding-right: 8px;
     }
+
+    /* Mining pools table */
+    .pools-table {
+      min-width: 720px;
+      font-size: 0.78rem;
+    }
+    .pools-table th,
+    .pools-table td {
+      text-align: center;
+      white-space: nowrap;
+    }
+    .pools-table th:nth-child(2),
+    .pools-table td:nth-child(2),
+    .pools-table th:nth-child(4),
+    .pools-table td:nth-child(4) {
+      text-align: left;
+    }
+    .pools-table td.pool-url {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pools-table tr.pool-active td {
+      background: rgba(62, 207, 142, 0.07);
+    }
+    .pools-table .pool-active-flag {
+      font-weight: 700;
+      color: var(--ok, #3ecf8e);
+    }
+    .pools-table .pool-inactive-flag {
+      color: var(--dim);
+    }
     .err-table tr:last-child td { border-bottom: none; }
     .err-table td:last-child { padding-right: 0; }
     .err-table td:first-child { padding-left: 0; }
@@ -1223,6 +1340,49 @@
       border-color: rgba(240, 180, 41, 0.45);
       background: rgba(240, 180, 41, 0.12);
     }
+    /* heat zone on liquid/env card */
+    .zone-badge {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      padding: 2px 8px;
+      border-radius: 4px;
+      vertical-align: middle;
+      border: 1px solid var(--border);
+      color: var(--text);
+      background: rgba(0,0,0,0.18);
+      max-width: 58%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .zone-badge.is-z0 {
+      color: #ff8a65;
+      border-color: rgba(255, 138, 101, 0.45);
+      background: rgba(255, 138, 101, 0.12);
+    }
+    .zone-badge.is-z1 {
+      color: #3ecf8e;
+      border-color: rgba(62, 207, 142, 0.45);
+      background: rgba(62, 207, 142, 0.12);
+    }
+    .zone-badge.is-z2 {
+      color: #5b9fd4;
+      border-color: rgba(91, 159, 212, 0.45);
+      background: rgba(91, 159, 212, 0.14);
+    }
+    .zone-badge.is-z3 {
+      color: #8ab4f8;
+      border-color: rgba(138, 180, 248, 0.4);
+      background: rgba(138, 180, 248, 0.12);
+    }
+    .zone-badge.is-critical {
+      color: #f07178;
+      border-color: rgba(240, 113, 120, 0.5);
+      background: rgba(240, 113, 120, 0.14);
+    }
 
     .temp-card {
       background: var(--panel2);
@@ -1279,6 +1439,139 @@
     }
     .temp-card.heat-balance .tc-val .hb-pos { color: var(--ok); }
     .temp-card.heat-balance .tc-val .hb-neg { color: var(--danger); }
+
+    /* Telegram chat history picker */
+    .tg-hist-link:hover { text-decoration: underline !important; }
+    .tg-hist-pop {
+      position: absolute;
+      z-index: 40;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      max-height: 240px;
+      overflow: auto;
+      background: var(--panel2, #121820);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+      padding: 6px 0;
+    }
+    .tg-hist-pop-h {
+      font-size: 0.68rem;
+      color: var(--dim);
+      padding: 4px 12px 8px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 4px;
+    }
+    .tg-hist-list button {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 0.8rem;
+      text-align: left;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .tg-hist-list button:hover {
+      background: rgba(61, 156, 240, 0.12);
+    }
+    .tg-hist-list .tg-hist-id {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--accent);
+    }
+    .tg-hist-list .tg-hist-nick {
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 55%;
+    }
+    .tg-hist-list .tg-hist-empty {
+      padding: 12px;
+      font-size: 0.75rem;
+      color: var(--dim);
+      text-align: center;
+    }
+    .tg-hist-list button.is-in {
+      opacity: 0.55;
+    }
+    .tg-hist-list button.is-in .tg-hist-id::after {
+      content: " ✓";
+      color: var(--ok);
+    }
+
+    .tg-perchat {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin: 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: rgba(0,0,0,0.15);
+    }
+    .tg-perchat-h {
+      font-size: 0.68rem;
+      color: var(--dim);
+      margin-bottom: 6px;
+    }
+    .tg-perchat-empty {
+      font-family: var(--mono);
+      color: var(--dim);
+    }
+    .tg-perchat-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .tg-perchat-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      line-height: 1.35;
+      color: var(--muted);
+    }
+    .tg-perchat-row .tg-perchat-meta {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tg-perchat-row .tg-perchat-id {
+      color: var(--accent);
+    }
+    .tg-perchat-del {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      border: 1px solid rgba(240, 113, 120, 0.45);
+      background: rgba(240, 113, 120, 0.12);
+      color: var(--danger, #f07178);
+      font-size: 0.85rem;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tg-perchat-del:hover {
+      background: rgba(240, 113, 120, 0.28);
+    }
+    .tg-perchat-del:disabled {
+      opacity: 0.5;
+      cursor: wait;
+    }
 
     .weather-results {
       margin-top: 10px;
@@ -1368,6 +1661,18 @@
       font-weight: 500;
     }
 
+    .temp-card .tc-extra .tc-thr {
+      margin-top: 3px;
+      opacity: 0.92;
+      font-variant-numeric: tabular-nums;
+    }
+    .temp-card.liquid-env .tc-extra {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      line-height: 1.35;
+    }
     .temp-card .tc-extra {
       margin-top: 8px;
       font-size: 0.72rem;
@@ -1521,7 +1826,7 @@
         <span class="pill accent tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
         <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
         <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
-        <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> zone: —</span>
+        <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> —</span>
         <span class="pill tip" data-tip-key="lan_token">LAN · token</span>
       </div>
     </header>
@@ -1590,6 +1895,7 @@
     <nav class="tabs" role="tablist">
       <button type="button" class="active" data-tab="dash">Обзор</button>
       <button type="button" data-tab="miner">Майнер</button>
+      <button type="button" data-tab="chips">Чипы</button>
       <button type="button" data-tab="map">Карта зон</button>
       <button type="button" data-tab="pool">Бассейн</button>
       <button type="button" data-tab="settings">Настройки</button>
@@ -1604,37 +1910,40 @@
         <div class="temp-grid">
           <div class="temp-card liquid-env">
             <div class="tc-label">
-              <span class="tip" data-tip-key="liquid">Теплоноситель</span>
+              <span class="tip" data-tip-key="t_ctrl">Теплоноситель</span>
               <span style="color:var(--dim)"> / </span>
               <span class="tip" data-tip-key="env">Окружение</span>
+              <span
+                class="zone-badge tip"
+                data-tip-key="zone"
+                id="dash-zone-badge"
+                data-bind="zoneName"
+                title="Тепловая зона (T_ctrl)"
+              >—</span>
             </div>
             <div class="tc-val tc-val-dual">
-              <span id="t-liquid">—</span> <small>°C</small>
+              <span id="t-liquid" class="tip" data-tip-key="t_ctrl">—</span> <small>°C</small>
               <span class="tc-sep" aria-hidden="true">/</span>
-              <span id="t-env">—</span> <small>°C</small>
+              <span id="t-env" class="tip" data-tip-key="env">—</span> <small>°C</small>
             </div>
-            <div class="tc-extra">liquid · <span class="tip" data-tip-key="t_ctrl">T_ctrl</span> · env</div>
+            <div class="tc-extra">
+              <div data-bind="zoneHint" id="dash-zone-hint">—</div>
+              <div id="dash-zone-thr" class="tc-thr">T0=— · T1=— · T2=— · h=—</div>
+            </div>
           </div>
           <div class="temp-card outdoor">
             <div class="tc-label"><span class="tip" data-tip-key="weather">Улица</span> · <span id="wx-city">—</span></div>
             <div class="tc-val"><span id="t-outdoor">—</span> <small>°C</small></div>
             <div class="tc-extra" id="wx-extra">погода · Open-Meteo</div>
           </div>
-          <div class="temp-card board-chip">
-            <div class="tc-label">
-              <span class="tip" data-tip-key="pcb">Платы (max)</span>
-              <span style="color:var(--dim)"> / </span>
-              <span class="tip" data-tip-key="chip_max">Чипы (max)</span>
-            </div>
+          <div class="temp-card heat-loss" id="card-heat-loss">
+            <div class="tc-label"><span class="tip" data-tip-key="heat_loss">Теплопотери</span></div>
             <div class="tc-val tc-val-dual">
-              <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
+              <span id="hl-kw">—</span> <small title="мощность, кВт (не кВт·ч)">kW</small>
               <span class="tc-sep" aria-hidden="true">/</span>
-              <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
+              <span id="hl-dT">—</span> <small>°C/ч</small>
             </div>
-            <div class="tc-extra">
-              <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
-              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span></div>
-            </div>
+            <div class="tc-extra" id="hl-cond">—</div>
           </div>
         </div>
 
@@ -1656,16 +1965,27 @@
               · <span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span>
               · <span class="tip" data-tip-key="psu_temp">PSU</span> <span data-bind="psuTemp">—</span>
               · <span class="tip" data-tip-key="psu_fan" data-bind="psuFan">—</span>
+              · <span class="tip" data-tip-key="asic_uptime" title="Uptime ASIC с перезагрузки">uptime</span>
+                <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
+              · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — с запуска майнинга">mining</span>
+                <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
             </div>
           </div>
-          <div class="temp-card heat-loss" id="card-heat-loss">
-            <div class="tc-label"><span class="tip" data-tip-key="heat_loss">Теплопотери</span></div>
-            <div class="tc-val tc-val-dual">
-              <span id="hl-kw">—</span> <small title="мощность, кВт (не кВт·ч)">kW</small>
-              <span class="tc-sep" aria-hidden="true">/</span>
-              <span id="hl-dT">—</span> <small>°C/ч</small>
+          <div class="temp-card board-chip">
+            <div class="tc-label">
+              <span class="tip" data-tip-key="pcb">Платы (max)</span>
+              <span style="color:var(--dim)"> / </span>
+              <span class="tip" data-tip-key="chip_max">Чипы (max)</span>
             </div>
-            <div class="tc-extra" id="hl-cond">—</div>
+            <div class="tc-val tc-val-dual">
+              <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
+              <span class="tc-sep" aria-hidden="true">/</span>
+              <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
+            </div>
+            <div class="tc-extra">
+              <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
+              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span></div>
+            </div>
           </div>
           <div class="temp-card heat-balance" id="card-heat-balance">
             <div class="tc-label"><span class="tip" data-tip-key="heat_balance">Нагрев / остывание</span></div>
@@ -1678,21 +1998,11 @@
           </div>
         </div>
 
-        <div class="grid-3">
-          <div class="metric highlight-accent">
-            <label><span class="tip" data-tip-key="t_ctrl">T_ctrl</span> · liquid</label>
-            <div class="val"><span data-bind="tctrl">—</span> <small>°C</small></div>
-            <div class="hint" id="hint-hyst">T0=— | T1=— | h=—</div>
-          </div>
+        <div class="grid-2">
           <div class="metric">
             <label><span class="tip" data-tip-key="t_safe">T_safe</span> · chip max</label>
             <div class="val"><span data-bind="tsafe">—</span> <small>°C</small></div>
             <div class="hint"><span class="tip" data-tip-key="critical">Critical</span> / safety</div>
-          </div>
-          <div class="metric">
-            <label><span class="tip" data-tip-key="zone">Policy zone</span></label>
-            <div class="val" style="font-size:1.15rem" data-bind="zoneName">—</div>
-            <div class="hint" data-bind="zoneHint">—</div>
           </div>
         </div>
 
@@ -1747,13 +2057,13 @@
             </div>
 
             <div class="card" style="box-shadow:none;margin-bottom:14px">
-              <div class="card-h"><div><h2>Температуры °C</h2><div class="sub">liquid · env · boards · chip max · offline/suspend bands</div></div></div>
+              <div class="card-h"><div><h2>Температуры °C</h2><div class="sub">liquid · env · outdoor · boards · chip max · offline/suspend bands</div></div></div>
               <div class="card-b" style="height:260px;position:relative">
                 <canvas id="chart-temp"></canvas>
               </div>
             </div>
             <div class="card" style="box-shadow:none;margin-bottom:10px">
-              <div class="card-h"><div><h2>Мощность W · хешрейт TH/s · freq</h2><div class="sub">power · limit · hashrate · freq · offline/suspend bands</div></div></div>
+              <div class="card-h"><div><h2>Мощность · Хешрейт · J/T</h2><div class="sub">Power · Limit · HR · Freq · EEF · offline/suspend bands</div></div></div>
               <div class="card-b" style="height:240px;position:relative">
                 <canvas id="chart-power"></canvas>
               </div>
@@ -1808,7 +2118,7 @@
             <span class="pill" id="pill-write" style="display:none"><span class="dot"></span> write…</span>
           </div>
           <div class="card-b">
-            <div class="grid-4" style="margin-bottom:12px">
+            <div class="grid-4" style="margin-bottom:12px;grid-template-columns:repeat(5,minmax(0,1fr))">
               <div class="metric">
                 <label><span class="tip" data-tip-key="power_mode">Power Mode</span></label>
                 <div class="val" style="font-size:1.2rem" id="pw-mode-now">—</div>
@@ -1816,6 +2126,10 @@
               <div class="metric">
                 <label><span class="tip" data-tip-key="working_mode">Mining Control</span></label>
                 <div class="val" style="font-size:1.05rem" id="wk-mode-now">—</div>
+              </div>
+              <div class="metric">
+                <label>Статус</label>
+                <div class="val" style="font-size:1.05rem" id="wk-run-status">—</div>
               </div>
               <div class="metric">
                 <label><span class="tip" data-tip-key="power_limit">Power Limit</span></label>
@@ -1905,6 +2219,41 @@
           </div>
         </div>
 
+        <div class="card" id="panel-miner-pools">
+          <div class="card-h">
+            <div>
+              <h2>Pools</h2>
+              <div class="sub">stratum · Active · shares · Whatsminer pools</div>
+            </div>
+            <button class="btn" type="button" id="btn-pools-refresh">Обновить</button>
+          </div>
+          <div class="card-b" style="padding-top:8px">
+            <div style="overflow:auto">
+              <table class="err-table pools-table" id="miner-pools-table">
+                <thead>
+                  <tr>
+                    <th>Pool</th>
+                    <th>URL</th>
+                    <th>Active</th>
+                    <th>User</th>
+                    <th>Status</th>
+                    <th>Difficulty</th>
+                    <th>GetWorks</th>
+                    <th>Accepted</th>
+                    <th>Rejected</th>
+                    <th>Stale</th>
+                    <th>LST</th>
+                  </tr>
+                </thead>
+                <tbody id="miner-pools-body">
+                  <tr><td colspan="11" style="color:var(--muted);text-align:center">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="miner-pools-status">—</p>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-h">
             <div>
@@ -1929,11 +2278,12 @@
               </div>
             </div>
             <div class="card-b layers" id="layers">
-              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (sleep)</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="override"><span class="n">2</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
-              <div class="layer on block" data-layer="warmup"><span class="n">3</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
-              <div class="layer" data-layer="map"><span class="n">4</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
-              <div class="layer" data-layer="fail"><span class="n">5</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
+              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (chip)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="force_stop"><span class="n">2</span><span class="tip" data-tip-key="force_stop">Force Stop (Suspend)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="override"><span class="n">3</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
+              <div class="layer on block" data-layer="warmup"><span class="n">4</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
+              <div class="layer" data-layer="map"><span class="n">5</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
+              <div class="layer" data-layer="fail"><span class="n">6</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
             </div>
           </div>
 
@@ -1963,16 +2313,92 @@
                 Warmup: upward (→ Z0) заблокирован. Карта: Z0 / Z1 / Z2 по liquid.
               </p>
               <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-                <button class="btn" type="button" id="btn-override">Override 30m</button>
-                <button class="btn danger" type="button" id="btn-override-clear-2" hidden>
-                  Отключить Override
+                <button class="btn" type="button" id="btn-override" title="Override 30m · click again to clear">
+                  Override 30m
                 </button>
-                <button class="btn danger" type="button" id="btn-force-sleep">Force sleep…</button>
+                <button class="btn danger" type="button" id="btn-force-suspend" title="Force Stop: sticky Suspend (игнор зон и Dry Run)">
+                  Force Stop
+                </button>
+                <button class="btn danger" type="button" id="btn-reboot-asic" title="Whatsminer reboot — полный reboot ASIC">
+                  Reboot ASIC
+                </button>
+                <button class="btn" type="button" id="btn-restart-miner" title="restart_btminer — только процесс майнинга">
+                  Restart miner
+                </button>
               </div>
             </div>
           </div>
         </div>
       </div>
+    </section>
+
+    <!-- ========== CHIP MAP ========== -->
+    <section class="view" id="view-chips">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Карта чипов</h2>
+              <div class="sub">LuCI Miner API Log · temp / hash≈nonce / freq · кеш + poll</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <label class="field" style="margin:0;min-width:160px">Цвет по
+                <select id="chipmap-metric">
+                  <option value="temp">Temperature</option>
+                  <option value="nonce">Hash (nonce)</option>
+                  <option value="freq">Frequency</option>
+                </select>
+              </label>
+              <button class="btn" type="button" id="btn-chipmap-refresh">Обновить</button>
+            </div>
+          </div>
+          <div class="card-b">
+            <p id="chipmap-status" style="font-size:0.8rem;color:var(--muted);margin:0 0 12px">—</p>
+            <div class="chip-legend" id="chipmap-legend"></div>
+            <div id="chipmap-boards" style="margin-top:14px"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Опрос карты чипов</h2>
+              <div class="sub">отдельный интервал · web admin · не смешивается с live poll</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-chipmap-cfg-save">Сохранить</button>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="chipmap-enabled" checked />
+              <span>Включить фоновый опрос
+                <span class="desc">парсинг /cgi-bin/luci/admin/status/btminerapi</span>
+              </span>
+            </label>
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+              <label class="field">Интервал, сек
+                <input type="number" id="chipmap-interval" value="30" min="10" max="600" step="5" />
+              </label>
+              <label class="field">Web user
+                <input type="text" id="chipmap-user" value="admin" autocomplete="off" />
+              </label>
+              <label class="field">Web password
+                <input type="password" id="chipmap-password" placeholder="пусто = API password" autocomplete="off" />
+              </label>
+              <label class="field">Scheme
+                <select id="chipmap-scheme">
+                  <option value="https">https</option>
+                  <option value="http">http</option>
+                </select>
+              </label>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45">
+              Данные с <strong>Miner API Log</strong> (не TCP :4028). Типично 4×264 чипа.
+              Пароль пустой → берётся API password майнера. Кеш на сервере, UI читает кеш.
+            </p>
+          </div>
+        </div>
+      </div>
+      <div class="chip-tip" id="chipmap-tip"></div>
     </section>
 
     <!-- ========== MAP ========== -->
@@ -1993,13 +2419,49 @@
               Гистерезис h защищает от thrash у T0 / T1 / T2.
             </div>
 
+            <div class="card" style="margin-bottom:14px;box-shadow:none" id="panel-zone-presets">
+              <div class="card-h">
+                <div>
+                  <h2>Пресеты карты</h2>
+                  <div class="sub">сохранить · применить · перезаписать · удалить</div>
+                </div>
+              </div>
+              <div class="card-b">
+                <div class="row" style="grid-template-columns:1fr auto;gap:10px;align-items:end;margin-bottom:10px">
+                  <label class="field" style="margin:0">Пресет
+                    <select id="zone-preset-select">
+                      <option value="">— выберите —</option>
+                    </select>
+                  </label>
+                  <button class="btn primary" type="button" id="btn-zone-preset-apply" title="Загрузить пресет в активную карту">
+                    Применить
+                  </button>
+                </div>
+                <p id="zone-preset-meta" style="font-size:0.75rem;color:var(--dim);margin:0 0 10px">—</p>
+                <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                  <button class="btn" type="button" id="btn-zone-preset-save" title="Сохранить текущую карту как новый пресет">
+                    Сохранить как…
+                  </button>
+                  <button class="btn" type="button" id="btn-zone-preset-update" title="Перезаписать выбранный пресет текущей картой">
+                    Перезаписать
+                  </button>
+                  <button class="btn ghost" type="button" id="btn-zone-preset-rename" title="Переименовать выбранный пресет">
+                    Переименовать
+                  </button>
+                  <button class="btn danger" type="button" id="btn-zone-preset-delete" title="Удалить выбранный пресет">
+                    Удалить
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div class="card" style="margin-bottom:14px;box-shadow:none">
               <div class="card-h">
                 <div>
                   <h2>Пороги (°C)</h2>
                   <div class="sub">T0 · T1 · T2 · h · chip Critical</div>
                 </div>
-                <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пресет 24 / 26 / 28 · h 0.5</button>
+                <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пороги 24 / 26 / 28 · h 0.5</button>
               </div>
               <div class="card-b">
                 <div class="thr-fields">
@@ -2485,7 +2947,7 @@
             <label class="check">
               <input type="checkbox" id="wx-enabled" checked />
               <span>Показывать погоду
-                <span class="desc">карточка «Улица» на обзоре</span>
+                <span class="desc">карточка «Улица» · сохранится по «Сохранить»</span>
               </span>
             </label>
             <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
@@ -2564,6 +3026,14 @@
           </div>
           <div class="card-b">
             <div class="row">
+              <label class="field">Название проекта
+                <input type="text" id="settings-project-name" value="poolheat_WM" maxlength="64" autocomplete="off" placeholder="poolheat_WM" />
+              </label>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:4px 0 10px">
+              В шапке UI и в Telegram (/status). По умолчанию poolheat_WM.
+            </p>
+            <div class="row">
               <label class="field"><span class="req">IP / host</span>
                 <input type="text" id="settings-miner-host" value="192.168.1.10" autocomplete="off" />
               </label>
@@ -2582,6 +3052,232 @@
             <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0" id="miner-cfg-status">
               host: —
             </p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-filtration">
+          <div class="card-h">
+            <div>
+              <h2>Фильтрация · насос</h2>
+              <div class="sub">розетка / webhook · auto ON при майнинге</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-filt-test">Проверить</button>
+              <button class="btn primary" type="button" id="btn-filt-save">Сохранить</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="filt-enabled" />
+              <span>Включить управление фильтрацией
+                <span class="desc">policy + ручные кнопки</span>
+              </span>
+            </label>
+            <label class="field">Тип управления
+              <select id="filt-backend">
+                <option value="tapo">Tapo P100 / P110</option>
+                <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
+                <option value="webhook">Webhook (HTTP)</option>
+                <option value="shelly">Shelly</option>
+                <option value="homeassistant">Home Assistant</option>
+              </select>
+            </label>
+            <p id="filt-backend-hint" style="font-size:0.75rem;color:var(--dim);margin:0"></p>
+
+            <!-- Tapo -->
+            <div class="filt-be" data-be="tapo" style="display:none">
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field">IP розетки
+                  <input type="text" id="filt-ip" placeholder="192.168.1.50" autocomplete="off" />
+                </label>
+                <label class="field">Tapo email
+                  <input type="text" id="filt-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                </label>
+                <label class="field">Tapo password
+                  <input type="password" id="filt-password" placeholder="••••" autocomplete="off" />
+                </label>
+              </div>
+            </div>
+
+            <!-- eWeLink DIY -->
+            <div class="filt-be" data-be="ewelink" style="display:none">
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field">IP устройства
+                  <input type="text" id="filt-ewelink-ip" placeholder="192.168.1.60" autocomplete="off" />
+                </label>
+                <label class="field">deviceid (DIY)
+                  <input type="text" id="filt-device-id" placeholder="1000xxxxxx" autocomplete="off" />
+                </label>
+                <label class="field">Port DIY
+                  <input type="number" id="filt-ewelink-port" value="8081" min="1" max="65535" />
+                </label>
+              </div>
+              <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0">
+                Нужен Sonoff в <strong>DIY mode</strong> (LAN). Облако eWeLink без DIY — через Webhook / HA.
+              </p>
+            </div>
+
+            <!-- Webhook -->
+            <div class="filt-be" data-be="webhook" style="display:none">
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field">URL ON
+                  <input type="text" id="filt-wh-on" placeholder="http://…/on" autocomplete="off" />
+                </label>
+                <label class="field">URL OFF
+                  <input type="text" id="filt-wh-off" placeholder="http://…/off" autocomplete="off" />
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:120px 1fr 1fr;gap:12px;margin-top:10px">
+                <label class="field">Method
+                  <select id="filt-wh-method">
+                    <option value="GET">GET</option>
+                    <option value="POST">POST</option>
+                  </select>
+                </label>
+                <label class="field">Body ON (POST)
+                  <input type="text" id="filt-wh-body-on" placeholder='{"state":"on"}' autocomplete="off" />
+                </label>
+                <label class="field">Body OFF (POST)
+                  <input type="text" id="filt-wh-body-off" placeholder='{"state":"off"}' autocomplete="off" />
+                </label>
+              </div>
+              <label class="field" style="margin-top:10px">Headers JSON (опц.)
+                <input type="text" id="filt-wh-headers" placeholder='{"Authorization":"Bearer …"}' autocomplete="off" />
+              </label>
+            </div>
+
+            <!-- Shelly -->
+            <div class="filt-be" data-be="shelly" style="display:none">
+              <div class="row" style="grid-template-columns:1fr 100px 120px;gap:12px">
+                <label class="field">IP Shelly
+                  <input type="text" id="filt-shelly-ip" placeholder="192.168.1.70" autocomplete="off" />
+                </label>
+                <label class="field">Channel
+                  <input type="number" id="filt-shelly-ch" value="0" min="0" max="3" />
+                </label>
+                <label class="field">Gen
+                  <select id="filt-shelly-gen">
+                    <option value="auto">auto</option>
+                    <option value="1">Gen1</option>
+                    <option value="2">Gen2</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <!-- Home Assistant -->
+            <div class="filt-be" data-be="homeassistant" style="display:none">
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field">HA URL
+                  <input type="text" id="filt-ha-url" placeholder="http://192.168.1.20:8123" autocomplete="off" />
+                </label>
+                <label class="field">Entity ID
+                  <input type="text" id="filt-ha-entity" placeholder="switch.filtration" autocomplete="off" />
+                </label>
+              </div>
+              <label class="field" style="margin-top:10px">Long-lived token
+                <input type="password" id="filt-ha-token" placeholder="••••" autocomplete="off" />
+              </label>
+            </div>
+
+            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+              <label class="check">
+                <input type="checkbox" id="filt-auto-mining" checked />
+                <span>Auto ON при майнинге
+                  <span class="desc">MC Resume → фильтрация обязательно ВКЛ</span>
+                </span>
+              </label>
+              <label class="check">
+                <input type="checkbox" id="filt-auto-suspend" />
+                <span>Auto OFF при Suspend
+                  <span class="desc">опционально выключать насос когда не майним</span>
+                </span>
+              </label>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn primary" type="button" id="btn-filt-on">Включить насос</button>
+              <button class="btn danger" type="button" id="btn-filt-off">Выключить насос</button>
+              <span id="filt-status" style="font-size:0.78rem;color:var(--muted)">статус: —</span>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45">
+              При <strong>Resume Mining</strong> + Auto ON — выключить нельзя (policy снова включит).
+              Другие варианты: MQTT, Zigbee2MQTT, SmartThings — обычно через <strong>Webhook</strong> или <strong>Home Assistant</strong>.
+            </p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-telegram">
+          <div class="card-h">
+            <div>
+              <h2 class="tip" data-tip-key="telegram">Telegram bot</h2>
+              <div class="sub">getUpdates · уведомления policy · команды /status</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn" type="button" id="btn-tg-test">Тест</button>
+              <button class="btn primary" type="button" id="btn-tg-save">Сохранить</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="tg-enabled" />
+              <span>Включить бота
+                <span class="desc">long-poll getUpdates на сервере</span>
+              </span>
+            </label>
+            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+              <label class="field">Bot token
+                <input type="password" id="tg-token" placeholder="123456:AA…" autocomplete="off" />
+              </label>
+              <label class="field">Chat IDs
+                <span style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">
+                  <span style="font-size:0.72rem;color:var(--dim)">через запятую</span>
+                  <a href="#" id="tg-hist-link" class="tg-hist-link" style="font-size:0.72rem;color:var(--accent);text-decoration:none;white-space:nowrap">история ▾</a>
+                </span>
+                <div style="position:relative">
+                  <input type="text" id="tg-chats" placeholder="123456789 · через запятую" autocomplete="off" />
+                  <div class="tg-hist-pop" id="tg-hist-pop" hidden>
+                    <div class="tg-hist-pop-h">История чатов · клик = добавить в поле</div>
+                    <div class="tg-hist-list" id="tg-hist-list">
+                      <div class="tg-hist-empty">пока пусто — напишите боту /start</div>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;flex-wrap:wrap">
+              <label class="check"><input type="checkbox" id="tg-notify-policy" checked /><span>policy / APPLY</span></label>
+              <label class="check"><input type="checkbox" id="tg-notify-zone" checked /><span>зоны</span></label>
+              <label class="check"><input type="checkbox" id="tg-notify-safety" checked /><span>Safety</span></label>
+              <label class="check"><input type="checkbox" id="tg-notify-offline" checked /><span>ASIC offline</span></label>
+            </div>
+            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:end">
+              <label class="field">Offline: подряд fails до TG
+                <input type="number" id="tg-offline-streak" value="3" min="1" max="30" step="1" />
+              </label>
+              <p style="font-size:0.72rem;color:var(--dim);margin:0 0 6px;line-height:1.35">
+                3 timeout подряд → одно «ASIC offline».<br />
+                Был ответ — счётчик сброс, TG не шлём.
+              </p>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="tg-commands" checked />
+              <span>Команды (глобально)
+                <span class="desc">/status · /profile · /lang · /notify</span>
+              </span>
+            </label>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
+              1) @BotFather → token<br />
+              2) Бот: <code>/start</code> → <code>chat_id</code> → вставить ниже<br />
+              3) В чате: <code>/profile</code> (Профайл) — язык и notify · кнопка <b>Cmd</b> = команды управления<br />
+              <code>/lang_ru</code> · <code>/notify_zone</code> (toggle) · <code>/notify_all off</code><br />
+              Роутер: HTTPS → <code>api.telegram.org</code>
+            </p>
+            <div class="tg-perchat" id="tg-chats-prefs">
+              <div class="tg-perchat-h">per-chat · [×] снять с allowlist</div>
+              <div class="tg-perchat-empty" id="tg-perchat-empty">chats: —</div>
+              <div class="tg-perchat-list" id="tg-perchat-list"></div>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="tg-status">telegram: —</p>
           </div>
         </div>
 
@@ -2972,8 +3668,8 @@
     /* —— glossary tooltips —— */
     const TIPS = {
       t_ctrl: {
-        title: "T_ctrl",
-        body: "Основная температура для карты зон (регуляция тепла).\nСейчас = liquid_temp.\nЗоны: Z0 / Z1 / Z2 по T0 · T1 · h.",
+        title: "T_ctrl · Теплоноситель",
+        body: "Основная температура для карты зон (регуляция тепла).\nСейчас = liquid_temp (статус ASIC).\nЗоны Z0–Z3 по порогам T0 · T1 · T2 · h (строка внизу карточки).\nТакже для оценки t_чаши (liquid − ΔT_ТО).",
       },
       t_safe: {
         title: "T_safe",
@@ -3013,10 +3709,10 @@
       },
       liquid: {
         title: "Теплоноситель · liquid_temp",
-        body: "Температура теплоносителя (status.liquid_temp).\nКонтур / обратка майнера.\nИспользуется как T_ctrl и для оценки t_чаши (liquid − ΔT_ТО).",
+        body: "См. T_ctrl — liquid_temp используется как T_ctrl.",
       },
       env: {
-        title: "Env Temp",
+        title: "Env Temp · Окружение",
         body: "Температура окружения из summary (датчик/оценка майнера).\nСправочно: не основной рычаг регуляции в MVP.",
       },
       pcb: {
@@ -3045,7 +3741,15 @@
       },
       power_measured: {
         title: "Power measured",
-        body: "Фактическая мощность (W) и хешрейт (TH/s).\nНиже: mode · freq · J/T · PSU °C · rpm.",
+        body: "Фактическая мощность (W) и хешрейт (TH/s) с ASIC.\nMining Control — measured (mineroff + hash), как на вкладке Майнер.\nБейдж: Suspend / Mining.\nНиже: mode · freq · J/T · PSU · uptime.",
+      },
+      asic_uptime: {
+        title: "Uptime ASIC",
+        body: "Время работы ASIC с последней перезагрузки (summary Uptime, сек).\nНе путать с Elapsed (майнинг) и uptime роутера на Info.",
+      },
+      asic_elapsed: {
+        title: "Elapsed · mining",
+        body: "Сколько времени идёт текущая сессия майнинга (summary Elapsed, сек).\nСбрасывается при Suspend / resume / reboot btminer.\nКороче или равен Uptime.",
       },
       psu_temp: {
         title: "PSU °C",
@@ -3097,7 +3801,7 @@
       },
       dry_run: {
         title: "Dry Run",
-        body: "Серверная галка (после «Сохранить»).\nВкл — авто-зоны только в лог, на ASIC не пишутся.\nВыкл — зоны применяются сами.\nSafety (chip ≥ T_crit) — всегда.\nРучные кнопки — отдельно, «Разрешить write».",
+        body: "Серверная галка (после «Сохранить»).\nВкл — зоны игнорируются: режим майнера «как есть» (mode/limit/MC не трогаем).\nТолько Safety Critical (chip ≥ T_crit) пишет на ASIC.\nЗоны пишут в лог DRY_RUN would … (preview).\nВыкл — авто-зоны снова пишут.\nРучные кнопки Майнер — отдельно, «Разрешить write».",
       },
       warmup: {
         title: "Warmup / upfreq",
@@ -3113,7 +3817,11 @@
       },
       critical: {
         title: "Critical",
-        body: "Аварийный слой: T_safe ≥ T_crit.\nПриоритет выше Z0–Z2.\nКоманды (Suspend / mode / limit) — в Карта зон → Safety on_crit / on_clear.\nОтдельный critical_allow_sleep не используется.",
+        body: "Аварийный слой: chip max ≥ T_crit.\nПриоритет #1 (выше Force Stop / зон).\nКоманды — Карта зон → Safety on_crit / on_clear.\nПри Force Stop on_clear (resume) блокируется.",
+      },
+      force_stop: {
+        title: "Force Stop",
+        body: "Экстренная остановка · sticky Suspend.\nПриоритет #2: выше Override, Warmup, зон и Dry Run.\nНиже только Safety Critical (chip).\nВкл — майнер всегда остановлен.\nВыкл (Continue Work) — снова зоны / Dry Run.",
       },
       zone: {
         title: "Policy zone",
@@ -3157,7 +3865,7 @@
       },
       override: {
         title: "Override 30m",
-        body: "Пауза auto-зон Z0–Z2 на 30 мин (server).\nSafety Critical (chip) — всё равно.\nПовторный клик — снять досрочно.\nРучные кнопки режима — работают.",
+        body: "Пауза auto-зон на 30 мин (server).\nПриоритет #3 — ниже Safety и Force Stop.\nКнопка: Override 30m ↔ Отключить Override.\nSafety Critical и Force Stop — всё равно.\nРучные кнопки режима — работают.",
       },
       api_live: {
         title: "API live",
@@ -3166,6 +3874,10 @@
       lan_token: {
         title: "LAN · token",
         body: "UI в локальной сети; для API/UI рекомендуется Bearer token.\nRemote — через VPN / Keenetic Cloud, не raw :8787 в интернет.",
+      },
+      telegram: {
+        title: "Telegram bot",
+        body: "getUpdates long-poll.\nПрофайл (/profile): язык + notify + Cmd.\nCmd ВЫКЛ = нет suspend/status/pools (профайл доступен).\n/lang_ru · /notify_zone · /notify_all.\nASIC offline после N fail.",
       },
       hysteresis: {
         title: "Гистерезис",
@@ -3249,14 +3961,20 @@
       window.addEventListener("resize", () => { if (active) place(active); });
     }
 
-    /* —— tabs + URL (#miner or /miner) —— */
-    const TAB_IDS = ["dash", "miner", "map", "pool", "settings", "info", "logs"];
+    /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
+    const TAB_IDS = ["dash", "miner", "chips", "map", "pool", "settings", "info", "logs"];
     const TAB_ALIASES = {
       "": "dash",
+      "/": "dash",
       overview: "dash",
       home: "dash",
       index: "dash",
       "index.html": "dash",
+      dashboard: "dash",
+      dash: "dash",
+      chips: "chips",
+      chipmap: "chips",
+      chip: "chips",
       zones: "map",
       zone: "map",
       weather: "pool",
@@ -3268,35 +3986,62 @@
 
     function resolveTabId(raw) {
       let t = String(raw || "").trim().toLowerCase();
-      t = t.replace(/^#\/?/, "").replace(/^\//, "");
+      // #/ · #dashboard · /dashboard · miner
+      t = t.replace(/^#/, "").replace(/^\/+/, "");
+      if (t === "" || t === "/") return "dash";
       t = t.split(/[/?#]/)[0] || "";
       if (TAB_ALIASES[t]) return TAB_ALIASES[t];
       if (TAB_IDS.includes(t)) return t;
       return null;
     }
 
+    function isDashHash(h) {
+      const x = String(h || "");
+      return (
+        x === "" ||
+        x === "#" ||
+        x === "#/" ||
+        x === "#dashboard" ||
+        x === "#dash" ||
+        x === "#overview" ||
+        x === "#home"
+      );
+    }
+
     function tabFromLocation() {
-      const hashTab = resolveTabId(location.hash);
-      if (hashTab) return hashTab;
+      // hash first: #/ · #dashboard · #miner
+      if (location.hash) {
+        const hashTab = resolveTabId(location.hash);
+        if (hashTab) return hashTab;
+      }
+      // path: / · /dashboard · /miner
       const parts = location.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-      const last = parts.length ? parts[parts.length - 1] : "";
+      if (!parts.length) return "dash";
+      const last = parts[parts.length - 1];
       const pathTab = resolveTabId(last);
       return pathTab || "dash";
     }
 
     function setTabUrl(tabId, mode) {
-      // Prefer hash: always works; path optional via history
+      // Canonical dash URL is #/ (also accept #dashboard · /)
       const hash = tabId === "dash" ? "#/" : "#" + tabId;
       try {
+        const sameDash =
+          tabId === "dash" &&
+          (isDashHash(location.hash) ||
+            location.pathname === "/" ||
+            /\/(dashboard|dash|overview|home)\/?$/i.test(location.pathname));
+        const sameOther =
+          tabId !== "dash" &&
+          (location.hash === hash || location.hash === "#" + tabId);
+        if (sameDash || sameOther) return;
         if (mode === "replace") {
-          if (location.hash !== hash && location.hash !== "#" + tabId) {
-            history.replaceState({ tab: tabId }, "", hash);
-          }
-        } else if (location.hash !== hash && location.hash !== "#" + tabId) {
+          history.replaceState({ tab: tabId }, "", hash);
+        } else {
           history.pushState({ tab: tabId }, "", hash);
         }
       } catch (_) {
-        location.hash = tabId === "dash" ? "" : tabId;
+        location.hash = tabId === "dash" ? "/" : tabId;
       }
     }
 
@@ -3327,6 +4072,13 @@
       }
       if (tabId === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
+      }
+      if (tabId === "miner" && typeof loadMiningPools === "function") {
+        loadMiningPools(false);
+      }
+      if (tabId === "chips") {
+        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+        if (typeof loadChipmap === "function") loadChipmap(false);
       }
       if (!opts.skipUrl) {
         setTabUrl(tabId, opts.replaceUrl ? "replace" : "push");
@@ -3950,6 +4702,267 @@
       }
     }
 
+    /* ── Zone map presets ─────────────────────────────────────────── */
+    let zonePresetsCache = { presets: [], active_id: null };
+
+    function selectedZonePresetId() {
+      return (document.getElementById("zone-preset-select")?.value || "").trim();
+    }
+
+    function selectedZonePresetMeta() {
+      const id = selectedZonePresetId();
+      return (zonePresetsCache.presets || []).find((p) => p.id === id) || null;
+    }
+
+    function renderZonePresetSelect() {
+      const sel = document.getElementById("zone-preset-select");
+      const meta = document.getElementById("zone-preset-meta");
+      if (!sel) return;
+      const cur = sel.value;
+      const items = zonePresetsCache.presets || [];
+      const active = zonePresetsCache.active_id || "";
+      sel.innerHTML = "";
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = items.length ? "— выберите —" : "— нет пресетов —";
+      sel.appendChild(opt0);
+      items.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.id;
+        let label = p.name || p.id;
+        if (p.id === active) label = "● " + label;
+        if (p.summary) label += " · " + p.summary;
+        o.textContent = label;
+        sel.appendChild(o);
+      });
+      // restore selection
+      if (cur && items.some((p) => p.id === cur)) sel.value = cur;
+      else if (active && items.some((p) => p.id === active)) sel.value = active;
+      updateZonePresetMetaLine();
+    }
+
+    function updateZonePresetMetaLine() {
+      const meta = document.getElementById("zone-preset-meta");
+      if (!meta) return;
+      const p = selectedZonePresetMeta();
+      if (!p) {
+        meta.textContent = (zonePresetsCache.presets || []).length
+          ? "Выберите пресет или сохраните текущую карту"
+          : "Пресеты пусты — «Сохранить как…»";
+        return;
+      }
+      const act =
+        p.id === zonePresetsCache.active_id ? " · активный" : "";
+      meta.textContent =
+        (p.name || p.id) +
+        (p.summary ? " · " + p.summary : "") +
+        (p.updated_ts ? " · " + p.updated_ts : "") +
+        act;
+    }
+
+    async function loadZonePresets() {
+      try {
+        const res = await fetch("/api/zone/presets", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok && body.presets == null)
+          throw new Error(body.error || "presets fail");
+        zonePresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderZonePresetSelect();
+        return zonePresetsCache;
+      } catch (e) {
+        console.warn("zone presets:", e);
+        const meta = document.getElementById("zone-preset-meta");
+        if (meta) meta.textContent = "не загружено: " + e.message;
+        return null;
+      }
+    }
+
+    async function zonePresetApi(payload) {
+      const res = await fetch("/api/zone/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      const body = await res.json();
+      if (!res.ok || body.ok === false)
+        throw new Error((body && body.error) || "HTTP " + res.status);
+      return body;
+    }
+
+    async function zonePresetSaveAs() {
+      const name = window.prompt("Имя нового пресета:", "");
+      if (name == null) return;
+      const n = String(name).trim();
+      if (!n) {
+        toastWarn("Имя пустое");
+        return;
+      }
+      try {
+        const cfg = collectZoneMapConfig();
+        const body = await zonePresetApi({
+          action: "save",
+          name: n,
+          config: cfg,
+        });
+        zonePresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || zonePresetsCache.active_id,
+        };
+        renderZonePresetSelect();
+        if (body.id) {
+          const sel = document.getElementById("zone-preset-select");
+          if (sel) sel.value = body.id;
+          updateZonePresetMetaLine();
+        }
+        toastSuccess("Пресет сохранён: " + n);
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function zonePresetUpdate() {
+      const p = selectedZonePresetMeta();
+      if (!p) {
+        toastWarn("Сначала выберите пресет");
+        return;
+      }
+      if (
+        !confirm(
+          "Перезаписать пресет «" +
+            (p.name || p.id) +
+            "» текущей картой зон?"
+        )
+      )
+        return;
+      try {
+        const cfg = collectZoneMapConfig();
+        const body = await zonePresetApi({
+          action: "update",
+          id: p.id,
+          name: p.name,
+          config: cfg,
+        });
+        zonePresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || zonePresetsCache.active_id,
+        };
+        renderZonePresetSelect();
+        const sel = document.getElementById("zone-preset-select");
+        if (sel) sel.value = p.id;
+        updateZonePresetMetaLine();
+        toastSuccess("Пресет обновлён: " + (p.name || p.id));
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function zonePresetRename() {
+      const p = selectedZonePresetMeta();
+      if (!p) {
+        toastWarn("Сначала выберите пресет");
+        return;
+      }
+      const name = window.prompt("Новое имя пресета:", p.name || "");
+      if (name == null) return;
+      const n = String(name).trim();
+      if (!n) {
+        toastWarn("Имя пустое");
+        return;
+      }
+      try {
+        const body = await zonePresetApi({
+          action: "update",
+          id: p.id,
+          name: n,
+          // keep stored config (omit config → server keeps existing)
+        });
+        // server update without config uses existing — but our API needs config
+        // if not provided uses existing.get("config") — good
+        zonePresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || zonePresetsCache.active_id,
+        };
+        renderZonePresetSelect();
+        const sel = document.getElementById("zone-preset-select");
+        if (sel) sel.value = p.id;
+        updateZonePresetMetaLine();
+        toastSuccess("Переименовано: " + n);
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function zonePresetDelete() {
+      const p = selectedZonePresetMeta();
+      if (!p) {
+        toastWarn("Сначала выберите пресет");
+        return;
+      }
+      if (!confirm("Удалить пресет «" + (p.name || p.id) + "»?")) return;
+      try {
+        const body = await zonePresetApi({ action: "delete", id: p.id });
+        zonePresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderZonePresetSelect();
+        toastSuccess("Пресет удалён");
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function zonePresetApply() {
+      const p = selectedZonePresetMeta();
+      if (!p) {
+        toastWarn("Сначала выберите пресет");
+        return;
+      }
+      if (
+        !confirm(
+          "Применить пресет «" +
+            (p.name || p.id) +
+            "»?\n\nАктивная карта зон будет заменена."
+        )
+      )
+        return;
+      try {
+        const body = await zonePresetApi({ action: "apply", id: p.id });
+        if (body.config) applyZoneMapConfig(body.config);
+        zonePresetsCache.active_id = body.id || p.id;
+        // refresh list for ● active marker
+        await loadZonePresets();
+        const sel = document.getElementById("zone-preset-select");
+        if (sel && body.id) sel.value = body.id;
+        updateZonePresetMetaLine();
+        toastSuccess("Пресет применён: " + (body.name || p.name || p.id));
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    document
+      .getElementById("zone-preset-select")
+      ?.addEventListener("change", updateZonePresetMetaLine);
+    document
+      .getElementById("btn-zone-preset-apply")
+      ?.addEventListener("click", () => void zonePresetApply());
+    document
+      .getElementById("btn-zone-preset-save")
+      ?.addEventListener("click", () => void zonePresetSaveAs());
+    document
+      .getElementById("btn-zone-preset-update")
+      ?.addEventListener("click", () => void zonePresetUpdate());
+    document
+      .getElementById("btn-zone-preset-rename")
+      ?.addEventListener("click", () => void zonePresetRename());
+    document
+      .getElementById("btn-zone-preset-delete")
+      ?.addEventListener("click", () => void zonePresetDelete());
+
     function minerHostLabel() {
       if (live && live.host) return String(live.host);
       const h = (document.getElementById("settings-miner-host")?.value || "").trim();
@@ -3992,6 +5005,8 @@
           hashrate_th: 300,
           psu_temp: 42,
           psu_fan: 6000,
+          uptime: 3600 * 26, // sim: 1д 2ч
+          elapsed: 3600 * 5,
           upfreq_block: simUp.checked,
           dry: !!(dryRunEl && dryRunEl.checked),
           source: "sim",
@@ -4020,6 +5035,9 @@
           hashrate_th: Number(live.hashrate_th),
           psu_temp: live.psu_temp != null ? Number(live.psu_temp) : NaN,
           psu_fan: live.psu_fan != null ? Number(live.psu_fan) : NaN,
+          // Whatsminer summary.Uptime (sec since reboot) · Elapsed (mining session)
+          uptime: live.uptime != null ? Number(live.uptime) : null,
+          elapsed: live.elapsed != null ? Number(live.elapsed) : null,
           upfreq_block: upfreqBusy,
           hash_stable: !notStable,
           dry: !!(dryRunEl && dryRunEl.checked),
@@ -4044,6 +5062,8 @@
         hashrate_th: NaN,
         psu_temp: NaN,
         psu_fan: NaN,
+        uptime: null,
+        elapsed: null,
         upfreq_block: false,
         hash_stable: false,
         dry: !!(dryRunEl && dryRunEl.checked),
@@ -4109,11 +5129,13 @@
       if (sm) sm.textContent = String(th.t1);
       if (sh) sh.textContent = String(th.t2);
       if (sc) sc.textContent = String(th.crit);
+      // thresholds line under liquid/env card (second bottom row)
+      const thrLine =
+        "T0=" + th.t0 + " · T1=" + th.t1 + " · T2=" + th.t2 + " · h=" + th.h;
+      const dzt = document.getElementById("dash-zone-thr");
+      if (dzt) dzt.textContent = thrLine;
       const hh = document.getElementById("hint-hyst");
-      if (hh) {
-        hh.textContent =
-          "T0=" + th.t0 + " · T1=" + th.t1 + " · T2=" + th.t2 + " · h=" + th.h;
-      }
+      if (hh) hh.textContent = thrLine;
       paintLiquidScale(th);
     }
 
@@ -4206,7 +5228,7 @@
       if (!el) return;
       const st = inferWorkState(r);
       el.classList.remove("is-mining", "is-suspend");
-      if (st === "suspend") {
+      if (st === "suspend" || st === "sleep") {
         el.textContent = "Suspend";
         el.classList.add("is-suspend");
       } else if (st === "resume") {
@@ -4258,6 +5280,35 @@
       // PSU 43°C · 6000 rpm
       setText("[data-bind=psuTemp]", Number.isFinite(r.psu_temp) ? fmt(r.psu_temp, 0) + "°C" : "—");
       setText("[data-bind=psuFan]", Number.isFinite(r.psu_fan) ? Math.round(r.psu_fan) + " rpm" : "—");
+      // ASIC uptime / elapsed (Whatsminer summary.Uptime / Elapsed, seconds)
+      {
+        const fmtSec = (raw) => {
+          if (raw == null || raw === "") return "—";
+          const sec = Number(raw);
+          if (!Number.isFinite(sec) || sec < 0) return String(raw);
+          let s = Math.floor(sec);
+          const d = Math.floor(s / 86400);
+          s %= 86400;
+          const h = Math.floor(s / 3600);
+          s %= 3600;
+          const m = Math.floor(s / 60);
+          if (d > 0) return d + "д " + h + "ч";
+          if (h > 0) return h + "ч " + m + "м";
+          if (m > 0) return m + "м";
+          return s + "с";
+        };
+        const pick = (key) => {
+          if (r && r[key] != null && r[key] !== "") return r[key];
+          if (typeof live !== "undefined" && live && live[key] != null) return live[key];
+          return null;
+        };
+        const upStr = fmtSec(pick("uptime"));
+        const elStr = fmtSec(pick("elapsed"));
+        setText("[data-bind=asicUptime]", upStr);
+        setId("dash-asic-uptime", upStr);
+        setText("[data-bind=asicElapsed]", elStr);
+        setId("dash-asic-elapsed", elStr);
+      }
       try {
         if (typeof updateWorkBadge === "function") updateWorkBadge(r);
       } catch (_) { /* ignore */ }
@@ -4285,6 +5336,46 @@
         return v || "—";
       };
       setId("wk-mode-now", workKey ? workLabel(workKey) : "—");
+      if (typeof syncForceSuspendBtn === "function") syncForceSuspendBtn(workKey);
+
+      // Lifecycle status: starting / stopping / tuning / running / stopped
+      // (commanded work_cmd vs measured + upfreq)
+      const runStatusLabel = (r) => {
+        if (r && r.run_status_ru) return r.run_status_ru;
+        if (r && r.run_status) {
+          const map = {
+            starting: "Запускается",
+            stopping: "Останавливается",
+            tuning: "Тюнинг",
+            running: "Работает",
+            stopped: "Остановлен",
+          };
+          if (map[r.run_status]) return map[r.run_status];
+        }
+        // client-side fallback when backend field missing
+        const meas = workKey === "suspend" || workKey === "sleep"
+          ? "suspend"
+          : workKey === "resume"
+            ? "resume"
+            : null;
+        let cmd = null;
+        const wc = String((r && r.work_cmd) || "").toLowerCase();
+        if (["sleep", "suspend", "power_off", "off"].includes(wc)) cmd = "suspend";
+        else if (["resume", "mining", "power_on", "on"].includes(wc)) cmd = "resume";
+        if (cmd === "resume" && meas === "suspend") return "Запускается";
+        if (cmd === "suspend" && meas === "resume") return "Останавливается";
+        if (meas === "resume") {
+          const up = (r && r.upfreq) || [];
+          const tuning =
+            Array.isArray(up) &&
+            up.length > 0 &&
+            up.some((u) => Number(u) !== 1);
+          return tuning ? "Тюнинг" : "Работает";
+        }
+        if (meas === "suspend") return "Остановлен";
+        return "—";
+      };
+      setId("wk-run-status", runStatusLabel(src));
 
       // Power Limit measured = power_limit_set on ASIC (summary Power Limit is 0 in Suspend)
       const limSet =
@@ -4464,48 +5555,97 @@
       }
     }
 
-    /* ── auto policy: Safety always; Z0–Z2 only if Dry Run off ── */
-    const policyCtrl = {
-      lastSafety: false,
-      lastKey: null,
-      streakKey: null,
-      streakCount: 0,
-      lastApplyTs: 0,
-      busy: false,
-    };
-    let lastPolicyCtx = null;
+    /* Policy auto-write: server-side only (serve.py policy_loop). */
 
-    function planAutoCommands(prefix) {
-      const cmds = [];
-      if (!prefix) return cmds;
-      const workEn = document.getElementById(prefix + "-work")?.checked;
-      const modeEn = document.getElementById(prefix + "-mode")?.checked;
-      const limEn = document.getElementById(prefix + "-lim")?.checked;
-      const pctEn = document.getElementById(prefix + "-pct")?.checked;
-      if (workEn) {
-        const w = document.getElementById(prefix + "-work-v")?.value || "resume";
-        cmds.push({ action: "working", value: w === "suspend" ? "suspend" : "resume" });
-      }
-      if (modeEn) {
-        const m = document.getElementById(prefix + "-mode-v")?.value;
-        if (m && ["low", "normal", "high"].includes(m)) {
-          cmds.push({ action: "mode", value: m });
-        }
-      }
-      if (limEn) {
-        const lim = Number(document.getElementById(prefix + "-lim-v")?.value);
-        if (Number.isFinite(lim) && lim >= 0) {
-          cmds.push({ action: "power_limit", value: Math.round(lim) });
-        }
-      }
-      if (pctEn) {
-        const pct = Number(document.getElementById(prefix + "-pct-v")?.value);
-        if (Number.isFinite(pct) && pct >= 0 && pct <= 100) {
-          cmds.push({ action: "power_pct", value: Math.round(pct) });
-        }
-      }
-      return cmds;
+    function escHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     }
+
+    function renderMiningPools(body) {
+      const tbody = document.getElementById("miner-pools-body");
+      const st = document.getElementById("miner-pools-status");
+      if (!tbody) return;
+      const pools = (body && Array.isArray(body.pools)) ? body.pools : [];
+      if (!body || body.ok === false) {
+        tbody.innerHTML =
+          '<tr><td colspan="11" style="color:var(--danger);text-align:center">' +
+          escHtml((body && body.error) || "нет данных") +
+          "</td></tr>";
+        if (st) st.textContent = "ошибка: " + ((body && body.error) || "—");
+        return;
+      }
+      if (!pools.length) {
+        tbody.innerHTML =
+          '<tr><td colspan="11" style="color:var(--muted);text-align:center">пулы не настроены / нет ответа</td></tr>';
+        if (st) st.textContent = "0 pools";
+        return;
+      }
+      tbody.innerHTML = pools
+        .map((p) => {
+          const active = !!p.active;
+          const diff =
+            p.difficulty != null && Number.isFinite(Number(p.difficulty))
+              ? (Number(p.difficulty) % 1 === 0
+                  ? String(Math.round(Number(p.difficulty)))
+                  : Number(p.difficulty).toFixed(2))
+              : "—";
+          return (
+            '<tr class="' + (active ? "pool-active" : "") + '">' +
+            "<td>" + escHtml(p.pool != null ? p.pool : "—") + "</td>" +
+            '<td class="pool-url" title="' + escHtml(p.url) + '">' + escHtml(p.url) + "</td>" +
+            '<td class="' + (active ? "pool-active-flag" : "pool-inactive-flag") + '">' +
+            (active ? "true" : "false") +
+            "</td>" +
+            "<td>" + escHtml(p.user) + "</td>" +
+            "<td>" + escHtml(p.status) + "</td>" +
+            "<td>" + escHtml(diff) + "</td>" +
+            "<td>" + escHtml(p.getworks != null ? p.getworks : "—") + "</td>" +
+            "<td>" + escHtml(p.accepted != null ? p.accepted : "—") + "</td>" +
+            "<td>" + escHtml(p.rejected != null ? p.rejected : "—") + "</td>" +
+            "<td>" + escHtml(p.stale != null ? p.stale : "—") + "</td>" +
+            "<td>" + escHtml(p.lst_label || "—") + "</td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+      if (st) {
+        const act = pools.filter((x) => x.active).length;
+        st.textContent =
+          pools.length +
+          " pool(s) · active " +
+          act +
+          (body.host ? " · " + body.host : "") +
+          (body.cached ? " · cache" : "") +
+          (body.ts ? " · " + body.ts.replace("T", " ") : "");
+      }
+    }
+
+    async function loadMiningPools(force) {
+      const st = document.getElementById("miner-pools-status");
+      if (st && force) st.textContent = "загрузка…";
+      try {
+        const res = await fetch(
+          "/api/miner/pools" + (force ? "?force=1" : ""),
+          { cache: "no-store" }
+        );
+        const body = await res.json();
+        renderMiningPools(body);
+        return body;
+      } catch (e) {
+        renderMiningPools({ ok: false, error: String(e.message || e), pools: [] });
+        return null;
+      }
+    }
+
+    document.getElementById("btn-pools-refresh")?.addEventListener("click", async () => {
+      const b = await loadMiningPools(true);
+      if (b && b.ok) toastSuccess("Pools: " + (b.count || (b.pools && b.pools.length) || 0));
+      else toastError("Pools: " + ((b && b.error) || "ошибка"));
+    });
 
     function appendActionLog(kind, text) {
       const log = document.getElementById("log");
@@ -4520,98 +5660,6 @@
         String(text).replace(/</g, "&lt;");
       log.insertBefore(line, log.firstChild);
       while (log.children.length > 80) log.removeChild(log.lastChild);
-    }
-
-    async function runPolicyAuto() {
-      const ctx = lastPolicyCtx;
-      if (!ctx || policyCtrl.busy) return;
-      if (!useLive.checked || !ctx.online) return;
-      if (!Number.isFinite(ctx.tSafe) && ctx.safetySticky) return;
-
-      const dry = !!(dryRunEl && dryRunEl.checked);
-      const wasSafety = policyCtrl.lastSafety;
-      let desired = null;
-      let prefix = null;
-      let isSafety = false;
-
-      if (ctx.safetySticky) {
-        desired = "safety:on_crit";
-        prefix = "z3e";
-        isSafety = true;
-      } else if (wasSafety && !ctx.safetySticky) {
-        desired = "safety:on_clear";
-        prefix = "z3c";
-        isSafety = true;
-      } else if (!dry) {
-        if (ctx.heatZone === "z0" && ctx.upfreq) {
-          desired = null;
-        } else if (ctx.heatZone === "z0" || ctx.heatZone === "z1" || ctx.heatZone === "z2") {
-          desired = ctx.heatZone;
-          prefix = ctx.heatZone;
-        }
-      } else {
-        // Dry Run: zone auto blocked — log intent once per key change
-        if (ctx.heatZone && policyCtrl.streakKey !== "dry:" + ctx.heatZone) {
-          appendActionLog("info", "DRY_RUN would zone=" + String(ctx.heatZone).toUpperCase() +
-            " · liquid=" + (Number.isFinite(ctx.tLiquid) ? ctx.tLiquid.toFixed(1) : "—"));
-          policyCtrl.streakKey = "dry:" + ctx.heatZone;
-          policyCtrl.streakCount = 0;
-        }
-      }
-
-      policyCtrl.lastSafety = !!ctx.safetySticky;
-
-      if (!desired) return;
-
-      if (policyCtrl.streakKey === desired) policyCtrl.streakCount += 1;
-      else {
-        policyCtrl.streakKey = desired;
-        policyCtrl.streakCount = 1;
-      }
-      const need = isSafety
-        ? Math.max(1, Math.min(2, num("thr-streak", 3)))
-        : Math.max(1, num("thr-streak", 3));
-      if (policyCtrl.streakCount < need) return;
-
-      // already applied this profile (on_clear is one-shot)
-      if (policyCtrl.lastKey === desired && desired !== "safety:on_clear") return;
-
-      const dwellMs = Math.max(0, num("thr-dwell", 600)) * 1000;
-      const now = Date.now();
-      if (!isSafety && policyCtrl.lastApplyTs && (now - policyCtrl.lastApplyTs) < dwellMs) {
-        return;
-      }
-
-      const cmds = planAutoCommands(prefix);
-      if (!cmds.length) {
-        policyCtrl.lastKey = desired;
-        appendActionLog("warn", "AUTO " + desired + " · no actuators enabled");
-        return;
-      }
-
-      policyCtrl.busy = true;
-      try {
-        appendActionLog("ok", "AUTO APPLY " + desired + " · " +
-          cmds.map((c) => c.action + "=" + c.value).join(", "));
-        toastInfo("AUTO " + desired, 2000);
-        for (let i = 0; i < cmds.length; i++) {
-          const c = cmds[i];
-          const res = await applyPower(c.action, c.value, {
-            force: true,
-            quiet: true,
-            source: "auto:" + desired,
-            skipRefresh: i < cmds.length - 1,
-          });
-          if (!res || !res.ok) {
-            appendActionLog("err", "AUTO fail " + c.action + ": " + (res && res.error ? res.error : "?"));
-            break;
-          }
-        }
-        policyCtrl.lastKey = desired === "safety:on_clear" ? null : desired;
-        policyCtrl.lastApplyTs = Date.now();
-      } finally {
-        policyCtrl.busy = false;
-      }
     }
 
     function recompute() {
@@ -4682,6 +5730,18 @@
         if (l.dataset.layer === "critical") {
           if (tSafe >= th.crit) { l.classList.add("on", "block"); tag.textContent = "SLEEP"; }
           else tag.textContent = "off";
+        }
+        if (l.dataset.layer === "force_stop") {
+          const fs =
+            (typeof forceStopServer !== "undefined" && !!forceStopServer) ||
+            !!(r && r.policy && r.policy.force_stop) ||
+            !!(typeof live !== "undefined" && live && live.policy && live.policy.force_stop);
+          if (fs) {
+            l.classList.add("on", "block");
+            tag.textContent = "SUSPEND";
+          } else {
+            tag.textContent = "off";
+          }
         }
         if (l.dataset.layer === "fail") tag.textContent = liveError ? "fail" : "ok";
         if (l.dataset.layer === "override") {
@@ -4813,6 +5873,24 @@
 
       setText("[data-bind=zoneName]", zoneName);
       setText("[data-bind=zoneHint]", zoneHint);
+      // color badge on liquid/env card by zone id
+      const zb = document.getElementById("dash-zone-badge");
+      if (zb) {
+        zb.classList.remove(
+          "is-z0",
+          "is-z1",
+          "is-z2",
+          "is-z3",
+          "is-critical"
+        );
+        const zc =
+          zone === "critical"
+            ? "is-critical"
+            : zone === "z0" || zone === "z1" || zone === "z2" || zone === "z3"
+              ? "is-" + zone
+              : "";
+        if (zc) zb.classList.add(zc);
+      }
       setText("[data-bind=prevMode]", prevMode);
       setText("[data-bind=prevLim]", prevLim);
       setText("[data-bind=prevPct]", prevPct);
@@ -4828,21 +5906,13 @@
           : zone === "z0" ? "ok"
           : zone === "z1" ? "ok"
           : "accent";
-        modePill.className = "pill " + cls;
-        modePill.innerHTML = '<span class="dot"></span> zone: ' +
-          (zone === "critical" ? "safety" : zone.toUpperCase());
+        modePill.className = "pill " + cls + " tip";
+        modePill.setAttribute("data-tip-key", "zone");
+        // full title: "Z3 · No heat" (not only Z3)
+        modePill.innerHTML =
+          '<span class="dot"></span> ' +
+          String(zoneName || zone || "—").replace(/</g, "&lt;");
       }
-
-      lastPolicyCtx = {
-        online: r.source === "live" && r.online === true,
-        dry: !!dry,
-        safetySticky: !!safetySticky,
-        heatZone: heatZone,
-        upfreq: !!upfreq,
-        tSafe: tSafe,
-        tLiquid: tLiquid,
-        zone: zone,
-      };
 
       // server policy status line + override banner sync
       const psl = document.getElementById("policy-status-line");
@@ -4862,9 +5932,22 @@
         const parts = [
           pol.server_side ? "server" : "—",
           dry ? "dry_run" : "zone_auto",
-          "hz=" + (pol.heat_zone || heatZone || "—"),
+          "hz=" +
+            (pol.heat_zone_title ||
+              zoneName ||
+              pol.heat_zone ||
+              heatZone ||
+              "—"),
           pol.safety_sticky ? "SAFETY" : "ok",
         ];
+        if (pol.want_work || pol.measured_work) {
+          parts.push(
+            "MC want=" +
+              (pol.want_work || "—") +
+              " have=" +
+              (pol.measured_work || "—")
+          );
+        }
         if (pol.override_active) {
           parts.push(
             "OVERRIDE " +
@@ -4991,7 +6074,9 @@
           st.style.color = "var(--ok)";
           st.textContent =
             "на сервере: " +
-            (dryRunServer ? "Dry Run ВКЛ · zone auto off" : "Dry Run ВЫКЛ · zone auto ON");
+            (dryRunServer
+              ? "Dry Run ВКЛ · режим как есть · только Safety"
+              : "Dry Run ВЫКЛ · zone auto ON");
         }
       }
     }
@@ -5025,11 +6110,14 @@
         dryRunDirty = false;
         if (!dryRunServer) {
           toastWarn(
-            "Dry Run ВЫКЛ и сохранён · авто-зоны Z0–Z2 пишут на майнер",
+            "Dry Run ВЫКЛ и сохранён · авто-зоны пишут на майнер",
             5500
           );
         } else {
-          toastSuccess("Dry Run ВКЛ и сохранён · авто-зоны не пишут на ASIC", 4000);
+          toastSuccess(
+            "Dry Run ВКЛ · режим как есть · только Safety (chip)",
+            4000
+          );
         }
         syncDryRunUI();
         recompute();
@@ -5222,10 +6310,41 @@
       return "view: " + s + " → " + e + " (" + h + "h)";
     }
 
-    function xySeries(key) {
+    function xySeries(key, opts) {
+      const requireOnline = !opts || opts.requireOnline !== false;
       return histPoints
-        .filter((p) => p[key] != null && p.online !== 0 && p.online !== "0")
+        .filter((p) => {
+          if (p[key] == null || p[key] === "") return false;
+          if (requireOnline && (p.online === 0 || p.online === "0")) return false;
+          const y = Number(p[key]);
+          return Number.isFinite(y);
+        })
         .map((p) => ({ x: p.ts, y: Number(p[key]) }));
+    }
+
+    /**
+     * EEF J/TH = W / (TH/s).
+     * No hashrate / div-by-zero / non-finite → y = 0 (not a gap / spike).
+     */
+    function xyEffSeries() {
+      return histPoints
+        .filter((p) => p && p.online !== 0 && p.online !== "0")
+        .map((p) => {
+          let y = 0;
+          if (p.eff_jt != null && p.eff_jt !== "" && Number.isFinite(Number(p.eff_jt))) {
+            y = Number(p.eff_jt);
+          } else {
+            const h = Number(p.hashrate_th);
+            const w = Number(p.power);
+            if (Number.isFinite(w) && Number.isFinite(h) && h > 0.05 && w > 0) {
+              y = w / h;
+            } else {
+              y = 0; // undefined / TH=0 / Suspend → flat zero on chart
+            }
+          }
+          if (!Number.isFinite(y) || y < 0) y = 0;
+          return { x: p.ts, y };
+        });
     }
 
     /** Median sample interval (sec) from points. */
@@ -5428,6 +6547,7 @@
             datasets: [
               { label: "liquid", data: [], borderColor: "#3d9cf0", backgroundColor: "rgba(61,156,240,0.1)", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
               { label: "env", data: [], borderColor: "#3ecf8e", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "outdoor", data: [], borderColor: "#7dd3fc", tension: 0.15, pointRadius: 0, borderWidth: 2, borderDash: [6, 3], fill: false },
               { label: "board0", data: [], borderColor: "#f0b429", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
               { label: "board2", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
               { label: "chip max", data: [], borderColor: "#f07178", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
@@ -5449,10 +6569,11 @@
           type: "line",
           data: {
             datasets: [
-              { label: "power W", data: [], borderColor: "#3ecf8e", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
-              { label: "limit W", data: [], borderColor: "#3d9cf0", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], fill: false },
-              { label: "hashrate TH/s", data: [], borderColor: "#c792ea", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
-              { label: "freq", data: [], borderColor: "#f0b429", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 1.2, borderDash: [2, 3], fill: false },
+              { label: "Power W", data: [], borderColor: "#3ecf8e", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+              { label: "Limit W", data: [], borderColor: "#3d9cf0", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], fill: false },
+              { label: "HR TH/s", data: [], borderColor: "#c792ea", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+              { label: "Freq", data: [], borderColor: "#f0b429", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 1.2, borderDash: [2, 3], fill: false },
+              { label: "EEF J/T", data: [], borderColor: "#ff9f43", yAxisID: "y2", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
             ],
           },
           options: {
@@ -5461,6 +6582,12 @@
               x: xAxisOpts(),
               y: { position: "left", title: { display: true, text: "W" }, grid: { color: "rgba(42,53,68,0.5)" } },
               y1: { position: "right", title: { display: true, text: "TH/s · freq" }, grid: { drawOnChartArea: false } },
+              y2: {
+                position: "right",
+                title: { display: true, text: "J/TH" },
+                grid: { drawOnChartArea: false },
+                offset: true,
+              },
             },
             plugins: { ...common.plugins },
           },
@@ -5483,14 +6610,18 @@
         return;
       }
 
-      const map = [
-        ["liquid", 0], ["env", 1], ["board0", 2], ["board2", 3], ["chip_max", 4],
-      ];
-      map.forEach(([key, i]) => { chartTemp.data.datasets[i].data = xySeries(key); });
+      // outdoor may be present while miner offline
+      chartTemp.data.datasets[0].data = xySeries("liquid");
+      chartTemp.data.datasets[1].data = xySeries("env");
+      chartTemp.data.datasets[2].data = xySeries("outdoor_c", { requireOnline: false });
+      chartTemp.data.datasets[3].data = xySeries("board0");
+      chartTemp.data.datasets[4].data = xySeries("board2");
+      chartTemp.data.datasets[5].data = xySeries("chip_max");
       chartPower.data.datasets[0].data = xySeries("power");
       chartPower.data.datasets[1].data = xySeries("power_limit");
       chartPower.data.datasets[2].data = xySeries("hashrate_th");
       chartPower.data.datasets[3].data = xySeries("freq");
+      chartPower.data.datasets[4].data = xyEffSeries();
 
       chartTemp.options.scales.x.min = view.start;
       chartTemp.options.scales.x.max = view.end;
@@ -5823,11 +6954,16 @@
         const h = document.getElementById("settings-miner-host");
         const p = document.getElementById("settings-miner-port");
         const pw = document.getElementById("settings-api-password");
+        const pn = document.getElementById("settings-project-name");
         if (h && c.miner_host) h.value = c.miner_host;
         if (p && c.miner_port != null) p.value = c.miner_port;
         if (pw && c.api_password != null && c.api_password !== "") pw.value = c.api_password;
+        if (pn) pn.value = c.project_name || "poolheat_WM";
         const pollEl = document.getElementById("settings-poll-interval");
         if (pollEl && c.poll_interval_sec != null) pollEl.value = c.poll_interval_sec;
+        // header brand
+        const brandH = document.querySelector(".brand h1");
+        if (brandH && c.project_name) brandH.textContent = c.project_name;
         if (dryRunEl && typeof c.dry_run === "boolean") {
           dryRunServer = !!c.dry_run;
           dryRunEl.checked = dryRunServer;
@@ -5854,6 +6990,9 @@
       const port = Number(document.getElementById("settings-miner-port")?.value);
       const password = document.getElementById("settings-api-password")?.value;
       let poll = Number(document.getElementById("settings-poll-interval")?.value);
+      const pnEl = document.getElementById("settings-project-name");
+      const projectName = String(pnEl && pnEl.value != null ? pnEl.value : "poolheat_WM")
+        .trim() || "poolheat_WM";
       if (!host) {
         toastError("Укажите IP / host майнера");
         return;
@@ -5876,21 +7015,37 @@
             miner_port: port,
             api_password: password != null ? password : undefined,
             poll_interval_sec: poll,
+            project_name: projectName,
           }),
         });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "save fail");
         const c = body.config || {};
+        // echo saved name back into field
+        if (pnEl && c.project_name) pnEl.value = c.project_name;
         const st = document.getElementById("miner-cfg-status");
         if (st) {
-          st.textContent = "сохранено · активный: " + (c.host || host + ":" + port) +
-            " · poll " + (c.poll_interval_sec ?? poll) + "s" +
+          st.textContent =
+            "сохранено · " +
+            (c.project_name || projectName) +
+            " · " +
+            (c.host || host + ":" + port) +
+            " · poll " +
+            (c.poll_interval_sec ?? poll) +
+            "s" +
             (c.config_path ? " · " + c.config_path : "");
         }
         const det = document.getElementById("src-detail");
         if (det) det.textContent = (c.host || host + ":" + port) + " · summary+status+devs";
+        const brandH = document.querySelector(".brand h1");
+        if (brandH) brandH.textContent = c.project_name || projectName;
         if (typeof restartLivePollTimer === "function") restartLivePollTimer();
-        toastSuccess("Майнер: " + (c.host || host + ":" + port) + " · poll " + (c.poll_interval_sec ?? poll) + "s");
+        toastSuccess(
+          "Сохранено: " +
+            (c.project_name || projectName) +
+            " · " +
+            (c.host || host + ":" + port)
+        );
         if (typeof fetchLive === "function") fetchLive(true);
       } catch (e) {
         toastError("Не сохранено: " + e.message);
@@ -5899,6 +7054,356 @@
 
     document.getElementById("btn-save-miner")?.addEventListener("click", () => {
       saveMinerConfig();
+    });
+
+    // ─── Telegram bot settings ─────────────────────────────────────────────
+    let tgChatHistory = []; // [{id, nick, username, ...}]
+
+    function parseTgChatIdsField() {
+      const raw = (document.getElementById("tg-chats")?.value || "").trim();
+      if (!raw) return [];
+      const out = [];
+      const seen = new Set();
+      raw.split(/[,;\s]+/).forEach((p) => {
+        const s = p.trim();
+        if (!s) return;
+        const n = Number(s);
+        const key = Number.isFinite(n) ? String(Math.trunc(n)) : s;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push(Number.isFinite(n) ? Math.trunc(n) : s);
+      });
+      return out;
+    }
+
+    function setTgChatIdsField(ids) {
+      const el = document.getElementById("tg-chats");
+      if (!el) return;
+      el.value = (ids || []).join(", ");
+    }
+
+    function addTgChatIdToField(id, nick) {
+      const ids = parseTgChatIdsField();
+      const n = Number(id);
+      const val = Number.isFinite(n) ? Math.trunc(n) : String(id);
+      const key = String(val);
+      if (ids.some((x) => String(x) === key)) {
+        toastInfo("уже в списке: " + key, 1600);
+        return;
+      }
+      ids.push(val);
+      setTgChatIdsField(ids);
+      toastSuccess(
+        "добавлен " + key + (nick ? " · " + nick : ""),
+        1800
+      );
+      paintTgHistList();
+    }
+
+    function paintTgHistList() {
+      const list = document.getElementById("tg-hist-list");
+      if (!list) return;
+      const selected = new Set(parseTgChatIdsField().map(String));
+      const hist = Array.isArray(tgChatHistory) ? tgChatHistory : [];
+      if (!hist.length) {
+        list.innerHTML =
+          '<div class="tg-hist-empty">пока пусто — напишите боту /start</div>';
+        return;
+      }
+      list.innerHTML = "";
+      hist.forEach((h) => {
+        const id = h && h.id != null ? h.id : null;
+        if (id == null) return;
+        const nick = h.nick || (h.username ? "@" + h.username : String(id));
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = selected.has(String(id)) ? "is-in" : "";
+        b.innerHTML =
+          '<span class="tg-hist-id">' +
+          String(id).replace(/</g, "&lt;") +
+          "</span>" +
+          '<span class="tg-hist-nick" title="' +
+          String(nick).replace(/"/g, "&quot;") +
+          '">' +
+          String(nick).replace(/</g, "&lt;") +
+          "</span>";
+        b.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          addTgChatIdToField(id, nick);
+        });
+        list.appendChild(b);
+      });
+    }
+
+    function toggleTgHistPop(force) {
+      const pop = document.getElementById("tg-hist-pop");
+      const link = document.getElementById("tg-hist-link");
+      if (!pop) return;
+      const open = force === true ? true : force === false ? false : pop.hidden;
+      pop.hidden = !open;
+      if (link) link.textContent = open ? "история ▴" : "история ▾";
+      if (open) paintTgHistList();
+    }
+
+    function paintTelegramStatus(cfg) {
+      const st = document.getElementById("tg-status");
+      if (!st) return;
+      const s = (cfg && cfg.status) || {};
+      const esc = (t) =>
+        String(t == null ? "" : t)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      const parts = [];
+      parts.push(cfg && cfg.enabled ? "вкл" : "выкл");
+      if (s.me) {
+        const user = String(s.me).replace(/^@/, "");
+        // only allow simple telegram usernames in href
+        const safe = /^[A-Za-z0-9_]{3,64}$/.test(user) ? user : "";
+        if (safe) {
+          parts.push(
+            '<a href="https://t.me/' +
+              esc(safe) +
+              '" target="_blank" rel="noopener noreferrer">@' +
+              esc(safe) +
+              "</a>"
+          );
+        } else {
+          parts.push(esc("@" + user));
+        }
+      }
+      if (s.ok) parts.push("poll ok");
+      else if (s.last_error) parts.push("err: " + s.last_error);
+      if (s.last_update_ts) {
+        parts.push("upd " + esc(String(s.last_update_ts).replace("T", " ")));
+      }
+      if (s.polls != null) parts.push("polls " + esc(s.polls));
+      const ids = (cfg && cfg.chat_ids) || [];
+      parts.push("chats " + ids.length);
+      st.innerHTML = "telegram: " + parts.join(" · ");
+
+      // per-chat prefs list with delete
+      paintTgPerChatList(cfg);
+      // history for picker
+      tgChatHistory = Array.isArray(cfg && cfg.chat_history) ? cfg.chat_history : [];
+      if (!document.getElementById("tg-hist-pop")?.hidden) paintTgHistList();
+    }
+
+    function paintTgPerChatList(cfg) {
+      const list = document.getElementById("tg-perchat-list");
+      const empty = document.getElementById("tg-perchat-empty");
+      if (!list) return;
+      const chats = (cfg && cfg.chats) || {};
+      const hist = Array.isArray(cfg && cfg.chat_history) ? cfg.chat_history : [];
+      const nickById = {};
+      hist.forEach((h) => {
+        if (h && h.id != null) nickById[String(h.id)] = h.nick || h.username || "";
+      });
+      // also show allowlisted ids even if prefs missing
+      const idSet = new Set([
+        ...Object.keys(chats),
+        ...((cfg && cfg.chat_ids) || []).map(String),
+      ]);
+      const keys = Array.from(idSet).sort();
+      list.innerHTML = "";
+      if (!keys.length) {
+        if (empty) {
+          empty.hidden = false;
+          empty.textContent =
+            "chats: — · после /start у каждого chat свой профайл (/profile)";
+        }
+        return;
+      }
+      if (empty) empty.hidden = true;
+      const fl = (v) => (v ? "on" : "off");
+      keys.forEach((id) => {
+        const p = chats[id] || {};
+        const nick = nickById[id] || "";
+        const row = document.createElement("div");
+        row.className = "tg-perchat-row";
+        const meta =
+          '<span class="tg-perchat-id">' +
+          String(id).replace(/</g, "&lt;") +
+          "</span>" +
+          (nick
+            ? ' <span style="color:var(--dim)">' +
+              String(nick).replace(/</g, "&lt;") +
+              "</span>"
+            : "") +
+          " · " +
+          (p.lang || "ru") +
+          " · zone=" +
+          fl(p.notify_zone !== false) +
+          " safety=" +
+          fl(p.notify_safety !== false) +
+          " offline=" +
+          fl(p.notify_offline !== false) +
+          " policy=" +
+          fl(p.notify_policy !== false);
+        row.innerHTML =
+          '<button type="button" class="tg-perchat-del" title="Удалить из allowlist и сбросить prefs" aria-label="Удалить">×</button>' +
+          '<span class="tg-perchat-meta">' +
+          meta +
+          "</span>";
+        const btn = row.querySelector(".tg-perchat-del");
+        btn?.addEventListener("click", () => {
+          void removeTgChat(id, btn);
+        });
+        list.appendChild(row);
+      });
+    }
+
+    async function removeTgChat(chatId, btn) {
+      const id = String(chatId);
+      if (
+        !confirm(
+          "Удалить chat " +
+            id +
+            " из allowlist и сбросить его настройки?\n(история для подстановки останется)"
+        )
+      ) {
+        return;
+      }
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch("/api/telegram/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            remove_chat_id: id,
+            remove_chat_history: false,
+          }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "remove fail");
+        // sync Chat IDs field
+        const ids = (body.config && body.config.chat_ids) || [];
+        const ch = document.getElementById("tg-chats");
+        if (ch) ch.value = ids.join(", ");
+        paintTelegramStatus(body.config || {});
+        toastSuccess("chat " + id + " удалён");
+      } catch (e) {
+        toastError("Не удалось удалить: " + e.message);
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function loadTelegramConfig() {
+      try {
+        const res = await fetch("/api/telegram/config", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "tg config fail");
+        const c = body.config || {};
+        const en = document.getElementById("tg-enabled");
+        if (en) en.checked = !!c.enabled;
+        const tok = document.getElementById("tg-token");
+        if (tok) {
+          // show placeholder if set; leave empty so user re-enters only when changing
+          tok.placeholder = c.bot_token_set
+            ? String(c.bot_token || "token set · введите новый чтобы сменить")
+            : "123456:AA…";
+          if (!tok.dataset.touched) tok.value = "";
+        }
+        const ch = document.getElementById("tg-chats");
+        // don't overwrite while user is editing
+        if (ch && document.activeElement !== ch) {
+          ch.value = (c.chat_ids || []).join(", ");
+        }
+        const setCk = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.checked = v !== false;
+        };
+        setCk("tg-notify-policy", c.notify_policy);
+        setCk("tg-notify-zone", c.notify_zone);
+        setCk("tg-notify-safety", c.notify_safety);
+        setCk("tg-notify-offline", c.notify_offline);
+        setCk("tg-commands", c.commands_en);
+        const stEl = document.getElementById("tg-offline-streak");
+        if (stEl && c.notify_offline_streak != null && document.activeElement !== stEl) {
+          stEl.value = Math.max(1, Math.min(30, Number(c.notify_offline_streak) || 3));
+        }
+        paintTelegramStatus(c);
+        return c;
+      } catch (e) {
+        const st = document.getElementById("tg-status");
+        if (st) st.textContent = "telegram: " + e.message;
+        return null;
+      }
+    }
+
+    async function saveTelegramConfig() {
+      const tokenEl = document.getElementById("tg-token");
+      const token = (tokenEl && tokenEl.value || "").trim();
+      const chatsRaw = (document.getElementById("tg-chats")?.value || "").trim();
+      const payload = {
+        enabled: !!(document.getElementById("tg-enabled")?.checked),
+        chat_ids: chatsRaw,
+        notify_policy: !!(document.getElementById("tg-notify-policy")?.checked),
+        notify_zone: !!(document.getElementById("tg-notify-zone")?.checked),
+        notify_safety: !!(document.getElementById("tg-notify-safety")?.checked),
+        notify_offline: !!(document.getElementById("tg-notify-offline")?.checked),
+        notify_offline_streak: (() => {
+          const n = Number(document.getElementById("tg-offline-streak")?.value);
+          return Number.isFinite(n) ? Math.max(1, Math.min(30, Math.round(n))) : 3;
+        })(),
+        commands_en: !!(document.getElementById("tg-commands")?.checked),
+      };
+      if (token) payload.bot_token = token;
+      try {
+        const res = await fetch("/api/telegram/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        if (tokenEl) {
+          tokenEl.value = "";
+          tokenEl.dataset.touched = "";
+        }
+        paintTelegramStatus(body.config || {});
+        const me = body.me && (body.me.username || body.me.id);
+        toastSuccess("Telegram сохранён" + (me ? " · @" + me : ""));
+        await loadTelegramConfig();
+      } catch (e) {
+        toastError("Telegram: " + e.message);
+      }
+    }
+
+    document.getElementById("tg-token")?.addEventListener("input", () => {
+      const el = document.getElementById("tg-token");
+      if (el) el.dataset.touched = "1";
+    });
+    document.getElementById("tg-hist-link")?.addEventListener("click", (e) => {
+      e.preventDefault();
+      toggleTgHistPop();
+    });
+    document.getElementById("tg-chats")?.addEventListener("input", () => {
+      if (!document.getElementById("tg-hist-pop")?.hidden) paintTgHistList();
+    });
+    document.addEventListener("click", (e) => {
+      const pop = document.getElementById("tg-hist-pop");
+      const link = document.getElementById("tg-hist-link");
+      const field = document.getElementById("tg-chats");
+      if (!pop || pop.hidden) return;
+      const t = e.target;
+      if (pop.contains(t) || link === t || link?.contains(t) || field === t) return;
+      toggleTgHistPop(false);
+    });
+    document.getElementById("btn-tg-save")?.addEventListener("click", () => {
+      void saveTelegramConfig();
+    });
+    document.getElementById("btn-tg-test")?.addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/telegram/test", { method: "POST" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "test fail");
+        toastSuccess("Telegram тест · sent " + (body.sent || 0));
+        await loadTelegramConfig();
+      } catch (e) {
+        toastError("Telegram тест: " + e.message);
+      }
     });
     document.getElementById("btn-test-conn")?.addEventListener("click", async () => {
       const host = (document.getElementById("settings-miner-host")?.value || "").trim();
@@ -5997,28 +7502,35 @@
       }
       if (timerEl) timerEl.textContent = active ? fmtOverrideClock(rem) : "—:—";
 
+      // single button: Override 30m ↔ Отключить Override
       if (btnOn) {
+        btnOn.disabled = false;
         if (active) {
-          btnOn.disabled = true;
-          btnOn.textContent = "Override · " + fmtOverrideClock(rem);
-          btnOn.classList.add("primary");
-        } else {
-          btnOn.disabled = false;
-          btnOn.textContent = "Override 30m";
+          btnOn.textContent = "Отключить Override · " + fmtOverrideClock(rem);
+          btnOn.classList.add("danger");
           btnOn.classList.remove("primary");
+          btnOn.title = "Снять Override · вернуть auto-зоны";
+        } else {
+          btnOn.textContent = "Override 30m";
+          btnOn.classList.remove("danger", "primary");
+          btnOn.title = "Пауза auto-зон на 30 мин";
         }
       }
-      // show clear buttons only while active
-      [btnClear, btnClear2].forEach((b) => {
-        if (!b) return;
+      // banner clear stays; remove duplicate clear-2 if present
+      if (btnClear2) {
+        btnClear2.hidden = true;
+        btnClear2.setAttribute("hidden", "");
+      }
+      if (btnClear) {
+        // banner button always available while banner shown
         if (active) {
-          b.hidden = false;
-          b.removeAttribute("hidden");
+          btnClear.hidden = false;
+          btnClear.removeAttribute("hidden");
         } else {
-          b.hidden = true;
-          b.setAttribute("hidden", "");
+          btnClear.hidden = true;
+          btnClear.setAttribute("hidden", "");
         }
-      });
+      }
 
       if (layer) {
         layer.classList.toggle("on", active);
@@ -6049,7 +7561,7 @@
           if (tEl) tEl.textContent = fmtOverrideClock(left);
           const bOn = document.getElementById("btn-override");
           if (bOn && overrideState.active) {
-            bOn.textContent = "Override · " + fmtOverrideClock(left);
+            bOn.textContent = "Отключить Override · " + fmtOverrideClock(left);
           }
           const lay = document.querySelector('.layer[data-layer="override"] .tag');
           if (lay && overrideState.active) lay.textContent = fmtOverrideClock(left);
@@ -6079,13 +7591,21 @@
     }
 
     document.getElementById("btn-override")?.addEventListener("click", async () => {
-      if (overrideState.active) return; // use clear button
+      if (overrideState.active) {
+        const ok = window.confirm(
+          "Отключить Override и вернуть auto-зоны?"
+        );
+        if (!ok) return;
+        await setOverride(false);
+        return;
+      }
       const ok = window.confirm(
         "Включить Override на 30 минут?\n\n" +
-          "· Auto-зоны Z0–Z2 — пауза\n" +
+          "· Auto-зоны — пауза\n" +
           "· Safety Critical (chip) — работает\n" +
+          "· Force Stop — выше Override\n" +
           "· Ручные кнопки режима — работают\n\n" +
-          "Отключить можно кнопкой «Отключить Override»."
+          "Повторный клик «Отключить Override» — снять."
       );
       if (!ok) return;
       await setOverride(30);
@@ -6094,16 +7614,13 @@
     async function clearOverrideConfirm() {
       if (!overrideState.active) return;
       const ok = window.confirm(
-        "Отключить Override и вернуть auto-зоны Z0–Z2?"
+        "Отключить Override и вернуть auto-зоны?"
       );
       if (!ok) return;
       await setOverride(false);
     }
     document
       .getElementById("btn-override-clear")
-      ?.addEventListener("click", () => void clearOverrideConfirm());
-    document
-      .getElementById("btn-override-clear-2")
       ?.addEventListener("click", () => void clearOverrideConfirm());
 
     // sync override from server (status + remaining)
@@ -6116,9 +7633,165 @@
     }
     void refreshOverrideFromServer();
     setInterval(() => void refreshOverrideFromServer(), 10000);
-    document.getElementById("btn-force-sleep")?.addEventListener("click", () => {
-      toastError("Force sleep — используйте Mining Control → Suspend или Safety on_crit");
+    /**
+     * Force Stop — sticky emergency Suspend (above zones & Dry Run).
+     * ON → miner always stopped; OFF (Continue) → rules resume.
+     */
+    let forceStopServer = false;
+    function syncForceSuspendBtn() {
+      const btn = document.getElementById("btn-force-suspend");
+      if (!btn) return;
+      if (forceStopServer) {
+        btn.textContent = "Continue Work";
+        btn.classList.remove("danger");
+        btn.classList.add("primary");
+        btn.dataset.forceStop = "1";
+        btn.title = "Force Stop OFF → снять экстренную остановку";
+      } else {
+        btn.textContent = "Force Stop";
+        btn.classList.add("danger");
+        btn.classList.remove("primary");
+        btn.dataset.forceStop = "0";
+        btn.title = "Force Stop ON → sticky Suspend (зоны/Dry Run игнор)";
+      }
+    }
+
+    document.getElementById("btn-reboot-asic")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-reboot-asic");
+      if (
+        !confirm(
+          "Reboot ASIC — полный reboot устройства?\n\n" +
+            "ASIC уйдёт offline на несколько минут.\n" +
+            "После загрузки — upfreq / settle."
+        )
+      )
+        return;
+      btn && (btn.disabled = true);
+      try {
+        const res = await fetch("/api/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "reboot", value: "asic" }),
+        });
+        const body = await res.json();
+        if (!res.ok || (body && body.ok === false)) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        toastWarn("Reboot ASIC отправлен · offline…", 5000);
+        appendActionLog("warn", "REBOOT ASIC sent");
+      } catch (e) {
+        toastError("Reboot ASIC: " + e.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
+
+    document.getElementById("btn-restart-miner")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-restart-miner");
+      if (
+        !confirm(
+          "Restart miner — перезапуск btminer?\n\n" +
+            "Полный reboot ASIC не делается.\n" +
+            "Hashrate восстановится после upfreq."
+        )
+      )
+        return;
+      btn && (btn.disabled = true);
+      try {
+        const res = await fetch("/api/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "restart_miner", value: "btminer" }),
+        });
+        const body = await res.json();
+        if (!res.ok || (body && body.ok === false)) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        toastSuccess("Restart miner отправлен · upfreq…", 4500);
+        appendActionLog("ok", "RESTART btminer sent");
+        setTimeout(() => fetchLive(false), 2000);
+      } catch (e) {
+        toastError("Restart miner: " + e.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    document.getElementById("btn-force-suspend")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-force-suspend");
+      const turnOn = !forceStopServer;
+      if (turnOn) {
+        if (
+          !confirm(
+            "Force Stop — экстренная остановка.\nМайнер будет в Suspend, зоны и Dry Run игнорируются.\nПродолжить?"
+          )
+        )
+          return;
+      } else {
+        if (
+          !confirm(
+            "Continue Work — снять Force Stop.\nСнова действуют зоны / Dry Run.\nПродолжить?"
+          )
+        )
+          return;
+      }
+      btn && (btn.disabled = true);
+      try {
+        const res = await fetch("/api/policy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force_stop: turnOn }),
+        });
+        const body = await res.json();
+        if (!res.ok || (body && body.ok === false)) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        forceStopServer = !!(body && body.force_stop);
+        syncForceSuspendBtn();
+        if (forceStopServer) {
+          toastWarn("Force Stop ВКЛ · Suspend locked", 4500);
+          const wsel = document.getElementById("set-work");
+          if (wsel) wsel.value = "sleep";
+        } else {
+          toastSuccess("Force Stop ВЫКЛ · Continue Work", 4000);
+        }
+        setTimeout(() => fetchLive(false), 600);
+      } catch (e) {
+        toastError("Force Stop: " + e.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+    // pick up force_stop from policy polls
+    (function hookForceStopFromPolicy() {
+      const prev = typeof updateOverrideUI === "function" ? updateOverrideUI : null;
+      // also read on live policy field when available
+      const _origFetchLive = typeof fetchLive === "function" ? fetchLive : null;
+      void (async () => {
+        try {
+          const res = await fetch("/api/policy", { cache: "no-store" });
+          const pol = await res.json();
+          if (pol && typeof pol.force_stop === "boolean") {
+            forceStopServer = !!pol.force_stop;
+            syncForceSuspendBtn();
+          }
+        } catch (_) { /* ignore */ }
+      })();
+      setInterval(async () => {
+        try {
+          const res = await fetch("/api/policy", { cache: "no-store" });
+          const pol = await res.json();
+          if (pol && typeof pol.force_stop === "boolean") {
+            const n = !!pol.force_stop;
+            if (n !== forceStopServer) {
+              forceStopServer = n;
+              syncForceSuspendBtn();
+            }
+          }
+        } catch (_) { /* ignore */ }
+      }, 10000);
+    })();
+    syncForceSuspendBtn();
     document.getElementById("btn-export-log")?.addEventListener("click", () => {
       toastSuccess("Экспорт логов JSONL (demo)");
     });
@@ -6252,7 +7925,7 @@
       setTxt("info-miner-fw", m.fw_ver || "—");
       setTxt("info-miner-api", m.api_ver ? "api " + m.api_ver : "api —");
       setTxt("info-miner-host", m.host || "—");
-      setTxt("info-miner-mac", m.mac ? "mac " + m.mac : "mac —");
+      setTxt("info-miner-mac", m.mac ? "MAC: " + m.mac : "MAC: —");
       setTxt(
         "info-miner-sn",
         m.minersn || (m.ok ? "не задан" : m.miner_type || m.mac ? "не задан" : "—")
@@ -6465,14 +8138,17 @@
     function fmtUptime(sec) {
       if (sec == null || !Number.isFinite(Number(sec))) return "—";
       let s = Math.floor(Number(sec));
+      if (s < 0) return "—";
       const d = Math.floor(s / 86400);
       s %= 86400;
       const h = Math.floor(s / 3600);
       s %= 3600;
       const m = Math.floor(s / 60);
+      // e.g. 1д 8ч · 5ч 12м · 42м
       if (d > 0) return d + "д " + h + "ч";
       if (h > 0) return h + "ч " + m + "м";
-      return m + "м";
+      if (m > 0) return m + "м";
+      return s + "с";
     }
     function setTxt(id, v) {
       const el = document.getElementById(id);
@@ -7042,13 +8718,17 @@
       }
     }
 
+    // weather: checkbox + interval edit local until «Сохранить»
+    let wxEnabledDirty = false;
+
     function renderWeatherSettings(cfg, w) {
       weatherCfg = cfg || weatherCfg;
       const city = document.getElementById("wx-cfg-city");
       const meta = document.getElementById("wx-cfg-meta");
       const en = document.getElementById("wx-enabled");
       const st = document.getElementById("wx-status");
-      if (en && cfg) en.checked = !!cfg.enabled;
+      // don't overwrite local unsaved checkbox / interval
+      if (en && cfg && !wxEnabledDirty) en.checked = !!cfg.enabled;
       const intEl = document.getElementById("wx-interval-min");
       if (intEl && cfg && cfg.refresh_interval_sec != null) {
         const mins = Math.max(1, Math.round(Number(cfg.refresh_interval_sec) / 60));
@@ -7183,6 +8863,7 @@
         weatherCfg = body.config;
         weatherData = body.weather;
         window.__wxIntervalDirty = false;
+        wxEnabledDirty = false;
         renderWeatherSettings(body.config, body.weather);
         renderWeatherDash(body.weather);
         scheduleWeatherRefresh();
@@ -7265,13 +8946,18 @@
         weatherCfg = body.config;
         weatherData = body.weather || weatherData;
         window.__wxIntervalDirty = false;
+        wxEnabledDirty = false;
         renderWeatherSettings(body.config, body.weather || weatherData);
         if (body.weather) renderWeatherDash(body.weather);
+        else if (body.config && body.config.enabled === false) {
+          renderWeatherDash({ enabled: false, city: body.config.city });
+        }
         scheduleWeatherRefresh();
         const mins = Math.round((body.config.refresh_interval_sec || 600) / 60);
-        toastSuccess("Интервал погоды: " + mins + " мин");
+        const onOff = body.config.enabled ? "показ вкл" : "показ выкл";
+        toastSuccess("Погода сохранена · " + onOff + " · интервал " + mins + " мин");
       } catch (e) {
-        toastError("Интервал погоды: " + e.message);
+        toastError("Погода: " + e.message);
       }
     });
     document.getElementById("wx-search")?.addEventListener("keydown", (e) => {
@@ -7286,14 +8972,15 @@
       if (w && (w.ok || w.stale)) toastSuccess("Погода: " + fmtWxTemp(w.temp_c) + " °C · " + (w.city || ""));
       else toastError("Погода: " + ((w && w.error) || "ошибка"));
     });
-    document.getElementById("wx-enabled")?.addEventListener("change", async () => {
-      if (!weatherCfg) {
-        await loadWeatherConfig();
+    // галка только локально — на сервер уходит по «Сохранить»
+    document.getElementById("wx-enabled")?.addEventListener("change", () => {
+      wxEnabledDirty = true;
+      const st = document.getElementById("wx-status");
+      if (st) {
+        const on = document.getElementById("wx-enabled").checked;
+        st.textContent =
+          (on ? "показ вкл" : "показ выкл") + " · не сохранено — нажмите «Сохранить»";
       }
-      if (!weatherCfg) return;
-      await saveWeatherCity(weatherCfg, {
-        enabled: document.getElementById("wx-enabled").checked,
-      });
     });
 
     // ─── Pool geometry / circulation ───────────────────────────────────────
@@ -7507,7 +9194,692 @@
 
     initTooltips();
     loadMinerConfig();
+    void loadTelegramConfig();
+    setInterval(() => {
+      const tab = document.querySelector("nav.tabs button.active");
+      if (tab && tab.dataset.tab === "settings") void loadTelegramConfig();
+    }, 15000);
     loadZoneMapConfig();
+    loadZonePresets();
+
+    /* ── Filtration · multi-backend ───────────────────────────────── */
+    const FILT_HINTS = {
+      tapo: "LAN · email/password аккаунта Tapo · IP P100/P110",
+      ewelink: "LAN DIY mode · IP + deviceid (облако eWeLink — Webhook/HA)",
+      webhook: "URL on/off · IFTTT, n8n, Node-RED, eWeLink scene, …",
+      shelly: "LAN HTTP · Gen1 /relay или Gen2 /rpc",
+      homeassistant: "REST · long-lived token · switch.entity",
+    };
+
+    function filtBackend() {
+      return (document.getElementById("filt-backend")?.value || "tapo").trim();
+    }
+
+    function syncFiltBackendPanels() {
+      const be = filtBackend();
+      document.querySelectorAll(".filt-be").forEach((el) => {
+        const match = el.getAttribute("data-be") === be;
+        el.style.display = match ? "block" : "none";
+        el.hidden = !match;
+      });
+      const hint = document.getElementById("filt-backend-hint");
+      if (hint) hint.textContent = FILT_HINTS[be] || "";
+    }
+
+    async function loadFiltrationConfig() {
+      const st = document.getElementById("filt-status");
+      try {
+        const res = await fetch("/api/filtration", { cache: "no-store" });
+        const body = await res.json();
+        if (body.ok === false) throw new Error(body.error || "fail");
+        const setV = (id, v) => {
+          const el = document.getElementById(id);
+          if (el && v != null) el.value = v;
+        };
+        const setC = (id, v) => {
+          const el = document.getElementById(id);
+          if (el) el.checked = !!v;
+        };
+        setC("filt-enabled", body.enabled);
+        const beEl = document.getElementById("filt-backend");
+        if (beEl && body.backend) beEl.value = body.backend;
+        // tapo / common
+        setV("filt-ip", body.ip || "");
+        setV("filt-email", body.email || "");
+        // ewelink — reuse ip field storage: server has single "ip"
+        setV("filt-ewelink-ip", body.ip || "");
+        setV("filt-device-id", body.device_id || "");
+        setV("filt-ewelink-port", body.ewelink_port != null ? body.ewelink_port : 8081);
+        // webhook
+        setV("filt-wh-on", body.webhook_on_url || "");
+        setV("filt-wh-off", body.webhook_off_url || "");
+        setV("filt-wh-method", body.webhook_method || "GET");
+        setV("filt-wh-body-on", body.webhook_body_on || "");
+        setV("filt-wh-body-off", body.webhook_body_off || "");
+        setV("filt-wh-headers", body.webhook_headers || "");
+        // shelly
+        setV("filt-shelly-ip", body.ip || "");
+        setV("filt-shelly-ch", body.shelly_channel != null ? body.shelly_channel : 0);
+        setV("filt-shelly-gen", body.shelly_gen || "auto");
+        // HA
+        setV("filt-ha-url", body.ha_url || "");
+        setV("filt-ha-entity", body.ha_entity_id || "");
+        setC("filt-auto-mining", body.auto_on_mining !== false);
+        setC("filt-auto-suspend", body.auto_off_suspend);
+        syncFiltBackendPanels();
+        syncFiltrationStatusUI(body);
+        return body;
+      } catch (e) {
+        if (st) st.textContent = "ошибка: " + e.message;
+        return null;
+      }
+    }
+
+    function syncFiltrationStatusUI(body) {
+      const st = document.getElementById("filt-status");
+      if (!st || !body) return;
+      const on =
+        body.on === true ? "ВКЛ" : body.on === false ? "ВЫКЛ" : "—";
+      const mine =
+        body.mining === true
+          ? "майнинг"
+          : body.mining === false
+            ? "suspend"
+            : "ASIC ?";
+      let t =
+        (body.backend || "?") + " · насос: " + on + " · " + mine;
+      if (body.last_action) t += " · " + body.last_action;
+      if (body.last_error) t += " · err: " + String(body.last_error).slice(0, 60);
+      st.textContent = t;
+      const offBtn = document.getElementById("btn-filt-off");
+      if (offBtn) {
+        offBtn.disabled = body.can_turn_off === false;
+        offBtn.title =
+          body.can_turn_off === false
+            ? "Нельзя выключить при майнинге (auto ON)"
+            : "Выключить насос";
+      }
+    }
+
+    function collectFiltrationPayload() {
+      const be = filtBackend();
+      const payload = {
+        enabled: !!document.getElementById("filt-enabled")?.checked,
+        backend: be,
+        auto_on_mining: !!document.getElementById("filt-auto-mining")?.checked,
+        auto_off_suspend: !!document.getElementById("filt-auto-suspend")?.checked,
+      };
+      if (be === "tapo") {
+        payload.ip = (document.getElementById("filt-ip")?.value || "").trim();
+        payload.email = (document.getElementById("filt-email")?.value || "").trim();
+        const pw = document.getElementById("filt-password")?.value;
+        if (pw) payload.password = pw;
+      } else if (be === "ewelink") {
+        payload.ip = (document.getElementById("filt-ewelink-ip")?.value || "").trim();
+        payload.device_id = (document.getElementById("filt-device-id")?.value || "").trim();
+        payload.ewelink_port = Number(
+          document.getElementById("filt-ewelink-port")?.value || 8081
+        );
+      } else if (be === "webhook") {
+        payload.webhook_on_url = (
+          document.getElementById("filt-wh-on")?.value || ""
+        ).trim();
+        payload.webhook_off_url = (
+          document.getElementById("filt-wh-off")?.value || ""
+        ).trim();
+        payload.webhook_method =
+          document.getElementById("filt-wh-method")?.value || "GET";
+        payload.webhook_body_on =
+          document.getElementById("filt-wh-body-on")?.value || "";
+        payload.webhook_body_off =
+          document.getElementById("filt-wh-body-off")?.value || "";
+        payload.webhook_headers =
+          document.getElementById("filt-wh-headers")?.value || "";
+      } else if (be === "shelly") {
+        payload.ip = (document.getElementById("filt-shelly-ip")?.value || "").trim();
+        payload.shelly_channel = Number(
+          document.getElementById("filt-shelly-ch")?.value || 0
+        );
+        payload.shelly_gen =
+          document.getElementById("filt-shelly-gen")?.value || "auto";
+      } else if (be === "homeassistant") {
+        payload.ha_url = (document.getElementById("filt-ha-url")?.value || "").trim();
+        payload.ha_entity_id = (
+          document.getElementById("filt-ha-entity")?.value || ""
+        ).trim();
+        const tok = document.getElementById("filt-ha-token")?.value;
+        if (tok) payload.ha_token = tok;
+      }
+      return payload;
+    }
+
+    async function saveFiltrationConfig() {
+      const st = document.getElementById("filt-status");
+      try {
+        const payload = collectFiltrationPayload();
+        const res = await fetch("/api/filtration/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "save fail");
+        const pw = document.getElementById("filt-password");
+        if (pw) pw.value = "";
+        const tok = document.getElementById("filt-ha-token");
+        if (tok) tok.value = "";
+        toastSuccess("Фильтрация · настройки сохранены");
+        await loadFiltrationConfig();
+      } catch (e) {
+        toastError("Фильтрация: " + e.message);
+        if (st) st.textContent = "save err: " + e.message;
+      }
+    }
+
+    async function filtrationTest() {
+      const st = document.getElementById("filt-status");
+      if (st) st.textContent = "проверка…";
+      try {
+        // save first so test uses form values? better require save
+        await saveFiltrationConfig();
+        const res = await fetch("/api/filtration/test", { method: "POST" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "test fail");
+        toastSuccess("Tapo OK · насос " + (body.on ? "ВКЛ" : "ВЫКЛ"));
+        await loadFiltrationConfig();
+      } catch (e) {
+        toastError("Tapo: " + e.message);
+        if (st) st.textContent = "test err: " + e.message;
+      }
+    }
+
+    async function filtrationSet(on) {
+      try {
+        const res = await fetch("/api/filtration/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on: !!on, source: "manual" }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "set fail");
+        toastSuccess(on ? "Насос ВКЛ" : "Насос ВЫКЛ");
+        await loadFiltrationConfig();
+      } catch (e) {
+        toastError("Насос: " + e.message);
+      }
+    }
+
+    document
+      .getElementById("btn-filt-save")
+      ?.addEventListener("click", () => void saveFiltrationConfig());
+    document
+      .getElementById("btn-filt-test")
+      ?.addEventListener("click", () => void filtrationTest());
+    document
+      .getElementById("btn-filt-on")
+      ?.addEventListener("click", () => void filtrationSet(true));
+    document
+      .getElementById("btn-filt-off")
+      ?.addEventListener("click", () => void filtrationSet(false));
+    document
+      .getElementById("filt-backend")
+      ?.addEventListener("change", syncFiltBackendPanels);
+    // show correct fields immediately (don't wait for API)
+    syncFiltBackendPanels();
+    loadFiltrationConfig();
+    setInterval(() => {
+      if (document.getElementById("view-settings")?.classList.contains("active") ||
+          document.querySelector('nav.tabs button[data-tab="settings"].active')) {
+        void loadFiltrationConfig();
+      }
+    }, 15000);
+
+    /* ── Chip map (LuCI scrape) ───────────────────────────────────── */
+    let chipmapData = null;
+    let chipmapTimer = null;
+
+    /** Discrete bands for hash/freq; temp = 10-step mono gradient min→max. */
+    const CHIP_COL = {
+      green: "hsl(130 65% 36%)",
+      yellow: "hsl(48 85% 42%)",
+      red: "hsl(4 78% 48%)",
+      empty: "var(--border2)",
+    };
+    const CHIP_TEMP_STEPS = 10;
+
+    /**
+     * Hue family by absolute range (where the chip cloud sits):
+     *   max ≤ 70  → green  (e.g. 43…63 °C)
+     *   max ≤ 99  → yellow
+     *   max ≥ 100 → red
+     * Within that, 10 steps min→max:
+     *   cold (min) = dark, cooler hue (green→blue / deep amber / deep red)
+     *   warm (max) = light, warmer hue (lime→yellow / light yellow / light coral)
+     */
+    function chipTempPalette(tmax) {
+      if (tmax == null || !Number.isFinite(Number(tmax))) {
+        return { h0: 150, h1: 95, s0: 55, s1: 70 }; // green→lime
+      }
+      const m = Number(tmax);
+      if (m >= 100) {
+        // red family: deep red → light orange-red
+        return { h0: 0, h1: 18, s0: 72, s1: 85 };
+      }
+      if (m >= 71) {
+        // yellow family: dark amber → light yellow
+        return { h0: 38, h1: 52, s0: 75, s1: 88 };
+      }
+      // green family: dark blue-green → salad/lime (towards yellow)
+      return { h0: 155, h1: 92, s0: 52, s1: 72 };
+    }
+
+    function chipTempColor(value, vmin, vmax) {
+      if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
+      const v = Number(value);
+      const lo = Number(vmin);
+      const hi = Number(vmax);
+      let t = 0.5;
+      if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
+        t = (v - lo) / (hi - lo);
+      }
+      t = Math.max(0, Math.min(1, t));
+      // quantize to 10 steps (0..9)
+      const step = Math.min(
+        CHIP_TEMP_STEPS - 1,
+        Math.floor(t * CHIP_TEMP_STEPS + 1e-9)
+      );
+      const tq = step / (CHIP_TEMP_STEPS - 1); // 0 … 1  (0=cold min, 1=warm max)
+      const pal = chipTempPalette(hi);
+      const h = pal.h0 + (pal.h1 - pal.h0) * tq;
+      const s = pal.s0 + (pal.s1 - pal.s0) * tq;
+      // dark (cold) → light (warm)
+      const l = 22 + tq * 48; // 22% → 70%
+      return (
+        "hsl(" +
+        h.toFixed(0) +
+        " " +
+        s.toFixed(0) +
+        "% " +
+        l.toFixed(0) +
+        "%)"
+      );
+    }
+
+    /**
+     * Hash % / freq: min→max gradient, 10 steps.
+     * slow (min) = dark red · mid = yellow · fast (max) = light lime-green
+     */
+    function chipPerfColor(value, vmin, vmax) {
+      if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
+      const v = Number(value);
+      const lo = Number(vmin);
+      const hi = Number(vmax);
+      let t = 0.5;
+      if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
+        t = (v - lo) / (hi - lo);
+      }
+      t = Math.max(0, Math.min(1, t));
+      const step = Math.min(
+        CHIP_TEMP_STEPS - 1,
+        Math.floor(t * CHIP_TEMP_STEPS + 1e-9)
+      );
+      const tq = step / (CHIP_TEMP_STEPS - 1); // 0 = slow, 1 = fast
+      // hue: red (0) → yellow (55) → green/lime (125)
+      const h = 0 + tq * 125;
+      const s = 78 - tq * 8; // 78 → 70
+      // dark (slow) → lighter (fast)
+      const l = 28 + tq * 36; // 28% → 64%
+      return (
+        "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)"
+      );
+    }
+
+    function chipColor(metric, value, vmin, vmax) {
+      if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
+      if (metric === "temp") return chipTempColor(value, vmin, vmax);
+      // nonce ≈ chip hash work; freq separate
+      if (metric === "nonce" || metric === "freq")
+        return chipPerfColor(value, vmin, vmax);
+      return CHIP_COL.empty;
+    }
+
+    /** Metric value for one chip (hash map uses nonce). */
+    function chipmapChipValue(c, metric) {
+      if (!c) return null;
+      if (metric === "temp") return c.temp;
+      if (metric === "nonce") return c.nonce;
+      if (metric === "freq") return c.freq;
+      return null;
+    }
+
+    function chipmapMetricRange(boards, metric) {
+      let vals = [];
+      (boards || []).forEach((b) => {
+        (b.chips || []).forEach((c) => {
+          const v = chipmapChipValue(c, metric);
+          if (v != null && Number.isFinite(Number(v))) vals.push(Number(v));
+        });
+      });
+      if (!vals.length) return { min: 0, max: 1 };
+      return { min: Math.min(...vals), max: Math.max(...vals) };
+    }
+
+    function chipmapLegendLabels(metric, range) {
+      if (metric === "temp") {
+        const lo =
+          range && range.min != null ? Number(range.min).toFixed(0) + "°C" : "min";
+        const hi =
+          range && range.max != null ? Number(range.max).toFixed(0) + "°C" : "max";
+        return {
+          kind: "temp",
+          low: lo + " cold",
+          high: hi + " warm",
+          palette: chipTempPalette(range && range.max),
+        };
+      }
+      let unit = "";
+      let lowTag = " slow";
+      let highTag = " fast";
+      if (metric === "nonce") {
+        unit = " n";
+        lowTag = " low hash";
+        highTag = " high hash";
+      } else if (metric === "freq") {
+        unit = " MHz";
+      }
+      const lo =
+        range && range.min != null
+          ? Number(range.min).toFixed(0) + unit
+          : "min";
+      const hi =
+        range && range.max != null
+          ? Number(range.max).toFixed(0) + unit
+          : "max";
+      return {
+        kind: "perf",
+        low: lo + lowTag,
+        high: hi + highTag,
+      };
+    }
+
+    function renderChipmap(data) {
+      const host = document.getElementById("chipmap-boards");
+      const st = document.getElementById("chipmap-status");
+      const leg = document.getElementById("chipmap-legend");
+      if (!host) return;
+      chipmapData = data;
+      const metric = document.getElementById("chipmap-metric")?.value || "temp";
+      const boards = (data && data.boards) || [];
+      if (st) {
+        if (!data) {
+          st.textContent = "нет данных";
+        } else if (data.error && !boards.length) {
+          st.textContent = "ошибка: " + data.error;
+        } else {
+          let t =
+            (data.ok ? "OK" : "stale/fail") +
+            " · chips " +
+            (data.chip_count || 0) +
+            " · boards " +
+            (data.board_count || boards.length);
+          if (data.temp_min != null)
+            t +=
+              " · temp " +
+              Number(data.temp_min).toFixed(0) +
+              "…" +
+              Number(data.temp_max).toFixed(0) +
+              " °C";
+          if (data.ts) t += " · " + data.ts;
+          if (data.fetch_ms != null) t += " · " + data.fetch_ms + " ms";
+          if (data.stale) t += " · STALE";
+          if (data.error) t += " · err: " + String(data.error).slice(0, 80);
+          st.textContent = t;
+        }
+      }
+      const metricRange = chipmapMetricRange(boards, metric);
+      const labels = chipmapLegendLabels(metric, metricRange);
+      if (leg) {
+        let sw = "";
+        if (labels.kind === "temp") {
+          const pal = labels.palette || chipTempPalette(null);
+          for (let i = 0; i < CHIP_TEMP_STEPS; i++) {
+            const tq = i / (CHIP_TEMP_STEPS - 1);
+            const h = pal.h0 + (pal.h1 - pal.h0) * tq;
+            const s = pal.s0 + (pal.s1 - pal.s0) * tq;
+            const l = 22 + tq * 48;
+            sw +=
+              "<i style=\"background:hsl(" +
+              h.toFixed(0) +
+              " " +
+              s.toFixed(0) +
+              "% " +
+              l.toFixed(0) +
+              "%)\"></i>";
+          }
+        } else {
+          // perf: red → yellow → green, dark→light
+          for (let i = 0; i < CHIP_TEMP_STEPS; i++) {
+            const tq = i / (CHIP_TEMP_STEPS - 1);
+            const h = 0 + tq * 125;
+            const s = 78 - tq * 8;
+            const l = 28 + tq * 36;
+            sw +=
+              "<i style=\"background:hsl(" +
+              h.toFixed(0) +
+              " " +
+              s.toFixed(0) +
+              "% " +
+              l.toFixed(0) +
+              "%)\"></i>";
+          }
+        }
+        leg.innerHTML =
+          "<span style=\"display:inline-flex;align-items:center;gap:2px\">" +
+          sw +
+          "</span>" +
+          "<span>" +
+          labels.low +
+          " → " +
+          labels.high +
+          " (10 steps)</span>" +
+          "<span>номер = C#</span>";
+      }
+      host.innerHTML = "";
+      boards.forEach((b) => {
+        const wrap = document.createElement("div");
+        wrap.className = "chip-board";
+        const h = document.createElement("div");
+        h.className = "chip-board-h";
+        h.innerHTML =
+          "<span class=\"title\">Плата / Slot " +
+          b.slot +
+          "</span>" +
+          "<span class=\"meta\">chips " +
+          (b.chip_count || (b.chips || []).length) +
+          (b.temp_min != null
+            ? " · " +
+              Number(b.temp_min).toFixed(0) +
+              "…" +
+              Number(b.temp_max).toFixed(0) +
+              " °C"
+            : "") +
+          (b.board_temp != null
+            ? " · PCB " + Number(b.board_temp).toFixed(1) + " °C"
+            : "") +
+          "</span>";
+        wrap.appendChild(h);
+        const grid = document.createElement("div");
+        grid.className = "chip-grid";
+        const chips = b.chips || [];
+        // ensure grid covers 0..max id for visual map
+        const maxId = chips.reduce((m, c) => Math.max(m, c.id | 0), 0);
+        const byId = {};
+        chips.forEach((c) => {
+          byId[c.id] = c;
+        });
+        for (let i = 0; i <= maxId; i++) {
+          const c = byId[i];
+          const cell = document.createElement("div");
+          cell.className = "chip-cell";
+          cell.textContent = String(i);
+          if (c) {
+            let v = chipmapChipValue(c, metric);
+            cell.style.background = chipColor(
+              metric,
+              v,
+              metricRange.min,
+              metricRange.max
+            );
+            // darker cells → light number; lighter cells → dark number
+            if (
+              v != null &&
+              metricRange.max > metricRange.min
+            ) {
+              const t =
+                (Number(v) - metricRange.min) /
+                (metricRange.max - metricRange.min);
+              // temp/perf: higher t → lighter fill → dark text
+              if (t > 0.55) {
+                cell.style.color = "rgba(12, 28, 16, 0.9)";
+                cell.style.textShadow = "none";
+              }
+            }
+            // tip: nonce = hash work proxy
+            cell.dataset.tip =
+              "C" +
+              c.id +
+              " · " +
+              (c.temp != null ? c.temp + "°C" : "—") +
+              " · " +
+              (c.freq != null ? c.freq + " MHz" : "") +
+              " · hash≈nonce " +
+              (c.nonce != null ? c.nonce : "—") +
+              (c.err ? " · err " + c.err : "");
+          } else {
+            cell.classList.add("empty");
+          }
+          grid.appendChild(cell);
+        }
+        wrap.appendChild(grid);
+        host.appendChild(wrap);
+      });
+    }
+
+    // chip tooltip
+    (function chipTip() {
+      const tip = document.getElementById("chipmap-tip");
+      if (!tip) return;
+      document.addEventListener("mousemove", (e) => {
+        const cell = e.target.closest && e.target.closest(".chip-cell[data-tip]");
+        if (!cell) {
+          tip.classList.remove("show");
+          return;
+        }
+        tip.textContent = cell.dataset.tip || "";
+        tip.classList.add("show");
+        tip.style.left = Math.min(window.innerWidth - 240, e.clientX + 12) + "px";
+        tip.style.top = Math.min(window.innerHeight - 80, e.clientY + 12) + "px";
+      });
+    })();
+
+    async function loadChipmap(force) {
+      try {
+        const res = await fetch(
+          "/api/chipmap" + (force ? "?force=1" : ""),
+          { cache: "no-store" }
+        );
+        const body = await res.json();
+        renderChipmap(body);
+        return body;
+      } catch (e) {
+        const st = document.getElementById("chipmap-status");
+        if (st) st.textContent = "load error: " + e.message;
+        return null;
+      }
+    }
+
+    async function loadChipmapConfig() {
+      try {
+        const res = await fetch("/api/chipmap/config", { cache: "no-store" });
+        const body = await res.json();
+        const c = body.config || body;
+        const en = document.getElementById("chipmap-enabled");
+        const iv = document.getElementById("chipmap-interval");
+        const u = document.getElementById("chipmap-user");
+        const sch = document.getElementById("chipmap-scheme");
+        if (en) en.checked = c.enabled !== false;
+        if (iv && c.poll_interval_sec != null) iv.value = c.poll_interval_sec;
+        if (u && c.web_user) u.value = c.web_user;
+        if (sch && c.web_scheme) sch.value = c.web_scheme;
+        return c;
+      } catch (e) {
+        console.warn("chipmap config", e);
+        return null;
+      }
+    }
+
+    async function saveChipmapConfig() {
+      try {
+        const payload = {
+          enabled: !!document.getElementById("chipmap-enabled")?.checked,
+          poll_interval_sec: Number(
+            document.getElementById("chipmap-interval")?.value || 30
+          ),
+          web_user: (document.getElementById("chipmap-user")?.value || "admin").trim(),
+          web_scheme: document.getElementById("chipmap-scheme")?.value || "https",
+        };
+        const pw = document.getElementById("chipmap-password")?.value;
+        if (pw) payload.web_password = pw;
+        const res = await fetch("/api/chipmap/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "save fail");
+        if (document.getElementById("chipmap-password"))
+          document.getElementById("chipmap-password").value = "";
+        toastSuccess("Карта чипов · настройки сохранены");
+        scheduleChipmapPoll();
+        await loadChipmap(true);
+      } catch (e) {
+        toastError("Chipmap: " + e.message);
+      }
+    }
+
+    function scheduleChipmapPoll() {
+      if (chipmapTimer) clearInterval(chipmapTimer);
+      const iv =
+        Number(document.getElementById("chipmap-interval")?.value || 30) * 1000;
+      chipmapTimer = setInterval(() => {
+        const active =
+          document.querySelector('nav.tabs button[data-tab="chips"].active') ||
+          document.getElementById("view-chips")?.classList.contains("active");
+        // always refresh cache display when tab open; server has own poll
+        if (active) void loadChipmap(false);
+      }, Math.max(5000, Math.min(iv, 60000)));
+    }
+
+    document
+      .getElementById("btn-chipmap-refresh")
+      ?.addEventListener("click", () => {
+        toastInfo("Chipmap refresh…", 1200);
+        void loadChipmap(true).then(() => toastSuccess("Chipmap updated"));
+      });
+    document
+      .getElementById("btn-chipmap-cfg-save")
+      ?.addEventListener("click", () => void saveChipmapConfig());
+    document
+      .getElementById("chipmap-metric")
+      ?.addEventListener("change", () => {
+        if (chipmapData) renderChipmap(chipmapData);
+      });
+
+    loadChipmapConfig();
+    scheduleChipmapPoll();
     loadHistoryCharts(); // charts on Обзор
     loadMinerErrorLog();
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
