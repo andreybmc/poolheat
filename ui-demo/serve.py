@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.11"
+_DEFAULT_APP_VERSION = "0.3.12"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -7643,7 +7643,8 @@ def _tg_status_text(lang: str = "ru") -> str:
     else:
         link = "🔴 offline"
 
-    # work line under uptime: suspend  |  mining · 1ч 4м
+    # work line under uptime: suspend · Elapsed  |  mining · Elapsed
+    # Whatsminer Elapsed can keep running in Suspend on some firmwares
     work_m = str(live.get("work_measured") or "").strip().lower()
     if not work_m:
         try:
@@ -7651,15 +7652,16 @@ def _tg_status_text(lang: str = "ru") -> str:
         except Exception:
             work_m = ""
     if work_m in ("sleep", "suspend"):
-        work_line = "suspend"
-    elif work_m in ("resume", "mining") or online:
-        el_s = _tg_fmt_dur_sec(live.get("elapsed"))
-        if el_s and el_s != "—":
-            work_line = f"mining · {el_s}"
-        else:
-            work_line = "mining"
+        work_lab = "suspend"
+    elif work_m in ("resume", "mining"):
+        work_lab = "mining"
     else:
-        work_line = "—"
+        work_lab = "mining" if online else "—"
+    el_s = _tg_fmt_dur_sec(live.get("elapsed"))
+    if work_lab != "—" and el_s and el_s != "—":
+        work_line = f"{work_lab} · {el_s}"
+    else:
+        work_line = work_lab
 
     # J/T = W / (TH/s)
     try:

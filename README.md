@@ -3,7 +3,7 @@
 Thermal / power controller for **Whatsminer** (pool heating) with Web UI.  
 Runs on a PC (dev) or **Keenetic Peak / Entware** router next to the miner.
 
-**Version:** `0.3.11` · **Repo:** https://github.com/andreybmc/poolheat
+**Version:** `0.3.12` · **Repo:** https://github.com/andreybmc/poolheat
 
 ## Features
 
