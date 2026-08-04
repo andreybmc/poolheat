@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.23"
+_DEFAULT_APP_VERSION = "0.3.24"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -6399,6 +6399,10 @@ _tg_emoji_wait: set[str] = set()  # chat id keys in capture mode
 # HTML: <tg-emoji emoji-id="5399965542633200318">📦</tg-emoji>
 _TG_MINER_HOST_EMOJI_ID = "5399965542633200318"
 _TG_MINER_HOST_EMOJI_FB = "📦"  # unicode fallback inside custom_emoji entity
+# Control / write FAIL in Miner + Status
+# <tg-emoji emoji-id="5278578973595427038">🚫</tg-emoji>
+_TG_CTRL_ERR_EMOJI_ID = "5278578973595427038"
+_TG_CTRL_ERR_EMOJI_FB = "🚫"
 # Inline button «Пулы» — icon_custom_emoji_id (Bot API)
 # <tg-emoji emoji-id="5267040075803274242">💲</tg-emoji>
 _TG_POOLS_BTN_EMOJI_ID = "5267040075803274242"
@@ -7818,33 +7822,55 @@ def _tg_pretty_last_event(msg: str | None) -> str | None:
     return m
 
 
-def _tg_status_fail_lines(msg: str, lang: str = "ru") -> list[str]:
+def _tg_ctrl_err_emoji_html() -> str:
+    return (
+        f'<tg-emoji emoji-id="{_TG_CTRL_ERR_EMOJI_ID}">'
+        f"{_TG_CTRL_ERR_EMOJI_FB}</tg-emoji>"
+    )
+
+
+def _tg_status_fail_lines(
+    msg: str,
+    lang: str = "ru",
+    *,
+    cmd: str | None = None,
+    reply: str | None = None,
+) -> list[str]:
     """
     FAIL working=suspend: can't access write cmd
-    → multi-line for Status (bottom of card):
-      📝 Ошибка управления
-      Команда: working=suspend
+    or explicit cmd/reply from last_write.
+
+    → multi-line (bottom of Status / Miner):
+      🚫
+      <blank>
+      🚫 Команда: working=sleep
       Ответ: can't access write cmd
     """
     en = str(lang or "ru").lower().startswith("en")
-    m = str(msg or "").strip()
-    # strip leading "FAIL "
-    body = m
-    if body.upper().startswith("FAIL "):
-        body = body[5:].strip()
-    cmd = body
-    reply = ""
-    if ":" in body:
-        # first ":" separates command from miner reply
-        left, right = body.split(":", 1)
-        cmd = left.strip()
-        reply = right.strip()
+    if cmd is None or reply is None:
+        m = str(msg or "").strip()
+        body = m
+        if body.upper().startswith("FAIL "):
+            body = body[5:].strip()
+        c = body
+        r = ""
+        if ":" in body:
+            left, right = body.split(":", 1)
+            c = left.strip()
+            r = right.strip()
+        if cmd is None:
+            cmd = c
+        if reply is None:
+            reply = r
+    cmd = str(cmd or "—").strip() or "—"
+    reply = str(reply or "").strip()
+    em = _tg_ctrl_err_emoji_html()
     if en:
-        lines = ["📝 Control error", f"Command: {cmd or '—'}"]
+        lines = [em, "", f"{em} Command: {cmd}"]
         if reply:
             lines.append(f"Reply: {reply}")
     else:
-        lines = ["📝 Ошибка управления", f"Команда: {cmd or '—'}"]
+        lines = [em, "", f"{em} Команда: {cmd}"]
         if reply:
             lines.append(f"Ответ: {reply}")
     return lines
@@ -8301,30 +8327,24 @@ def _tg_status_text(lang: str = "ru") -> str:
         _tg_zone_profile_for_status(hz, safety=safety), lang
     )
 
-    # T_ctrl as "Вода" / "Water" (sensor chosen in zone map: liquid|env|…)
-    if en:
-        tctrl_line = f"Water: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
-    else:
-        tctrl_line = f"Вода: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
-
+    # Temps spacing (Telegram proportional font) — exact gaps as designed:
+    # Вода:    28 °C
+    # Улица:  21.9 °C
+    # Чипы:   42.9 °C
     if en:
         temps_h = "🌡  <b>Temperatures:</b>"
         temp_lines = [
-            tctrl_line,
+            f"Water:   <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>",
             f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>",
-            f"Chips:  <b>{_tg_fmt_num(chip, 1)} °C</b>",
+            f"Chips:   <b>{_tg_fmt_num(chip, 1)} °C</b>",
         ]
         lab_ov, lab_left = "Override", "left"
     else:
-        # 🌡  <b>Температуры:</b>
-        # Вода: <b>…</b>   (= T_ctrl)
-        # Улица:  <b>…</b>
-        # Чипы:  <b>…</b>
         temps_h = "🌡  <b>Температуры:</b>"
         temp_lines = [
-            tctrl_line,
+            f"Вода:    <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>",
             f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>",
-            f"Чипы:  <b>{_tg_fmt_num(chip, 1)} °C</b>",
+            f"Чипы:   <b>{_tg_fmt_num(chip, 1)} °C</b>",
         ]
         lab_ov, lab_left = "Override", "осталось"
     policy_block = _tg_policy_block_lines(
@@ -8786,13 +8806,14 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
         link = f"🟢 online · uptime {up_m}"
     else:
         link = "🔴 offline"
+    # HTML host line (parse_mode=HTML in _tg_send_miner)
     lines = [
-        f"{_tg_miner_host_prefix()}{host}",
+        _tg_miner_host_line_html(str(host)),
         link,
     ]
     if not online:
         lines.append("")
-        lines.append(_fmt_asic_offline_msg(err, lang=lang))
+        lines.append(_tg_html_esc(_fmt_asic_offline_msg(err, lang=lang)))
         return "\n".join(lines)
 
     pw = live.get("power")
@@ -8865,17 +8886,27 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
     lw = live.get("last_write") or {}
     if isinstance(lw, dict) and (lw.get("ts") or lw.get("action") is not None):
         ok = lw.get("ok")
-        mark = "✅" if ok else "❌"
         action = lw.get("action")
         value = lw.get("value")
-        lines.append("")
-        lines.append(f"last write: {_tg_fmt_ts_local(lw.get('ts'))}")
-        if action is not None:
-            lines.append(f"{mark} {action}={value}")
+        cmd = f"{action}={value}" if action is not None else "—"
+        if ok:
+            mark = "✅"
+            lines.append("")
+            lines.append(f"last write: {_tg_fmt_ts_local(lw.get('ts'))}")
+            lines.append(f"{mark} {_tg_html_esc(cmd)}")
         else:
-            lines.append(mark)
-        if lw.get("error"):
-            lines.append(str(lw.get("error")))
+            # 🚫
+            # 🚫 Команда: working=sleep
+            # Ответ: can't access write cmd
+            lines.append("")
+            lines.extend(
+                _tg_status_fail_lines(
+                    "",
+                    lang,
+                    cmd=cmd,
+                    reply=str(lw.get("error") or "—"),
+                )
+            )
 
     return "\n".join(lines)
 
@@ -8891,17 +8922,18 @@ def _tg_send_miner(
         live = {}
     text = _tg_miner_text(lang=lang, live=live, online=online, err=err)
     markup = _tg_miner_inline(lang, live if online else None)
+    # HTML: host custom emoji + control-error custom emoji
     if edit_message_id is not None:
         tg_edit_message(
             chat_id,
             edit_message_id,
             text,
             reply_markup=markup,
-            miner_host_emoji=True,
+            parse_mode="HTML",
         )
     else:
         tg_send_message(
-            chat_id, text, reply_markup=markup, miner_host_emoji=True
+            chat_id, text, reply_markup=markup, parse_mode="HTML"
         )
 
 
