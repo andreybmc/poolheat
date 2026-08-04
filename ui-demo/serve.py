@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.19"
+_DEFAULT_APP_VERSION = "0.3.20"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -4981,7 +4981,9 @@ def get_token_data(
 ) -> dict:
     """
     Privileged Whatsminer token. Cached ~25 min (API default ~30).
-    On «over max connect» wait long — rapid get_token only makes it worse.
+
+    When unlocked=True (caller holds _miner_io_lock): NEVER sleep — only one
+    attempt. Sleeping under the I/O lock freezes live poll + Telegram status.
     """
     if not force_refresh:
         cached = _token_cache_get(password)
@@ -4989,7 +4991,8 @@ def get_token_data(
             return cached
 
     last_err: Exception | None = None
-    attempts = max(1, int(max_attempts))
+    # Under exclusive lock: single shot only (caller retries outside lock).
+    attempts = 1 if unlocked else max(1, int(max_attempts))
     for attempt in range(attempts):
         try:
             if unlocked:
@@ -4998,13 +5001,18 @@ def get_token_data(
                 data = miner_cmd({"cmd": "get_token"}, timeout=6.0)
         except Exception as e:
             last_err = e
-            time.sleep(min(10.0, 2.0 + attempt * 2.0))
+            if unlocked:
+                break
+            time.sleep(min(4.0, 1.0 + attempt * 1.0))
             continue
         msg = data.get("Msg") if isinstance(data, dict) else None
         if _msg_is_over_max_connect(msg):
             last_err = RuntimeError("over max connect")
-            # Tokens live ~30 min; short retry loops only delay the error.
-            time.sleep(min(90.0, 20.0 + attempt * 25.0))
+            if unlocked:
+                # Do not sleep while holding _miner_io_lock.
+                break
+            # Outside lock path: brief wait between free-standing retries
+            time.sleep(min(30.0, 8.0 + attempt * 8.0))
             continue
         if not isinstance(msg, dict) or "salt" not in msg or "time" not in msg:
             raise RuntimeError(f"get_token failed: {msg!r}")
@@ -5032,58 +5040,79 @@ def get_token_data(
 
 def privileged_cmd(cmd: dict, password: str, *, token_attempts: int = 3) -> dict:
     """
-    Encrypted privileged write. Reuses cached token; exclusive lock for send.
+    Encrypted privileged write. Reuses cached token.
+    Retries over max connect with sleep OUTSIDE _miner_io_lock so TG/live stay responsive.
     """
-    with _miner_io_lock:
-        time.sleep(0.1)
-        token = get_token_data(
-            password, max_attempts=token_attempts, unlocked=True
-        )
-        cmd = dict(cmd)
-        cmd["token"] = token["host_sign"]
-        aeskey = binascii.unhexlify(
-            hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
-        )
-        cipher = AES.new(aeskey, AES.MODE_ECB)
-        api_str = json.dumps(cmd, separators=(",", ":"))
-        enc = base64.b64encode(cipher.encrypt(_add_to_16(api_str))).decode()
-        payload = (
-            json.dumps({"enc": 1, "data": enc}, separators=(",", ":")) + "\n"
-        ).encode()
+    last_err: Exception | None = None
+    attempts = max(1, int(token_attempts))
+    for attempt in range(attempts):
         try:
-            with socket.create_connection(
-                (HOST_MINER, PORT_MINER), timeout=12
-            ) as sock:
-                sock.sendall(payload)
-                # factory_reset / reboot may be slow to ACK / drop link
-                raw = _recv_json(sock, timeout=25)
-        except (OSError, TimeoutError, socket.timeout) as e:
-            # factory_reset often kills the link before a full JSON reply
-            cname = str(cmd.get("cmd") or "")
-            if cname in ("factory_reset", "reboot", "net_config"):
-                return {
-                    "STATUS": "S",
-                    "Msg": f"{cname} sent (link dropped: {e})",
-                    "Code": 131,
-                }
-            raise
-        if isinstance(raw, dict):
-            dec = _decrypt_privileged_response(cipher, raw)
-            # token rejected → drop cache so next call refreshes
-            try:
-                st = str(dec.get("STATUS") or "").upper()
-                msg = str(dec.get("Msg") or "").lower()
-                code = dec.get("Code")
-                if code == 135 or "token" in msg and (
-                    "error" in msg or "invalid" in msg or "check" in msg
-                ):
-                    _token_cache_clear()
-                elif st in ("E", "F") and "token" in msg:
-                    _token_cache_clear()
-            except Exception:
-                pass
-            return dec
-        return raw
+            with _miner_io_lock:
+                token = get_token_data(
+                    password, max_attempts=1, unlocked=True
+                )
+                out_cmd = dict(cmd)
+                out_cmd["token"] = token["host_sign"]
+                aeskey = binascii.unhexlify(
+                    hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
+                )
+                cipher = AES.new(aeskey, AES.MODE_ECB)
+                api_str = json.dumps(out_cmd, separators=(",", ":"))
+                enc = base64.b64encode(
+                    cipher.encrypt(_add_to_16(api_str))
+                ).decode()
+                payload = (
+                    json.dumps({"enc": 1, "data": enc}, separators=(",", ":"))
+                    + "\n"
+                ).encode()
+                try:
+                    with socket.create_connection(
+                        (HOST_MINER, PORT_MINER), timeout=12
+                    ) as sock:
+                        sock.sendall(payload)
+                        raw = _recv_json(sock, timeout=25)
+                except (OSError, TimeoutError, socket.timeout) as e:
+                    cname = str(out_cmd.get("cmd") or "")
+                    if cname in ("factory_reset", "reboot", "net_config"):
+                        return {
+                            "STATUS": "S",
+                            "Msg": f"{cname} sent (link dropped: {e})",
+                            "Code": 131,
+                        }
+                    raise
+                if isinstance(raw, dict):
+                    dec = _decrypt_privileged_response(cipher, raw)
+                    try:
+                        st = str(dec.get("STATUS") or "").upper()
+                        msg = str(dec.get("Msg") or "").lower()
+                        code = dec.get("Code")
+                        if code == 135 or (
+                            "token" in msg
+                            and (
+                                "error" in msg
+                                or "invalid" in msg
+                                or "check" in msg
+                            )
+                        ):
+                            _token_cache_clear()
+                        elif st in ("E", "F") and "token" in msg:
+                            _token_cache_clear()
+                    except Exception:
+                        pass
+                    return dec
+                return raw
+        except RuntimeError as e:
+            last_err = e
+            if "over max" not in str(e).lower():
+                raise
+            # Sleep outside lock — free live poll / Telegram
+            if attempt + 1 < attempts:
+                time.sleep(min(45.0, 10.0 + attempt * 12.0))
+                continue
+            raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
+    if last_err:
+        raise last_err
+    raise RuntimeError(_OVER_MAX_CONNECT_RU)
 
 
 # Human tooltips (hover) for ErrorCode — not shown as Cause
@@ -8132,12 +8161,39 @@ def _tg_t_ctrl_from_live(live: dict | None = None) -> tuple[float | None, str]:
     return resolve_t_ctrl(live if isinstance(live, dict) else {}, sens)
 
 
+def _tg_live_snapshot(*, max_age_sec: float = 12.0) -> tuple[dict, bool, Exception | None]:
+    """
+    Live for Telegram: prefer short-lived cache so /status never freezes
+    getUpdates while miner I/O is busy.
+    Returns (live_dict, online, error).
+    """
+    now = time.time()
+    with _cache_lock:
+        cached = dict(_cache) if isinstance(_cache, dict) else None
+        age = (now - float(_cache_ts or 0)) if _cache_ts else 9999.0
+    if cached and cached.get("ok") and age <= max_age_sec:
+        return cached, True, None
+    try:
+        live = fetch_live()
+        with _cache_lock:
+            global _cache, _cache_ts
+            _cache = live
+            _cache_ts = time.time()
+        return live, True, None
+    except Exception as e:
+        if cached and cached.get("ok"):
+            # stale but better than offline for bot reply
+            return cached, True, None
+        return {}, False, e
+
+
 def _tg_status_text(lang: str = "ru") -> str:
     en = str(lang or "ru").lower().startswith("en")
     proj = get_project_name()
     try:
-        live = fetch_live()
-        online = True
+        live, online, err = _tg_live_snapshot()
+        if not online:
+            raise err or RuntimeError("offline")
         err = None
     except Exception as e:
         online = False
@@ -8422,13 +8478,8 @@ def _tg_info_text(lang: str = "ru") -> str:
     """Info tab: identity, boards, PSU (like UI #info miner block)."""
     en = str(lang or "ru").lower().startswith("en")
     proj = get_project_name()
-    try:
-        live = fetch_live()
-        online = True
-        err = None
-    except Exception as e:
-        online = False
-        err = e
+    live, online, err = _tg_live_snapshot()
+    if not online:
         live = {}
 
     try:
@@ -8701,13 +8752,8 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
     """Miner control card — laconic measured + last write (UI #miner)."""
     en = str(lang or "ru").lower().startswith("en")
     if live is None:
-        try:
-            live = fetch_live()
-            online = True
-            err = None
-        except Exception as e:
-            online = False
-            err = e
+        live, online, err = _tg_live_snapshot()
+        if not online:
             live = {}
 
     host = live.get("host") or f"{HOST_MINER}:{PORT_MINER}"
@@ -8816,14 +8862,9 @@ def _tg_send_miner(
     *,
     edit_message_id: int | None = None,
 ) -> None:
-    try:
-        live = fetch_live()
-        online = True
-        err = None
-    except Exception as e:
+    live, online, err = _tg_live_snapshot()
+    if not online:
         live = {}
-        online = False
-        err = e
     text = _tg_miner_text(lang=lang, live=live, online=online, err=err)
     markup = _tg_miner_inline(lang, live if online else None)
     if edit_message_id is not None:
@@ -10047,10 +10088,11 @@ def _tg_handle_callback(cq: dict) -> None:
                 except ValueError:
                     tg_answer_callback(cq_id, "bad delta", alert=True)
                     return
-                try:
-                    live = fetch_live()
-                except Exception as e:
-                    tg_answer_callback(cq_id, f"❌ {e}", alert=True)
+                live, ok_live, e_live = _tg_live_snapshot()
+                if not ok_live:
+                    tg_answer_callback(
+                        cq_id, f"❌ {e_live or 'offline'}", alert=True
+                    )
                     return
                 cur = _live_power_limit_w(live)
                 if cur is None:
