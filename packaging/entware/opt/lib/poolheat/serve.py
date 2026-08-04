@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.15"
+_DEFAULT_APP_VERSION = "0.3.16"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -4541,10 +4541,17 @@ def _add_to_16(s: str) -> bytes:
     return b
 
 
+# Whatsminer: max ~100 tokens, default lifetime ~30 min (API manual Code 136).
+# Each successful get_token burns a slot — cache & reuse; do not spam get_token.
 _OVER_MAX_CONNECT_RU = (
-    "лимит API-сессий майнера (over max connect). "
-    "Подождите 30–60 с, закройте лишние вкладки UI / другие API-клиенты, повторите"
+    "лимит токенов API майнера (over max connect, до 100 / ~30 мин). "
+    "Не жмите повторно: подождите до 30 мин или перезагрузите ASIC (питание / web). "
+    "Read-команды (summary) не при чём — только get_token."
 )
+
+_token_cache_lock = threading.Lock()
+# {host, port, pwd_fp, host_sign, host_passwd_md5, expires_at}
+_token_cache: dict | None = None
 
 
 def _msg_is_over_max_connect(msg) -> bool:
@@ -4554,18 +4561,87 @@ def _msg_is_over_max_connect(msg) -> bool:
     return low == "over max connect" or "over max connect" in low
 
 
+def _password_fingerprint(password: str) -> str:
+    return hashlib.sha256((password or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _token_cache_get(password: str) -> dict | None:
+    global _token_cache
+    with _token_cache_lock:
+        c = _token_cache
+        if not c:
+            return None
+        if c.get("host") != HOST_MINER or int(c.get("port") or 0) != int(PORT_MINER):
+            return None
+        if c.get("pwd_fp") != _password_fingerprint(password):
+            return None
+        if float(c.get("expires_at") or 0) <= time.time():
+            _token_cache = None
+            return None
+        return {
+            "host_sign": c["host_sign"],
+            "host_passwd_md5": c["host_passwd_md5"],
+        }
+
+
+def _token_cache_put(password: str, token: dict, *, ttl_sec: float) -> None:
+    global _token_cache
+    with _token_cache_lock:
+        _token_cache = {
+            "host": HOST_MINER,
+            "port": int(PORT_MINER),
+            "pwd_fp": _password_fingerprint(password),
+            "host_sign": token["host_sign"],
+            "host_passwd_md5": token["host_passwd_md5"],
+            "expires_at": time.time() + max(30.0, float(ttl_sec)),
+        }
+
+
+def _token_cache_clear() -> None:
+    global _token_cache
+    with _token_cache_lock:
+        _token_cache = None
+
+
+def _decrypt_privileged_response(cipher, raw: dict) -> dict:
+    """Miner may return ciphertext in «data» or «enc» (base64 string)."""
+    if not isinstance(raw, dict):
+        return raw  # type: ignore[return-value]
+    blob = None
+    for k in ("data", "enc"):
+        v = raw.get(k)
+        # request uses enc:1 (int); response uses enc:"<base64>"
+        if isinstance(v, str) and len(v) > 16:
+            blob = v
+            break
+    if not blob:
+        return raw
+    try:
+        pt = cipher.decrypt(base64.b64decode(blob)).split(b"\x00")[0].decode()
+        return json.loads(pt)
+    except Exception:
+        return raw
+
+
 def get_token_data(
     password: str,
     *,
-    max_attempts: int = 8,
+    max_attempts: int = 3,
     unlocked: bool = False,
+    force_refresh: bool = False,
 ) -> dict:
     """
-    Privileged Whatsminer token. Retries on «over max connect» (token/session cap).
-    If unlocked=True, caller already holds _miner_io_lock (no nested sleep races).
+    Privileged Whatsminer token. Cached ~25 min (API default ~30).
+    On «over max connect» wait long — rapid get_token only makes it worse.
     """
+    if not force_refresh:
+        cached = _token_cache_get(password)
+        if cached:
+            return cached
+
     last_err: Exception | None = None
-    for attempt in range(max(1, int(max_attempts))):
+    attempts = max(1, int(max_attempts))
+    for attempt in range(attempts):
         try:
             if unlocked:
                 data = _miner_cmd_unlocked({"cmd": "get_token"}, timeout=6.0)
@@ -4573,14 +4649,13 @@ def get_token_data(
                 data = miner_cmd({"cmd": "get_token"}, timeout=6.0)
         except Exception as e:
             last_err = e
-            time.sleep(min(8.0, 1.5 + attempt * 1.0))
+            time.sleep(min(10.0, 2.0 + attempt * 2.0))
             continue
         msg = data.get("Msg") if isinstance(data, dict) else None
         if _msg_is_over_max_connect(msg):
             last_err = RuntimeError("over max connect")
-            # Hold off new poolheat traffic only if we already own the I/O lock;
-            # otherwise brief sleep so other threads can finish and free sessions.
-            time.sleep(min(8.0, 2.0 + attempt * 1.2))
+            # Tokens live ~30 min; short retry loops only delay the error.
+            time.sleep(min(90.0, 20.0 + attempt * 25.0))
             continue
         if not isinstance(msg, dict) or "salt" not in msg or "time" not in msg:
             raise RuntimeError(f"get_token failed: {msg!r}")
@@ -4588,7 +4663,17 @@ def get_token_data(
         host_passwd_md5 = pwd_hash.split("$")[3]
         tmp = md5_crypt.hash(host_passwd_md5 + msg["time"], salt=msg["newsalt"])
         host_sign = tmp.split("$")[3]
-        return {"host_sign": host_sign, "host_passwd_md5": host_passwd_md5}
+        token = {"host_sign": host_sign, "host_passwd_md5": host_passwd_md5}
+        # timeout field: "0" = no expire; missing = 30 min (Whatsminer manual)
+        ttl = 25 * 60.0
+        try:
+            to = msg.get("timeout")
+            if to is not None and str(to).strip() not in ("", "0"):
+                ttl = max(60.0, min(30 * 60.0, float(to)))
+        except (TypeError, ValueError):
+            pass
+        _token_cache_put(password, token, ttl_sec=ttl)
+        return token
     if last_err and "over max" in str(last_err).lower():
         raise RuntimeError(_OVER_MAX_CONNECT_RU) from last_err
     if last_err:
@@ -4596,14 +4681,12 @@ def get_token_data(
     raise RuntimeError(_OVER_MAX_CONNECT_RU)
 
 
-def privileged_cmd(cmd: dict, password: str, *, token_attempts: int = 8) -> dict:
+def privileged_cmd(cmd: dict, password: str, *, token_attempts: int = 3) -> dict:
     """
-    Encrypted privileged write. Exclusive lock for get_token + send so live poll
-    cannot open parallel 4028 sessions during the critical window.
+    Encrypted privileged write. Reuses cached token; exclusive lock for send.
     """
     with _miner_io_lock:
-        # Small quiet gap: let in-flight unlocked paths finish (we hold the lock now).
-        time.sleep(0.15)
+        time.sleep(0.1)
         token = get_token_data(
             password, max_attempts=token_attempts, unlocked=True
         )
@@ -4618,20 +4701,39 @@ def privileged_cmd(cmd: dict, password: str, *, token_attempts: int = 8) -> dict
         payload = (
             json.dumps({"enc": 1, "data": enc}, separators=(",", ":")) + "\n"
         ).encode()
-        with socket.create_connection((HOST_MINER, PORT_MINER), timeout=12) as sock:
-            sock.sendall(payload)
-            # factory_reset / reboot may be slow to ACK
-            raw = _recv_json(sock, timeout=20)
-        if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
+        try:
+            with socket.create_connection(
+                (HOST_MINER, PORT_MINER), timeout=12
+            ) as sock:
+                sock.sendall(payload)
+                # factory_reset / reboot may be slow to ACK / drop link
+                raw = _recv_json(sock, timeout=25)
+        except (OSError, TimeoutError, socket.timeout) as e:
+            # factory_reset often kills the link before a full JSON reply
+            cname = str(cmd.get("cmd") or "")
+            if cname in ("factory_reset", "reboot", "net_config"):
+                return {
+                    "STATUS": "S",
+                    "Msg": f"{cname} sent (link dropped: {e})",
+                    "Code": 131,
+                }
+            raise
+        if isinstance(raw, dict):
+            dec = _decrypt_privileged_response(cipher, raw)
+            # token rejected → drop cache so next call refreshes
             try:
-                pt = (
-                    cipher.decrypt(base64.b64decode(raw["data"]))
-                    .split(b"\x00")[0]
-                    .decode()
-                )
-                return json.loads(pt)
+                st = str(dec.get("STATUS") or "").upper()
+                msg = str(dec.get("Msg") or "").lower()
+                code = dec.get("Code")
+                if code == 135 or "token" in msg and (
+                    "error" in msg or "invalid" in msg or "check" in msg
+                ):
+                    _token_cache_clear()
+                elif st in ("E", "F") and "token" in msg:
+                    _token_cache_clear()
             except Exception:
-                return raw
+                pass
+            return dec
         return raw
 
 
@@ -5788,9 +5890,9 @@ def apply_set(action: str, value, password: str) -> dict:
         except Exception:
             pass
         try:
-            # More token retries: factory often competes with live UI poll.
+            # Few attempts: each get_token burns a 30‑min slot (max ~100).
             resp = privileged_cmd(
-                {"cmd": "factory_reset"}, password, token_attempts=10
+                {"cmd": "factory_reset"}, password, token_attempts=3
             )
         except RuntimeError as e:
             err = str(e)
@@ -5801,14 +5903,18 @@ def apply_set(action: str, value, password: str) -> dict:
             _policy_log("ok", "FACTORY_RESET · ASIC will reboot / reconfigure")
         except Exception:
             pass
+        # drop token cache — password/network may change after factory
+        try:
+            _token_cache_clear()
+        except Exception:
+            pass
         return _record_write(
             "factory_reset",
             "asic",
             resp,
             warning=(
-                "Factory reset: сеть/пароль/power/pools → defaults. "
-                "IP может смениться (DHCP). Логи API не гарантирует удалить. "
-                "ASIC offline несколько минут."
+                "Factory reset sent · ASIC reboot / defaults. "
+                "IP may change (DHCP)."
             ),
         )
 
