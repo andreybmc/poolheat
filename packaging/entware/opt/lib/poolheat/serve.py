@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.22"
+_DEFAULT_APP_VERSION = "0.3.23"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -7812,7 +7812,42 @@ def _tg_pretty_last_event(msg: str | None) -> str | None:
         return None
     if m.upper().startswith("FORCE_STOP"):
         return None
+    # FAIL action=value: err — multi-line block via _tg_status_fail_lines
+    if m.upper().startswith("FAIL "):
+        return m
     return m
+
+
+def _tg_status_fail_lines(msg: str, lang: str = "ru") -> list[str]:
+    """
+    FAIL working=suspend: can't access write cmd
+    → multi-line for Status (bottom of card):
+      📝 Ошибка управления
+      Команда: working=suspend
+      Ответ: can't access write cmd
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    m = str(msg or "").strip()
+    # strip leading "FAIL "
+    body = m
+    if body.upper().startswith("FAIL "):
+        body = body[5:].strip()
+    cmd = body
+    reply = ""
+    if ":" in body:
+        # first ":" separates command from miner reply
+        left, right = body.split(":", 1)
+        cmd = left.strip()
+        reply = right.strip()
+    if en:
+        lines = ["📝 Control error", f"Command: {cmd or '—'}"]
+        if reply:
+            lines.append(f"Reply: {reply}")
+    else:
+        lines = ["📝 Ошибка управления", f"Команда: {cmd or '—'}"]
+        if reply:
+            lines.append(f"Ответ: {reply}")
+    return lines
 
 
 def _tg_zone_line(zone_id, *, safety: bool = False) -> str:
@@ -8366,7 +8401,11 @@ def _tg_status_text(lang: str = "ru") -> str:
         lines.append("")
         lines.extend(err_lines)
 
-    # last_event: skip Dry Run / APPLY / FORCE_STOP noise; only real alerts
+    # policy summary
+    lines.append("")
+    lines.extend(policy_block)
+
+    # last_event at the very bottom (after policy); FAIL → multi-line control error
     le = pol.get("last_event") or {}
     raw_ev = str(le.get("msg") or "")
     raw_l = raw_ev.lower()
@@ -8404,13 +8443,12 @@ def _tg_status_text(lang: str = "ru") -> str:
                 or ("offline" in pretty_l and "timeout" in pretty_l)
             ):
                 pass
+            elif str(pretty).upper().startswith("FAIL "):
+                lines.append("")
+                lines.extend(_tg_status_fail_lines(pretty, lang))
             else:
                 lines.append("")
                 lines.append(f"📝  {pretty}")
-
-    # policy summary at the bottom
-    lines.append("")
-    lines.extend(policy_block)
 
     return "\n".join(lines)
 
