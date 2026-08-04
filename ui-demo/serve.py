@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.8"
+_DEFAULT_APP_VERSION = "0.3.9"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -1235,6 +1235,130 @@ def _filtration_http(
         return int(resp.status), resp.read().decode("utf-8", errors="replace")
 
 
+def _filtration_user_error(
+    exc: BaseException,
+    *,
+    on: bool | None = None,
+    backend: str | None = None,
+    lang: str = "ru",
+) -> str:
+    """
+    Laconic filtration errors for UI / Telegram.
+
+    Не удалось активировать фильтрацию:
+    Tapo email/password не настроен
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    raw = str(exc or "").strip()
+    low = raw.lower()
+    be = str(backend or "").strip().lower()
+
+    if en:
+        head_on = "Could not enable filtration:"
+        head_off = "Could not disable filtration:"
+        head_test = "Filtration check failed:"
+    else:
+        head_on = "Не удалось активировать фильтрацию:"
+        head_off = "Не удалось выключить фильтрацию:"
+        head_test = "Не удалось проверить фильтрацию:"
+
+    if on is True:
+        head = head_on
+    elif on is False:
+        head = head_off
+    else:
+        head = head_test
+
+    # --- classify ---
+    reason = None
+    if be == "tapo" or "tapo" in low:
+        if (
+            "email/password empty" in low
+            or "email empty" in low
+            or "password empty" in low
+            or ("email" in low and "password" in low and "empty" in low)
+            or "не настроен" in low
+        ):
+            reason = (
+                "Tapo email/password not configured"
+                if en
+                else "Tapo email/password не настроен"
+            )
+        elif (
+            "bad email/password" in low
+            or "login error" in low
+            or "login_device" in low
+            or "invalid" in low
+            or "unauthorized" in low
+            or "error_code=-1501" in low
+            or "error_code= -1501" in low
+            or "не действитель" in low
+        ):
+            reason = (
+                "Tapo email/password invalid"
+                if en
+                else "Tapo email/password не действительны"
+            )
+        elif "ip empty" in low or ("ip" in low and "empty" in low):
+            reason = "Tapo IP not configured" if en else "Tapo IP не настроен"
+        elif (
+            "timed out" in low
+            or "timeout" in low
+            or "unreachable" in low
+            or "no route" in low
+            or "network is unreachable" in low
+        ):
+            # local plug first (handshake is LAN)
+            reason = (
+                "Tapo device unreachable"
+                if en
+                else "Tapo устройство недоступно"
+            )
+        elif (
+            "connection refused" in low
+            or "reset by peer" in low
+            or "name or service not known" in low
+            or "nodename nor servname" in low
+            or "failed to resolve" in low
+        ):
+            reason = (
+                "Tapo device unreachable"
+                if en
+                else "Tapo устройство недоступно"
+            )
+        elif "handshake" in low or "decrypt" in low:
+            reason = (
+                "Tapo device unreachable"
+                if en
+                else "Tapo устройство недоступно"
+            )
+        elif "server" in low or "cloud" in low or "api.tapo" in low:
+            reason = (
+                "Tapo server unavailable"
+                if en
+                else "Tapo сервер недоступен"
+            )
+        else:
+            reason = (
+                "Tapo device unreachable"
+                if en
+                else "Tapo устройство недоступно"
+            )
+    elif "disabled" in low or "отключ" in low:
+        reason = (
+            "filtration disabled in settings"
+            if en
+            else "фильтрация отключена в настройках"
+        )
+    elif "майнинг" in low or "mining" in low:
+        reason = raw  # already laconic RU
+    else:
+        # generic backends — keep short
+        reason = raw[:120] if raw else ("unknown error" if en else "неизвестная ошибка")
+
+    return f"{head}\n{reason}"
+
+
 def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
     """on=None → read only; else set."""
     ip = str(cfg.get("ip") or "").strip()
@@ -1245,10 +1369,24 @@ def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
     if not email or not password:
         raise ValueError("Tapo email/password empty")
     c = _TapoP100Local(ip, email, password)
-    c.connect()
+    try:
+        c.connect()
+    except Exception as e:
+        # re-raise with markers for _filtration_user_error
+        low = str(e).lower()
+        if "email/password" in low or "login" in low or "error_code" in low:
+            raise RuntimeError(f"Tapo {e}") from e
+        if "timed out" in low or "timeout" in low:
+            raise RuntimeError(f"Tapo device timeout: {e}") from e
+        if "refused" in low or "unreachable" in low or "reset" in low:
+            raise RuntimeError(f"Tapo device unreachable: {e}") from e
+        raise RuntimeError(f"Tapo: {e}") from e
     if on is None:
         return {"on": c.get_on(), "backend": "tapo", "ip": ip}
-    c.set_on(bool(on))
+    try:
+        c.set_on(bool(on))
+    except Exception as e:
+        raise RuntimeError(f"Tapo device: {e}") from e
     try:
         got = c.get_on()
     except Exception:
@@ -1481,11 +1619,12 @@ def filtration_test() -> dict:
         _save_filtration_cfg()
         return {"ok": True, "backend": be, **out}
     except Exception as e:
+        pretty = _filtration_user_error(e, on=None, backend=be, lang="ru")
         with _filtration_lock:
-            _filtration_cfg["last_error"] = str(e)
+            _filtration_cfg["last_error"] = pretty
             _filtration_cfg["last_action"] = "test_fail"
         _save_filtration_cfg()
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": pretty}
 
 
 def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> dict:
@@ -1523,11 +1662,17 @@ def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> 
         _save_filtration_cfg()
         return {"ok": True, "on": bool(got), "source": source, "backend": be, **out}
     except Exception as e:
+        pretty = _filtration_user_error(e, on=on, backend=be, lang="ru")
         with _filtration_lock:
-            _filtration_cfg["last_error"] = str(e)
+            _filtration_cfg["last_error"] = pretty
             _filtration_cfg["last_action"] = f"{source}_fail"
         _save_filtration_cfg()
-        return {"ok": False, "error": str(e), "source": source, "backend": be}
+        return {
+            "ok": False,
+            "error": pretty,
+            "source": source,
+            "backend": be,
+        }
 
 
 def filtration_sync_with_mining(measured_work: str | None) -> None:
@@ -1845,10 +1990,137 @@ def parse_chipmap_log(text: str) -> dict:
     }
 
 
+def _chipmap_attach_hash_estimates(payload: dict) -> dict:
+    """
+    Per-chip hashrate estimate using mining Elapsed as time base.
+
+    If nonce is cumulative since mining start:
+      nonce_rate = nonce / elapsed          (nonce/s)
+      est_th     = HR_total × nonce / Σnonce (TH/s)
+
+    Share method is preferred for TH/s (elapsed cancels out when nonce
+    is proportional to work over the same window). Elapsed is still used
+    for nonce/s and status, and as a sanity check (elapsed > 0).
+    """
+    if not isinstance(payload, dict):
+        return payload
+    if payload.get("reason") == "suspend":
+        return payload
+    boards = payload.get("boards")
+    if not isinstance(boards, list) or not boards:
+        return payload
+
+    elapsed = None
+    hr = None
+    try:
+        live = fetch_live()
+        elapsed = _f(live.get("elapsed"))
+        hr = _f(live.get("hashrate_th"))
+    except Exception:
+        pass
+
+    total_nonce = int(payload.get("nonce_total") or 0)
+    if total_nonce <= 0:
+        total_nonce = 0
+        for b in boards:
+            for c in b.get("chips") or []:
+                try:
+                    total_nonce += int(c.get("nonce") or 0)
+                except (TypeError, ValueError):
+                    pass
+        payload["nonce_total"] = total_nonce
+
+    payload["mining_elapsed"] = elapsed
+    payload["hashrate_th"] = hr
+    el = float(elapsed) if elapsed is not None and float(elapsed) > 0 else None
+    hr_ok = hr is not None and float(hr) > 0
+
+    for b in boards:
+        for c in b.get("chips") or []:
+            try:
+                n = int(c.get("nonce") or 0)
+            except (TypeError, ValueError):
+                n = 0
+            if el is not None:
+                c["nonce_rate"] = round(n / el, 6)  # nonce / s over mining elapsed
+            else:
+                c["nonce_rate"] = None
+            if total_nonce > 0:
+                share = n / float(total_nonce)
+                c["hash_share_asic"] = round(100.0 * share, 4)
+                if hr_ok:
+                    # primary estimate: distribute measured ASIC HR by nonce share
+                    c["est_th"] = round(float(hr) * share, 4)
+                else:
+                    c["est_th"] = None
+            else:
+                c["hash_share_asic"] = 0.0
+                c["est_th"] = None
+    return payload
+
+
+def _chipmap_is_mining() -> tuple[bool | None, str]:
+    """
+    Whether boards are powered for chip log.
+    Returns (is_mining, detail):
+      True  — mining / boards expected live
+      False — suspend / sleep (chip map N/A by design)
+      None  — miner live API unreachable (real offline / auth issue possible)
+    """
+    try:
+        live = fetch_live()
+    except Exception as e:
+        return None, str(e)
+    try:
+        work = str(live.get("work_measured") or "").strip().lower()
+        if not work:
+            work = _measured_work_state(live)
+        if work in ("suspend", "sleep"):
+            return False, "suspend"
+        if work in ("resume", "mining"):
+            return True, "mining"
+        # fallback measured
+        mw = _measured_work_state(live)
+        if mw in ("sleep", "suspend"):
+            return False, "suspend"
+        return True, mw or "mining"
+    except Exception as e:
+        return None, str(e)
+
+
+def _chipmap_suspend_payload(*, fetch_ms: int | None = None) -> dict:
+    """Friendly non-error status when ASIC is online but Suspend (no board power)."""
+    msg = (
+        "Mining Suspend · карты чипов доступны только при майнинге "
+        "(когда есть питание на платах)."
+    )
+    out = {
+        "ok": True,
+        "reason": "suspend",
+        "message": msg,
+        "error": None,
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "fetch_ms": fetch_ms if fetch_ms is not None else 0,
+        "source": "mining_state",
+        "boards": [],
+        "board_count": 0,
+        "chip_count": 0,
+        "temp_min": None,
+        "temp_max": None,
+        "temp_avg": None,
+        "stale": False,
+    }
+    with _chipmap_lock:
+        _chipmap_cache.clear()
+        _chipmap_cache.update(out)
+    return dict(out)
+
+
 def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
     """
     Login to miner LuCI and scrape Miner API Log.
     Returns cache-shaped dict with ok/error.
+    Suspend (miner offline boards) → ok + reason=suspend, not an access error.
     """
     t0 = time.time()
     with _chipmap_lock:
@@ -1860,7 +2132,15 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             out = dict(_chipmap_cache)
         out["ok"] = False
         out["error"] = "chipmap disabled"
+        out["reason"] = "disabled"
         return out
+
+    # Suspend first: empty chip log is expected — do not scrape LuCI / show auth errors
+    mining, mining_detail = _chipmap_is_mining()
+    if mining is False:
+        return _chipmap_suspend_payload(
+            fetch_ms=int((time.time() - t0) * 1000)
+        )
 
     password = _chipmap_web_password()
     base = _chipmap_base_url()
@@ -1922,13 +2202,22 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
 
         parsed = parse_chipmap_log(log_text)
         if not parsed.get("chip_count"):
+            # Re-check suspend: empty log while stopped is normal
+            mining2, _ = _chipmap_is_mining()
+            if mining2 is False:
+                return _chipmap_suspend_payload(
+                    fetch_ms=int((time.time() - t0) * 1000)
+                )
             raise RuntimeError(
-                "no chip lines parsed — check web password / page content"
+                "no chip lines parsed — check web password / page content "
+                "(or miner not hashing yet)"
             )
 
         ms = int((time.time() - t0) * 1000)
         out = {
             "ok": True,
+            "reason": None,
+            "message": None,
             "ts": datetime.now().isoformat(timespec="seconds"),
             "fetch_ms": ms,
             "error": None,
@@ -1936,21 +2225,28 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             "host": base,
             **parsed,
         }
+        out = _chipmap_attach_hash_estimates(out)
         with _chipmap_lock:
             _chipmap_cache.clear()
             _chipmap_cache.update(out)
         return dict(out)
     except Exception as e:
         ms = int((time.time() - t0) * 1000)
+        # If we only failed LuCI while miner is suspended — not an access error
+        mining3, _ = _chipmap_is_mining()
+        if mining3 is False:
+            return _chipmap_suspend_payload(fetch_ms=ms)
         with _chipmap_lock:
             prev = dict(_chipmap_cache)
             _chipmap_cache["ok"] = False
+            _chipmap_cache["reason"] = "error"
+            _chipmap_cache["message"] = None
             _chipmap_cache["error"] = str(e)
             _chipmap_cache["fetch_ms"] = ms
             _chipmap_cache["ts"] = datetime.now().isoformat(timespec="seconds")
             # keep last good boards if any
             out = dict(_chipmap_cache)
-            if prev.get("boards"):
+            if prev.get("boards") and prev.get("reason") != "suspend":
                 out["boards"] = prev["boards"]
                 out["chip_count"] = prev.get("chip_count")
                 out["stale"] = True
@@ -1963,9 +2259,15 @@ def get_chipmap(*, force: bool = False) -> dict:
         return fetch_chipmap_from_luci(force=True)
     with _chipmap_lock:
         if _chipmap_cache.get("boards"):
-            return dict(_chipmap_cache)
-    # cold cache
-    return fetch_chipmap_from_luci(force=True)
+            out = dict(_chipmap_cache)
+        else:
+            out = None
+    if out is None:
+        return fetch_chipmap_from_luci(force=True)
+    # refresh est_th / nonce_rate from current HR + mining elapsed
+    if out.get("reason") != "suspend":
+        out = _chipmap_attach_hash_estimates(out)
+    return out
 
 
 def chipmap_loop() -> None:
@@ -5413,14 +5715,16 @@ def _invalidate_cache() -> None:
 # Default prefs for each chat_id (copied when chat is first seen)
 DEFAULT_CHAT_PREFS = {
     "lang": "ru",  # ru | en
-    "notify_policy": True,
+    "notify_events": True,
     "notify_offline": True,
     "notify_safety": True,
     "notify_zone": True,
     "commands_en": True,
+    # confirm main-menu Force Stop / Continue (avoid accidental taps)
+    "confirm_force_stop": True,
     # main reply-keyboard sections (Status + Profile always shown)
     "show_miner": True,
-    "show_policy": True,
+    "show_policy": True,  # Events section visibility
     "show_force_stop": True,
     "show_filtration": True,
     "show_settings": True,
@@ -5429,11 +5733,12 @@ DEFAULT_CHAT_PREFS = {
 
 # bool prefs stored per chat (besides lang)
 _TG_BOOL_PREF_KEYS = (
-    "notify_policy",
+    "notify_events",
     "notify_offline",
     "notify_safety",
     "notify_zone",
     "commands_en",
+    "confirm_force_stop",
     "show_miner",
     "show_policy",
     "show_force_stop",
@@ -5460,7 +5765,7 @@ DEFAULT_TELEGRAM_CFG = {
     # per-chat prefs: { "123456": { lang, notify_* , commands_en } }
     "chats": {},
     # global defaults for NEW chats (and fallback)
-    "notify_policy": True,  # AUTO apply / FAIL
+    "notify_events": True,  # zone/policy event log · APPLY
     "notify_offline": True,  # ASIC offline (after N consecutive poll fails)
     "notify_offline_streak": 3,  # in a row timeouts before TG (reset on any ok poll)
     "notify_safety": True,  # Safety Critical
@@ -5523,6 +5828,12 @@ def _load_telegram_cfg() -> None:
                 if s:
                     out_ids.append(s)
         cfg["chat_ids"] = out_ids
+        # legacy global key notify_policy → notify_events
+        if isinstance(raw, dict) and "notify_policy" in raw and "notify_events" not in raw:
+            cfg["notify_events"] = bool(raw.get("notify_policy"))
+        cfg.pop("notify_policy", None)
+        if isinstance(raw, dict):
+            raw.pop("notify_policy", None)  # no-op on file; keep cfg clean
         for k in _TG_BOOL_PREF_KEYS:
             if k.startswith("show_"):
                 cfg[k] = bool(cfg.get(k, True))
@@ -5549,8 +5860,12 @@ def _load_telegram_cfg() -> None:
             for pk, pv in prev.items():
                 if pk == "lang":
                     merged["lang"] = "en" if str(pv).lower().startswith("en") else "ru"
+                elif pk == "notify_policy":
+                    # legacy → notify_events
+                    merged["notify_events"] = bool(pv)
                 elif pk in _TG_BOOL_PREF_KEYS or str(pk).startswith("show_"):
                     merged[pk] = bool(pv)
+            merged.pop("notify_policy", None)
             chats_out[key] = merged
         # keep orphan prefs? drop — only allowlisted chats
         cfg["chats"] = chats_out
@@ -5759,6 +6074,11 @@ def _tg_get_chat_prefs(chat_id) -> dict:
         if isinstance(p, dict):
             out = dict(DEFAULT_CHAT_PREFS)
             out.update(p)
+            # legacy cleanup for callers
+            if "notify_policy" in out:
+                if "notify_events" not in p:
+                    out["notify_events"] = bool(out.get("notify_policy"))
+                out.pop("notify_policy", None)
             return out
         # fallback global defaults
         out = dict(DEFAULT_CHAT_PREFS)
@@ -5827,8 +6147,11 @@ def _tg_set_chat_prefs(chat_id, **updates) -> dict:
         for k, v in updates.items():
             if k == "lang":
                 cur["lang"] = "en" if str(v).lower().startswith("en") else "ru"
+            elif k == "notify_policy":
+                cur["notify_events"] = bool(v)
             elif k in _TG_BOOL_PREF_KEYS or str(k).startswith("show_"):
                 cur[k] = bool(v)
+        cur.pop("notify_policy", None)
         chats[key] = cur
         # ensure allowlisted
         ids = list(_tg_cfg.get("chat_ids") or [])
@@ -5848,14 +6171,14 @@ def _tg_set_chat_prefs(chat_id, **updates) -> dict:
 
 
 def _tg_chat_wants(chat_id, notify_kind: str) -> bool:
-    """notify_kind: policy | offline | safety | zone"""
+    """notify_kind: events | offline | safety | zone"""
     prefs = _tg_get_chat_prefs(chat_id)
     key = {
-        "policy": "notify_policy",
+        "events": "notify_events",
         "offline": "notify_offline",
         "safety": "notify_safety",
         "zone": "notify_zone",
-    }.get(notify_kind)
+    }.get(str(notify_kind or "").strip().lower())
     if not key:
         return True
     return bool(prefs.get(key, True))
@@ -5908,6 +6231,24 @@ def _tg_utf16_len(s: str) -> int:
 def _tg_miner_host_prefix() -> str:
     """📦  — fallback glyph for custom miner-host emoji."""
     return f"{_TG_MINER_HOST_EMOJI_FB}  "
+
+
+def _tg_html_esc(s) -> str:
+    """Escape for Telegram parse_mode=HTML."""
+    return (
+        str(s if s is not None else "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _tg_miner_host_line_html(host: str) -> str:
+    """Host line with custom emoji via HTML (works with parse_mode=HTML)."""
+    return (
+        f'<tg-emoji emoji-id="{_TG_MINER_HOST_EMOJI_ID}">'
+        f"{_TG_MINER_HOST_EMOJI_FB}</tg-emoji>  {_tg_html_esc(host)}"
+    )
 
 
 def _tg_attach_miner_host_emoji(text: str) -> tuple[str, list[dict]]:
@@ -6080,6 +6421,132 @@ def _tg_dry_run_on() -> bool:
         return bool(DRY_RUN)
 
 
+def _tg_who(from_user: dict | None, chat_id=None) -> str:
+    """chat 123 · @username (or first name)."""
+    cid = chat_id if chat_id is not None else "?"
+    uname = ""
+    fn = ""
+    if isinstance(from_user, dict):
+        uname = str(from_user.get("username") or "").strip().lstrip("@")
+        fn = str(from_user.get("first_name") or "").strip()
+        if not uname and not fn and from_user.get("id") is not None:
+            fn = f"id:{from_user.get('id')}"
+    if uname:
+        who = f"@{uname}"
+    elif fn:
+        who = fn
+    else:
+        who = "unknown"
+    return f"chat {cid} · {who}"
+
+
+def _tg_log_control(
+    chat_id,
+    from_user: dict | None,
+    action: str,
+) -> None:
+    """
+    Action log after a real control change only (not confirm dialogs).
+    Format: chat 123 · @user · Force Stop OFF
+    (kind [TG] is added by the Action log UI)
+    """
+    who = _tg_who(from_user, chat_id)
+    act = str(action or "?").strip()
+    msg = f"{who} · {act}"
+    try:
+        _policy_log(
+            "tg",
+            msg,
+            source="telegram",
+            chat_id=str(chat_id),
+        )
+    except Exception as e:
+        print(f"[tg] action log fail: {e}")
+
+
+def _tg_apply_force_stop_result(
+    chat_id,
+    onoff: bool,
+    lang: str = "ru",
+    *,
+    from_user: dict | None = None,
+    log: bool = True,
+) -> None:
+    """Apply Force Stop and send result + main keyboard."""
+    en = str(lang or "ru").lower().startswith("en")
+    if log:
+        _tg_log_control(
+            chat_id,
+            from_user,
+            "Force Stop ON" if onoff else "Force Stop OFF")
+    try:
+        set_force_stop(bool(onoff), apply_now=True)
+        if onoff:
+            msg = (
+                "🛑 Force Stop ON · mining suspended\n"
+                "Zones & Dry Run ignored until Continue mining"
+                if en
+                else "🛑 Force Stop ВКЛ · майнинг остановлен\n"
+                "Зоны и Dry Run игнорируются до «Продолжить майнинг»"
+            )
+        else:
+            msg = (
+                "▶️ Force Stop OFF · Continue mining\n"
+                "Zone auto / Dry Run rules apply again"
+                if en
+                else "▶️ Force Stop ВЫКЛ · Продолжить майнинг\n"
+                "Снова действуют зоны / Dry Run"
+            )
+        tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+    except Exception as e:
+        tg_send_message(
+            chat_id,
+            f"❌ Force Stop: {e}",
+            reply_markup=_tg_main_keyboard(lang, chat_id),
+        )
+
+
+def _tg_offer_force_stop_confirm(chat_id, want: bool, lang: str = "ru") -> None:
+    """Inline Yes/No before Force Stop ON/OFF (profile confirm_force_stop)."""
+    en = str(lang or "ru").lower().startswith("en")
+    if want:
+        text = (
+            "⚠️ Confirm <b>Force Stop ON</b>?\n"
+            "Mining will suspend · zones & Dry Run ignored until Continue."
+            if en
+            else "⚠️ Подтвердите <b>Force Stop ВКЛ</b>?\n"
+            "Майнинг остановится · зоны и Dry Run игнорируются до «Продолжить»."
+        )
+    else:
+        text = (
+            "⚠️ Confirm <b>Force Stop OFF</b>?\n"
+            "Zone auto / Dry Run rules apply again."
+            if en
+            else "⚠️ Подтвердите <b>Force Stop ВЫКЛ</b>?\n"
+            "Снова действуют зоны / Dry Run."
+        )
+    markup = {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "✅ Yes" if en else "✅ Да",
+                    "callback_data": f"fs:yes:{1 if want else 0}",
+                },
+                {
+                    "text": "❌ No" if en else "❌ Нет",
+                    "callback_data": "fs:no",
+                },
+            ]
+        ]
+    }
+    tg_send_message(
+        chat_id,
+        text,
+        reply_markup=markup,
+        parse_mode="HTML",
+    )
+
+
 def _tg_force_stop_btn_label(lang: str = "ru") -> str:
     """Main-menu toggle: Stop when off, Continue when Force Stop is active."""
     en = str(lang or "ru").lower().startswith("en")
@@ -6149,10 +6616,10 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     if _show("show_miner"):
         row1.append({"text": "⛏ Miner" if en else "⛏ Майнер"})
 
-    # Row 2: Profile always · Policy optional
+    # Row 2: Profile always · Events (policy log) optional
     row2 = [{"text": "👤 Profile" if en else "👤 Профайл"}]
     if _show("show_policy"):
-        row2.append({"text": "📋 Policy"})
+        row2.append({"text": "📋 Events" if en else "📋 События"})
 
     rows: list[list[dict]] = [row1, row2]
     if _show("show_force_stop"):
@@ -6232,8 +6699,12 @@ def _tg_settings_inline(
             ],
             [
                 {
-                    "text": f"Policy {on_mark('notify_policy')}",
-                    "callback_data": "s:tog:policy",
+                    "text": (
+                        f"Events {on_mark('notify_events')}"
+                        if en
+                        else f"События {on_mark('notify_events')}"
+                    ),
+                    "callback_data": "s:tog:events",
                 }
             ],
             [
@@ -6256,7 +6727,7 @@ def _tg_settings_inline(
 
         rows = [
             [sec_btn("miner", "⛏ Miner", "⛏ Майнер")],
-            [sec_btn("policy", "📋 Policy", "📋 Policy")],
+            [sec_btn("policy", "📋 Events", "📋 События")],
             [sec_btn("force_stop", "⏹ Force Stop", "⏹ Force Stop")],
             [sec_btn("filtration", "💧 Filtration", "💧 Фильтрация")],
             [sec_btn("settings", "⚙️ Settings", "⚙️ Настройки")],
@@ -6280,7 +6751,7 @@ def _tg_settings_inline(
             "notify_zone",
             "notify_safety",
             "notify_offline",
-            "notify_policy",
+            "notify_events",
         )
         if bool(p.get(k, True))
     )
@@ -6322,6 +6793,16 @@ def _tg_settings_inline(
                     else f"Управление {on_mark('commands_en')}"
                 ),
                 "callback_data": "s:tog:commands",
+            }
+        ],
+        [
+            {
+                "text": (
+                    f"Force Stop confirm {on_mark('confirm_force_stop')}"
+                    if en
+                    else f"Подтверждение Force Stop {on_mark('confirm_force_stop')}"
+                ),
+                "callback_data": "s:tog:confirm_fs",
             }
         ],
         [
@@ -6407,8 +6888,8 @@ def _tg_normalize_incoming_text(text: str) -> str:
         return "/force_stop"
     if "resume" in bare or bare in ("mining", "майнинг"):
         return "/force_stop"
-    if "policy" in bare or "политик" in bare:
-        return "/policy"
+    if "events" in bare or "событ" in bare or bare in ("event", "policy"):
+        return "/events"
     if "pool" in bare or "пул" in bare:
         return "/pools"
     if "help" in bare or "справк" in bare or "помощ" in bare:
@@ -6447,9 +6928,16 @@ def tg_broadcast(
         msg = text
         if text_by_lang and isinstance(text_by_lang, dict):
             msg = text_by_lang.get(lang) or text_by_lang.get("ru") or text_by_lang.get("en") or text
-        # status cards may include miner-host custom emoji
-        use_icon = ("📦  " in msg) or ("🖥" in msg)
-        if tg_send_message(cid, msg, silent=silent, miner_host_emoji=use_icon):
+        # HTML status cards (<b>, <tg-emoji>) vs entity-based host emoji
+        use_html = ("<b>" in msg) or ("<tg-emoji" in msg)
+        use_icon = (not use_html) and (("📦  " in msg) or ("🖥" in msg))
+        if tg_send_message(
+            cid,
+            msg,
+            silent=silent,
+            miner_host_emoji=use_icon,
+            parse_mode="HTML" if use_html else None,
+        ):
             n += 1
     return n
 
@@ -6567,7 +7055,7 @@ def tg_on_policy_event(kind: str, msg: str, extra: dict | None = None) -> None:
         tg_broadcast(
             f"❌ {msg}",
             debounce_key="err:" + msg[:50],
-            notify_kind="policy",
+            notify_kind="events",
         )
         return
 
@@ -6605,7 +7093,7 @@ def tg_on_policy_event(kind: str, msg: str, extra: dict | None = None) -> None:
             tg_broadcast(
                 f"✅ {msg}",
                 debounce_key="pol:" + msg[:50],
-                notify_kind="policy",
+                notify_kind="events",
             )
 
 
@@ -6659,6 +7147,40 @@ def _tg_zone_emoji(zone_id, *, safety: bool = False) -> str:
         "z3": "🧊",
         "critical": "🛑",
     }.get(k, "📍")
+
+
+def _tg_fmt_ts_eu(ts) -> str:
+    """
+    Policy event timestamps for Telegram:
+      04.08.2026 11:32:27
+    Accepts ISO (2026-08-04T11:32:27[.fff][Z]) or already-formatted strings.
+    """
+    if ts is None:
+        return "—"
+    s = str(ts).strip()
+    if not s:
+        return "—"
+    # already DD.MM.YYYY …
+    if re.match(r"^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}", s):
+        return s[:19] if len(s) >= 19 else s
+    try:
+        raw = s.replace("Z", "+00:00")
+        # datetime.fromisoformat handles "2026-08-04T11:32:27" and with micros
+        dt = datetime.fromisoformat(raw)
+        # drop tz for display (local wall time as stored)
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        return dt.strftime("%d.%m.%Y %H:%M:%S")
+    except Exception:
+        pass
+    # fallback: 2026-08-04 11:32:27 or T-separated
+    m = re.match(
+        r"^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})", s
+    )
+    if m:
+        y, mo, d, hh, mm, ss = m.groups()
+        return f"{d}.{mo}.{y} {hh}:{mm}:{ss}"
+    return s
 
 
 def _tg_pretty_last_event(msg: str | None) -> str | None:
@@ -6968,13 +7490,6 @@ def _tg_active_errors_lines(live: dict | None, lang: str = "ru", *, limit: int =
     return out
 
 
-def _tg_policy_kv(label: str, value: str, col: int = 14) -> str:
-    """Pad after label so values line up (Telegram proportional font)."""
-    lab = str(label or "")
-    pad = max(1, int(col) - len(lab))
-    return f"{lab}{' ' * pad}{value}"
-
-
 def _tg_policy_block_lines(
     *,
     preset: str,
@@ -6985,35 +7500,34 @@ def _tg_policy_block_lines(
     lang: str = "ru",
 ) -> list[str]:
     """
-    Spacing (RU) — values roughly column-aligned:
+    RU — exact spaces after colon (count, not column pad):
 
-    Пресет:        Теплый бассейн
-    T зона:        Z2 (Reduced heat)
-    Цель:          Mining · Low · 1800W
-    Dry Run:       вкл. ручной режим
-    Force Stop:    выкл.
+    Пресет:       Теплый бассейн      (7 spaces)
+    T зона:         Z2 (Reduced heat) (9 spaces)
+    Цель:           Mining · Low · …  (11 spaces)
+    Dry Run:      вкл. ручной режим   (6 spaces)
+    Force Stop:  выкл.                (2 spaces)
     """
     en = str(lang or "ru").lower().startswith("en")
-    # col: char offset where value starts (label + spaces)
-    col = 14
     if en:
         dry_s = "on. manual mode" if dry else "off. auto mode"
         fs_s = "on." if fs else "off."
+        # EN: keep same space counts as RU labels of similar length
         return [
-            _tg_policy_kv("Preset:", preset, col),
-            _tg_policy_kv("T zone:", z_lab, col),
-            _tg_policy_kv("Target:", z_mode, col),
-            _tg_policy_kv("Dry Run:", dry_s, col),
-            _tg_policy_kv("Force Stop:", fs_s, col),
+            f"Preset:{' ' * 7}{preset}",
+            f"T zone:{' ' * 9}{z_lab}",
+            f"Target:{' ' * 11}{z_mode}",
+            f"Dry Run:{' ' * 6}{dry_s}",
+            f"Force Stop:{' ' * 2}{fs_s}",
         ]
     dry_s = "вкл. ручной режим" if dry else "выкл. авто режим"
     fs_s = "вкл." if fs else "выкл."
     return [
-        _tg_policy_kv("Пресет:", preset, col),
-        _tg_policy_kv("T зона:", z_lab, col),
-        _tg_policy_kv("Цель:", z_mode, col),
-        _tg_policy_kv("Dry Run:", dry_s, col),
-        _tg_policy_kv("Force Stop:", fs_s, col),
+        f"Пресет:{' ' * 7}{preset}",
+        f"T зона:{' ' * 9}{z_lab}",
+        f"Цель:{' ' * 11}{z_mode}",
+        f"Dry Run:{' ' * 6}{dry_s}",
+        f"Force Stop:{' ' * 2}{fs_s}",
     ]
 
 
@@ -7047,21 +7561,20 @@ def _tg_status_text(lang: str = "ru") -> str:
             preset=preset, z_lab=z_lab, z_mode=z_mode, dry=dry, fs=fs, lang=lang
         )
         lines = [
-            f"🏠 {proj}",
+            f"🏠 {_tg_html_esc(proj)}",
             "————————————",
             "",
-            f"{_tg_miner_host_prefix()}{host}",
+            _tg_miner_host_line_html(host),
             "🔴 offline",
             "",
-            f"   {_fmt_asic_offline_msg(err, lang=lang)}",
+            f"   {_tg_html_esc(_fmt_asic_offline_msg(err, lang=lang))}",
         ]
         if street is not None:
             lines.append("")
-            lines.append(
-                f"Street: {_tg_fmt_num(street, 1)} °C"
-                if en
-                else f"Улица: {_tg_fmt_num(street, 1)} °C"
-            )
+            if en:
+                lines.append(f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>")
+            else:
+                lines.append(f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>")
         lines.append("")
         lines.extend(policy_block)
         return "\n".join(lines)
@@ -7096,12 +7609,25 @@ def _tg_status_text(lang: str = "ru") -> str:
     )
 
     if en:
-        temps_h = "🌡  Temperatures:"
-        lab_liq, lab_str, lab_chip = "Liquid:", "Street:", "Chip:"
+        temps_h = "🌡  <b>Temperatures:</b>"
+        # Liquid: 1sp · Street/Chips: 2sp after colon
+        temp_lines = [
+            f"Liquid: <b>{_tg_fmt_num(liq, 1)} °C</b>",
+            f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>",
+            f"Chips:  <b>{_tg_fmt_num(chip, 1)} °C</b>",
+        ]
         lab_ov, lab_left = "Override", "left"
     else:
-        temps_h = "🌡  Температуры:"
-        lab_liq, lab_str, lab_chip = "Жидкость:", "Улица:", "Чип:"
+        # 🌡  <b>Температуры:</b>
+        # Жидкость: <b>…</b>   (1 space)
+        # Улица:  <b>…</b>     (2 spaces)
+        # Чипы:  <b>…</b>      (2 spaces)
+        temps_h = "🌡  <b>Температуры:</b>"
+        temp_lines = [
+            f"Жидкость: <b>{_tg_fmt_num(liq, 1)} °C</b>",
+            f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>",
+            f"Чипы:  <b>{_tg_fmt_num(chip, 1)} °C</b>",
+        ]
         lab_ov, lab_left = "Override", "осталось"
     policy_block = _tg_policy_block_lines(
         preset=preset, z_lab=z_lab, z_mode=z_mode, dry=dry, fs=fs, lang=lang
@@ -7132,18 +7658,16 @@ def _tg_status_text(lang: str = "ru") -> str:
         power_line = f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s"
 
     lines = [
-        f"🏠 {proj}",
+        f"🏠 {_tg_html_esc(proj)}",
         "————————————",
         "",
-        f"{_tg_miner_host_prefix()}{host}",
+        _tg_miner_host_line_html(str(host)),
         link,
         "",
         power_line,
         "",
         temps_h,
-        f"{lab_liq} {_tg_fmt_num(liq, 1)} °C",
-        f"{lab_str} {_tg_fmt_num(street, 1)} °C",
-        f"{lab_chip} {_tg_fmt_num(chip, 1)} °C",
+        *temp_lines,
     ]
 
     hb_lines = _tg_heat_balance_lines(live, street, lang)
@@ -7858,7 +8382,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
             "/settings — settings hub\n"
             "/update — check / install software update\n"
             "/profile — language & notifies\n"
-            "/policy — zones & limits\n"
+            "/events — event log (zones · writes)\n"
             "\n"
             "Force Stop (no arg = toggle)\n"
             "/force_stop [on|off] — emergency stop\n"
@@ -7871,7 +8395,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
             "/notify_zone [on|off] — zones\n"
             "/notify_safety [on|off] — safety\n"
             "/notify_offline [on|off] — offline ASIC\n"
-            "/notify_policy [on|off] — policy writes\n"
+            "/notify_events [on|off] — event writes\n"
             "/notify_all [on|off] — all notifications"
         )
     return (
@@ -7889,7 +8413,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
         "/settings — настройки бота\n"
         "/update — проверка / установка обновления\n"
         "/profile — язык и уведомления\n"
-        "/policy — зоны и лимиты\n"
+        "/events — журнал событий (зоны · записи)\n"
         "\n"
         "Force Stop (без arg = переключить)\n"
         "/force_stop [on|off] — экстренная остановка\n"
@@ -7902,7 +8426,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
         "/notify_zone [on|off] — зоны\n"
         "/notify_safety [on|off] — safety\n"
         "/notify_offline [on|off] — offline ASIC\n"
-        "/notify_policy [on|off] — запись policy\n"
+        "/notify_events [on|off] — события / записи\n"
         "/notify_all [on|off] — все уведомления"
     )
 
@@ -7942,17 +8466,18 @@ def _tg_prefs_text(
             f"Zone notifications: {on(p.get('notify_zone'))}\n"
             f"Safety notifications: {on(p.get('notify_safety'))}\n"
             f"Offline notifications: {on(p.get('notify_offline'))}\n"
-            f"Policy notifications: {on(p.get('notify_policy'))}\n"
+            f"Events notifications: {on(p.get('notify_events'))}\n"
             f"\n"
             f"{s_head}\n"
             f"Miner: {_sec('show_miner')}\n"
-            f"Policy: {_sec('show_policy')}\n"
+            f"Events: {_sec('show_policy')}\n"
             f"Force Stop: {_sec('show_force_stop')}\n"
             f"Filtration: {_sec('show_filtration')}\n"
             f"Settings: {_sec('show_settings')}\n"
             f"Help: {_sec('show_help')}\n"
             f"\n"
-            f"Control: {on(p.get('commands_en'))}"
+            f"Control: {on(p.get('commands_en'))}\n"
+            f"Force Stop confirm: {on(p.get('confirm_force_stop', True))}"
         )
     n_head = (
         "🔔 <b>Уведомления</b> · настройте ниже"
@@ -7973,17 +8498,18 @@ def _tg_prefs_text(
         f"Уведомления зоны: {on(p.get('notify_zone'))}\n"
         f"Уведомления Safety: {on(p.get('notify_safety'))}\n"
         f"Уведомления Offline: {on(p.get('notify_offline'))}\n"
-        f"Уведомления Policy: {on(p.get('notify_policy'))}\n"
+        f"Уведомления событий: {on(p.get('notify_events'))}\n"
         f"\n"
         f"{s_head}\n"
         f"Майнер: {_sec('show_miner')}\n"
-        f"Policy: {_sec('show_policy')}\n"
+        f"События: {_sec('show_policy')}\n"
         f"Force Stop: {_sec('show_force_stop')}\n"
         f"Фильтрация: {_sec('show_filtration')}\n"
         f"Настройки: {_sec('show_settings')}\n"
         f"Справка: {_sec('show_help')}\n"
         f"\n"
-        f"Управление: {on(p.get('commands_en'))}"
+        f"Управление: {on(p.get('commands_en'))}\n"
+        f"Подтверждение Force Stop: {on(p.get('confirm_force_stop', True))}"
     )
 
 
@@ -7998,19 +8524,22 @@ def _tg_parse_onoff(s: str) -> bool | None:
 
 def _tg_apply_notify_cmd(chat_id, what: str, arg: str | None, prefs: dict) -> dict:
     """
-    what: zone|safety|offline|policy|all|commands
+    what: zone|safety|offline|events|all|commands|confirm_fs
     arg: on|off|None (None = toggle)
     """
     key_map = {
         "zone": "notify_zone",
         "safety": "notify_safety",
         "offline": "notify_offline",
-        "policy": "notify_policy",
+        "events": "notify_events",
+        "event": "notify_events",
         "commands": "commands_en",
         "cmd": "commands_en",
+        "confirm_fs": "confirm_force_stop",
+        "confirm_force_stop": "confirm_force_stop",
     }
     onoff = _tg_parse_onoff(arg) if arg else None
-    if what in ("all", "все", "*"):
+    if what in ("all", "*"):
         if onoff is None:
             # toggle all based on majority / zone as reference
             onoff = not bool(prefs.get("notify_zone", True))
@@ -8019,7 +8548,7 @@ def _tg_apply_notify_cmd(chat_id, what: str, arg: str | None, prefs: dict) -> di
             notify_zone=onoff,
             notify_safety=onoff,
             notify_offline=onoff,
-            notify_policy=onoff,
+            notify_events=onoff,
         )
     pk = key_map.get(what)
     if not pk:
@@ -8364,6 +8893,43 @@ def _tg_handle_callback(cq: dict) -> None:
         en = str(prefs.get("lang") or "ru").lower().startswith("en")
         lang = prefs.get("lang") or "ru"
         parts = data.split(":")
+        # fs:yes:1 | fs:yes:0 | fs:no — Force Stop confirm (profile confirm_force_stop)
+        if parts and parts[0] == "fs":
+            sub = parts[1] if len(parts) >= 2 else ""
+            fu = cq.get("from") if isinstance(cq.get("from"), dict) else None
+            if sub == "no":
+                # no log — mode did not change
+                tg_answer_callback(cq_id, "Cancel" if en else "Отмена")
+                try:
+                    tg_edit_message(
+                        chat_id,
+                        mid,
+                        "❌ Force Stop cancelled" if en else "❌ Force Stop отменён",
+                        reply_markup={"inline_keyboard": []},
+                    )
+                except Exception:
+                    pass
+                return
+            if sub == "yes":
+                want = True
+                if len(parts) >= 3:
+                    want = parts[2] not in ("0", "off", "false", "no")
+                tg_answer_callback(cq_id, "OK")
+                try:
+                    tg_edit_message(
+                        chat_id,
+                        mid,
+                        ("Applying…" if en else "Применяю…"),
+                        reply_markup={"inline_keyboard": []},
+                    )
+                except Exception:
+                    pass
+                _tg_apply_force_stop_result(
+                    chat_id, bool(want), lang, from_user=fu, log=True
+                )
+                return
+            tg_answer_callback(cq_id)
+            return
         # cfg: — bot Settings hub + Update subsection
         # cfg:home | cfg:menu | cfg:profile | cfg:update | cfg:update:check | …
         if len(parts) >= 2 and parts[0] == "cfg":
@@ -8644,7 +9210,7 @@ def _tg_handle_callback(cq: dict) -> None:
                 # stay inside notifications panel when toggling notify flags
                 view = (
                     "notify"
-                    if what in ("zone", "safety", "offline", "policy")
+                    if what in ("zone", "safety", "offline", "events")
                     else "root"
                 )
                 _tg_send_profile(
@@ -8708,6 +9274,7 @@ def _tg_handle_callback(cq: dict) -> None:
         # m:limd:±500 | m:pct:N | m:dry:… | m:pools | m:info
         if len(parts) >= 2 and parts[0] == "m":
             action = parts[1]
+            fu = cq.get("from") if isinstance(cq.get("from"), dict) else None
             if action == "refresh":
                 tg_answer_callback(cq_id, "OK")
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8727,6 +9294,10 @@ def _tg_handle_callback(cq: dict) -> None:
                     want = False
                 else:
                     want = not _tg_dry_run_on()
+                _tg_log_control(
+                    chat_id,
+                    fu,
+                    "Dry Run " + ("ON" if want else "OFF"))
                 note = _tg_set_dry_run(want, lang)
                 tg_answer_callback(
                     cq_id,
@@ -8777,14 +9348,20 @@ def _tg_handle_callback(cq: dict) -> None:
                     return
                 # confirmed
                 if action == "reboot":
+                    _tg_log_control(chat_id, fu, "Reboot ASIC")
                     msg = _tg_apply_miner_write("reboot", "asic", lang)
                 else:
+                    _tg_log_control(chat_id, fu, "Restart miner")
                     msg = _tg_apply_miner_write("restart_miner", "btminer", lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
                 return
             if action == "work" and len(parts) >= 3:
                 want = "sleep" if parts[2] in ("sleep", "suspend") else "resume"
+                _tg_log_control(
+                    chat_id,
+                    fu,
+                    "Mining Control " + ("Suspend" if want == "sleep" else "Resume"))
                 msg = _tg_apply_miner_write("working", want, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8792,6 +9369,10 @@ def _tg_handle_callback(cq: dict) -> None:
             # legacy
             if action in ("suspend", "resume"):
                 want = "sleep" if action == "suspend" else "resume"
+                _tg_log_control(
+                    chat_id,
+                    fu,
+                    "Mining Control " + ("Suspend" if want == "sleep" else "Resume"))
                 msg = _tg_apply_miner_write("working", want, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8801,6 +9382,9 @@ def _tg_handle_callback(cq: dict) -> None:
                 if mode not in ("low", "normal", "high"):
                     tg_answer_callback(cq_id, "mode?", alert=True)
                     return
+                _tg_log_control(
+                    chat_id, fu, f"Power Mode {mode.upper()}"
+                )
                 msg = _tg_apply_miner_write("mode", mode, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8831,6 +9415,10 @@ def _tg_handle_callback(cq: dict) -> None:
                     tg_answer_callback(cq_id, msg[:180])
                     _tg_send_miner(chat_id, lang, edit_message_id=mid)
                     return
+                _tg_log_control(
+                    chat_id,
+                    fu,
+                    f"Power Limit {new_lim} W")
                 msg = _tg_apply_miner_write("power_limit", new_lim, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8858,6 +9446,9 @@ def _tg_handle_callback(cq: dict) -> None:
                         return
                 except Exception:
                     pass
+                _tg_log_control(
+                    chat_id, fu, f"Power pct {pct}%"
+                )
                 msg = _tg_apply_miner_write("power_pct", pct, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -9156,7 +9747,7 @@ def _tg_handle_command(
     en = str(lang).lower().startswith("en")
 
     # ── personal settings / language / notify (always allowed) ──
-    if cmd in ("/settings", "/настройки", "/config", "/setup"):
+    if cmd in ("/settings", "/config", "/setup"):
         _tg_send_bot_settings(chat_id, lang)
         return
 
@@ -9210,11 +9801,11 @@ def _tg_handle_command(
         )
         return
 
-    if cmd in ("/update", "/updates", "/обновление", "/обновления"):
+    if cmd in ("/update", "/updates"):
         _tg_send_update(chat_id, lang)
         return
 
-    if cmd in ("/prefs", "/my", "/profile", "/профайл", "/prof"):
+    if cmd in ("/prefs", "/my", "/profile", "/prof"):
         _tg_send_profile(chat_id, prefs)
         return
 
@@ -9229,8 +9820,8 @@ def _tg_handle_command(
         _tg_send_profile(chat_id, prefs)
         return
 
-    if cmd in ("/lang", "/language", "/язык"):
-        # legacy: /lang ru | /lang en
+    if cmd in ("/lang", "/language"):
+        # /lang ru | /lang en
         if args:
             new_lang = "en" if str(args[0]).lower().startswith("en") else "ru"
             prefs = _tg_set_chat_prefs(chat_id, lang=new_lang)
@@ -9244,12 +9835,12 @@ def _tg_handle_command(
             tg_send_message(chat_id, "/lang_ru  or  /lang_en")
         return
 
-    # /notify_zone [on|off]  ·  /notify_zone  (toggle)
+    # /notify_zone [on|off]  ·  no arg = toggle
     notify_cmds = {
         "/notify_zone": "zone",
         "/notify_safety": "safety",
         "/notify_offline": "offline",
-        "/notify_policy": "policy",
+        "/notify_events": "events",
         "/notify_all": "all",
         "/notify_commands": "commands",
     }
@@ -9263,14 +9854,13 @@ def _tg_handle_command(
         _tg_send_profile(chat_id, prefs)
         return
 
-    # legacy: /notify zone on
-    if cmd in ("/notify", "/уведомления"):
+    # /notify zone on
+    if cmd == "/notify":
         if not args:
             _tg_send_profile(chat_id, prefs)
             return
         what = str(args[0]).lower().replace("-", "_")
         arg = args[1] if len(args) > 1 else None
-        # allow /notify zone  or /notify_zone style in second form already handled
         prefs = _tg_apply_notify_cmd(chat_id, what, arg, prefs)
         _tg_send_profile(chat_id, prefs)
         return
@@ -9283,19 +9873,15 @@ def _tg_handle_command(
         "/help",
         "/chatid",
         "/settings",
-        "/настройки",
         "/config",
         "/setup",
         "/update",
         "/updates",
-        "/обновление",
-        "/обновления",
         "/emoji",
         "/cancel",
         "/prefs",
         "/my",
         "/profile",
-        "/профайл",
         "/prof",
         "/lang",
         "/lang_ru",
@@ -9304,7 +9890,7 @@ def _tg_handle_command(
         "/notify_zone",
         "/notify_safety",
         "/notify_offline",
-        "/notify_policy",
+        "/notify_events",
         "/notify_all",
         "/notify_commands",
     ):
@@ -9322,15 +9908,15 @@ def _tg_handle_command(
             chat_id,
             _tg_status_text(lang=lang),
             reply_markup=_tg_main_keyboard(lang, chat_id),
-            miner_host_emoji=True,
+            parse_mode="HTML",
         )
         return
 
-    if cmd in ("/miner", "/майнер"):
+    if cmd == "/miner":
         _tg_send_miner(chat_id, lang)
         return
 
-    if cmd in ("/info", "/инфо", "/asic"):
+    if cmd in ("/info", "/asic"):
         _tg_send_info(chat_id, lang)
         return
 
@@ -9345,6 +9931,10 @@ def _tg_handle_command(
                     reply_markup=_tg_main_keyboard(lang, chat_id),
                 )
                 return
+            _tg_log_control(
+                chat_id,
+                from_user,
+                "Dry Run " + ("ON" if onoff else "OFF"))
             note = _tg_set_dry_run(onoff, lang)
             tg_send_message(chat_id, note, reply_markup=_tg_main_keyboard(lang, chat_id))
             _tg_send_miner(chat_id, lang)
@@ -9360,7 +9950,11 @@ def _tg_handle_command(
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
             return
-        msg = _tg_apply_miner_write("mode", str(args[0]).lower(), lang)
+        mode_v = str(args[0]).lower()
+        _tg_log_control(
+            chat_id, from_user, f"Power Mode {mode_v.upper()}"
+        )
+        msg = _tg_apply_miner_write("mode", mode_v, lang)
         tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
         _tg_send_miner(chat_id, lang)
         return
@@ -9378,6 +9972,9 @@ def _tg_handle_command(
         except ValueError:
             tg_send_message(chat_id, "bad W", reply_markup=_tg_main_keyboard(lang, chat_id))
             return
+        _tg_log_control(
+            chat_id, from_user, f"Power Limit {watts} W"
+        )
         msg = _tg_apply_miner_write("power_limit", watts, lang)
         tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
         _tg_send_miner(chat_id, lang)
@@ -9396,6 +9993,7 @@ def _tg_handle_command(
         except ValueError:
             tg_send_message(chat_id, "bad %", reply_markup=_tg_main_keyboard(lang, chat_id))
             return
+        _tg_log_control(chat_id, from_user, f"Power pct {pct}%")
         msg = _tg_apply_miner_write("power_pct", pct, lang)
         tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
         _tg_send_miner(chat_id, lang)
@@ -9417,6 +10015,7 @@ def _tg_handle_command(
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
             return
+        _tg_log_control(chat_id, from_user, "Reboot ASIC")
         msg = _tg_apply_miner_write("reboot", "asic", lang)
         tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
         return
@@ -9436,11 +10035,14 @@ def _tg_handle_command(
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
             return
+        _tg_log_control(
+            chat_id, from_user, "Restart miner"
+        )
         msg = _tg_apply_miner_write("restart_miner", "btminer", lang)
         tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
         return
 
-    if cmd == "/policy":
+    if cmd == "/events":
         pol = get_policy_status()
         evs = pol.get("events") or []
         zlab = (
@@ -9448,15 +10050,43 @@ def _tg_handle_command(
             if pol.get("safety_sticky")
             else zone_title(pol.get("heat_zone"))
         )
-        lines = [
-            f"policy · zone={zlab} · want={pol.get('want_work')} have={pol.get('measured_work')}"
-        ]
-        for e in evs[:8]:
-            lines.append(f"{e.get('ts','')} [{e.get('kind')}] {e.get('msg')}")
+        dry = bool(pol.get("dry_run"))
+        fs = bool(pol.get("force_stop"))
+        want = pol.get("want_work") or "—"
+        have = pol.get("measured_work") or "—"
+        if en:
+            title = "📋 <b>Events</b>"
+            empty = "no events"
+        else:
+            title = "📋 <b>События</b>"
+            empty = "нет событий"
+        line_z = f"zone={zlab} · want={want} have={have}"
+        line_f = (
+            f"Dry Run {'ON' if dry else 'OFF'} · "
+            f"Force Stop {'ON' if fs else 'OFF'}"
+        )
+        # 📋 <b>События</b>
+        #
+        # zone=Z3 · No heat · want=suspend have=suspend
+        # Dry Run off · Force Stop off
+        #
+        # 04.08.2026 … [ok] …
+        lines = [title, "", line_z, line_f, ""]
+        if not evs:
+            lines.append(empty)
+        else:
+            for e in evs[:12]:
+                if not isinstance(e, dict):
+                    continue
+                ts = _tg_fmt_ts_eu(e.get("ts"))
+                kind = str(e.get("kind") or "—").strip() or "—"
+                msg = str(e.get("msg") or "").strip()
+                lines.append(f"{ts} [{kind}] {msg}".rstrip())
         tg_send_message(
             chat_id,
-            "\n".join(lines) if len(lines) > 1 else ("no events" if en else "нет событий"),
+            "\n".join(lines),
             reply_markup=_tg_main_keyboard(lang, chat_id),
+            parse_mode="HTML",
         )
         return
 
@@ -9499,17 +10129,15 @@ def _tg_handle_command(
         "/resume",
         "/sleep",
         "/mining",
-        "/остановить",
-        "/продолжить",
     ):
         # One control: Force Stop (sticky Suspend). Toggle if no arg.
         # /suspend|/stop → ON; /resume|/continue → OFF; bare button → toggle.
         arg0 = str(args[0]).lower() if args else ""
         onoff = _tg_parse_onoff(arg0) if arg0 else None
         if onoff is None:
-            if cmd in ("/suspend", "/sleep", "/stop_work", "/stopwork", "/остановить"):
+            if cmd in ("/suspend", "/sleep", "/stop_work", "/stopwork"):
                 onoff = True
-            elif cmd in ("/resume", "/mining", "/продолжить"):
+            elif cmd in ("/resume", "/mining"):
                 onoff = False
             elif arg0 in ("stop", "halt"):
                 onoff = True
@@ -9517,34 +10145,18 @@ def _tg_handle_command(
                 onoff = False
             else:
                 onoff = not get_force_stop()
-        try:
-            set_force_stop(bool(onoff), apply_now=True)
-            if onoff:
-                msg = (
-                    "🛑 Force Stop ON · mining suspended\n"
-                    "Zones & Dry Run ignored until Continue mining"
-                    if en
-                    else "🛑 Force Stop ВКЛ · майнинг остановлен\n"
-                    "Зоны и Dry Run игнорируются до «Продолжить майнинг»"
-                )
-            else:
-                msg = (
-                    "▶️ Force Stop OFF · Continue mining\n"
-                    "Zone auto / Dry Run rules apply again"
-                    if en
-                    else "▶️ Force Stop ВЫКЛ · Продолжить майнинг\n"
-                    "Снова действуют зоны / Dry Run"
-                )
-            tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
-        except Exception as e:
-            tg_send_message(
-                chat_id,
-                f"❌ Force Stop: {e}",
-                reply_markup=_tg_main_keyboard(lang, chat_id),
+        # Profile: «Подтверждение Force Stop» — ask before apply (default ON)
+        # Log only after apply (confirm Yes or no-confirm path) — not on button press
+        need_confirm = bool(prefs.get("confirm_force_stop", True))
+        if need_confirm:
+            _tg_offer_force_stop_confirm(chat_id, bool(onoff), lang)
+        else:
+            _tg_apply_force_stop_result(
+                chat_id, bool(onoff), lang, from_user=from_user, log=True
             )
         return
 
-    if cmd in ("/filtration", "/filter", "/фильтрация", "/фильтр"):
+    if cmd in ("/filtration", "/filter"):
         try:
             st = get_filtration_status()
         except Exception as e:
@@ -9585,12 +10197,24 @@ def _tg_handle_command(
             )
             return
         try:
+            _tg_log_control(
+                chat_id,
+                from_user,
+                "Filtration " + ("ON" if onoff else "OFF"))
             out = filtration_set(bool(onoff), source="telegram", force=False)
             if not out.get("ok"):
                 err = out.get("error") or "fail"
+                # re-pretty with chat language if raw slipped through
+                if "\n" not in str(err) or "Не удалось" not in str(err):
+                    err = _filtration_user_error(
+                        Exception(str(err)),
+                        on=bool(onoff),
+                        backend=out.get("backend") or st.get("backend"),
+                        lang=lang,
+                    )
                 tg_send_message(
                     chat_id,
-                    f"❌ filtration: {err}",
+                    f"❌ {err}",
                     reply_markup=_tg_main_keyboard(lang, chat_id),
                 )
                 return
@@ -9611,7 +10235,13 @@ def _tg_handle_command(
         except Exception as e:
             tg_send_message(
                 chat_id,
-                f"❌ filtration: {e}",
+                "❌ "
+                + _filtration_user_error(
+                    e,
+                    on=bool(onoff),
+                    backend=st.get("backend") if isinstance(st, dict) else None,
+                    lang=lang,
+                ),
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
         return
@@ -10071,7 +10701,7 @@ def set_force_stop(on: bool, *, apply_now: bool = True) -> dict:
         _policy_ctrl["force_stop"] = on
     _persist_force_stop(on)
     if on and not prev:
-        _policy_log("ok", "FORCE_STOP ON · Suspend enforced · zones/Dry Run ignored")
+        _policy_log("ok", "FORCE_STOP ON · Suspend")
         if apply_now:
             try:
                 apply_set("working", "sleep", DEFAULT_API_PASSWORD)
@@ -10079,9 +10709,9 @@ def set_force_stop(on: bool, *, apply_now: bool = True) -> dict:
             except Exception as e:
                 _policy_log("err", f"FORCE_STOP write fail: {e}", source="force_stop")
     elif not on and prev:
-        _policy_log("ok", "FORCE_STOP OFF · zone auto / Dry Run rules resume")
+        _policy_log("ok", "FORCE_STOP OFF")
     elif on:
-        _policy_log("info", "FORCE_STOP already ON")
+        _policy_log("info", "FORCE_STOP still ON")
     return get_policy_status()
 
 
@@ -10234,7 +10864,7 @@ def get_policy_status() -> dict:
         "force_stop": bool(ctrl.get("force_stop")),
         "last_apply_ts": ctrl.get("last_apply_ts"),
         "last_event": ctrl.get("last_event"),
-        "events": events[:20],
+        "events": events[:40],
         "override_active": ov_until > now,
         "override_until_ts": ov_until if ov_until > now else None,
         "override_remaining_sec": ov_rem,
@@ -10363,10 +10993,8 @@ def policy_tick() -> None:
         desired = None
         profile = None
         if last_key != "force_stop":
-            _policy_log(
-                "info",
-                "FORCE_STOP active · Suspend enforced · zones & Dry Run ignored",
-            )
+            # short note once when policy enters FS (ON already logged in set_force_stop)
+            _policy_log("info", "FORCE_STOP active")
             with _policy_lock:
                 _policy_ctrl["last_key"] = "force_stop"
             last_key = "force_stop"
@@ -11195,7 +11823,7 @@ class Handler(SimpleHTTPRequestHandler):
                                 ids.append(s)
                     _tg_cfg["chat_ids"] = ids
                 for k in (
-                    "notify_policy",
+                    "notify_events",
                     "notify_offline",
                     "notify_safety",
                     "notify_zone",
@@ -11239,14 +11867,17 @@ class Handler(SimpleHTTPRequestHandler):
                                 else "ru"
                             )
                         for nk in (
-                            "notify_policy",
+                            "notify_events",
                             "notify_offline",
                             "notify_safety",
                             "notify_zone",
                             "commands_en",
+                            "confirm_force_stop",
                         ):
                             if nk in cv:
                                 base[nk] = bool(cv[nk])
+                        # drop legacy key if present
+                        base.pop("notify_policy", None)
                         cur_chats[key] = base
                 # force getMe refresh on token change
                 if "bot_token" in req:

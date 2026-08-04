@@ -874,12 +874,13 @@
       color: var(--muted);
     }
 
-    .log .line { white-space: nowrap; }
-    .log .t { color: var(--dim); }
-    .log .ok { color: var(--ok); }
-    .log .warn { color: var(--warn); }
-    .log .info { color: var(--accent); }
-    .log .danger { color: var(--danger); }
+    .log .line { white-space: pre-wrap; word-break: break-word; }
+    .log .t { color: var(--dim); margin-right: 6px; }
+    .log .ok { color: var(--ok); font-weight: 600; margin-right: 6px; }
+    .log .warn { color: var(--warn); font-weight: 600; margin-right: 6px; }
+    .log .info { color: var(--accent); font-weight: 600; margin-right: 6px; }
+    .log .danger { color: var(--danger); font-weight: 600; margin-right: 6px; }
+    .log .kind { text-transform: uppercase; }
 
     /* —— banner —— */
     .banner {
@@ -1984,7 +1985,7 @@
             </div>
             <div class="tc-extra">
               <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
-              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span></div>
+              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">Critical</span> <span id="t-chip-crit">—</span></div>
             </div>
           </div>
           <div class="temp-card heat-balance" id="card-heat-balance">
@@ -1995,14 +1996,6 @@
               <span id="hb-net">—</span> <small>kW</small>
             </div>
             <div class="tc-extra" id="hb-cond">—</div>
-          </div>
-        </div>
-
-        <div class="grid-2">
-          <div class="metric">
-            <label><span class="tip" data-tip-key="t_safe">T_safe</span> · chip max</label>
-            <div class="val"><span data-bind="tsafe">—</span> <small>°C</small></div>
-            <div class="hint"><span class="tip" data-tip-key="critical">Critical</span> / safety</div>
           </div>
         </div>
 
@@ -2345,7 +2338,9 @@
               <label class="field" style="margin:0;min-width:160px">Цвет по
                 <select id="chipmap-metric">
                   <option value="temp">Temperature</option>
+                  <option value="est_th">Hash est (TH/s)</option>
                   <option value="nonce">Hash (nonce)</option>
+                  <option value="nonce_rate">Nonce/s (elapsed)</option>
                   <option value="freq">Frequency</option>
                 </select>
               </label>
@@ -3242,7 +3237,7 @@
               </label>
             </div>
             <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;flex-wrap:wrap">
-              <label class="check"><input type="checkbox" id="tg-notify-policy" checked /><span>policy / APPLY</span></label>
+              <label class="check"><input type="checkbox" id="tg-notify-events" checked /><span>события / APPLY</span></label>
               <label class="check"><input type="checkbox" id="tg-notify-zone" checked /><span>зоны</span></label>
               <label class="check"><input type="checkbox" id="tg-notify-safety" checked /><span>Safety</span></label>
               <label class="check"><input type="checkbox" id="tg-notify-offline" checked /><span>ASIC offline</span></label>
@@ -3416,26 +3411,13 @@
               </div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45" id="info-update-msg">
-              Нажмите «Проверить обновления» — сравним VERSION/release с
-              <a href="https://github.com/andreybmc/poolheat" target="_blank" rel="noopener" id="info-github-link">GitHub</a>.
-              Установка скачает архив (tag/branch), обновит UI+serve, config.json не трогает, перезапустит сервис.
+              Нажмите «Проверить обновления» — сравним версию с репозиторием.
+              Установка обновит UI+serve, config.json не трогает, перезапустит сервис.
             </p>
             <div class="update-notes" id="info-update-notes" hidden>
               <span class="rn-label">Release notes</span>
               <div id="info-update-notes-body"></div>
             </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2>Info · оборудование</h2>
-              <div class="sub">роутер · ASIC · платы · ресурсы · sn / версии</div>
-            </div>
-          </div>
-          <div class="card-b">
-            <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-ts">—</p>
           </div>
         </div>
 
@@ -3610,20 +3592,17 @@
           <div class="card-h">
             <div>
               <h2>Action log</h2>
-              <div class="sub">commanded vs measured · demo</div>
+              <div class="sub">policy events · last write · live</div>
             </div>
-            <button class="btn ghost" type="button" id="btn-export-log">Export</button>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn ghost" type="button" id="btn-refresh-log">Обновить</button>
+              <button class="btn ghost" type="button" id="btn-export-log">Export JSONL</button>
+            </div>
           </div>
           <div class="card-b">
+            <p id="action-log-meta" style="font-size:0.75rem;color:var(--dim);margin:0 0 8px">—</p>
             <div class="log" id="log">
-              <div class="line"><span class="t">19:42:01</span> <span class="info">POLL</span> t_ctrl=42.6 t_safe=42.6 boards=[42.6,42.5,35.4,35.3] power=4180 upfreq=1</div>
-              <div class="line"><span class="t">19:42:01</span> <span class="warn">WARMUP</span> miner_ready=false → block upward</div>
-              <div class="line"><span class="t">19:42:01</span> <span class="ok">ZONE</span> Z1 Reduced heat · liquid mid-band</div>
-              <div class="line"><span class="t">19:41:16</span> <span class="info">POLL</span> t_ctrl=42.5 power=4120</div>
-              <div class="line"><span class="t">19:40:31</span> <span class="info">DRY_RUN</span> would_skip Z1→Z0 (warmup)</div>
-              <div class="line"><span class="t">19:12:00</span> <span class="ok">APPLY</span> zone=Z1 mode=low limit=4000 dry_run=true</div>
-              <div class="line"><span class="t">19:11:15</span> <span class="warn">STREAK</span> Z1 2/3</div>
-              <div class="line"><span class="t">18:00:00</span> <span class="info">START</span> evaluate · cold_start=Z1</div>
+              <div class="line" style="white-space:normal;color:var(--dim)">загрузка…</div>
             </div>
           </div>
         </div>
@@ -4072,8 +4051,9 @@
           if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
         } catch (_) { /* ignore */ }
       }
-      if (tabId === "logs" && typeof loadMinerErrorLog === "function") {
-        loadMinerErrorLog();
+      if (tabId === "logs") {
+        if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
+        if (typeof loadActionLog === "function") loadActionLog();
       }
       if (tabId === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
@@ -5143,6 +5123,12 @@
       if (sm) sm.textContent = String(th.t1);
       if (sh) sh.textContent = String(th.t2);
       if (sc) sc.textContent = String(th.crit);
+      // chip card: … · Critical 70.0°C
+      const tcc = document.getElementById("t-chip-crit");
+      if (tcc) {
+        const c = Number(th.crit);
+        tcc.textContent = Number.isFinite(c) ? c.toFixed(1) + "°C" : "—";
+      }
       // thresholds line under liquid/env card (second bottom row)
       const thrLine =
         "T0=" + th.t0 + " · T1=" + th.t1 + " · T2=" + th.t2 + " · h=" + th.h;
@@ -5272,6 +5258,17 @@
       };
       setId("t-chip-avg", withC(r.chip_avg, 1));
       setId("t-chip-min", withC(r.chip_min, 1));
+      // T_crit threshold (Safety Critical) next to live chip avg/min
+      let critV = NaN;
+      try {
+        const th = typeof getThresholds === "function" ? getThresholds() : null;
+        if (th && th.crit != null) critV = Number(th.crit);
+      } catch (_) { /* ignore */ }
+      if (!Number.isFinite(critV)) {
+        const el = document.getElementById("thr-crit");
+        if (el && el.value !== "") critV = Number(el.value);
+      }
+      setId("t-chip-crit", withC(critV, 1));
       setId("t-pcb-avg", withC(boardAvg, 1));
       setId("t-pcb-min", withC(boardMin, 1));
       setId("chip-min", fmt(r.chip_min));
@@ -7259,8 +7256,8 @@
           fl(p.notify_safety !== false) +
           " offline=" +
           fl(p.notify_offline !== false) +
-          " policy=" +
-          fl(p.notify_policy !== false);
+          " events=" +
+          fl(p.notify_events !== false);
         row.innerHTML =
           '<button type="button" class="tg-perchat-del" title="Удалить из allowlist и сбросить prefs" aria-label="Удалить">×</button>' +
           '<span class="tg-perchat-meta">' +
@@ -7334,7 +7331,7 @@
           const el = document.getElementById(id);
           if (el) el.checked = v !== false;
         };
-        setCk("tg-notify-policy", c.notify_policy);
+        setCk("tg-notify-events", c.notify_events);
         setCk("tg-notify-zone", c.notify_zone);
         setCk("tg-notify-safety", c.notify_safety);
         setCk("tg-notify-offline", c.notify_offline);
@@ -7359,7 +7356,7 @@
       const payload = {
         enabled: !!(document.getElementById("tg-enabled")?.checked),
         chat_ids: chatsRaw,
-        notify_policy: !!(document.getElementById("tg-notify-policy")?.checked),
+        notify_events: !!(document.getElementById("tg-notify-events")?.checked),
         notify_zone: !!(document.getElementById("tg-notify-zone")?.checked),
         notify_safety: !!(document.getElementById("tg-notify-safety")?.checked),
         notify_offline: !!(document.getElementById("tg-notify-offline")?.checked),
@@ -7812,9 +7809,219 @@
       }, 10000);
     })();
     syncForceSuspendBtn();
-    document.getElementById("btn-export-log")?.addEventListener("click", () => {
-      toastSuccess("Экспорт логов JSONL (demo)");
-    });
+    /* ── Action log (live policy events) ─────────────────────────── */
+    let actionLogCache = [];
+    let actionLogTimer = null;
+
+    function escapeLogHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function fmtActionLogTs(ts) {
+      if (ts == null || ts === "") return "—";
+      const s = String(ts).trim();
+      // already DD.MM.YYYY …
+      if (/^\d{2}\.\d{2}\.\d{4}/.test(s)) return s.slice(0, 19);
+      // ISO 2026-08-04T11:32:27
+      const m = s.match(
+        /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2}):(\d{2})/
+      );
+      if (m) return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5] + ":" + m[6];
+      try {
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) {
+          const p = (n) => String(n).padStart(2, "0");
+          return (
+            p(d.getDate()) +
+            "." +
+            p(d.getMonth() + 1) +
+            "." +
+            d.getFullYear() +
+            " " +
+            p(d.getHours()) +
+            ":" +
+            p(d.getMinutes()) +
+            ":" +
+            p(d.getSeconds())
+          );
+        }
+      } catch (_) { /* ignore */ }
+      return s;
+    }
+
+    function actionLogKindClass(kind) {
+      const k = String(kind || "").toLowerCase();
+      if (k === "ok" || k === "apply" || k === "write") return "ok";
+      if (k === "warn" || k === "warning" || k === "warmup" || k === "streak")
+        return "warn";
+      if (
+        k === "err" ||
+        k === "error" ||
+        k === "fail" ||
+        k === "danger" ||
+        k === "crit"
+      )
+        return "danger";
+      // tg = Telegram control command
+      if (k === "tg" || k === "telegram") return "info";
+      return "info";
+    }
+
+    function renderActionLog(pol, lastWrite) {
+      const el = document.getElementById("log");
+      const meta = document.getElementById("action-log-meta");
+      if (!el) return;
+      const events = Array.isArray(pol && pol.events) ? pol.events.slice() : [];
+      // optional last write as a synthetic top line (if not already in events)
+      if (lastWrite && (lastWrite.action != null || lastWrite.ts)) {
+        const wmsg =
+          "WRITE " +
+          String(lastWrite.action || "?") +
+          (lastWrite.value != null ? "=" + lastWrite.value : "") +
+          (lastWrite.ok === false
+            ? " FAIL " + (lastWrite.error || "")
+            : lastWrite.ok
+              ? " OK"
+              : "") +
+          (lastWrite.source ? " · " + lastWrite.source : "");
+        events.unshift({
+          ts: lastWrite.ts || new Date().toISOString(),
+          kind: lastWrite.ok === false ? "err" : "write",
+          msg: wmsg.trim(),
+          _synthetic: true,
+        });
+      }
+      actionLogCache = events;
+      if (meta) {
+        const z = (pol && (pol.heat_zone_title || pol.heat_zone)) || "—";
+        const want = (pol && pol.want_work) || "—";
+        const have = (pol && pol.measured_work) || "—";
+        const dry = pol && pol.dry_run ? "Dry Run ON" : "Dry Run OFF";
+        const fs = pol && pol.force_stop ? "Force Stop ON" : "Force Stop OFF";
+        meta.textContent =
+          "zone " +
+          z +
+          " · want " +
+          want +
+          " · have " +
+          have +
+          " · " +
+          dry +
+          " · " +
+          fs +
+          " · " +
+          events.length +
+          " events";
+      }
+      if (!events.length) {
+        el.innerHTML =
+          '<div class="line" style="color:var(--dim)">пока пусто · APPLY / warn / write появятся при работе policy</div>';
+        return;
+      }
+      el.innerHTML = events
+        .map((e) => {
+          const ts = escapeLogHtml(fmtActionLogTs(e.ts));
+          const kind = String(e.kind || "info").toUpperCase();
+          const cls = actionLogKindClass(e.kind);
+          const msg = escapeLogHtml(e.msg || "");
+          return (
+            '<div class="line"><span class="t">' +
+            ts +
+            '</span><span class="kind ' +
+            cls +
+            '">[' +
+            escapeLogHtml(kind) +
+            "]</span> " +
+            msg +
+            "</div>"
+          );
+        })
+        .join("");
+    }
+
+    async function loadActionLog() {
+      try {
+        const [resPol, resLive] = await Promise.all([
+          fetch("/api/policy", { cache: "no-store" }),
+          fetch("/api/live", { cache: "no-store" }).catch(() => null),
+        ]);
+        const pol = await resPol.json();
+        let lw = null;
+        if (resLive && resLive.ok) {
+          try {
+            const live = await resLive.json();
+            lw = live && live.last_write ? live.last_write : null;
+          } catch (_) { /* ignore */ }
+        }
+        if (pol && pol.ok === false) throw new Error(pol.error || "policy fail");
+        renderActionLog(pol, lw);
+        return pol;
+      } catch (e) {
+        const el = document.getElementById("log");
+        if (el)
+          el.innerHTML =
+            '<div class="line" style="color:var(--danger)">ошибка: ' +
+            escapeLogHtml(e.message) +
+            "</div>";
+        return null;
+      }
+    }
+
+    function exportActionLogJsonl() {
+      const rows = actionLogCache || [];
+      if (!rows.length) {
+        toastWarn("Лог пуст");
+        return;
+      }
+      const body = rows
+        .map((e) =>
+          JSON.stringify({
+            ts: e.ts,
+            kind: e.kind,
+            msg: e.msg,
+          })
+        )
+        .join("\n");
+      const blob = new Blob([body + "\n"], { type: "application/x-ndjson" });
+      const a = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.download =
+        "poolheat-action-log-" +
+        new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") +
+        ".jsonl";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toastSuccess("Export · " + rows.length + " lines");
+    }
+
+    document
+      .getElementById("btn-export-log")
+      ?.addEventListener("click", () => exportActionLogJsonl());
+    document
+      .getElementById("btn-refresh-log")
+      ?.addEventListener("click", () => {
+        void loadActionLog().then(() => toastSuccess("Action log обновлён"));
+      });
+    // poll while Logs tab is open
+    if (actionLogTimer) clearInterval(actionLogTimer);
+    actionLogTimer = setInterval(() => {
+      const onLogs =
+        document.getElementById("view-logs")?.classList.contains("active") ||
+        document.querySelector('nav.tabs button[data-tab="logs"].active');
+      if (onLogs) void loadActionLog();
+    }, 5000);
+    // first paint if already on logs
+    if (
+      document.getElementById("view-logs")?.classList.contains("active") ||
+      document.querySelector('nav.tabs button[data-tab="logs"].active')
+    ) {
+      void loadActionLog();
+    }
     document.getElementById("btn-dry-goto")?.addEventListener("click", () => {
       if (typeof activateTab === "function") activateTab("miner");
       else {
@@ -7910,12 +8117,6 @@
 
       updateBrandDevices(r, m, ph.version);
       renderUpdateCheck(lastUpdateCheck, ph);
-
-      const tsEl = document.getElementById("info-ts");
-      if (tsEl) {
-        // silent — no «из кэша / обновлено» labels
-        tsEl.textContent = "";
-      }
 
       setTxt("info-router-model", r.model || r.device_tree_model || "—");
       setTxt(
@@ -8324,7 +8525,6 @@
     async function loadSystemInfo(opts) {
       opts = opts || {};
       const forceLive = opts.forceLive !== false;
-      const tsEl = document.getElementById("info-ts");
 
       // 1) instant paint from localStorage
       const hadLocal = paintInfoFromLocalCache();
@@ -9445,11 +9645,12 @@
         const res = await fetch("/api/filtration/test", { method: "POST" });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "test fail");
-        toastSuccess("Tapo OK · насос " + (body.on ? "ВКЛ" : "ВЫКЛ"));
+        toastSuccess("OK · насос " + (body.on ? "ВКЛ" : "ВЫКЛ"));
         await loadFiltrationConfig();
       } catch (e) {
-        toastError("Tapo: " + e.message);
-        if (st) st.textContent = "test err: " + e.message;
+        const m = String(e.message || e);
+        toastError(m, 6000);
+        if (st) st.textContent = m.replace(/\n/g, " · ");
       }
     }
 
@@ -9466,7 +9667,7 @@
         toastSuccess(on ? "Насос ВКЛ" : "Насос ВЫКЛ");
         await loadFiltrationConfig();
       } catch (e) {
-        toastError("Насос: " + e.message);
+        toastError(String(e.message || e), 6000);
       }
     }
 
@@ -9607,17 +9808,24 @@
     function chipColor(metric, value, vmin, vmax) {
       if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
       if (metric === "temp") return chipTempColor(value, vmin, vmax);
-      // nonce ≈ chip hash work; freq separate
-      if (metric === "nonce" || metric === "freq")
+      // hash work metrics + freq: red→yellow→green
+      if (
+        metric === "nonce" ||
+        metric === "est_th" ||
+        metric === "nonce_rate" ||
+        metric === "freq"
+      )
         return chipPerfColor(value, vmin, vmax);
       return CHIP_COL.empty;
     }
 
-    /** Metric value for one chip (hash map uses nonce). */
+    /** Metric value for one chip. */
     function chipmapChipValue(c, metric) {
       if (!c) return null;
       if (metric === "temp") return c.temp;
       if (metric === "nonce") return c.nonce;
+      if (metric === "est_th") return c.est_th;
+      if (metric === "nonce_rate") return c.nonce_rate;
       if (metric === "freq") return c.freq;
       return null;
     }
@@ -9650,21 +9858,32 @@
       let unit = "";
       let lowTag = " slow";
       let highTag = " fast";
+      let digits = 0;
       if (metric === "nonce") {
         unit = " n";
         lowTag = " low hash";
         highTag = " high hash";
+      } else if (metric === "est_th") {
+        unit = " TH/s";
+        lowTag = " low";
+        highTag = " high";
+        digits = 3;
+      } else if (metric === "nonce_rate") {
+        unit = "/s";
+        lowTag = " low";
+        highTag = " high";
+        digits = 2;
       } else if (metric === "freq") {
         unit = " MHz";
       }
+      const fmtR = (v) =>
+        v != null && Number.isFinite(Number(v))
+          ? Number(v).toFixed(digits) + unit
+          : null;
       const lo =
-        range && range.min != null
-          ? Number(range.min).toFixed(0) + unit
-          : "min";
+        range && range.min != null ? fmtR(range.min) || "min" : "min";
       const hi =
-        range && range.max != null
-          ? Number(range.max).toFixed(0) + unit
-          : "max";
+        range && range.max != null ? fmtR(range.max) || "max" : "max";
       return {
         kind: "perf",
         low: lo + lowTag,
@@ -9680,12 +9899,29 @@
       chipmapData = data;
       const metric = document.getElementById("chipmap-metric")?.value || "temp";
       const boards = (data && data.boards) || [];
+      // Suspend: maps only when mining (board power) — not an access error
+      const isSuspend =
+        data &&
+        (data.reason === "suspend" ||
+          data.reason === "mining_off" ||
+          (String(data.message || "").toLowerCase().includes("suspend") &&
+            !data.error));
       if (st) {
         if (!data) {
           st.textContent = "нет данных";
+        } else if (isSuspend) {
+          st.style.color = "var(--muted)";
+          st.textContent =
+            data.message ||
+            "Mining Suspend · карты чипов доступны только при майнинге (когда есть питание на платах).";
         } else if (data.error && !boards.length) {
-          st.textContent = "ошибка: " + data.error;
+          st.style.color = "var(--danger, #e55)";
+          st.textContent =
+            "ошибка доступа: " +
+            data.error +
+            " (ASIC offline / пароль web / прошивка)";
         } else {
+          st.style.color = "var(--muted)";
           let t =
             (data.ok ? "OK" : "stale/fail") +
             " · chips " +
@@ -9699,12 +9935,34 @@
               "…" +
               Number(data.temp_max).toFixed(0) +
               " °C";
+          if (data.hashrate_th != null && Number(data.hashrate_th) > 0)
+            t += " · ASIC " + Number(data.hashrate_th).toFixed(1) + " TH/s";
+          if (data.mining_elapsed != null && Number(data.mining_elapsed) > 0) {
+            const el = Number(data.mining_elapsed);
+            const em = Math.floor(el / 60);
+            const es = Math.floor(el % 60);
+            t +=
+              " · mining " +
+              (em > 0 ? em + "m " : "") +
+              es +
+              "s" +
+              " (elapsed)";
+          }
           if (data.ts) t += " · " + data.ts;
           if (data.fetch_ms != null) t += " · " + data.fetch_ms + " ms";
           if (data.stale) t += " · STALE";
           if (data.error) t += " · err: " + String(data.error).slice(0, 80);
           st.textContent = t;
         }
+      }
+      if (isSuspend || (data && data.reason === "suspend")) {
+        if (leg) leg.innerHTML = "";
+        host.innerHTML =
+          '<div class="chip-board" style="padding:16px 14px;color:var(--muted);font-size:0.85rem;line-height:1.5">' +
+          "<strong style=\"color:var(--text)\">Mining Suspend</strong><br/>" +
+          "Карты чипов доступны только при майнинге (когда есть питание на платах)." +
+          "</div>";
+        return;
       }
       const metricRange = chipmapMetricRange(boards, metric);
       const labels = chipmapLegendLabels(metric, metricRange);
@@ -9814,17 +10072,23 @@
                 cell.style.textShadow = "none";
               }
             }
-            // tip: nonce = hash work proxy
-            cell.dataset.tip =
+            // tip: est TH/s = ASIC HR × nonce/Σnonce · rate = nonce/mining_elapsed
+            let tip =
               "C" +
               c.id +
               " · " +
               (c.temp != null ? c.temp + "°C" : "—") +
               " · " +
-              (c.freq != null ? c.freq + " MHz" : "") +
-              " · hash≈nonce " +
-              (c.nonce != null ? c.nonce : "—") +
-              (c.err ? " · err " + c.err : "");
+              (c.freq != null ? c.freq + " MHz" : "");
+            if (c.est_th != null && Number.isFinite(Number(c.est_th)))
+              tip += " · ≈" + Number(c.est_th).toFixed(3) + " TH/s";
+            if (c.nonce != null) tip += " · nonce " + c.nonce;
+            if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
+              tip += " · " + Number(c.nonce_rate).toFixed(2) + " n/s";
+            if (c.hash_share_asic != null)
+              tip += " · " + Number(c.hash_share_asic).toFixed(2) + "% ASIC";
+            if (c.err) tip += " · err " + c.err;
+            cell.dataset.tip = tip;
           } else {
             cell.classList.add("empty");
           }
