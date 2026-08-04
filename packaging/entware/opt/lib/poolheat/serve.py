@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.21"
+_DEFAULT_APP_VERSION = "0.3.22"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -8167,6 +8167,7 @@ def _tg_live_snapshot(*, max_age_sec: float = 12.0) -> tuple[dict, bool, Excepti
     getUpdates while miner I/O is busy.
     Returns (live_dict, online, error).
     """
+    global _cache, _cache_ts
     now = time.time()
     with _cache_lock:
         cached = dict(_cache) if isinstance(_cache, dict) else None
@@ -8176,7 +8177,6 @@ def _tg_live_snapshot(*, max_age_sec: float = 12.0) -> tuple[dict, bool, Excepti
     try:
         live = fetch_live()
         with _cache_lock:
-            global _cache, _cache_ts
             _cache = live
             _cache_ts = time.time()
         return live, True, None
