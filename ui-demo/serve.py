@@ -142,7 +142,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.5"
+_DEFAULT_APP_VERSION = "0.3.6"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -7732,44 +7732,59 @@ def _tg_update_status_phrase(st: str | None, en: bool) -> str:
         return {
             "up_to_date": "up to date",
             "update_available": "update available",
-            "local_ahead": "local ahead of GitHub",
-            "branch_only": "no release tag — branch install only",
+            "local_ahead": "local ahead",
+            "branch_only": "branch only",
             "error": "check error",
             "unknown": "not checked yet",
         }.get(st, st)
     return {
         "up_to_date": "актуально",
         "update_available": "есть обновление",
-        "local_ahead": "локально новее GitHub",
-        "branch_only": "нет release/tag — только ветка",
+        "local_ahead": "локально новее",
+        "branch_only": "только ветка",
         "error": "ошибка проверки",
         "unknown": "ещё не проверяли",
     }.get(st, st)
 
 
 def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
+    """
+    Exact layout (RU example):
+
+    Установлено:  0.3.5
+
+    Репозиторий:  0.3.6
+    Статус:       есть обновление
+    Источник:     release
+    Tag:          v0.3.6
+    Commit:       392cf7a0f789
+    Проверка:     04.08.2026 10:12:28
+    """
     en = str(lang or "ru").lower().startswith("en")
     cur = get_app_version()
     chk = check if isinstance(check, dict) else None
-    # read state without holding _update_lock (install holds it for a long time)
     busy = bool(_update_state.get("busy"))
     if chk is None:
         last = _update_state.get("last_check")
         chk = last if isinstance(last, dict) else None
 
+    # column alignment after label
+    def row(label: str, value: str) -> str:
+        # labels padded to same visual width (cyrillic ~ wider; keep simple)
+        pad = 14  # "Установлено: " length-ish
+        lab = label if label.endswith(":") else (label + ":")
+        spaces = max(1, pad - len(lab))
+        return f"{lab}{' ' * spaces}{value}"
+
     lines: list[str] = []
     if en:
         lines.append("🔄 Update")
         lines.append("————————————")
-        lines.append(f"Installed:  {cur}")
-        lines.append(f"Repo:       {GITHUB_REPO}")
-        lines.append(f"Branch:     {GITHUB_BRANCH}")
+        lines.append(row("Installed", cur))
     else:
         lines.append("🔄 Обновление")
         lines.append("————————————")
-        lines.append(f"Установлено:  {cur}")
-        lines.append(f"Репозиторий:  {GITHUB_REPO}")
-        lines.append(f"Ветка:        {GITHUB_BRANCH}")
+        lines.append(row("Установлено", cur))
 
     if busy:
         lines.append("")
@@ -7788,38 +7803,33 @@ def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
     st = _tg_update_status_phrase(chk.get("status"), en)
     lines.append("")
     if en:
-        lines.append(f"GitHub:     {latest}")
-        lines.append(f"Status:     {st}")
+        lines.append(row("Repository", str(latest)))
+        lines.append(row("Status", st))
+        if chk.get("source"):
+            lines.append(row("Source", str(chk.get("source"))))
+        if chk.get("tag"):
+            lines.append(row("Tag", str(chk.get("tag"))))
+        if chk.get("commit_sha"):
+            lines.append(row("Commit", str(chk.get("commit_sha"))))
+        if chk.get("checked_at"):
+            lines.append(row("Checked", _tg_fmt_ts_local(chk.get("checked_at"))))
     else:
-        lines.append(f"GitHub:       {latest}")
-        lines.append(f"Статус:       {st}")
+        lines.append(row("Репозиторий", str(latest)))
+        lines.append(row("Статус", st))
+        if chk.get("source"):
+            lines.append(row("Источник", str(chk.get("source"))))
+        if chk.get("tag"):
+            lines.append(row("Tag", str(chk.get("tag"))))
+        if chk.get("commit_sha"):
+            lines.append(row("Commit", str(chk.get("commit_sha"))))
+        if chk.get("checked_at"):
+            lines.append(row("Проверка", _tg_fmt_ts_local(chk.get("checked_at"))))
 
-    if chk.get("source"):
-        lines.append(
-            f"Source:     {chk.get('source')}"
-            if en
-            else f"Источник:     {chk.get('source')}"
-        )
-    if chk.get("tag"):
-        lines.append(f"Tag:        {chk.get('tag')}" if en else f"Tag:         {chk.get('tag')}")
-    if chk.get("commit_sha"):
-        lines.append(
-            f"Commit:     {chk.get('commit_sha')}"
-            if en
-            else f"Commit:      {chk.get('commit_sha')}"
-        )
-    if chk.get("checked_at"):
-        lines.append(
-            f"Checked:    {_tg_fmt_ts_local(chk.get('checked_at'))}"
-            if en
-            else f"Проверка:    {_tg_fmt_ts_local(chk.get('checked_at'))}"
-        )
     if chk.get("error"):
         lines.append("")
         lines.append(f"❌ {chk.get('error')}")
     notes = chk.get("notes")
     if notes and chk.get("status") in ("branch_only", "update_available"):
-        # short note
         note = str(notes).replace("\n", " ").strip()
         if len(note) > 220:
             note = note[:217] + "…"
