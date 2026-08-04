@@ -128,6 +128,8 @@ ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
+# After OTA install + restart: notify the chat that started the update
+UPDATE_NOTIFY_FILE = DATA / "update_notify.json"
 DEFAULT_API_PASSWORD = _APP["api_password"]
 # Live / control poll of miner API (UI + future policy loop). Not history sample interval.
 POLL_INTERVAL_SEC = int(
@@ -3865,6 +3867,111 @@ fi
     threading.Thread(target=_run, name="poolheat-restart", daemon=True).start()
 
 
+def _queue_update_restart_notify(
+    chat_id,
+    lang: str = "ru",
+    *,
+    from_version: str | None = None,
+    to_version: str | None = None,
+    source: str = "telegram",
+) -> None:
+    """
+    Persist a one-shot TG message for after service restart.
+    Written to DATA so it survives kill of serve.py.
+    """
+    try:
+        DATA.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "chat_id": chat_id,
+            "lang": "en" if str(lang or "").lower().startswith("en") else "ru",
+            "from_version": from_version,
+            "to_version": to_version or get_app_version(),
+            "source": source,
+            "queued_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        UPDATE_NOTIFY_FILE.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"[update] restart notify queued → chat {chat_id}")
+    except Exception as e:
+        print(f"[update] restart notify queue fail: {e}")
+
+
+def _flush_update_restart_notify() -> None:
+    """
+    After boot: if an OTA left a pending notify, send success to that chat.
+    Safe to call multiple times; file is removed first to avoid loops.
+    """
+    path = UPDATE_NOTIFY_FILE
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"[update] restart notify read fail: {e}")
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    if not isinstance(raw, dict):
+        return
+    chat_id = raw.get("chat_id")
+    if chat_id is None:
+        return
+    en = str(raw.get("lang") or "ru").lower().startswith("en")
+    ver = str(raw.get("to_version") or get_app_version() or "?")
+    from_v = raw.get("from_version")
+    try:
+        # ensure TG config loaded
+        if not _tg_cfg.get("bot_token") or not _tg_cfg.get("enabled"):
+            print("[update] restart notify skipped: telegram disabled")
+            return
+        if en:
+            if from_v:
+                msg = (
+                    f"✅ Restart OK after update\n"
+                    f"{from_v} → {ver}\n"
+                    f"Service is online again."
+                )
+            else:
+                msg = f"✅ Restart OK · {ver}\nService is online again."
+        else:
+            if from_v:
+                msg = (
+                    f"✅ Перезапуск после обновления OK\n"
+                    f"{from_v} → {ver}\n"
+                    f"Сервис снова онлайн."
+                )
+            else:
+                msg = f"✅ Перезапуск OK · {ver}\nСервис снова онлайн."
+        tg_send_message(
+            chat_id,
+            msg,
+            reply_markup=_tg_main_keyboard(
+                "en" if en else "ru", chat_id
+            ),
+        )
+        print(f"[update] restart notify sent → chat {chat_id}")
+    except Exception as e:
+        print(f"[update] restart notify send fail: {e}")
+        # re-queue once if send failed (network blip right after start)
+        try:
+            raw["retry"] = int(raw.get("retry") or 0) + 1
+            if int(raw["retry"]) <= 2:
+                path.write_text(
+                    json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+        except Exception:
+            pass
+
+
 def apply_github_update(ref: str | None = None) -> dict:
     """
     Download GitHub archive (tag/branch) and install serve.py + UI + VERSION.
@@ -5248,6 +5355,9 @@ _tg_last_msg_sig: dict[str, float] = {}  # debounce identical messages
 # ASIC offline streak: only TG after N consecutive fails; reset on success
 _tg_offline_streak = 0
 _tg_offline_notified = False
+# Hidden tool: /emoji — wait for custom emoji and print custom_emoji_id
+_tg_emoji_wait_lock = threading.Lock()
+_tg_emoji_wait: set[str] = set()  # chat id keys in capture mode
 
 
 def _load_telegram_cfg() -> None:
@@ -8114,11 +8224,21 @@ def _tg_handle_callback(cq: dict) -> None:
                             result = apply_github_update(None)
                             ok = bool(result.get("ok"))
                             if ok:
+                                to_v = result.get("to_version") or get_app_version() or "?"
+                                from_v = result.get("from_version")
+                                # survive process kill — notify after restart
+                                _queue_update_restart_notify(
+                                    chat_id,
+                                    lang,
+                                    from_version=str(from_v) if from_v else None,
+                                    to_version=str(to_v),
+                                    source="telegram",
+                                )
                                 msg = (
-                                    f"✅ Installed {result.get('to_version') or '?'}\n"
+                                    f"✅ Installed {to_v}\n"
                                     f"Restarting…"
                                     if en
-                                    else f"✅ Установлено {result.get('to_version') or '?'}\n"
+                                    else f"✅ Установлено {to_v}\n"
                                     f"Перезапуск…"
                                 )
                             else:
@@ -8476,10 +8596,158 @@ def _tg_handle_callback(cq: dict) -> None:
             pass
 
 
-def _tg_handle_command(chat_id, text: str, from_user: dict | None) -> None:
+def _tg_utf16_slice(text: str, offset: int, length: int) -> str:
+    """Telegram entity offsets are UTF-16 code units."""
+    try:
+        u16 = (text or "").encode("utf-16-le")
+        start = max(0, int(offset)) * 2
+        end = start + max(0, int(length)) * 2
+        return u16[start:end].decode("utf-16-le")
+    except Exception:
+        try:
+            o = int(offset)
+            n = int(length)
+            return (text or "")[o : o + n]
+        except Exception:
+            return ""
+
+
+def _tg_extract_custom_emoji(msg: dict | None) -> list[dict]:
+    """
+    Parse custom_emoji_id from message entities / stickers.
+    Returns list of {id, emoji, source} or sticker file meta without custom id.
+    """
+    msg = msg if isinstance(msg, dict) else {}
+    out: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(eid, emoji: str, source: str) -> None:
+        if not eid:
+            return
+        key = str(eid)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"id": key, "emoji": emoji or "?", "source": source})
+
+    body = str(msg.get("text") or msg.get("caption") or "")
+    for ent_key in ("entities", "caption_entities"):
+        ents = msg.get(ent_key)
+        if not isinstance(ents, list):
+            continue
+        for ent in ents:
+            if not isinstance(ent, dict):
+                continue
+            if str(ent.get("type") or "") != "custom_emoji":
+                continue
+            eid = ent.get("custom_emoji_id")
+            ch = _tg_utf16_slice(
+                body, int(ent.get("offset") or 0), int(ent.get("length") or 0)
+            )
+            _add(eid, ch, "custom_emoji")
+
+    st = msg.get("sticker")
+    if isinstance(st, dict):
+        if st.get("custom_emoji_id"):
+            _add(st.get("custom_emoji_id"), str(st.get("emoji") or "sticker"), "sticker")
+        else:
+            # ordinary sticker — useful ids but not custom emoji
+            out.append(
+                {
+                    "id": None,
+                    "file_id": st.get("file_id"),
+                    "emoji": st.get("emoji"),
+                    "set_name": st.get("set_name"),
+                    "source": "sticker_file",
+                }
+            )
+    return out
+
+
+def _tg_format_emoji_ids(items: list[dict], lang: str = "ru") -> str:
+    en = str(lang or "ru").lower().startswith("en")
+    if not items:
+        return (
+            "No custom emoji found.\nSend a premium/custom emoji (not a keyboard button)."
+            if en
+            else "Custom emoji не найден.\nПришлите premium/custom emoji (не кнопку клавиатуры)."
+        )
+    lines = ["🔎 custom_emoji_id:" if en else "🔎 custom_emoji_id:"]
+    for i, it in enumerate(items, 1):
+        if it.get("source") == "sticker_file":
+            lines.append(
+                f"{i}. sticker (not custom emoji)\n"
+                f"   emoji: {it.get('emoji') or '—'}\n"
+                f"   set: {it.get('set_name') or '—'}\n"
+                f"   file_id: {it.get('file_id') or '—'}"
+            )
+            continue
+        eid = it.get("id") or "—"
+        em = it.get("emoji") or "?"
+        lines.append(f"{i}. {em}  →  `{eid}`")
+        lines.append(f"   HTML: <tg-emoji emoji-id=\"{eid}\">{em}</tg-emoji>")
+    lines.append("")
+    lines.append(
+        "Mode still ON — send more, or /emoji off"
+        if en
+        else "Режим ВКЛ — пришлите ещё, или /emoji off"
+    )
+    return "\n".join(lines)
+
+
+def _tg_emoji_wait_on(chat_id) -> None:
+    with _tg_emoji_wait_lock:
+        _tg_emoji_wait.add(_tg_cid_key(chat_id))
+
+
+def _tg_emoji_wait_off(chat_id) -> None:
+    with _tg_emoji_wait_lock:
+        _tg_emoji_wait.discard(_tg_cid_key(chat_id))
+
+
+def _tg_emoji_wait_active(chat_id) -> bool:
+    with _tg_emoji_wait_lock:
+        return _tg_cid_key(chat_id) in _tg_emoji_wait
+
+
+def _tg_handle_command(
+    chat_id, text: str, from_user: dict | None, msg: dict | None = None
+) -> None:
     raw = (text or "").strip()
     text = _tg_normalize_incoming_text(raw)
+
+    # Hidden capture mode: next message with custom emoji → dump ids
+    if _tg_emoji_wait_active(chat_id) and msg is not None:
+        low = (text or "").strip().lower()
+        # let /emoji* and /cancel fall through to command handlers
+        cmd0 = low.split()[0].split("@", 1)[0] if low.startswith("/") else ""
+        if cmd0 not in ("/emoji", "/cancel"):
+            prefs = (
+                _tg_get_chat_prefs(chat_id)
+                if _tg_chat_allowed(chat_id)
+                else dict(DEFAULT_CHAT_PREFS)
+            )
+            lang = prefs.get("lang") or "ru"
+            items = _tg_extract_custom_emoji(msg)
+            if items or msg.get("sticker") or msg.get("entities") or msg.get(
+                "caption_entities"
+            ):
+                tg_send_message(chat_id, _tg_format_emoji_ids(items, lang))
+                return
+            if text and not text.startswith("/"):
+                en = str(lang).lower().startswith("en")
+                tg_send_message(
+                    chat_id,
+                    (
+                        "No custom_emoji entity. Send a custom/premium emoji, or /emoji off"
+                        if en
+                        else "Нет custom_emoji. Пришлите custom/premium emoji или /emoji off"
+                    ),
+                )
+                return
+
     if not text:
+        # sticker without wait mode — ignore
         return
     # plain text that is not a button → short hint (don't hang silently)
     if not text.startswith("/"):
@@ -8544,6 +8812,46 @@ def _tg_handle_command(chat_id, text: str, from_user: dict | None) -> None:
     # ── personal settings / language / notify (always allowed) ──
     if cmd in ("/settings", "/настройки", "/config", "/setup"):
         _tg_send_bot_settings(chat_id, lang)
+        return
+
+    # Hidden: custom emoji id capture (not on keyboard / public help)
+    if cmd == "/emoji":
+        arg0 = str(args[0]).lower() if args else ""
+        if arg0 in ("off", "0", "stop", "exit", "cancel", "выкл", "стоп"):
+            _tg_emoji_wait_off(chat_id)
+            tg_send_message(
+                chat_id,
+                "🔎 emoji mode OFF" if en else "🔎 режим emoji ВЫКЛ",
+            )
+            return
+        items = _tg_extract_custom_emoji(msg) if msg else []
+        if items:
+            _tg_emoji_wait_on(chat_id)
+            tg_send_message(chat_id, _tg_format_emoji_ids(items, lang))
+            return
+        _tg_emoji_wait_on(chat_id)
+        tg_send_message(
+            chat_id,
+            (
+                "🔎 emoji mode ON\n"
+                "Send a custom/premium emoji (or custom-emoji sticker).\n"
+                "I’ll reply with custom_emoji_id + HTML snippet.\n"
+                "/emoji off — exit"
+                if en
+                else "🔎 режим emoji ВКЛ\n"
+                "Пришлите custom/premium emoji (или стикер-custom-emoji).\n"
+                "Отвечу custom_emoji_id + HTML-фрагмент.\n"
+                "/emoji off — выход"
+            ),
+        )
+        return
+
+    if cmd == "/cancel" and _tg_emoji_wait_active(chat_id):
+        _tg_emoji_wait_off(chat_id)
+        tg_send_message(
+            chat_id,
+            "🔎 emoji mode OFF" if en else "🔎 режим emoji ВЫКЛ",
+        )
         return
 
     if cmd in ("/update", "/updates", "/обновление", "/обновления"):
@@ -8626,6 +8934,8 @@ def _tg_handle_command(chat_id, text: str, from_user: dict | None) -> None:
         "/updates",
         "/обновление",
         "/обновления",
+        "/emoji",
+        "/cancel",
         "/prefs",
         "/my",
         "/profile",
@@ -9009,9 +9319,10 @@ def _tg_process_update(upd: dict) -> None:
         _tg_remember_chat(chat, msg.get("from"))
     except Exception:
         pass
-    text = msg.get("text") or ""
-    if text:
-        _tg_handle_command(chat_id, text, msg.get("from"))
+    text = msg.get("text") or msg.get("caption") or ""
+    # always pass full msg (entities / stickers) — needed for /emoji capture
+    if text or msg.get("sticker") or msg.get("entities") or msg.get("caption_entities"):
+        _tg_handle_command(chat_id, text, msg.get("from"), msg=msg)
 
 
 def telegram_loop() -> None:
@@ -10931,6 +11242,24 @@ def main() -> None:
     tt.start()
     tc = threading.Thread(target=chipmap_loop, name="chipmap-poll", daemon=True)
     tc.start()
+
+    # After OTA restart: tell the initiating TG chat that we're back online
+    def _boot_update_notify() -> None:
+        # wait for telegram_loop to load token / getMe
+        for delay in (3.0, 8.0, 15.0):
+            time.sleep(delay)
+            try:
+                if not UPDATE_NOTIFY_FILE.is_file():
+                    return
+                _flush_update_restart_notify()
+                if not UPDATE_NOTIFY_FILE.is_file():
+                    return
+            except Exception as e:
+                print(f"[update] boot notify: {e}")
+
+    threading.Thread(
+        target=_boot_update_notify, name="update-restart-notify", daemon=True
+    ).start()
 
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), Handler)
     print(f"poolheat UI:       http://{HTTP_BIND}:{HTTP_PORT}/")
