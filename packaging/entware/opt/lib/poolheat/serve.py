@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.25"
+_DEFAULT_APP_VERSION = "0.3.26"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -6401,8 +6401,9 @@ _TG_MINER_HOST_EMOJI_ID = "5399965542633200318"
 _TG_MINER_HOST_EMOJI_FB = "📦"  # unicode fallback inside custom_emoji entity
 # Control / write FAIL in Miner + Status
 # <tg-emoji emoji-id="5278578973595427038">🚫</tg-emoji>
+# Fallback inside <tg-emoji> must NOT be 🚫 — some clients render custom+alt = two 🚫.
 _TG_CTRL_ERR_EMOJI_ID = "5278578973595427038"
-_TG_CTRL_ERR_EMOJI_FB = "🚫"
+_TG_CTRL_ERR_EMOJI_FB = "⛔"
 # Inline button «Пулы» — icon_custom_emoji_id (Bot API)
 # <tg-emoji emoji-id="5267040075803274242">💲</tg-emoji>
 _TG_POOLS_BTN_EMOJI_ID = "5267040075803274242"
@@ -8875,9 +8876,7 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
             lines.append(f"last write: {_tg_fmt_ts_local(lw.get('ts'))}")
             lines.append(f"{mark} {_tg_html_esc(cmd)}")
         else:
-            # 🚫
-            # 🚫 Команда: working=sleep
-            # Ответ: can't access write cmd
+            # 🚫 FAIL working=sleep: can't access write cmd
             lines.append("")
             lines.extend(
                 _tg_status_fail_lines(
