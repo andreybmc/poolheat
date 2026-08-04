@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.20"
+_DEFAULT_APP_VERSION = "0.3.21"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -8237,13 +8237,12 @@ def _tg_status_text(lang: str = "ru") -> str:
         return "\n".join(lines)
 
     pol = get_policy_status()
-    # Status "Liquid" line = selected T_ctrl (may be env / chip / board)
+    # "Вода" line = selected T_ctrl (liquid|env|chip|board from zone map)
     t_ctrl, t_ctrl_sensor = _tg_t_ctrl_from_live(live)
     chip = live.get("chip_max")
     pw = live.get("power")
     hr = live.get("hashrate_th")
     street = _tg_street_c()
-    sens_lab = _tg_t_ctrl_sensor_label(t_ctrl_sensor, lang)
 
     hz = pol.get("heat_zone")
     safety = bool(pol.get("safety_sticky"))
@@ -8267,27 +8266,14 @@ def _tg_status_text(lang: str = "ru") -> str:
         _tg_zone_profile_for_status(hz, safety=safety), lang
     )
 
-    # Liquid line shows T_ctrl value; name sensor when not liquid
-    if t_ctrl_sensor == "liquid":
-        if en:
-            tctrl_line = f"Liquid: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
-        else:
-            tctrl_line = f"Жидкость: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
+    # T_ctrl as "Вода" / "Water" (sensor chosen in zone map: liquid|env|…)
+    if en:
+        tctrl_line = f"Water: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
     else:
-        if en:
-            tctrl_line = (
-                f"T_ctrl ({_tg_html_esc(sens_lab)}): "
-                f"<b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
-            )
-        else:
-            tctrl_line = (
-                f"T_ctrl ({_tg_html_esc(sens_lab)}): "
-                f"<b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
-            )
+        tctrl_line = f"Вода: <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>"
 
     if en:
         temps_h = "🌡  <b>Temperatures:</b>"
-        # T_ctrl/Liquid: 1sp · Street/Chips: 2sp after colon
         temp_lines = [
             tctrl_line,
             f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>",
@@ -8296,7 +8282,7 @@ def _tg_status_text(lang: str = "ru") -> str:
         lab_ov, lab_left = "Override", "left"
     else:
         # 🌡  <b>Температуры:</b>
-        # Жидкость / T_ctrl: <b>…</b>
+        # Вода: <b>…</b>   (= T_ctrl)
         # Улица:  <b>…</b>
         # Чипы:  <b>…</b>
         temps_h = "🌡  <b>Температуры:</b>"
@@ -10125,7 +10111,7 @@ def _tg_handle_callback(cq: dict) -> None:
                     return
                 # early skip: same % already set → no set_power_pct (no mining restart)
                 try:
-                    live = fetch_live()
+                    live, _, _ = _tg_live_snapshot()
                     have = _f(live.get("power_pct_cmd"))
                     if have is None:
                         have = _f(_state.get("power_pct_cmd"))
