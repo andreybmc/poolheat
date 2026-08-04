@@ -7749,16 +7749,16 @@ def _tg_update_status_phrase(st: str | None, en: bool) -> str:
 
 def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
     """
-    Exact layout (RU example):
+    Exact spacing (RU, spaces after colon — tuned in Telegram):
 
-    Установлено:  0.3.5
+    Установлено:  0.3.6
 
     Репозиторий:  0.3.6
-    Статус:       есть обновление
-    Источник:     release
-    Tag:          v0.3.6
-    Commit:       392cf7a0f789
-    Проверка:     04.08.2026 10:12:28
+    Статус:               актуально
+    Источник:         release
+    Tag:                     v0.3.6
+    Commit:            1090f627c4b1
+    Проверка:        04.08.2026 10:20:54
     """
     en = str(lang or "ru").lower().startswith("en")
     cur = get_app_version()
@@ -7768,23 +7768,40 @@ def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
         last = _update_state.get("last_check")
         chk = last if isinstance(last, dict) else None
 
-    # column alignment after label
-    def row(label: str, value: str) -> str:
-        # labels padded to same visual width (cyrillic ~ wider; keep simple)
-        pad = 14  # "Установлено: " length-ish
-        lab = label if label.endswith(":") else (label + ":")
-        spaces = max(1, pad - len(lab))
-        return f"{lab}{' ' * spaces}{value}"
+    # Fixed spaces after ":" — do not smart-align (Telegram proportional font)
+    SP_RU = {
+        "Установлено": 2,
+        "Репозиторий": 2,
+        "Статус": 15,
+        "Источник": 9,
+        "Tag": 21,
+        "Commit": 12,
+        "Проверка": 8,
+    }
+    SP_EN = {
+        "Installed": 2,
+        "Repository": 2,
+        "Status": 15,
+        "Source": 9,
+        "Tag": 21,
+        "Commit": 12,
+        "Checked": 8,
+    }
 
+    def row(label: str, value: str, table: dict) -> str:
+        n = int(table.get(label, 2))
+        return f"{label}:{' ' * n}{value}"
+
+    sp = SP_EN if en else SP_RU
     lines: list[str] = []
     if en:
         lines.append("🔄 Update")
         lines.append("————————————")
-        lines.append(row("Installed", cur))
+        lines.append(row("Installed", cur, sp))
     else:
         lines.append("🔄 Обновление")
         lines.append("————————————")
-        lines.append(row("Установлено", cur))
+        lines.append(row("Установлено", cur, sp))
 
     if busy:
         lines.append("")
@@ -7803,38 +7820,32 @@ def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
     st = _tg_update_status_phrase(chk.get("status"), en)
     lines.append("")
     if en:
-        lines.append(row("Repository", str(latest)))
-        lines.append(row("Status", st))
+        lines.append(row("Repository", str(latest), sp))
+        lines.append(row("Status", st, sp))
         if chk.get("source"):
-            lines.append(row("Source", str(chk.get("source"))))
+            lines.append(row("Source", str(chk.get("source")), sp))
         if chk.get("tag"):
-            lines.append(row("Tag", str(chk.get("tag"))))
+            lines.append(row("Tag", str(chk.get("tag")), sp))
         if chk.get("commit_sha"):
-            lines.append(row("Commit", str(chk.get("commit_sha"))))
+            lines.append(row("Commit", str(chk.get("commit_sha")), sp))
         if chk.get("checked_at"):
-            lines.append(row("Checked", _tg_fmt_ts_local(chk.get("checked_at"))))
+            lines.append(row("Checked", _tg_fmt_ts_local(chk.get("checked_at")), sp))
     else:
-        lines.append(row("Репозиторий", str(latest)))
-        lines.append(row("Статус", st))
+        lines.append(row("Репозиторий", str(latest), sp))
+        lines.append(row("Статус", st, sp))
         if chk.get("source"):
-            lines.append(row("Источник", str(chk.get("source"))))
+            lines.append(row("Источник", str(chk.get("source")), sp))
         if chk.get("tag"):
-            lines.append(row("Tag", str(chk.get("tag"))))
+            lines.append(row("Tag", str(chk.get("tag")), sp))
         if chk.get("commit_sha"):
-            lines.append(row("Commit", str(chk.get("commit_sha"))))
+            lines.append(row("Commit", str(chk.get("commit_sha")), sp))
         if chk.get("checked_at"):
-            lines.append(row("Проверка", _tg_fmt_ts_local(chk.get("checked_at"))))
+            lines.append(row("Проверка", _tg_fmt_ts_local(chk.get("checked_at")), sp))
 
     if chk.get("error"):
         lines.append("")
         lines.append(f"❌ {chk.get('error')}")
-    notes = chk.get("notes")
-    if notes and chk.get("status") in ("branch_only", "update_available"):
-        note = str(notes).replace("\n", " ").strip()
-        if len(note) > 220:
-            note = note[:217] + "…"
-        lines.append("")
-        lines.append(note)
+    # no release notes body in TG
     if chk.get("status") == "update_available":
         lines.append("")
         lines.append(
