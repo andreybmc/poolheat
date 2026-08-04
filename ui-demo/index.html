@@ -2318,6 +2318,14 @@
                 <button class="btn" type="button" id="btn-restart-miner" title="restart_btminer — только процесс майнинга">
                   Restart miner
                 </button>
+                <button
+                  class="btn danger"
+                  type="button"
+                  id="btn-factory-reset-miner"
+                  title="Whatsminer factory_reset — полный сброс настроек"
+                >
+                  Factory reset
+                </button>
               </div>
             </div>
           </div>
@@ -3455,6 +3463,16 @@
               <h2>Whatsminer</h2>
               <div class="sub">модель · fw · serial · PSU</div>
             </div>
+            <div class="btn-row" style="gap:8px;margin-top:0">
+              <button
+                class="btn danger"
+                type="button"
+                id="btn-factory-reset"
+                title="Whatsminer factory_reset — сброс настроек ASIC к factory"
+              >
+                Factory reset
+              </button>
+            </div>
           </div>
           <div class="card-b stack" style="gap:14px">
             <div class="grid-3">
@@ -3492,23 +3510,10 @@
               </div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
-            <div
-              class="btn-row"
-              style="gap:10px;flex-wrap:wrap;align-items:center;margin-top:4px;padding-top:12px;border-top:1px solid var(--border)"
-            >
-              <button
-                class="btn danger"
-                type="button"
-                id="btn-factory-reset"
-                title="Whatsminer factory_reset — сброс настроек ASIC"
-              >
-                Factory reset ASIC
-              </button>
-              <span style="font-size:0.72rem;color:var(--dim);line-height:1.4;max-width:420px">
-                Privileged <code>factory_reset</code>: сеть · пароль admin · power mode/limit · прочие settings → factory.
-                Логи через API <strong>не гарантируется</strong> стереть. IP может уйти в DHCP.
-              </span>
-            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45">
+              <strong>Factory reset</strong> (<code>factory_reset</code>): сеть · admin password · power mode/limit · settings → factory.
+              Логи API <strong>не гарантирует</strong> стереть. IP может уйти в DHCP. Offline несколько минут.
+            </p>
           </div>
         </div>
 
@@ -7718,6 +7723,92 @@
       } finally {
         if (btn) btn.disabled = false;
       }
+    });
+
+    async function runFactoryReset(btn) {
+      if (
+        !confirm(
+          "FACTORY RESET ASIC — полный сброс настроек?\n\n" +
+            "• сеть (IP может смениться на DHCP)\n" +
+            "• пароль admin → factory default\n" +
+            "• power mode / limit / pools / прочие settings\n" +
+            "• логи через API НЕ гарантируется удалить\n\n" +
+            "ASIC offline несколько минут. Действие необратимо."
+        )
+      ) {
+        return;
+      }
+      // second confirm (no window.prompt — often blocked in embedded browsers)
+      if (
+        !confirm(
+          "Подтвердите ещё раз: отправить factory_reset на майнер?\n\n" +
+            "OK = сброс · Отмена = не делать"
+        )
+      ) {
+        toastWarn("Factory reset отменён");
+        return;
+      }
+      const buttons = [
+        document.getElementById("btn-factory-reset"),
+        document.getElementById("btn-factory-reset-miner"),
+      ].filter(Boolean);
+      buttons.forEach((b) => {
+        b.disabled = false; // ensure enabled before run
+        b.disabled = true;
+      });
+      if (btn) btn.disabled = true;
+      try {
+        const pwEl = document.getElementById("settings-api-password");
+        const password = pwEl && pwEl.value ? pwEl.value : undefined;
+        const payload = { action: "factory_reset", value: "yes" };
+        if (password) payload.password = password;
+        const res = await fetch("/api/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        let body = null;
+        try {
+          body = await res.json();
+        } catch (_) {
+          body = null;
+        }
+        if (!res.ok || (body && body.ok === false)) {
+          throw new Error(
+            (body && body.error) || "HTTP " + res.status + " (майнер offline?)"
+          );
+        }
+        toastWarn(
+          "Factory reset отправлен · ASIC offline / reconfigure…",
+          8000
+        );
+        appendActionLog(
+          "warn",
+          "FACTORY_RESET sent · settings → defaults (logs not guaranteed wiped)"
+        );
+        if (typeof loadActionLog === "function") {
+          setTimeout(() => void loadActionLog(), 800);
+        }
+      } catch (e) {
+        toastError("Factory reset: " + e.message, 7000);
+        appendActionLog("err", "FACTORY_RESET fail: " + e.message);
+      } finally {
+        buttons.forEach((b) => {
+          b.disabled = false;
+        });
+      }
+    }
+
+    // bind both Info + Miner buttons (delegation-safe)
+    ["btn-factory-reset", "btn-factory-reset-miner"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.disabled = false;
+      el.removeAttribute("disabled");
+      el.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        void runFactoryReset(el);
+      });
     });
 
     document.getElementById("btn-restart-miner")?.addEventListener("click", async () => {
