@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.14"
+_DEFAULT_APP_VERSION = "0.3.15"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -2490,6 +2490,9 @@ _cache: dict | None = None
 _cache_ts = 0.0
 _cache_lock = threading.Lock()
 CACHE_TTL = 2.0
+# Serialize TCP 4028 access so live poll / collector / privileged writes
+# do not race and exhaust Whatsminer "over max connect" sessions.
+_miner_io_lock = threading.RLock()
 
 _state_lock = threading.Lock()
 _state: dict = {
@@ -3547,11 +3550,17 @@ def _recv_json(sock: socket.socket, timeout: float = 5.0) -> dict:
     return json.loads(raw)
 
 
-def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
+def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
+    """Send one JSON cmd to miner API. Caller must hold _miner_io_lock if needed."""
     payload = (json.dumps(cmd, separators=(",", ":")) + "\n").encode()
     with socket.create_connection((HOST_MINER, PORT_MINER), timeout=timeout) as sock:
         sock.sendall(payload)
         return _recv_json(sock, timeout=timeout)
+
+
+def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
+    with _miner_io_lock:
+        return _miner_cmd_unlocked(cmd, timeout=timeout)
 
 
 def _read_text_file(path: str, max_len: int = 4096) -> str | None:
@@ -4532,39 +4541,98 @@ def _add_to_16(s: str) -> bytes:
     return b
 
 
-def get_token_data(password: str) -> dict:
-    data = miner_cmd({"cmd": "get_token"})
-    msg = data["Msg"]
-    if msg == "over max connect":
-        raise RuntimeError("over max connect")
-    pwd_hash = md5_crypt.hash(password, salt=msg["salt"])
-    host_passwd_md5 = pwd_hash.split("$")[3]
-    tmp = md5_crypt.hash(host_passwd_md5 + msg["time"], salt=msg["newsalt"])
-    host_sign = tmp.split("$")[3]
-    return {"host_sign": host_sign, "host_passwd_md5": host_passwd_md5}
+_OVER_MAX_CONNECT_RU = (
+    "лимит API-сессий майнера (over max connect). "
+    "Подождите 30–60 с, закройте лишние вкладки UI / другие API-клиенты, повторите"
+)
 
 
-def privileged_cmd(cmd: dict, password: str) -> dict:
-    token = get_token_data(password)
-    cmd = dict(cmd)
-    cmd["token"] = token["host_sign"]
-    aeskey = binascii.unhexlify(
-        hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
-    )
-    cipher = AES.new(aeskey, AES.MODE_ECB)
-    api_str = json.dumps(cmd, separators=(",", ":"))
-    enc = base64.b64encode(cipher.encrypt(_add_to_16(api_str))).decode()
-    payload = (json.dumps({"enc": 1, "data": enc}, separators=(",", ":")) + "\n").encode()
-    with socket.create_connection((HOST_MINER, PORT_MINER), timeout=8) as sock:
-        sock.sendall(payload)
-        raw = _recv_json(sock, timeout=8)
-    if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
+def _msg_is_over_max_connect(msg) -> bool:
+    if not isinstance(msg, str):
+        return False
+    low = msg.strip().lower()
+    return low == "over max connect" or "over max connect" in low
+
+
+def get_token_data(
+    password: str,
+    *,
+    max_attempts: int = 8,
+    unlocked: bool = False,
+) -> dict:
+    """
+    Privileged Whatsminer token. Retries on «over max connect» (token/session cap).
+    If unlocked=True, caller already holds _miner_io_lock (no nested sleep races).
+    """
+    last_err: Exception | None = None
+    for attempt in range(max(1, int(max_attempts))):
         try:
-            pt = cipher.decrypt(base64.b64decode(raw["data"])).split(b"\x00")[0].decode()
-            return json.loads(pt)
-        except Exception:
-            return raw
-    return raw
+            if unlocked:
+                data = _miner_cmd_unlocked({"cmd": "get_token"}, timeout=6.0)
+            else:
+                data = miner_cmd({"cmd": "get_token"}, timeout=6.0)
+        except Exception as e:
+            last_err = e
+            time.sleep(min(8.0, 1.5 + attempt * 1.0))
+            continue
+        msg = data.get("Msg") if isinstance(data, dict) else None
+        if _msg_is_over_max_connect(msg):
+            last_err = RuntimeError("over max connect")
+            # Hold off new poolheat traffic only if we already own the I/O lock;
+            # otherwise brief sleep so other threads can finish and free sessions.
+            time.sleep(min(8.0, 2.0 + attempt * 1.2))
+            continue
+        if not isinstance(msg, dict) or "salt" not in msg or "time" not in msg:
+            raise RuntimeError(f"get_token failed: {msg!r}")
+        pwd_hash = md5_crypt.hash(password, salt=msg["salt"])
+        host_passwd_md5 = pwd_hash.split("$")[3]
+        tmp = md5_crypt.hash(host_passwd_md5 + msg["time"], salt=msg["newsalt"])
+        host_sign = tmp.split("$")[3]
+        return {"host_sign": host_sign, "host_passwd_md5": host_passwd_md5}
+    if last_err and "over max" in str(last_err).lower():
+        raise RuntimeError(_OVER_MAX_CONNECT_RU) from last_err
+    if last_err:
+        raise RuntimeError(f"get_token: {last_err}") from last_err
+    raise RuntimeError(_OVER_MAX_CONNECT_RU)
+
+
+def privileged_cmd(cmd: dict, password: str, *, token_attempts: int = 8) -> dict:
+    """
+    Encrypted privileged write. Exclusive lock for get_token + send so live poll
+    cannot open parallel 4028 sessions during the critical window.
+    """
+    with _miner_io_lock:
+        # Small quiet gap: let in-flight unlocked paths finish (we hold the lock now).
+        time.sleep(0.15)
+        token = get_token_data(
+            password, max_attempts=token_attempts, unlocked=True
+        )
+        cmd = dict(cmd)
+        cmd["token"] = token["host_sign"]
+        aeskey = binascii.unhexlify(
+            hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
+        )
+        cipher = AES.new(aeskey, AES.MODE_ECB)
+        api_str = json.dumps(cmd, separators=(",", ":"))
+        enc = base64.b64encode(cipher.encrypt(_add_to_16(api_str))).decode()
+        payload = (
+            json.dumps({"enc": 1, "data": enc}, separators=(",", ":")) + "\n"
+        ).encode()
+        with socket.create_connection((HOST_MINER, PORT_MINER), timeout=12) as sock:
+            sock.sendall(payload)
+            # factory_reset / reboot may be slow to ACK
+            raw = _recv_json(sock, timeout=20)
+        if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], str):
+            try:
+                pt = (
+                    cipher.decrypt(base64.b64decode(raw["data"]))
+                    .split(b"\x00")[0]
+                    .decode()
+                )
+                return json.loads(pt)
+            except Exception:
+                return raw
+        return raw
 
 
 # Human tooltips (hover) for ErrorCode — not shown as Cause
@@ -5719,7 +5787,16 @@ def apply_set(action: str, value, password: str) -> dict:
             _policy_log("warn", "FACTORY_RESET sent · settings → defaults")
         except Exception:
             pass
-        resp = privileged_cmd({"cmd": "factory_reset"}, password)
+        try:
+            # More token retries: factory often competes with live UI poll.
+            resp = privileged_cmd(
+                {"cmd": "factory_reset"}, password, token_attempts=10
+            )
+        except RuntimeError as e:
+            err = str(e)
+            if "over max" in err.lower() and "лимит" not in err.lower():
+                raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
+            raise
         try:
             _policy_log("ok", "FACTORY_RESET · ASIC will reboot / reconfigure")
         except Exception:
