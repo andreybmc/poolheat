@@ -26,6 +26,7 @@ import re
 import shutil
 import socket
 import sqlite3
+import struct
 import subprocess
 import threading
 import time
@@ -144,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.16"
+_DEFAULT_APP_VERSION = "0.3.17"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -1013,6 +1014,18 @@ def _tapo_sha1_hex(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
 
+def _tapo_parse_session_cookie(set_cookie: str | None) -> str | None:
+    if not set_cookie:
+        return None
+    # Prefer TP_SESSIONID=... (device may send multiple Set-Cookie)
+    for part in re.split(r",(?=[A-Za-z_]+=)", set_cookie):
+        part = part.strip()
+        pair = part.split(";")[0].strip()
+        if pair.upper().startswith("TP_SESSIONID="):
+            return pair
+    return set_cookie.split(";")[0].strip() or None
+
+
 def _tapo_http_json(
     url: str,
     payload: dict,
@@ -1032,19 +1045,7 @@ def _tapo_http_json(
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode("utf-8", errors="replace")
         set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie")
-    cookie_out = None
-    if set_cookie:
-        # TP_SESSIONID=...; Path=...
-        for part in set_cookie.split(","):
-            part = part.strip()
-            if "TP_SESSIONID=" in part or "TP_SESSIONID" in part.upper():
-                # take first pair
-                pair = part.split(";")[0].strip()
-                if "=" in pair:
-                    cookie_out = pair
-                    break
-        if not cookie_out:
-            cookie_out = set_cookie.split(";")[0].strip()
+    cookie_out = _tapo_parse_session_cookie(set_cookie)
     try:
         j = json.loads(body)
     except Exception as e:
@@ -1054,8 +1055,246 @@ def _tapo_http_json(
     return j, cookie_out
 
 
+def _tapo_http_bytes(
+    url: str,
+    data: bytes,
+    *,
+    cookie: str | None = None,
+    content_type: str = "application/octet-stream",
+    timeout: float = 6.0,
+) -> tuple[int, bytes, str | None]:
+    """POST raw bytes (KLAP handshake/request). Returns (status, body, cookie)."""
+    headers = {
+        "Content-Type": content_type,
+        "User-Agent": "poolheat-tapo/1.0",
+    }
+    if cookie:
+        headers["Cookie"] = cookie
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read()
+            status = int(getattr(resp, "status", 200) or 200)
+            set_cookie = resp.headers.get("Set-Cookie") or resp.headers.get("set-cookie")
+        return status, body, _tapo_parse_session_cookie(set_cookie)
+    except urllib.error.HTTPError as e:
+        body = e.read() if hasattr(e, "read") else b""
+        set_cookie = None
+        try:
+            set_cookie = e.headers.get("Set-Cookie") if e.headers else None
+        except Exception:
+            pass
+        return int(e.code), body, _tapo_parse_session_cookie(set_cookie)
+
+
+class _KlapSession:
+    """AES-CBC session after KLAP handshake (python-kasa compatible)."""
+
+    def __init__(self, local_seed: bytes, remote_seed: bytes, user_hash: bytes):
+        self._key = hashlib.sha256(
+            b"lsk" + local_seed + remote_seed + user_hash
+        ).digest()[:16]
+        full_iv = hashlib.sha256(b"iv" + local_seed + remote_seed + user_hash).digest()
+        self._iv = full_iv[:12]
+        self._seq = int.from_bytes(full_iv[-4:], "big", signed=True)
+        self._sig = hashlib.sha256(
+            b"ldk" + local_seed + remote_seed + user_hash
+        ).digest()[:28]
+
+    def encrypt(self, msg: bytes) -> tuple[bytes, int]:
+        from Crypto.Cipher import AES  # type: ignore
+
+        self._seq += 1
+        iv_seq = self._iv + struct.pack(">l", self._seq)
+        cipher = AES.new(self._key, AES.MODE_CBC, iv_seq)
+        ct = cipher.encrypt(_pkcs7_pad(msg))
+        sig = hashlib.sha256(self._sig + struct.pack(">l", self._seq) + ct).digest()
+        return sig + ct, self._seq
+
+    def decrypt(self, msg: bytes) -> bytes:
+        from Crypto.Cipher import AES  # type: ignore
+
+        iv_seq = self._iv + struct.pack(">l", self._seq)
+        cipher = AES.new(self._key, AES.MODE_CBC, iv_seq)
+        return _pkcs7_unpad(cipher.decrypt(msg[32:]))
+
+
+class _TapoKlapLocal:
+    """
+    Modern Tapo LAN protocol (KLAP).
+    Newer firmware rejects legacy securePassthrough with error_code=1003.
+    """
+
+    def __init__(self, ip: str, email: str, password: str):
+        self.ip = ip.strip()
+        self.email = email.strip()
+        self.password = password
+        self.terminal_uuid = str(uuid.uuid4())
+        self.cookie: str | None = None
+        self._session: _KlapSession | None = None
+        self._proto: str = "v2"  # v1 | v2
+
+    def _base(self) -> str:
+        return f"http://{self.ip}/app"
+
+    @staticmethod
+    def _auth_hash_v1(username: str, password: str) -> bytes:
+        # md5(md5(user)+md5(pass))
+        return hashlib.md5(
+            hashlib.md5(username.encode("utf-8")).digest()
+            + hashlib.md5(password.encode("utf-8")).digest()
+        ).digest()
+
+    @staticmethod
+    def _auth_hash_v2(username: str, password: str) -> bytes:
+        # sha256(sha1(user)+sha1(pass)) — newer Tapo/Kasa
+        return hashlib.sha256(
+            hashlib.sha1(username.encode("utf-8")).digest()
+            + hashlib.sha1(password.encode("utf-8")).digest()
+        ).digest()
+
+    @staticmethod
+    def _h1_hash(local_seed: bytes, remote_seed: bytes, auth: bytes, proto: str) -> bytes:
+        if proto == "v1":
+            return hashlib.sha256(local_seed + auth).digest()
+        return hashlib.sha256(local_seed + remote_seed + auth).digest()
+
+    @staticmethod
+    def _h2_hash(local_seed: bytes, remote_seed: bytes, auth: bytes, proto: str) -> bytes:
+        if proto == "v1":
+            return hashlib.sha256(remote_seed + auth).digest()
+        return hashlib.sha256(remote_seed + local_seed + auth).digest()
+
+    def _candidate_auths(self) -> list[tuple[str, bytes]]:
+        """(label, auth_hash) pairs to try against handshake1 server hash."""
+        email = self.email
+        pw = self.password
+        email_sha1 = _tapo_sha1_hex(email)
+        out: list[tuple[str, bytes]] = []
+        for proto in ("v2", "v1"):
+            gen = self._auth_hash_v2 if proto == "v2" else self._auth_hash_v1
+            for label, user in (
+                (f"{proto}:email", email),
+                (f"{proto}:email_sha1hex", email_sha1),
+                (f"{proto}:blank", ""),
+            ):
+                # blank only once per proto
+                if user == "" and pw:
+                    out.append((f"{proto}:blank_creds", gen("", "")))
+                    continue
+                out.append((label, gen(user, pw if user else "")))
+            # empty password variants rare
+            out.append((f"{proto}:email_empty_pw", gen(email, "")))
+        # de-dupe by hash
+        seen: set[bytes] = set()
+        uniq: list[tuple[str, bytes]] = []
+        for lab, h in out:
+            if h in seen:
+                continue
+            seen.add(h)
+            uniq.append((lab, h))
+        return uniq
+
+    def connect(self) -> None:
+        import secrets as _secrets
+
+        local_seed = _secrets.token_bytes(16)
+        status, body, cookie = _tapo_http_bytes(
+            f"{self._base()}/handshake1",
+            local_seed,
+            timeout=6.0,
+        )
+        if status != 200:
+            raise RuntimeError(f"KLAP handshake1 HTTP {status}")
+        if len(body) < 48:
+            # JSON error or unexpected
+            try:
+                j = json.loads(body.decode("utf-8", errors="replace"))
+                raise RuntimeError(
+                    f"KLAP handshake1 error_code={j.get('error_code')} (not KLAP?)"
+                )
+            except RuntimeError:
+                raise
+            except Exception:
+                raise RuntimeError(f"KLAP handshake1 bad body len={len(body)}")
+        remote_seed = body[:16]
+        server_hash = body[16:48]
+        if cookie:
+            self.cookie = cookie
+
+        matched: tuple[str, bytes] | None = None
+        for label, auth in self._candidate_auths():
+            proto = "v2" if label.startswith("v2") else "v1"
+            if self._h1_hash(local_seed, remote_seed, auth, proto) == server_hash:
+                matched = (label, auth)
+                self._proto = proto
+                break
+        if not matched:
+            raise RuntimeError(
+                "KLAP auth mismatch (bad email/password? case-sensitive)"
+            )
+        _lab, auth_hash = matched
+
+        h2 = self._h2_hash(local_seed, remote_seed, auth_hash, self._proto)
+        status2, body2, cookie2 = _tapo_http_bytes(
+            f"{self._base()}/handshake2",
+            h2,
+            cookie=self.cookie,
+            timeout=6.0,
+        )
+        if cookie2:
+            self.cookie = cookie2
+        if status2 != 200:
+            raise RuntimeError(f"KLAP handshake2 HTTP {status2} (bad email/password?)")
+        self._session = _KlapSession(local_seed, remote_seed, auth_hash)
+
+    def _request(self, method: str, params: dict | None = None) -> dict:
+        if not self._session:
+            raise RuntimeError("KLAP not connected")
+        payload = {
+            "method": method,
+            "params": params or {},
+            "requestTimeMils": int(time.time() * 1000),
+            "terminalUUID": self.terminal_uuid,
+        }
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        enc, seq = self._session.encrypt(raw)
+        status, body, _ = _tapo_http_bytes(
+            f"{self._base()}/request?seq={seq}",
+            enc,
+            cookie=self.cookie,
+            timeout=6.0,
+        )
+        if status == 403:
+            self._session = None
+            raise RuntimeError("KLAP session expired (403) — retry")
+        if status != 200:
+            raise RuntimeError(f"KLAP request HTTP {status}")
+        try:
+            plain = self._session.decrypt(body)
+            return json.loads(plain.decode("utf-8"))
+        except Exception as e:
+            raise RuntimeError(f"KLAP decrypt/parse: {e}") from e
+
+    def get_on(self) -> bool:
+        inner = self._request("get_device_info")
+        if int(inner.get("error_code") or 0) != 0:
+            raise RuntimeError(
+                f"get_device_info error_code={inner.get('error_code')}"
+            )
+        res = inner.get("result") or {}
+        return bool(res.get("device_on"))
+
+    def set_on(self, on: bool) -> None:
+        inner = self._request("set_device_info", {"device_on": bool(on)})
+        if int(inner.get("error_code") or 0) != 0:
+            raise RuntimeError(
+                f"set_device_info error_code={inner.get('error_code')}"
+            )
+
+
 class _TapoP100Local:
-    """Minimal local Tapo P100 client (handshake + securePassthrough)."""
+    """Legacy local Tapo client (RSA handshake + securePassthrough)."""
 
     def __init__(self, ip: str, email: str, password: str):
         self.ip = ip.strip()
@@ -1206,6 +1445,35 @@ class _TapoP100Local:
         self._device_request("set_device_info", {"device_on": bool(on)})
 
 
+def _tapo_connect_client(ip: str, email: str, password: str):
+    """
+    Prefer KLAP (modern FW). Fall back to legacy securePassthrough.
+    Returns client with get_on/set_on.
+    """
+    klap_err: Exception | None = None
+    try:
+        c = _TapoKlapLocal(ip, email, password)
+        c.connect()
+        return c
+    except Exception as e:
+        klap_err = e
+        low = str(e).lower()
+        # hard auth failure — no point trying legacy with same wrong password
+        if "auth mismatch" in low or "bad email/password" in low:
+            raise
+    try:
+        c2 = _TapoP100Local(ip, email, password)
+        c2.connect()
+        return c2
+    except Exception as e2:
+        # prefer KLAP error when legacy is 1003 (expected on new FW)
+        low2 = str(e2).lower()
+        if "1003" in low2 or "handshake" in low2:
+            if klap_err:
+                raise RuntimeError(f"Tapo KLAP: {klap_err}") from klap_err
+        raise RuntimeError(f"Tapo: {e2}") from e2
+
+
 def _filtration_cfg_snapshot() -> dict:
     with _filtration_lock:
         return dict(_filtration_cfg)
@@ -1286,6 +1554,7 @@ def _filtration_user_error(
             )
         elif (
             "bad email/password" in low
+            or "auth mismatch" in low
             or "login error" in low
             or "login_device" in low
             or "invalid" in low
@@ -1298,6 +1567,12 @@ def _filtration_user_error(
                 "Tapo email/password invalid"
                 if en
                 else "Tapo email/password не действительны"
+            )
+        elif "1003" in low or ("klap" in low and ("handshake" in low or "auth" in low)):
+            reason = (
+                "Tapo KLAP auth failed (email/password?)"
+                if en
+                else "Tapo KLAP: email/password не действительны"
             )
         elif "ip empty" in low or ("ip" in low and "empty" in low):
             reason = "Tapo IP not configured" if en else "Tapo IP не настроен"
@@ -1326,11 +1601,12 @@ def _filtration_user_error(
                 if en
                 else "Tapo устройство недоступно"
             )
-        elif "handshake" in low or "decrypt" in low:
+        elif "handshake" in low or "decrypt" in low or "1003" in low:
+            # often new FW (KLAP) or wrong protocol — not pure LAN timeout
             reason = (
-                "Tapo device unreachable"
+                "Tapo protocol/auth failed (KLAP / password)"
                 if en
-                else "Tapo устройство недоступно"
+                else "Tapo: ошибка протокола/пароля (KLAP)"
             )
         elif "server" in low or "cloud" in low or "api.tapo" in low:
             reason = (
@@ -1360,7 +1636,7 @@ def _filtration_user_error(
 
 
 def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
-    """on=None → read only; else set."""
+    """on=None → read only; else set. Uses KLAP (new FW) or legacy."""
     ip = str(cfg.get("ip") or "").strip()
     email = str(cfg.get("email") or "").strip()
     password = str(cfg.get("password") or "")
@@ -1368,13 +1644,17 @@ def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
         raise ValueError("Tapo IP empty")
     if not email or not password:
         raise ValueError("Tapo email/password empty")
-    c = _TapoP100Local(ip, email, password)
     try:
-        c.connect()
+        c = _tapo_connect_client(ip, email, password)
     except Exception as e:
         # re-raise with markers for _filtration_user_error
         low = str(e).lower()
-        if "email/password" in low or "login" in low or "error_code" in low:
+        if (
+            "email/password" in low
+            or "login" in low
+            or "auth mismatch" in low
+            or "error_code" in low
+        ):
             raise RuntimeError(f"Tapo {e}") from e
         if "timed out" in low or "timeout" in low:
             raise RuntimeError(f"Tapo device timeout: {e}") from e
