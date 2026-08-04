@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.24"
+_DEFAULT_APP_VERSION = "0.3.25"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -7837,43 +7837,23 @@ def _tg_status_fail_lines(
     reply: str | None = None,
 ) -> list[str]:
     """
-    FAIL working=suspend: can't access write cmd
-    or explicit cmd/reply from last_write.
-
-    → multi-line (bottom of Status / Miner):
-      🚫
-      <blank>
-      🚫 Команда: working=sleep
-      Ответ: can't access write cmd
+    One line for Status / Miner:
+      🚫 FAIL working=suspend: can't access write cmd
     """
-    en = str(lang or "ru").lower().startswith("en")
-    if cmd is None or reply is None:
-        m = str(msg or "").strip()
-        body = m
-        if body.upper().startswith("FAIL "):
-            body = body[5:].strip()
-        c = body
-        r = ""
-        if ":" in body:
-            left, right = body.split(":", 1)
-            c = left.strip()
-            r = right.strip()
-        if cmd is None:
-            cmd = c
-        if reply is None:
-            reply = r
-    cmd = str(cmd or "—").strip() or "—"
-    reply = str(reply or "").strip()
-    em = _tg_ctrl_err_emoji_html()
-    if en:
-        lines = [em, "", f"{em} Command: {cmd}"]
-        if reply:
-            lines.append(f"Reply: {reply}")
+    if cmd is not None or reply is not None:
+        c = str(cmd or "—").strip() or "—"
+        r = str(reply or "").strip()
+        body = f"{c}: {r}" if r else c
+        if not body.upper().startswith("FAIL "):
+            body = f"FAIL {body}"
     else:
-        lines = [em, "", f"{em} Команда: {cmd}"]
-        if reply:
-            lines.append(f"Ответ: {reply}")
-    return lines
+        body = str(msg or "").strip()
+        if body and not body.upper().startswith("FAIL "):
+            body = f"FAIL {body}"
+    if not body:
+        body = "FAIL"
+    em = _tg_ctrl_err_emoji_html()
+    return [f"{em} {body}"]
 
 
 def _tg_zone_line(zone_id, *, safety: bool = False) -> str:
@@ -8895,9 +8875,7 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
             lines.append(f"last write: {_tg_fmt_ts_local(lw.get('ts'))}")
             lines.append(f"{mark} {_tg_html_esc(cmd)}")
         else:
-            # 🚫
-            # 🚫 Команда: working=sleep
-            # Ответ: can't access write cmd
+            # 🚫 FAIL working=sleep: can't access write cmd
             lines.append("")
             lines.extend(
                 _tg_status_fail_lines(
