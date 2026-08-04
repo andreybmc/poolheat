@@ -2416,8 +2416,9 @@
             <button class="btn primary" type="button" id="btn-save-map">Сохранить карту</button>
           </div>
           <div class="card-b">
-            <div class="map-note">
-              <strong>T_ctrl</strong> = liquid · <strong>T_safe</strong> = chip max.
+            <div class="map-note" id="map-note-tctrl">
+              <strong>T_ctrl</strong> = <span id="map-tctrl-label">liquid</span>
+              · <strong>T_safe</strong> = chip max.
               Четыре зоны нагрева; deadband/hold нет.
               Гистерезис h защищает от thrash у T0 / T1 / T2.
             </div>
@@ -2462,12 +2463,21 @@
               <div class="card-h">
                 <div>
                   <h2>Пороги (°C)</h2>
-                  <div class="sub">T0 · T1 · T2 · h · chip Critical</div>
+                  <div class="sub">T_ctrl датчик · T0 · T1 · T2 · h · chip Critical</div>
                 </div>
                 <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пороги 24 / 26 / 28 · h 0.5</button>
               </div>
               <div class="card-b">
                 <div class="thr-fields">
+                  <label class="field"><span class="tip" data-tip-key="t_ctrl_sensor">T_ctrl</span> · датчик
+                    <select id="thr-tctrl-sensor">
+                      <option value="liquid">liquid (теплоноситель)</option>
+                      <option value="env">env (окружение)</option>
+                      <option value="chip_avg">chip avg</option>
+                      <option value="chip_max">chip max</option>
+                      <option value="board_max">board max (PCB)</option>
+                    </select>
+                  </label>
                   <label class="field"><span class="tip" data-tip-key="t0">T0</span> · Z0↔Z1
                     <input type="number" id="thr-low" value="24" step="0.1" />
                   </label>
@@ -2488,12 +2498,13 @@
                   </label>
                 </div>
                 <p class="hint-inline" id="thr-validate" style="margin-top:10px;font-size:0.75rem;color:var(--dim)"></p>
-                <p style="font-size:0.75rem;color:var(--muted);margin:8px 0 0;line-height:1.45">
-                  liquid ≤ T0 → <strong>Z0 High</strong> ·
+                <p style="font-size:0.75rem;color:var(--muted);margin:8px 0 0;line-height:1.45" id="thr-map-help">
+                  T_ctrl ≤ T0 → <strong>Z0 High</strong> ·
                   T0–T1 → <strong>Z1 Normal</strong> ·
                   T1–T2 → <strong>Z2 Reduced</strong> ·
-                  liquid ≥ T2 → <strong>Z3 No heat</strong>.
+                  T_ctrl ≥ T2 → <strong>Z3 No heat</strong>.
                   Гистерезис h на границах T0 / T1 / T2.
+                  T_safe (chip max) — отдельно.
                 </p>
               </div>
             </div>
@@ -2501,8 +2512,8 @@
             <div class="card" style="margin-bottom:14px;box-shadow:none" id="panel-liquid-scale">
               <div class="card-h">
                 <div>
-                  <h2>Шкала liquid (карта зон)</h2>
-                  <div class="sub">игла = liquid · T0 / T1 / T2 · зоны Z0–Z3</div>
+                  <h2>Шкала T_ctrl (карта зон)</h2>
+                  <div class="sub" id="scale-tctrl-sub">игла = T_ctrl · T0 / T1 / T2 · зоны Z0–Z3</div>
                 </div>
               </div>
               <div class="card-b">
@@ -3510,10 +3521,6 @@
               </div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
-            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45">
-              <strong>Factory reset</strong> (<code>factory_reset</code>): сеть · admin password · power mode/limit · settings → factory.
-              Логи API <strong>не гарантирует</strong> стереть. IP может уйти в DHCP. Offline несколько минут.
-            </p>
           </div>
         </div>
 
@@ -3666,8 +3673,12 @@
     /* —— glossary tooltips —— */
     const TIPS = {
       t_ctrl: {
-        title: "T_ctrl · Теплоноситель",
-        body: "Основная температура для карты зон (регуляция тепла).\nСейчас = liquid_temp (статус ASIC).\nЗоны Z0–Z3 по порогам T0 · T1 · T2 · h (строка внизу карточки).\nТакже для оценки t_чаши (liquid − ΔT_ТО).",
+        title: "T_ctrl · датчик карты зон",
+        body: "Температура для карты зон Z0–Z3 (не Safety).\nИсточник выбирается в Порогах: liquid · env · chip avg/max · board max.\nПороги T0 · T1 · T2 · h. Safety Critical всегда по chip max.",
+      },
+      t_ctrl_sensor: {
+        title: "T_ctrl · выбор датчика",
+        body: "Какое поле live API = T_ctrl для heat zone.\n• liquid — liquid_temp (гидро, если ASIC отдаёт)\n• env — Env Temp (окружение)\n• chip avg / max — температура чипов\n• board max — max PCB °C по слотам\nT_safe / Critical по chip max не меняется.",
       },
       t_safe: {
         title: "T_safe",
@@ -4552,6 +4563,38 @@
       };
     }
 
+    function getTctrlSensor() {
+      const el = document.getElementById("thr-tctrl-sensor");
+      const v = (el && el.value) || "liquid";
+      const ok = ["liquid", "env", "chip_avg", "chip_max", "board_max"];
+      return ok.includes(v) ? v : "liquid";
+    }
+
+    function tctrlSensorLabel(id) {
+      const m = {
+        liquid: "liquid",
+        env: "env",
+        chip_avg: "chip avg",
+        chip_max: "chip max",
+        board_max: "board max",
+      };
+      return m[id] || id || "liquid";
+    }
+
+    /** Resolve T_ctrl °C from a live/sim reading using selected sensor. */
+    function resolveTctrl(r, sensor) {
+      const sens = sensor || getTctrlSensor();
+      const boards = (r && r.boards) || [];
+      const boardNums = boards.map(Number).filter((x) => Number.isFinite(x));
+      if (sens === "env") return Number(r && r.env);
+      if (sens === "chip_avg") return Number(r && r.chip_avg);
+      if (sens === "chip_max") return Number(r && r.chip_max);
+      if (sens === "board_max") {
+        return boardNums.length ? Math.max(...boardNums) : NaN;
+      }
+      return Number(r && r.liquid);
+    }
+
     function collectZoneMapConfig() {
       const th = getThresholds();
       const readZone = (p) => ({
@@ -4565,6 +4608,7 @@
         pct: Number(document.getElementById(p + "-pct-v")?.value) || 0,
       });
       return {
+        t_ctrl_sensor: getTctrlSensor(),
         t0: th.t0,
         t1: th.t1,
         t2: th.t2,
@@ -4618,6 +4662,13 @@
         const el = document.getElementById(id);
         if (el && v != null) el.value = v;
       };
+      if (cfg.t_ctrl_sensor != null) {
+        const sel = document.getElementById("thr-tctrl-sensor");
+        if (sel) {
+          const v = String(cfg.t_ctrl_sensor);
+          if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+        }
+      }
       if (cfg.t0 != null) setNum("thr-low", cfg.t0);
       if (cfg.t1 != null) setNum("thr-mid", cfg.t1);
       if (cfg.t2 != null) setNum("thr-high", cfg.t2);
@@ -5124,15 +5175,17 @@
     }
 
     function updateZoneLabels(th) {
+      const sens = getTctrlSensor();
+      const lab = tctrlSensorLabel(sens);
       const el0 = document.getElementById("z0-range-label");
       const el1 = document.getElementById("z1-range-label");
       const el2 = document.getElementById("z2-range-label");
       const el3 = document.getElementById("z3-range-label");
       const elC = document.getElementById("z-crit-range-label");
-      if (el0) el0.textContent = "liquid ≤ " + th.t0 + " · exit ≥ " + (th.t0 + th.h).toFixed(1);
-      if (el1) el1.textContent = th.t0 + " < liquid ≤ " + th.t1 + " · Normal";
-      if (el2) el2.textContent = th.t1 + " < liquid < " + th.t2 + " · Reduced";
-      if (el3) el3.textContent = "liquid ≥ " + th.t2 + " · exit ≤ " + (th.t2 - th.h).toFixed(1);
+      if (el0) el0.textContent = "T_ctrl ≤ " + th.t0 + " · exit ≥ " + (th.t0 + th.h).toFixed(1);
+      if (el1) el1.textContent = th.t0 + " < T_ctrl ≤ " + th.t1 + " · Normal";
+      if (el2) el2.textContent = th.t1 + " < T_ctrl < " + th.t2 + " · Reduced";
+      if (el3) el3.textContent = "T_ctrl ≥ " + th.t2 + " · exit ≤ " + (th.t2 - th.h).toFixed(1);
       if (elC) {
         elC.textContent =
           "enter ≥ " + th.crit + " · clear ≤ " + th.critClear;
@@ -5153,11 +5206,15 @@
       }
       // thresholds line under liquid/env card (second bottom row)
       const thrLine =
-        "T0=" + th.t0 + " · T1=" + th.t1 + " · T2=" + th.t2 + " · h=" + th.h;
+        "T_ctrl=" + lab + " · T0=" + th.t0 + " · T1=" + th.t1 + " · T2=" + th.t2 + " · h=" + th.h;
       const dzt = document.getElementById("dash-zone-thr");
       if (dzt) dzt.textContent = thrLine;
       const hh = document.getElementById("hint-hyst");
       if (hh) hh.textContent = thrLine;
+      const mapLab = document.getElementById("map-tctrl-label");
+      if (mapLab) mapLab.textContent = lab;
+      const scaleSub = document.getElementById("scale-tctrl-sub");
+      if (scaleSub) scaleSub.textContent = "игла = " + lab + " · T0 / T1 / T2 · зоны Z0–Z3";
       paintLiquidScale(th);
     }
 
@@ -5303,8 +5360,8 @@
         setId("b" + i + "u", "upfreq " + (u === 1 ? "ok" : String(u)));
       }
 
-      // T_ctrl = liquid, T_safe = chip max
-      setText("[data-bind=tctrl]", fmt(r.liquid));
+      // T_ctrl = selected sensor, T_safe = chip max
+      setText("[data-bind=tctrl]", fmt(resolveTctrl(r)));
       setText("[data-bind=tsafe]", fmt(r.chip_max));
       setText("[data-bind=pw]", Number.isFinite(r.power) ? Math.round(r.power) : "—");
       setText("[data-bind=pwMode]", r.mode || "—");
@@ -5709,15 +5766,18 @@
       const r = getReading();
       updateTempDisplay(r);
 
-      // Policy: liquid for map, chip_max for critical
-      const tLiquid = r.liquid;
+      // Policy: T_ctrl (selected sensor) for map, chip_max for critical
+      const tCtrlSens = getTctrlSensor();
+      const tLiquid = resolveTctrl(r, tCtrlSens); // name kept: heat-zone input
       const tSafe = r.chip_max;
       const upfreq = r.upfreq_block;
       const dry = r.dry;
 
-      // needle on liquid scale 20..40 °C
-      const pct = Math.min(100, Math.max(0, ((tLiquid - 20) / 20) * 100));
-      document.getElementById("needle").style.left = pct + "%";
+      // needle on T_ctrl scale 20..40 °C (may clip for chip sensors)
+      const needleT = Number.isFinite(tLiquid) ? tLiquid : 20;
+      const pct = Math.min(100, Math.max(0, ((needleT - 20) / 20) * 100));
+      const needleEl = document.getElementById("needle");
+      if (needleEl) needleEl.style.left = pct + "%";
 
       document.getElementById("banner-dry").style.display = dry ? "flex" : "none";
       document.getElementById("pill-dry").style.display = dry ? "inline-flex" : "none";
@@ -5869,28 +5929,28 @@
             prevMode = act.mode;
             prevLim = act.lim;
             prevPct = act.pct;
-            reason = "Z0 High Heat · liquid=" + fmt(tLiquid) + " ≤ T0=" + th.t0;
+            reason = "Z0 High Heat · T_ctrl(" + tCtrlSens + ")=" + fmt(tLiquid) + " ≤ T0=" + th.t0;
           }
         } else if (heatZone === "z1") {
           zoneHint = th.t0 + "°C < T_ctrl ≤ " + th.t1 + "°C · normal";
           prevMode = act.mode;
           prevLim = act.lim;
           prevPct = act.pct;
-          reason = "Z1 Normal heat · liquid=" + fmt(tLiquid) +
+          reason = "Z1 Normal heat · T_ctrl(" + tCtrlSens + ")=" + fmt(tLiquid) +
             " ∈ (" + th.t0 + " … " + th.t1 + ")";
         } else if (heatZone === "z3") {
           zoneHint = "T_ctrl ≥ " + th.t2 + "°C · no heat";
           prevMode = act.mode;
           prevLim = act.lim;
           prevPct = act.workLabel || act.pct;
-          reason = "Z3 No heat · liquid=" + fmt(tLiquid) + " ≥ T2=" + th.t2 +
+          reason = "Z3 No heat · T_ctrl(" + tCtrlSens + ")=" + fmt(tLiquid) + " ≥ T2=" + th.t2 +
             (act.work === "suspend" ? " · Suspend Mining" : "");
         } else {
           zoneHint = th.t1 + "°C < T_ctrl < " + th.t2 + "°C · reduced";
           prevMode = act.mode;
           prevLim = act.lim;
           prevPct = act.pct;
-          reason = "Z2 Reduced heat · liquid=" + fmt(tLiquid) +
+          reason = "Z2 Reduced heat · T_ctrl(" + tCtrlSens + ")=" + fmt(tLiquid) +
             " ∈ (" + th.t1 + " … " + th.t2 + ") · h=" + th.h +
             (act.workLabel && act.workLabel !== "— skip" ? " · " + act.workLabel : "");
         }
@@ -6252,6 +6312,11 @@
         syncZonesFromGlobal();
         recompute();
       });
+    });
+    document.getElementById("thr-tctrl-sensor")?.addEventListener("change", () => {
+      policyZone = null; // re-bootstrap sticky zone on sensor change
+      syncZonesFromGlobal();
+      recompute();
     });
 
     syncZonesFromGlobal();

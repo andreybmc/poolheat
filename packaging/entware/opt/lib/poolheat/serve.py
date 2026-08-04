@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.17"
+_DEFAULT_APP_VERSION = "0.3.18"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -184,10 +184,67 @@ _policy_ctrl: dict = {
     "force_stop": bool((_APP.get("file_cfg") or {}).get("force_stop", False)),
 }
 
+# Sensors usable as T_ctrl for heat-zone map (not Safety / chip Critical).
+T_CTRL_SENSORS: tuple[str, ...] = (
+    "liquid",
+    "env",
+    "chip_avg",
+    "chip_max",
+    "board_max",
+)
+
+
+def _normalize_t_ctrl_sensor(v) -> str:
+    s = str(v or "liquid").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "liquid_temp": "liquid",
+        "coolant": "liquid",
+        "water": "liquid",
+        "env_temp": "env",
+        "ambient": "env",
+        "environment": "env",
+        "chip": "chip_max",
+        "chipmax": "chip_max",
+        "pcb": "board_max",
+        "board": "board_max",
+        "boards": "board_max",
+        "pcb_max": "board_max",
+    }
+    s = aliases.get(s, s)
+    return s if s in T_CTRL_SENSORS else "liquid"
+
+
+def resolve_t_ctrl(
+    live: dict | None, sensor: str | None = None
+) -> tuple[float | None, str]:
+    """Return (T_ctrl °C, normalized sensor id) from a live snapshot."""
+    sens = _normalize_t_ctrl_sensor(sensor)
+    live = live if isinstance(live, dict) else {}
+    if sens == "liquid":
+        return _f(live.get("liquid")), sens
+    if sens == "env":
+        return _f(live.get("env")), sens
+    if sens == "chip_avg":
+        return _f(live.get("chip_avg")), sens
+    if sens == "chip_max":
+        return _f(live.get("chip_max")), sens
+    if sens == "board_max":
+        boards = live.get("boards") or []
+        vals: list[float] = []
+        for b in boards:
+            fb = _f(b)
+            if fb is not None:
+                vals.append(fb)
+        return (max(vals) if vals else None), sens
+    return _f(live.get("liquid")), "liquid"
+
+
 DEFAULT_ZONE_CFG: dict = {
     # map schema: 2 = Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat (T0/T1/T2)
     "zone_map_version": 2,
-    # liquid thresholds (°C): cold → warm
+    # Which live field drives heat zones (T_ctrl). Safety Critical stays chip_max.
+    "t_ctrl_sensor": "liquid",
+    # T_ctrl thresholds (°C): cold → warm
     # ≤ T0 High · T0–T1 Normal · T1–T2 Reduced · ≥ T2 No heat
     "t0": 24.0,
     "t1": 26.0,
@@ -336,6 +393,12 @@ def _load_zone_cfg() -> None:
                         cfg[key] = float(raw[key])
                 except (TypeError, ValueError):
                     pass
+        if "t_ctrl_sensor" in raw and raw.get("t_ctrl_sensor") is not None:
+            cfg["t_ctrl_sensor"] = _normalize_t_ctrl_sensor(raw.get("t_ctrl_sensor"))
+        else:
+            cfg["t_ctrl_sensor"] = _normalize_t_ctrl_sensor(
+                cfg.get("t_ctrl_sensor", "liquid")
+            )
         for bkey in ("warmup_en", "warmup_downward_only"):
             if bkey in raw:
                 cfg[bkey] = bool(raw[bkey])
@@ -354,6 +417,7 @@ def _load_zone_cfg() -> None:
         cfg["h"] = max(0.2, min(5.0, float(cfg.get("h", 0.5))))
         cfg["t_crit"] = float(cfg["t_crit"])
         cfg["t_crit_clear"] = float(cfg["t_crit_clear"])
+        cfg["t_ctrl_sensor"] = _normalize_t_ctrl_sensor(cfg.get("t_ctrl_sensor"))
         zones_in = raw.get("zones") if isinstance(raw.get("zones"), dict) else {}
         ver = int(raw.get("zone_map_version") or 0)
         # migrate v1 (3 heat zones) → v2 (4 heat zones + T2)
@@ -662,6 +726,8 @@ def _coerce_zone_config_dict(req: dict) -> dict:
                     cfg[key] = float(req[key])
             except (TypeError, ValueError):
                 pass
+    if "t_ctrl_sensor" in req and req.get("t_ctrl_sensor") is not None:
+        cfg["t_ctrl_sensor"] = _normalize_t_ctrl_sensor(req.get("t_ctrl_sensor"))
     for bkey in ("warmup_en", "warmup_downward_only"):
         if bkey in req:
             cfg[bkey] = bool(req[bkey])
@@ -675,6 +741,9 @@ def _coerce_zone_config_dict(req: dict) -> dict:
     cfg["warmup_en"] = bool(cfg.get("warmup_en", True))
     cfg["warmup_downward_only"] = bool(cfg.get("warmup_downward_only", True))
     cfg["h"] = max(0.2, min(5.0, float(cfg.get("h", 0.5))))
+    cfg["t_ctrl_sensor"] = _normalize_t_ctrl_sensor(
+        cfg.get("t_ctrl_sensor", "liquid")
+    )
     if "t2" not in cfg or cfg.get("t2") is None:
         cfg["t2"] = float(cfg.get("t1", 28)) + max(2.0, float(cfg["h"]))
     if float(cfg["t0"]) >= float(cfg["t1"]):
@@ -11385,6 +11454,10 @@ def get_policy_status() -> dict:
             if ctrl.get("safety_sticky")
             else zone_title(ctrl.get("heat_zone"))
         ),
+        "t_ctrl": ctrl.get("t_ctrl"),
+        "t_ctrl_sensor": _normalize_t_ctrl_sensor(
+            ctrl.get("t_ctrl_sensor") or zc.get("t_ctrl_sensor")
+        ),
         "safety_sticky": bool(ctrl.get("safety_sticky")),
         "last_key": ctrl.get("last_key"),
         "streak_key": ctrl.get("streak_key"),
@@ -11406,6 +11479,8 @@ def get_policy_status() -> dict:
             "h": zc.get("h"),
             "t_crit": zc.get("t_crit"),
             "t_crit_clear": zc.get("t_crit_clear"),
+            "t_ctrl_sensor": _normalize_t_ctrl_sensor(zc.get("t_ctrl_sensor")),
+            "t_ctrl_sensors": list(T_CTRL_SENSORS),
             "dwell_sec": zc.get("dwell_sec"),
             "settle_sec": zc.get("settle_sec"),
             "streak": zc.get("streak"),
@@ -11460,6 +11535,8 @@ def policy_tick() -> None:
     h = float(zc.get("h", 0.5))
     t_crit = float(zc.get("t_crit", 70))
     t_crit_clear = float(zc.get("t_crit_clear", 65))
+    t_ctrl_sensor = _normalize_t_ctrl_sensor(zc.get("t_ctrl_sensor"))
+    t_ctrl, t_ctrl_sensor = resolve_t_ctrl(live, t_ctrl_sensor)
     streak_need = max(1, int(zc.get("streak", 3) or 3))
     dwell_sec = max(0, int(zc.get("dwell_sec", 600) or 0))
     settle_sec = max(0, int(zc.get("settle_sec", 300) or 0))
@@ -11496,7 +11573,11 @@ def policy_tick() -> None:
         elif chip_max <= t_crit_clear:
             safety_sticky = False
 
-    heat_zone = _evaluate_heat_zone(liquid, heat_sticky, t0, t1, t2, h)
+    # Heat map uses selected T_ctrl sensor (default liquid; env if liquid N/A)
+    heat_zone = _evaluate_heat_zone(t_ctrl, heat_sticky, t0, t1, t2, h)
+    with _policy_lock:
+        _policy_ctrl["t_ctrl"] = t_ctrl
+        _policy_ctrl["t_ctrl_sensor"] = t_ctrl_sensor
 
     with _miner_cfg_lock:
         dry = bool(DRY_RUN)
@@ -11794,6 +11875,8 @@ def policy_tick() -> None:
         f"lim={_live_limit_w(live)})",
         dry_run=dry,
         liquid=liquid,
+        t_ctrl=t_ctrl,
+        t_ctrl_sensor=t_ctrl_sensor,
         chip_max=chip_max,
     )
     ok = _policy_apply_commands(need_cmds, source=str(desired))
