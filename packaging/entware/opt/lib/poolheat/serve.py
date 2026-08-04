@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.12"
+_DEFAULT_APP_VERSION = "0.3.13"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -5698,6 +5698,41 @@ def apply_set(action: str, value, password: str) -> dict:
             "btminer",
             resp,
             warning="btminer restarting — hash rate rebuilds after upfreq",
+        )
+
+    # Factory reset (Whatsminer privileged "factory_reset")
+    # Restores network, admin password, power mode/limit, pools-related settings.
+    # API does NOT guarantee log wipe — documented as settings restore only.
+    if action in (
+        "factory_reset",
+        "factory",
+        "restore_factory",
+        "reset_factory",
+    ):
+        # require explicit confirm value from UI
+        conf = str(value or "").strip().lower()
+        if conf not in ("yes", "confirm", "factory", "1", "go"):
+            raise ValueError(
+                "factory_reset requires value=yes (double confirm in UI)"
+            )
+        try:
+            _policy_log("warn", "FACTORY_RESET sent · settings → defaults")
+        except Exception:
+            pass
+        resp = privileged_cmd({"cmd": "factory_reset"}, password)
+        try:
+            _policy_log("ok", "FACTORY_RESET · ASIC will reboot / reconfigure")
+        except Exception:
+            pass
+        return _record_write(
+            "factory_reset",
+            "asic",
+            resp,
+            warning=(
+                "Factory reset: сеть/пароль/power/pools → defaults. "
+                "IP может смениться (DHCP). Логи API не гарантирует удалить. "
+                "ASIC offline несколько минут."
+            ),
         )
 
     raise ValueError(f"unknown action: {action}")
