@@ -3201,7 +3201,6 @@
             </div>
             <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45">
               При <strong>Resume Mining</strong> + Auto ON — выключить нельзя (policy снова включит).
-              Другие варианты: MQTT, Zigbee2MQTT, SmartThings — обычно через <strong>Webhook</strong> или <strong>Home Assistant</strong>.
             </p>
           </div>
         </div>
@@ -3210,7 +3209,7 @@
           <div class="card-h">
             <div>
               <h2 class="tip" data-tip-key="telegram">Telegram bot</h2>
-              <div class="sub">getUpdates · уведомления policy · команды /status</div>
+              <div class="sub">уведомления policy · команды /status</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn" type="button" id="btn-tg-test">Тест</button>
@@ -3220,9 +3219,7 @@
           <div class="card-b stack" style="gap:12px">
             <label class="check">
               <input type="checkbox" id="tg-enabled" />
-              <span>Включить бота
-                <span class="desc">long-poll getUpdates на сервере</span>
-              </span>
+              <span>Включить бота</span>
             </label>
             <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
               <label class="field">Bot token
@@ -3877,7 +3874,7 @@
       },
       telegram: {
         title: "Telegram bot",
-        body: "getUpdates long-poll.\nПрофайл (/profile): язык + notify + Cmd.\nCmd ВЫКЛ = нет suspend/status/pools (профайл доступен).\n/lang_ru · /notify_zone · /notify_all.\nASIC offline после N fail.",
+        body: "Профайл (/profile): язык + notify + Cmd.\nCmd ВЫКЛ = нет suspend/status/pools (профайл доступен).\n/lang_ru · /notify_zone · /notify_all.\nASIC offline после N fail.",
       },
       hysteresis: {
         title: "Гистерезис",
@@ -4023,25 +4020,33 @@
     }
 
     function setTabUrl(tabId, mode) {
-      // Canonical dash URL is #/ (also accept #dashboard · /)
-      const hash = tabId === "dash" ? "#/" : "#" + tabId;
+      // Canonical dash URL: #dashboard (also accept #/ · empty · /)
+      // Other tabs: #miner · #chips · …
+      const hash = tabId === "dash" ? "#dashboard" : "#" + tabId;
       try {
-        const sameDash =
-          tabId === "dash" &&
-          (isDashHash(location.hash) ||
-            location.pathname === "/" ||
-            /\/(dashboard|dash|overview|home)\/?$/i.test(location.pathname));
-        const sameOther =
-          tabId !== "dash" &&
-          (location.hash === hash || location.hash === "#" + tabId);
-        if (sameDash || sameOther) return;
+        const cur = String(location.hash || "");
+        if (tabId === "dash") {
+          // Must clear leftover #miner etc. — pathname "/" alone is NOT "already dash"
+          if (isDashHash(cur) && (cur === "#dashboard" || cur === "#/")) return;
+          // normalize any dash alias → #dashboard
+          if (mode === "replace") {
+            history.replaceState({ tab: "dash" }, "", hash);
+          } else {
+            history.pushState({ tab: "dash" }, "", hash);
+          }
+          return;
+        }
+        const sameOther = cur === hash || cur === "#" + tabId;
+        if (sameOther) return;
         if (mode === "replace") {
           history.replaceState({ tab: tabId }, "", hash);
         } else {
           history.pushState({ tab: tabId }, "", hash);
         }
       } catch (_) {
-        location.hash = tabId === "dash" ? "/" : tabId;
+        try {
+          location.hash = tabId === "dash" ? "dashboard" : tabId;
+        } catch (__) { /* ignore */ }
       }
     }
 
@@ -4102,14 +4107,23 @@
     // initial route (path /miner → #miner, or hash)
     (function initTabRoute() {
       const t = tabFromLocation();
-      // normalize path /miner to /#miner so refresh works without SPA edge cases
+      // normalize path /miner to #miner; dash → #dashboard
       const path = location.pathname.replace(/\/+$/, "") || "/";
-      if (path !== "/" && path !== "/index.html" && !location.hash) {
-        try {
-          history.replaceState({ tab: t }, "", t === "dash" ? "#/" : "#" + t);
-        } catch (_) { /* ignore */ }
-      }
-      activateTab(t, { skipUrl: true, replaceUrl: true });
+      const wantHash = t === "dash" ? "#dashboard" : "#" + t;
+      try {
+        if (path !== "/" && path !== "/index.html" && !location.hash) {
+          history.replaceState({ tab: t }, "", wantHash);
+        } else if (t === "dash" && !isDashHash(location.hash)) {
+          // e.g. stuck on #miner while showing dash — force fix
+          history.replaceState({ tab: "dash" }, "", "#dashboard");
+        } else if (t === "dash" && location.hash && location.hash !== "#dashboard" && isDashHash(location.hash)) {
+          // normalize #/ · #dash → #dashboard
+          history.replaceState({ tab: "dash" }, "", "#dashboard");
+        } else if (t !== "dash" && location.hash !== wantHash) {
+          history.replaceState({ tab: t }, "", wantHash);
+        }
+      } catch (_) { /* ignore */ }
+      activateTab(t, { skipUrl: false, replaceUrl: true });
     })();
 
     /* —— toast stack (hash2cash admin style) —— */
@@ -5505,7 +5519,13 @@
           throw new Error(err);
         }
         let okMsg = "Команда принята";
-        if (action === "mode") {
+        if (body.skipped) {
+          if (action === "power_limit") okMsg = "Power Limit уже " + value + " W — без переустановки";
+          else if (action === "power_pct") okMsg = "Power pct уже " + value + "% — без переустановки";
+          else if (action === "mode") okMsg = "Power Mode уже " + String(value).toUpperCase();
+          else if (action === "working" || action === "working_mode") okMsg = "Уже в этом состоянии Mining Control";
+          else okMsg = "Уже установлено — команда не отправлена";
+        } else if (action === "mode") {
           okMsg = "Power Mode: " + String(value).toUpperCase();
         } else if (action === "working" || action === "working_mode") {
           const v = String(value).toLowerCase();
@@ -5514,11 +5534,11 @@
             : "Mining Control: Resume Mining";
         } else if (action === "power_limit") okMsg = "Power Limit установлен: " + value + " W";
         else if (action === "power_pct") okMsg = "Power pct установлен: " + value + " %";
-        if (source && String(source).startsWith("auto")) {
+        if (source && String(source).startsWith("auto") && !body.skipped) {
           okMsg = "AUTO · " + okMsg;
         }
         if (!quiet) {
-          if (body.warning) {
+          if (body.warning && !body.skipped) {
             toastSuccess(okMsg);
             toastWarn(body.warning, 5000);
           } else {
@@ -9211,6 +9231,25 @@
       homeassistant: "REST · long-lived token · switch.entity",
     };
 
+    /** Don't overwrite form while user is editing (periodic poll was unchecking enabled). */
+    let filtFormDirty = false;
+    let filtDirtyTimer = null;
+    function markFiltDirty() {
+      filtFormDirty = true;
+      if (filtDirtyTimer) clearTimeout(filtDirtyTimer);
+      // auto-clear dirty after 2 min idle so poll can resume
+      filtDirtyTimer = setTimeout(() => {
+        filtFormDirty = false;
+      }, 120000);
+    }
+    function clearFiltDirty() {
+      filtFormDirty = false;
+      if (filtDirtyTimer) {
+        clearTimeout(filtDirtyTimer);
+        filtDirtyTimer = null;
+      }
+    }
+
     function filtBackend() {
       return (document.getElementById("filt-backend")?.value || "tapo").trim();
     }
@@ -9226,7 +9265,17 @@
       if (hint) hint.textContent = FILT_HINTS[be] || "";
     }
 
-    async function loadFiltrationConfig() {
+    async function loadFiltrationConfig(opts) {
+      opts = opts || {};
+      // skip full form overwrite while editing (status line still updates)
+      if (filtFormDirty && !opts.force) {
+        try {
+          const res = await fetch("/api/filtration", { cache: "no-store" });
+          const body = await res.json();
+          if (body && body.ok !== false) syncFiltrationStatusUI(body);
+        } catch (_) { /* ignore */ }
+        return null;
+      }
       const st = document.getElementById("filt-status");
       try {
         const res = await fetch("/api/filtration", { cache: "no-store" });
@@ -9240,7 +9289,7 @@
           const el = document.getElementById(id);
           if (el) el.checked = !!v;
         };
-        setC("filt-enabled", body.enabled);
+        setC("filt-enabled", body.enabled === true || body.enabled === 1 || body.enabled === "true");
         const beEl = document.getElementById("filt-backend");
         if (beEl && body.backend) beEl.value = body.backend;
         // tapo / common
@@ -9357,6 +9406,8 @@
       const st = document.getElementById("filt-status");
       try {
         const payload = collectFiltrationPayload();
+        // always send explicit boolean
+        payload.enabled = !!document.getElementById("filt-enabled")?.checked;
         const res = await fetch("/api/filtration/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -9369,8 +9420,16 @@
         if (pw) pw.value = "";
         const tok = document.getElementById("filt-ha-token");
         if (tok) tok.value = "";
-        toastSuccess("Фильтрация · настройки сохранены");
-        await loadFiltrationConfig();
+        clearFiltDirty();
+        // apply response immediately (don't wait for re-fetch race)
+        const enEl = document.getElementById("filt-enabled");
+        if (enEl && body.enabled != null) enEl.checked = !!body.enabled;
+        toastSuccess(
+          body.enabled
+            ? "Фильтрация · сохранено (вкл)"
+            : "Фильтрация · сохранено (выкл)"
+        );
+        await loadFiltrationConfig({ force: true });
       } catch (e) {
         toastError("Фильтрация: " + e.message);
         if (st) st.textContent = "save err: " + e.message;
@@ -9425,10 +9484,19 @@
       ?.addEventListener("click", () => void filtrationSet(false));
     document
       .getElementById("filt-backend")
-      ?.addEventListener("change", syncFiltBackendPanels);
+      ?.addEventListener("change", () => {
+        markFiltDirty();
+        syncFiltBackendPanels();
+      });
+    // mark dirty on any filtration field edit so poll won't uncheck enabled
+    const filtPanel = document.getElementById("panel-filtration");
+    if (filtPanel) {
+      filtPanel.addEventListener("input", markFiltDirty);
+      filtPanel.addEventListener("change", markFiltDirty);
+    }
     // show correct fields immediately (don't wait for API)
     syncFiltBackendPanels();
-    loadFiltrationConfig();
+    loadFiltrationConfig({ force: true });
     setInterval(() => {
       if (document.getElementById("view-settings")?.classList.contains("active") ||
           document.querySelector('nav.tabs button[data-tab="settings"].active')) {

@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.7"
+_DEFAULT_APP_VERSION = "0.3.8"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -799,6 +799,22 @@ def list_filtration_backends() -> list[dict]:
     return list(FILTRATION_BACKENDS)
 
 
+def _as_bool(v) -> bool:
+    """Truthy parse for JSON/form bools (true/1/yes/on)."""
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return False
+    if isinstance(v, (int, float)):
+        return v != 0
+    s = str(v).strip().lower()
+    if s in ("1", "true", "yes", "on", "y", "вкл", "enable", "enabled"):
+        return True
+    if s in ("0", "false", "no", "off", "n", "выкл", "disable", "disabled", ""):
+        return False
+    return bool(v)
+
+
 def _load_filtration_cfg() -> None:
     global _filtration_cfg
     with _filtration_lock:
@@ -810,7 +826,7 @@ def _load_filtration_cfg() -> None:
             if k not in raw:
                 continue
             cfg[k] = raw[k]
-        cfg["enabled"] = bool(cfg.get("enabled", False))
+        cfg["enabled"] = _as_bool(cfg.get("enabled", False))
         be = str(cfg.get("backend") or "tapo").strip().lower()
         if be not in _FILTRATION_BACKEND_IDS:
             be = "tapo"
@@ -847,8 +863,8 @@ def _load_filtration_cfg() -> None:
         cfg["webhook_method"] = "POST" if wm == "POST" else "GET"
         sg = str(cfg.get("shelly_gen") or "auto").lower()
         cfg["shelly_gen"] = sg if sg in ("auto", "1", "2") else "auto"
-        cfg["auto_on_mining"] = bool(cfg.get("auto_on_mining", True))
-        cfg["auto_off_suspend"] = bool(cfg.get("auto_off_suspend", False))
+        cfg["auto_on_mining"] = _as_bool(cfg.get("auto_on_mining", True))
+        cfg["auto_off_suspend"] = _as_bool(cfg.get("auto_off_suspend", False))
         if "last_on" in raw:
             cfg["last_on"] = (
                 None if raw.get("last_on") is None else bool(raw.get("last_on"))
@@ -857,8 +873,18 @@ def _load_filtration_cfg() -> None:
 
 
 def _save_filtration_cfg() -> None:
+    """Atomic write; raise on failure so UI does not report false success."""
     with _filtration_lock:
-        _save_json(FILTRATION_CFG_FILE, _filtration_cfg)
+        data = dict(_filtration_cfg)
+    try:
+        FILTRATION_CFG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(data, indent=2, ensure_ascii=False)
+        tmp = FILTRATION_CFG_FILE.with_suffix(FILTRATION_CFG_FILE.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(FILTRATION_CFG_FILE)
+    except Exception as e:
+        print(f"[filtration] save fail {FILTRATION_CFG_FILE}: {e}")
+        raise RuntimeError(f"cannot save filtration config: {e}") from e
 
 
 def get_filtration_cfg(*, redact: bool = True) -> dict:
@@ -889,8 +915,9 @@ def apply_filtration_cfg(req: dict) -> dict:
     if not isinstance(req, dict):
         raise ValueError("expected object")
     with _filtration_lock:
+        # always accept enabled when present (UI always sends it)
         if "enabled" in req:
-            _filtration_cfg["enabled"] = bool(req["enabled"])
+            _filtration_cfg["enabled"] = _as_bool(req.get("enabled"))
         if "backend" in req and req["backend"] is not None:
             be = str(req["backend"]).strip().lower()
             if be not in _FILTRATION_BACKEND_IDS:
@@ -933,13 +960,23 @@ def apply_filtration_cfg(req: dict) -> dict:
             except (TypeError, ValueError):
                 pass
         if "auto_on_mining" in req:
-            _filtration_cfg["auto_on_mining"] = bool(req["auto_on_mining"])
+            _filtration_cfg["auto_on_mining"] = _as_bool(req.get("auto_on_mining"))
         if "auto_off_suspend" in req:
-            _filtration_cfg["auto_off_suspend"] = bool(req["auto_off_suspend"])
+            _filtration_cfg["auto_off_suspend"] = _as_bool(req.get("auto_off_suspend"))
         _filtration_session["token"] = None
         _filtration_session["cookie"] = None
     _save_filtration_cfg()
-    return get_filtration_cfg(redact=True)
+    out = get_filtration_cfg(redact=True)
+    # re-read file once so enabled is confirmed persisted
+    try:
+        raw = _load_json(FILTRATION_CFG_FILE, {})
+        if isinstance(raw, dict) and "enabled" in raw:
+            out["enabled"] = bool(raw.get("enabled"))
+            with _filtration_lock:
+                _filtration_cfg["enabled"] = bool(raw.get("enabled"))
+    except Exception:
+        pass
+    return out
 
 
 def _pkcs7_pad(data: bytes, block: int = 16) -> bytes:
@@ -5178,6 +5215,20 @@ def _record_write(action: str, value, resp, *, warning: str | None = None) -> di
     return out
 
 
+def _live_power_limit_w(live: dict | None = None) -> float | None:
+    """Configured power limit (prefer power_limit_set; summary Power Limit is 0 in Suspend)."""
+    try:
+        live = live if isinstance(live, dict) else fetch_live()
+    except Exception:
+        return None
+    lim = _f(live.get("power_limit_measured"))
+    if lim is None:
+        lim = _f(live.get("power_limit_set"))
+    if lim is None:
+        lim = _f(live.get("power_limit"))
+    return lim
+
+
 def apply_set(action: str, value, password: str) -> dict:
     action = (action or "").strip().lower()
     password = password or DEFAULT_API_PASSWORD
@@ -5192,6 +5243,20 @@ def apply_set(action: str, value, password: str) -> dict:
         }
         if v not in cmd_map:
             raise ValueError("Power Mode must be low|normal|high (use action=working for suspend|resume)")
+        # skip if already on this mode (mode change restarts mining)
+        try:
+            live = fetch_live()
+            cur = str(live.get("mode_norm") or live.get("mode") or "").strip().lower()
+            if cur == v:
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "action": "mode",
+                    "value": v,
+                    "msg": f"mode already {v}",
+                }
+        except Exception:
+            pass
         resp = privileged_cmd({"cmd": cmd_map[v]}, password)
         out = _record_write("mode", v, resp)
         out["cmd"] = cmd_map[v]
@@ -5217,6 +5282,29 @@ def apply_set(action: str, value, password: str) -> dict:
             "resume": "power_on",
         }
         miner_cmd_name = cmd_map[stored]
+        # skip if already suspend/resume
+        try:
+            live = fetch_live()
+            have = str(live.get("work_measured") or _live_work(live) or "").lower()
+            want = "suspend" if stored == "sleep" else "resume"
+            if have in ("sleep", "suspend") and want == "suspend":
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "action": "working",
+                    "value": stored,
+                    "msg": "already suspend",
+                }
+            if have in ("resume", "mining") and want == "resume":
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "action": "working",
+                    "value": stored,
+                    "msg": "already resume",
+                }
+        except Exception:
+            pass
         resp = privileged_cmd({"cmd": miner_cmd_name}, password)
         out = _record_write("working", stored, resp)
         out["cmd"] = miner_cmd_name
@@ -5226,6 +5314,33 @@ def apply_set(action: str, value, password: str) -> dict:
         pct = int(value)
         if not 0 <= pct <= 100:
             raise ValueError("power_pct must be 0..100")
+        # skip if already at this pct — set_power_pct can disturb / restart hashing
+        try:
+            live = fetch_live()
+            have_cmd = _f(live.get("power_pct_cmd"))
+            if have_cmd is None:
+                have_cmd = _f(_state.get("power_pct_cmd"))
+            same = False
+            if have_cmd is not None and abs(float(have_cmd) - float(pct)) < 0.5:
+                same = True
+            if not same:
+                # estimate from power / limit (ASIC may not read back pct)
+                pw = _f(live.get("power"))
+                lim = _live_power_limit_w(live)
+                if pw is not None and lim is not None and lim > 0 and float(pw) > 0:
+                    est = 100.0 * float(pw) / float(lim)
+                    if abs(est - float(pct)) <= 3.0:
+                        same = True
+            if same:
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "action": "power_pct",
+                    "value": pct,
+                    "msg": f"power_pct already {pct}%",
+                }
+        except Exception:
+            pass
         resp = privileged_cmd({"cmd": "set_power_pct", "percent": str(pct)}, password)
         return _record_write("power_pct", pct, resp)
 
@@ -5233,6 +5348,26 @@ def apply_set(action: str, value, password: str) -> dict:
         watts = int(value)
         if watts < 0 or watts > 20000:
             raise ValueError("power_limit out of range")
+        # skip if already at this limit — adjust_power_limit restarts mining
+        try:
+            candidates: list[float] = []
+            cur = _live_power_limit_w()
+            if cur is not None:
+                candidates.append(float(cur))
+            cmd_lim = _f(_state.get("power_limit_cmd"))
+            if cmd_lim is not None:
+                candidates.append(float(cmd_lim))
+            for c in candidates:
+                if abs(int(round(float(c))) - int(watts)) <= 1:
+                    return {
+                        "ok": True,
+                        "skipped": True,
+                        "action": "power_limit",
+                        "value": watts,
+                        "msg": f"power_limit already {watts} W",
+                    }
+        except Exception:
+            pass
         resp = privileged_cmd(
             {"cmd": "adjust_power_limit", "power_limit": str(watts)}, password
         )
@@ -5358,6 +5493,14 @@ _tg_offline_notified = False
 # Hidden tool: /emoji — wait for custom emoji and print custom_emoji_id
 _tg_emoji_wait_lock = threading.Lock()
 _tg_emoji_wait: set[str] = set()  # chat id keys in capture mode
+
+# Custom emoji for miner host line (🖥 → pack glyph)
+# HTML: <tg-emoji emoji-id="5399965542633200318">📦</tg-emoji>
+_TG_MINER_HOST_EMOJI_ID = "5399965542633200318"
+_TG_MINER_HOST_EMOJI_FB = "📦"  # unicode fallback inside custom_emoji entity
+# Inline button «Пулы» — icon_custom_emoji_id (Bot API)
+# <tg-emoji emoji-id="5267040075803274242">💲</tg-emoji>
+_TG_POOLS_BTN_EMOJI_ID = "5267040075803274242"
 
 
 def _load_telegram_cfg() -> None:
@@ -5757,6 +5900,55 @@ def _tg_target_chats() -> list:
         return list(_tg_cfg.get("chat_ids") or [])
 
 
+def _tg_utf16_len(s: str) -> int:
+    """Length in UTF-16 code units (Telegram entity offsets)."""
+    return len((s or "").encode("utf-16-le")) // 2
+
+
+def _tg_miner_host_prefix() -> str:
+    """📦  — fallback glyph for custom miner-host emoji."""
+    return f"{_TG_MINER_HOST_EMOJI_FB}  "
+
+
+def _tg_attach_miner_host_emoji(text: str) -> tuple[str, list[dict]]:
+    """
+    Replace 🖥 with pack emoji 📦 and attach custom_emoji entities.
+    Returns (text, entities) for sendMessage/editMessageText.
+    """
+    t = text or ""
+    # normalize any computer emoji to our fallback box
+    t = t.replace("🖥  ", _tg_miner_host_prefix()).replace("🖥 ", _tg_miner_host_prefix())
+    t = t.replace("🖥", _TG_MINER_HOST_EMOJI_FB)
+    entities: list[dict] = []
+    fb = _TG_MINER_HOST_EMOJI_FB
+    fb_u16 = _tg_utf16_len(fb)
+    # scan codepoints; track UTF-16 offset
+    u16 = 0
+    i = 0
+    while i < len(t):
+        if t.startswith(fb, i):
+            prev = t[i - 1] if i > 0 else "\n"
+            # only host lines: start of message or after newline, then "  "
+            nxt = t[i + len(fb) : i + len(fb) + 2]
+            if (i == 0 or prev == "\n") and nxt == "  ":
+                entities.append(
+                    {
+                        "type": "custom_emoji",
+                        "offset": u16,
+                        "length": fb_u16,
+                        "custom_emoji_id": _TG_MINER_HOST_EMOJI_ID,
+                    }
+                )
+            u16 += fb_u16
+            i += len(fb)
+            continue
+        # advance one unicode char
+        ch = t[i]
+        u16 += _tg_utf16_len(ch)
+        i += 1
+    return t, entities
+
+
 def tg_send_message(
     chat_id,
     text: str,
@@ -5764,11 +5956,18 @@ def tg_send_message(
     silent: bool = False,
     reply_markup: dict | None = None,
     parse_mode: str | None = None,
+    entities: list | None = None,
+    miner_host_emoji: bool = False,
 ) -> bool:
     text = (text or "")[:3900]
     if not text:
         return False
     try:
+        ent = list(entities) if entities else None
+        if miner_host_emoji and not parse_mode:
+            # custom emoji entities conflict with parse_mode HTML
+            text, ent2 = _tg_attach_miner_host_emoji(text)
+            ent = (ent or []) + ent2
         payload: dict = {
             "chat_id": chat_id,
             "text": text,
@@ -5778,6 +5977,8 @@ def tg_send_message(
             payload["reply_markup"] = reply_markup
         if parse_mode:
             payload["parse_mode"] = parse_mode
+        elif ent:
+            payload["entities"] = ent
         _tg_api("sendMessage", payload, timeout=20)
         with _tg_state_lock:
             _tg_state["last_send_ts"] = datetime.now().isoformat(timespec="seconds")
@@ -5799,9 +6000,15 @@ def tg_edit_message(
     *,
     reply_markup: dict | None = None,
     parse_mode: str | None = None,
+    entities: list | None = None,
+    miner_host_emoji: bool = False,
 ) -> bool:
     text = (text or "")[:3900]
     try:
+        ent = list(entities) if entities else None
+        if miner_host_emoji and not parse_mode:
+            text, ent2 = _tg_attach_miner_host_emoji(text)
+            ent = (ent or []) + ent2
         payload: dict = {
             "chat_id": chat_id,
             "message_id": int(message_id),
@@ -5811,6 +6018,8 @@ def tg_edit_message(
             payload["reply_markup"] = reply_markup
         if parse_mode:
             payload["parse_mode"] = parse_mode
+        elif ent:
+            payload["entities"] = ent
         _tg_api("editMessageText", payload, timeout=15)
         return True
     except Exception as e:
@@ -5926,7 +6135,14 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
 
     # Info + Pools live under Miner (inline), not on the main keyboard.
     fs_btn = _tg_force_stop_btn_label(lang)
-    fl_btn = _tg_filtration_btn_label(lang)
+
+    # Filtration button only if feature enabled in settings (and user prefs allow)
+    filt_enabled = False
+    try:
+        filt_enabled = bool(get_filtration_status().get("enabled"))
+    except Exception:
+        filt_enabled = False
+    fl_btn = _tg_filtration_btn_label(lang) if filt_enabled else None
 
     # Row 1: Status always · Miner optional
     row1 = [{"text": "📊 Status" if en else "📊 Статус"}]
@@ -5941,7 +6157,7 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     rows: list[list[dict]] = [row1, row2]
     if _show("show_force_stop"):
         rows.append([{"text": fs_btn}])
-    if _show("show_filtration"):
+    if filt_enabled and _show("show_filtration") and fl_btn:
         rows.append([{"text": fl_btn}])
 
     # Settings / Help
@@ -6231,7 +6447,9 @@ def tg_broadcast(
         msg = text
         if text_by_lang and isinstance(text_by_lang, dict):
             msg = text_by_lang.get(lang) or text_by_lang.get("ru") or text_by_lang.get("en") or text
-        if tg_send_message(cid, msg, silent=silent):
+        # status cards may include miner-host custom emoji
+        use_icon = ("📦  " in msg) or ("🖥" in msg)
+        if tg_send_message(cid, msg, silent=silent, miner_host_emoji=use_icon):
             n += 1
     return n
 
@@ -6536,7 +6754,7 @@ def _tg_zone_profile_for_status(zone_id, *, safety: bool = False) -> dict:
 def _tg_format_zone_mode(profile: dict | None, lang: str = "ru") -> str:
     """
     Suspend
-    or Mining · Low Power Mode · 1800W · 90% PCT
+    or Mining · Low · 1800W · 90%
     (only flags enabled on the zone profile).
     """
     en = str(lang or "ru").lower().startswith("en")
@@ -6558,7 +6776,8 @@ def _tg_format_zone_mode(profile: dict | None, lang: str = "ru") -> str:
     if p.get("mode_en"):
         m = str(p.get("mode") or "").strip().lower()
         if m in ("low", "normal", "high"):
-            parts.append(f"{m.capitalize()} Power Mode")
+            # short: Mining · Low · 1800W (no "Power Mode" suffix)
+            parts.append(m.capitalize())
         elif m:
             parts.append(m)
 
@@ -6572,7 +6791,7 @@ def _tg_format_zone_mode(profile: dict | None, lang: str = "ru") -> str:
     if p.get("pct_en"):
         try:
             pct = int(round(float(p.get("pct"))))
-            parts.append(f"{pct}% PCT")
+            parts.append(f"{pct}%")
         except (TypeError, ValueError):
             pass
 
@@ -6749,6 +6968,55 @@ def _tg_active_errors_lines(live: dict | None, lang: str = "ru", *, limit: int =
     return out
 
 
+def _tg_policy_kv(label: str, value: str, col: int = 14) -> str:
+    """Pad after label so values line up (Telegram proportional font)."""
+    lab = str(label or "")
+    pad = max(1, int(col) - len(lab))
+    return f"{lab}{' ' * pad}{value}"
+
+
+def _tg_policy_block_lines(
+    *,
+    preset: str,
+    z_lab: str,
+    z_mode: str,
+    dry: bool,
+    fs: bool,
+    lang: str = "ru",
+) -> list[str]:
+    """
+    Spacing (RU) — values roughly column-aligned:
+
+    Пресет:        Теплый бассейн
+    T зона:        Z2 (Reduced heat)
+    Цель:          Mining · Low · 1800W
+    Dry Run:       вкл. ручной режим
+    Force Stop:    выкл.
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    # col: char offset where value starts (label + spaces)
+    col = 14
+    if en:
+        dry_s = "on. manual mode" if dry else "off. auto mode"
+        fs_s = "on." if fs else "off."
+        return [
+            _tg_policy_kv("Preset:", preset, col),
+            _tg_policy_kv("T zone:", z_lab, col),
+            _tg_policy_kv("Target:", z_mode, col),
+            _tg_policy_kv("Dry Run:", dry_s, col),
+            _tg_policy_kv("Force Stop:", fs_s, col),
+        ]
+    dry_s = "вкл. ручной режим" if dry else "выкл. авто режим"
+    fs_s = "вкл." if fs else "выкл."
+    return [
+        _tg_policy_kv("Пресет:", preset, col),
+        _tg_policy_kv("T зона:", z_lab, col),
+        _tg_policy_kv("Цель:", z_mode, col),
+        _tg_policy_kv("Dry Run:", dry_s, col),
+        _tg_policy_kv("Force Stop:", fs_s, col),
+    ]
+
+
 def _tg_status_text(lang: str = "ru") -> str:
     en = str(lang or "ru").lower().startswith("en")
     proj = get_project_name()
@@ -6775,39 +7043,14 @@ def _tg_status_text(lang: str = "ru") -> str:
         z_mode = _tg_format_zone_mode(
             _tg_zone_profile_for_status(hz, safety=safety), lang
         )
-        if en:
-            dry_s = (
-                "on · manual control"
-                if dry
-                else "off · automatic control"
-            )
-            fs_s = "on" if fs else "off"
-            policy_block = [
-                f"Preset: {preset}",
-                f"Temp zone: {z_lab}",
-                f"Zone mode: {z_mode}",
-                f"Dry Run: {dry_s}",
-                f"Force Stop: {fs_s}",
-            ]
-        else:
-            dry_s = (
-                "включен · регулирование в ручном режиме"
-                if dry
-                else "выключен · автоматическое регулирование"
-            )
-            fs_s = "включен" if fs else "выключен"
-            policy_block = [
-                f"Пресет: {preset}",
-                f"Температурная зона: {z_lab}",
-                f"Режим зоны: {z_mode}",
-                f"Dry Run: {dry_s}",
-                f"Force Stop: {fs_s}",
-            ]
+        policy_block = _tg_policy_block_lines(
+            preset=preset, z_lab=z_lab, z_mode=z_mode, dry=dry, fs=fs, lang=lang
+        )
         lines = [
             f"🏠 {proj}",
             "————————————",
             "",
-            f"🖥  {host}",
+            f"{_tg_miner_host_prefix()}{host}",
             "🔴 offline",
             "",
             f"   {_fmt_asic_offline_msg(err, lang=lang)}",
@@ -6853,39 +7096,16 @@ def _tg_status_text(lang: str = "ru") -> str:
     )
 
     if en:
-        dry_s = (
-            "on · manual control"
-            if dry
-            else "off · automatic control"
-        )
-        fs_s = "on" if fs else "off"
         temps_h = "🌡  Temperatures:"
         lab_liq, lab_str, lab_chip = "Liquid:", "Street:", "Chip:"
         lab_ov, lab_left = "Override", "left"
-        policy_block = [
-            f"Preset: {preset}",
-            f"Temp zone: {z_lab}",
-            f"Zone mode: {z_mode}",
-            f"Dry Run: {dry_s}",
-            f"Force Stop: {fs_s}",
-        ]
     else:
-        dry_s = (
-            "включен · регулирование в ручном режиме"
-            if dry
-            else "выключен · автоматическое регулирование"
-        )
-        fs_s = "включен" if fs else "выключен"
         temps_h = "🌡  Температуры:"
         lab_liq, lab_str, lab_chip = "Жидкость:", "Улица:", "Чип:"
         lab_ov, lab_left = "Override", "осталось"
-        policy_block = [
-            f"Пресет: {preset}",
-            f"Температурная зона: {z_lab}",
-            f"Режим зоны: {z_mode}",
-            f"Dry Run: {dry_s}",
-            f"Force Stop: {fs_s}",
-        ]
+    policy_block = _tg_policy_block_lines(
+        preset=preset, z_lab=z_lab, z_mode=z_mode, dry=dry, fs=fs, lang=lang
+    )
 
     host = live.get("host") or f"{HOST_MINER}:{PORT_MINER}"
     up_s = _tg_fmt_dur_sec(live.get("uptime"))
@@ -6915,7 +7135,7 @@ def _tg_status_text(lang: str = "ru") -> str:
         f"🏠 {proj}",
         "————————————",
         "",
-        f"🖥  {host}",
+        f"{_tg_miner_host_prefix()}{host}",
         link,
         "",
         power_line,
@@ -7057,7 +7277,7 @@ def _tg_info_text(lang: str = "ru") -> str:
         f"ℹ️  {'Info' if en else 'Инфо'} · {proj}",
         "————————————",
         "",
-        f"🖥  {host}",
+        f"{_tg_miner_host_prefix()}{host}",
         ("🟢 online" if online else "🔴 offline"),
         "",
         f"{'Type' if en else 'Модель'}:  {mtype}",
@@ -7141,9 +7361,17 @@ def _tg_send_info(
     text = _tg_info_text(lang=lang)
     markup = _tg_info_inline(lang)
     if edit_message_id is not None:
-        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+        tg_edit_message(
+            chat_id,
+            edit_message_id,
+            text,
+            reply_markup=markup,
+            miner_host_emoji=True,
+        )
     else:
-        tg_send_message(chat_id, text, reply_markup=markup)
+        tg_send_message(
+            chat_id, text, reply_markup=markup, miner_host_emoji=True
+        )
 
 
 def _tg_miner_inline(lang: str = "ru", live: dict | None = None) -> dict:
@@ -7170,6 +7398,20 @@ def _tg_miner_inline(lang: str = "ru", live: dict | None = None) -> dict:
     sus_l = wlab(True, "⏸ Suspend" if en else "⏸ Suspend")
     res_l = wlab(False, "▶️ Resume" if en else "▶️ Resume")
     lim_s = f"{int(lim)} W" if lim is not None else "Limit"
+    # mark current power pct (local cmd or estimate)
+    pct_cur = None
+    if pct_set is not None:
+        pct_cur = int(round(float(pct_set)))
+    else:
+        pw = _f(live.get("power"))
+        if pw is not None and lim is not None and lim > 0 and float(pw) > 0:
+            pct_cur = int(round(100.0 * float(pw) / float(lim)))
+
+    def plab(p: int) -> str:
+        if pct_cur is not None and abs(pct_cur - p) <= 2:
+            return f"· {p}%"
+        return f"{p}%"
+
     dry = _tg_dry_run_on()
     if en:
         dry_l = "🧪 Dry Run · ON" if dry else "🧪 Dry Run · OFF"
@@ -7193,9 +7435,9 @@ def _tg_miner_inline(lang: str = "ru", live: dict | None = None) -> dict:
                 {"text": "+500 W", "callback_data": "m:limd:500"},
             ],
             [
-                {"text": "50%", "callback_data": "m:pct:50"},
-                {"text": "80%", "callback_data": "m:pct:80"},
-                {"text": "100%", "callback_data": "m:pct:100"},
+                {"text": plab(50), "callback_data": "m:pct:50"},
+                {"text": plab(80), "callback_data": "m:pct:80"},
+                {"text": plab(100), "callback_data": "m:pct:100"},
             ],
             [
                 {"text": dry_l, "callback_data": "m:dry:toggle"},
@@ -7211,7 +7453,11 @@ def _tg_miner_inline(lang: str = "ru", live: dict | None = None) -> dict:
                 },
             ],
             [
-                {"text": "🏊 Pools" if en else "🏊 Пулы", "callback_data": "m:pools"},
+                {
+                    "text": "Pools" if en else "Пулы",
+                    "callback_data": "m:pools",
+                    "icon_custom_emoji_id": _TG_POOLS_BTN_EMOJI_ID,
+                },
                 {
                     "text": "🔄 Refresh" if en else "🔄 Обновить",
                     "callback_data": "m:refresh",
@@ -7295,7 +7541,7 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
     else:
         link = "🔴 offline"
     lines = [
-        f"🖥  {host}",
+        f"{_tg_miner_host_prefix()}{host}",
         link,
     ]
     if not online:
@@ -7405,9 +7651,17 @@ def _tg_send_miner(
     text = _tg_miner_text(lang=lang, live=live, online=online, err=err)
     markup = _tg_miner_inline(lang, live if online else None)
     if edit_message_id is not None:
-        tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+        tg_edit_message(
+            chat_id,
+            edit_message_id,
+            text,
+            reply_markup=markup,
+            miner_host_emoji=True,
+        )
     else:
-        tg_send_message(chat_id, text, reply_markup=markup)
+        tg_send_message(
+            chat_id, text, reply_markup=markup, miner_host_emoji=True
+        )
 
 
 def _tg_apply_miner_write(action: str, value, lang: str = "ru") -> str:
@@ -7415,6 +7669,31 @@ def _tg_apply_miner_write(action: str, value, lang: str = "ru") -> str:
     en = str(lang or "ru").lower().startswith("en")
     try:
         out = apply_set(action, value, DEFAULT_API_PASSWORD)
+        if isinstance(out, dict) and out.get("skipped"):
+            if action in ("power_limit", "set_power_limit", "adjust_power_limit"):
+                return (
+                    f"Power Limit already {value} W"
+                    if en
+                    else f"Power Limit уже {value} W"
+                )
+            if action == "power_pct":
+                return (
+                    f"Power pct already {value}%"
+                    if en
+                    else f"Power pct уже {value}%"
+                )
+            if action == "mode":
+                return (
+                    f"Power Mode already {str(value).upper()}"
+                    if en
+                    else f"Power Mode уже {str(value).upper()}"
+                )
+            if action in ("working", "working_mode", "work", "mining"):
+                v = str(value).lower()
+                if v in ("sleep", "suspend"):
+                    return "Mining Control already Suspend" if en else "Уже Suspend"
+                return "Mining Control already Resume" if en else "Уже Resume"
+            return "✅ already set" if en else "✅ уже установлено"
         if action == "mode":
             return f"Power Mode: {str(value).upper()}"
         if action in ("working", "working_mode", "work", "mining"):
@@ -8537,8 +8816,21 @@ def _tg_handle_callback(cq: dict) -> None:
                 except Exception as e:
                     tg_answer_callback(cq_id, f"❌ {e}", alert=True)
                     return
-                cur = _f(live.get("power_limit_measured") or live.get("power_limit")) or 0
-                new_lim = max(0, min(20000, int(cur) + delta))
+                cur = _live_power_limit_w(live)
+                if cur is None:
+                    cur = 0
+                cur_i = int(round(float(cur)))
+                new_lim = max(0, min(20000, cur_i + delta))
+                # same limit after clamp (± at 0/max) or noop — do not re-write ASIC
+                if new_lim == cur_i:
+                    msg = (
+                        f"Power Limit already {cur_i} W"
+                        if en
+                        else f"Power Limit уже {cur_i} W"
+                    )
+                    tg_answer_callback(cq_id, msg[:180])
+                    _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                    return
                 msg = _tg_apply_miner_write("power_limit", new_lim, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8549,6 +8841,23 @@ def _tg_handle_callback(cq: dict) -> None:
                 except ValueError:
                     tg_answer_callback(cq_id, "pct?", alert=True)
                     return
+                # early skip: same % already set → no set_power_pct (no mining restart)
+                try:
+                    live = fetch_live()
+                    have = _f(live.get("power_pct_cmd"))
+                    if have is None:
+                        have = _f(_state.get("power_pct_cmd"))
+                    if have is not None and abs(float(have) - float(pct)) < 0.5:
+                        msg = (
+                            f"Power pct already {pct}%"
+                            if en
+                            else f"Power pct уже {pct}%"
+                        )
+                        tg_answer_callback(cq_id, msg[:180])
+                        _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                        return
+                except Exception:
+                    pass
                 msg = _tg_apply_miner_write("power_pct", pct, lang)
                 tg_answer_callback(cq_id, msg[:180], alert=msg.startswith("❌"))
                 _tg_send_miner(chat_id, lang, edit_message_id=mid)
@@ -8664,7 +8973,21 @@ def _tg_extract_custom_emoji(msg: dict | None) -> list[dict]:
     return out
 
 
+def _tg_html_esc(s: str) -> str:
+    return (
+        str(s or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def _tg_format_emoji_ids(items: list[dict], lang: str = "ru") -> str:
+    """
+    HTML body for /emoji tool.
+    Custom emoji are sent as <tg-emoji> so clients render the pack art,
+    not only the unicode fallback character.
+    """
     en = str(lang or "ru").lower().startswith("en")
     if not items:
         return (
@@ -8672,25 +8995,44 @@ def _tg_format_emoji_ids(items: list[dict], lang: str = "ru") -> str:
             if en
             else "Custom emoji не найден.\nПришлите premium/custom emoji (не кнопку клавиатуры)."
         )
-    lines = ["🔎 custom_emoji_id:" if en else "🔎 custom_emoji_id:"]
+    lines = ["🔎 <b>custom_emoji_id</b>:"]
     for i, it in enumerate(items, 1):
         if it.get("source") == "sticker_file":
             lines.append(
                 f"{i}. sticker (not custom emoji)\n"
-                f"   emoji: {it.get('emoji') or '—'}\n"
-                f"   set: {it.get('set_name') or '—'}\n"
-                f"   file_id: {it.get('file_id') or '—'}"
+                f"   emoji: {_tg_html_esc(it.get('emoji') or '—')}\n"
+                f"   set: {_tg_html_esc(it.get('set_name') or '—')}\n"
+                f"   file_id: <code>{_tg_html_esc(it.get('file_id') or '—')}</code>"
             )
             continue
-        eid = it.get("id") or "—"
-        em = it.get("emoji") or "?"
-        lines.append(f"{i}. {em}  →  `{eid}`")
-        lines.append(f"   HTML: <tg-emoji emoji-id=\"{eid}\">{em}</tg-emoji>")
+        eid = re.sub(r"[^0-9]", "", str(it.get("id") or ""))
+        em = it.get("emoji") or "⭐"
+        em_esc = _tg_html_esc(em)
+        if not eid:
+            lines.append(f"{i}. {em_esc}  →  —")
+            continue
+        # Live custom glyph in the reply + plain id
+        lines.append(
+            f"{i}. <tg-emoji emoji-id=\"{eid}\">{em_esc}</tg-emoji>"
+            f"  →  <code>{eid}</code>"
+        )
+        # Escaped snippet for copy-paste into bot code
+        snippet = (
+            f"&lt;tg-emoji emoji-id=\"{eid}\"&gt;{em_esc}&lt;/tg-emoji&gt;"
+        )
+        lines.append(f"   HTML: <code>{snippet}</code>")
     lines.append("")
     lines.append(
-        "Mode still ON — send more, or /emoji off"
+        "Mode still ON — send more, or /emoji to toggle off"
         if en
-        else "Режим ВКЛ — пришлите ещё, или /emoji off"
+        else "Режим ВКЛ — пришлите ещё, или /emoji чтобы выключить"
+    )
+    lines.append(
+        "\n<i>If you see only the standard glyph, bot owner needs Telegram Premium "
+        "(Bot API custom emoji).</i>"
+        if en
+        else "\n<i>Если виден только стандартный 📦 — у владельца бота нужен "
+        "Telegram Premium (custom emoji в Bot API).</i>"
     )
     return "\n".join(lines)
 
@@ -8732,16 +9074,20 @@ def _tg_handle_command(
             if items or msg.get("sticker") or msg.get("entities") or msg.get(
                 "caption_entities"
             ):
-                tg_send_message(chat_id, _tg_format_emoji_ids(items, lang))
+                tg_send_message(
+                    chat_id,
+                    _tg_format_emoji_ids(items, lang),
+                    parse_mode="HTML",
+                )
                 return
             if text and not text.startswith("/"):
                 en = str(lang).lower().startswith("en")
                 tg_send_message(
                     chat_id,
                     (
-                        "No custom_emoji entity. Send a custom/premium emoji, or /emoji off"
+                        "No custom_emoji entity. Send a custom/premium emoji, or /emoji to toggle off"
                         if en
-                        else "Нет custom_emoji. Пришлите custom/premium emoji или /emoji off"
+                        else "Нет custom_emoji. Пришлите custom/premium emoji или /emoji чтобы выключить"
                     ),
                 )
                 return
@@ -8815,19 +9161,29 @@ def _tg_handle_command(
         return
 
     # Hidden: custom emoji id capture (not on keyboard / public help)
+    # /emoji          → toggle ON/OFF
+    # /emoji on|off   → force state
     if cmd == "/emoji":
         arg0 = str(args[0]).lower() if args else ""
-        if arg0 in ("off", "0", "stop", "exit", "cancel", "выкл", "стоп"):
+        force_on = arg0 in ("on", "1", "вкл", "start", "enable")
+        force_off = arg0 in ("off", "0", "stop", "exit", "cancel", "выкл", "стоп")
+        if force_off or (not force_on and not arg0 and _tg_emoji_wait_active(chat_id)):
+            # explicit off OR bare /emoji while already ON → toggle OFF
             _tg_emoji_wait_off(chat_id)
             tg_send_message(
                 chat_id,
                 "🔎 emoji mode OFF" if en else "🔎 режим emoji ВЫКЛ",
             )
             return
+        # ON (toggle from off, or explicit on)
         items = _tg_extract_custom_emoji(msg) if msg else []
         if items:
             _tg_emoji_wait_on(chat_id)
-            tg_send_message(chat_id, _tg_format_emoji_ids(items, lang))
+            tg_send_message(
+                chat_id,
+                _tg_format_emoji_ids(items, lang),
+                parse_mode="HTML",
+            )
             return
         _tg_emoji_wait_on(chat_id)
         tg_send_message(
@@ -8836,12 +9192,12 @@ def _tg_handle_command(
                 "🔎 emoji mode ON\n"
                 "Send a custom/premium emoji (or custom-emoji sticker).\n"
                 "I’ll reply with custom_emoji_id + HTML snippet.\n"
-                "/emoji off — exit"
+                "/emoji — toggle off"
                 if en
                 else "🔎 режим emoji ВКЛ\n"
                 "Пришлите custom/premium emoji (или стикер-custom-emoji).\n"
                 "Отвечу custom_emoji_id + HTML-фрагмент.\n"
-                "/emoji off — выход"
+                "/emoji — выключить"
             ),
         )
         return
@@ -8966,6 +9322,7 @@ def _tg_handle_command(
             chat_id,
             _tg_status_text(lang=lang),
             reply_markup=_tg_main_keyboard(lang, chat_id),
+            miner_host_emoji=True,
         )
         return
 
