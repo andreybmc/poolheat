@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.27"
+_DEFAULT_APP_VERSION = "0.3.28"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -7845,6 +7845,78 @@ def _tg_ctrl_err_emoji_html() -> str:
     )
 
 
+def _tg_fail_human_text(
+    msg: str = "",
+    lang: str = "ru",
+    *,
+    cmd: str | None = None,
+    reply: str | None = None,
+) -> str:
+    """
+    Map FAIL working=suspend: … → laconic human message.
+    e.g. «Ошибка установки режима Suspend»
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    c = (cmd or "").strip()
+    r = (reply or "").strip()
+    if not c:
+        m = str(msg or "").strip()
+        if m.upper().startswith("FAIL "):
+            m = m[5:].strip()
+        if ":" in m:
+            left, right = m.split(":", 1)
+            c = left.strip()
+            r = right.strip()
+        else:
+            c = m
+    action = ""
+    value = ""
+    if "=" in c:
+        action, value = c.split("=", 1)
+        action = action.strip().lower()
+        value = value.strip().lower()
+    else:
+        action = c.lower()
+
+    # working / Mining Control
+    if action in ("working", "work", "mining", "working_mode"):
+        if value in ("sleep", "suspend", "power_off", "off"):
+            return (
+                "Suspend mode set failed"
+                if en
+                else "Ошибка установки режима Suspend"
+            )
+        if value in ("resume", "power_on", "on", "mining"):
+            return (
+                "Resume mode set failed"
+                if en
+                else "Ошибка установки режима Resume"
+            )
+        return (
+            f"Mining Control set failed ({value or '—'})"
+            if en
+            else f"Ошибка Mining Control ({value or '—'})"
+        )
+    if action == "mode":
+        return (
+            f"Power Mode set failed ({value or '—'})"
+            if en
+            else f"Ошибка Power Mode ({value or '—'})"
+        )
+    if action in ("power_limit", "set_power_limit", "adjust_power_limit"):
+        return "Power Limit set failed" if en else "Ошибка Power Limit"
+    if action == "power_pct":
+        return "Power pct set failed" if en else "Ошибка Power pct"
+    if action in ("reboot", "reboot_asic", "system_reboot"):
+        return "Reboot command failed" if en else "Ошибка reboot"
+    if action in ("restart", "restart_miner", "restart_btminer"):
+        return "Restart miner failed" if en else "Ошибка restart miner"
+    # fallback: short original without raw API dump
+    if c:
+        return f"Ошибка: {c}" if not en else f"Error: {c}"
+    return "Ошибка управления" if not en else "Control error"
+
+
 def _tg_status_fail_lines(
     msg: str,
     lang: str = "ru",
@@ -7854,22 +7926,10 @@ def _tg_status_fail_lines(
 ) -> list[str]:
     """
     One line for Status / Miner:
-      🚫 FAIL working=suspend: can't access write cmd
+      🚫 Ошибка установки режима Suspend
     """
-    if cmd is not None or reply is not None:
-        c = str(cmd or "—").strip() or "—"
-        r = str(reply or "").strip()
-        body = f"{c}: {r}" if r else c
-        if not body.upper().startswith("FAIL "):
-            body = f"FAIL {body}"
-    else:
-        body = str(msg or "").strip()
-        if body and not body.upper().startswith("FAIL "):
-            body = f"FAIL {body}"
-    if not body:
-        body = "FAIL"
-    # Exactly one custom emoji (no extra 🚫 unicode outside the tag).
-    return [f"{_tg_ctrl_err_emoji_html()} {body}"]
+    text = _tg_fail_human_text(msg, lang, cmd=cmd, reply=reply)
+    return [f"{_tg_ctrl_err_emoji_html()} {text}"]
 
 
 def _tg_zone_line(zone_id, *, safety: bool = False) -> str:

@@ -475,6 +475,43 @@
       transition: border-color 0.15s;
     }
 
+    /* password + eye toggle */
+    .pw-wrap {
+      position: relative;
+      display: block;
+      width: 100%;
+    }
+    .pw-wrap input[type="password"],
+    .pw-wrap input[type="text"] {
+      padding-right: 40px;
+    }
+    .pw-eye {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 32px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 0.95rem;
+      line-height: 1;
+    }
+    .pw-eye:hover {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .pw-eye[aria-pressed="true"] {
+      color: var(--accent);
+    }
+
     input:focus, select:focus, textarea:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(61, 156, 240, 0.15);
@@ -2385,7 +2422,10 @@
                 <input type="text" id="chipmap-user" value="admin" autocomplete="off" />
               </label>
               <label class="field">Web password
-                <input type="password" id="chipmap-password" placeholder="пусто = API password" autocomplete="off" />
+                <span class="pw-wrap">
+                  <input type="password" id="chipmap-password" placeholder="пусто = API password" autocomplete="off" />
+                  <button type="button" class="pw-eye" data-pw-for="chipmap-password" title="Показать пароль" aria-label="Показать пароль" aria-pressed="false">👁</button>
+                </span>
               </label>
               <label class="field">Scheme
                 <select id="chipmap-scheme">
@@ -3057,7 +3097,10 @@
             </div>
             <div class="row" style="margin-top:12px">
               <label class="field">API password
-                <input type="password" id="settings-api-password" value="admin" autocomplete="off" />
+                <span class="pw-wrap">
+                  <input type="password" id="settings-api-password" value="admin" autocomplete="off" />
+                  <button type="button" class="pw-eye" data-pw-for="settings-api-password" title="Показать пароль" aria-label="Показать пароль" aria-pressed="false">👁</button>
+                </span>
               </label>
               <label class="field"><span class="tip" data-tip-key="poll">Интервал опроса, сек</span>
                 <input type="number" id="settings-poll-interval" value="5" min="2" max="300" step="1" />
@@ -3108,7 +3151,10 @@
                   <input type="text" id="filt-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
                 </label>
                 <label class="field">Tapo password
-                  <input type="password" id="filt-password" placeholder="••••" autocomplete="off" />
+                  <span class="pw-wrap">
+                    <input type="password" id="filt-password" placeholder="••••" autocomplete="off" />
+                    <button type="button" class="pw-eye" data-pw-for="filt-password" title="Показать пароль" aria-label="Показать пароль" aria-pressed="false">👁</button>
+                  </span>
                 </label>
               </div>
             </div>
@@ -3190,7 +3236,10 @@
                 </label>
               </div>
               <label class="field" style="margin-top:10px">Long-lived token
-                <input type="password" id="filt-ha-token" placeholder="••••" autocomplete="off" />
+                <span class="pw-wrap">
+                  <input type="password" id="filt-ha-token" placeholder="••••" autocomplete="off" />
+                  <button type="button" class="pw-eye" data-pw-for="filt-ha-token" title="Показать пароль" aria-label="Показать пароль" aria-pressed="false">👁</button>
+                </span>
               </label>
             </div>
 
@@ -3244,7 +3293,10 @@
             </label>
             <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
               <label class="field">Bot token
-                <input type="password" id="tg-token" placeholder="123456:AA…" autocomplete="off" />
+                <span class="pw-wrap">
+                  <input type="password" id="tg-token" placeholder="123456:AA…" autocomplete="off" />
+                  <button type="button" class="pw-eye" data-pw-for="tg-token" title="Показать пароль" aria-label="Показать пароль" aria-pressed="false">👁</button>
+                </span>
               </label>
               <label class="field">Chat IDs
                 <span style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">
@@ -6328,6 +6380,27 @@
 
     syncZonesFromGlobal();
     onLiveToggle();
+
+    // Password fields: 👁 show / hide
+    function bindPasswordEyes(root) {
+      (root || document).querySelectorAll(".pw-eye[data-pw-for]").forEach((btn) => {
+        if (btn.dataset.bound === "1") return;
+        btn.dataset.bound = "1";
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          const id = btn.getAttribute("data-pw-for");
+          const inp = id ? document.getElementById(id) : null;
+          if (!inp) return;
+          const show = inp.type === "password";
+          inp.type = show ? "text" : "password";
+          btn.setAttribute("aria-pressed", show ? "true" : "false");
+          btn.title = show ? "Скрыть пароль" : "Показать пароль";
+          btn.setAttribute("aria-label", btn.title);
+          btn.textContent = show ? "🙈" : "👁";
+        });
+      });
+    }
+    bindPasswordEyes();
 
     // Live poll interval (Подключение Whatsminer) — not history sample interval
     let livePollTimer = null;
