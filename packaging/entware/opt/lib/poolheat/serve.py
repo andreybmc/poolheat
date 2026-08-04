@@ -144,7 +144,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.9"
+_DEFAULT_APP_VERSION = "0.3.10"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -10060,17 +10060,19 @@ def _tg_handle_command(
         else:
             title = "📋 <b>События</b>"
             empty = "нет событий"
-        line_z = f"zone={zlab} · want={want} have={have}"
-        line_f = (
-            f"Dry Run {'ON' if dry else 'OFF'} · "
-            f"Force Stop {'ON' if fs else 'OFF'}"
+        # zone: <b>Z3 No heat</b> · want: <b>suspend</b> have: <b>suspend</b>
+        # Dry Run: <b>OFF</b> · Force Stop: <b>OFF</b>
+        z_show = _tg_html_esc(str(zlab or "—").replace(" · ", " "))
+        want_s = _tg_html_esc(str(want or "—"))
+        have_s = _tg_html_esc(str(have or "—"))
+        dry_s = "ON" if dry else "OFF"
+        fs_s = "ON" if fs else "OFF"
+        line_z = (
+            f"zone: <b>{z_show}</b> · want: <b>{want_s}</b> have: <b>{have_s}</b>"
         )
-        # 📋 <b>События</b>
-        #
-        # zone=Z3 · No heat · want=suspend have=suspend
-        # Dry Run off · Force Stop off
-        #
-        # 04.08.2026 … [ok] …
+        line_f = (
+            f"Dry Run: <b>{dry_s}</b> · Force Stop: <b>{fs_s}</b>"
+        )
         lines = [title, "", line_z, line_f, ""]
         if not evs:
             lines.append(empty)
