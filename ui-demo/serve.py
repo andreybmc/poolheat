@@ -8857,17 +8857,10 @@ def _tg_filtration_status_lines(lang: str = "ru") -> list[str]:
         return []
     on = cfg.get("last_on")
     if on is True:
-        if en:
-            return ["💦 Filtration:  <b>on</b>"]
-        return ["💦 Фильтрация:  <b>вкл</b>"]
+        return ["💦 Filtration:  on" if en else "💦 Фильтрация:  вкл"]
     if on is False:
-        if en:
-            return ["🚱 Filtration:  <b>off</b>"]
-        return ["🚱 Фильтрация:  <b>выкл</b>"]
-    # never commanded / unknown
-    if en:
-        return ["💧 Filtration:  <b>—</b>"]
-    return ["💧 Фильтрация:  <b>—</b>"]
+        return ["🚱 Filtration:  off" if en else "🚱 Фильтрация:  выкл"]
+    return ["💧 Filtration:  —" if en else "💧 Фильтрация:  —"]
 
 
 def _tg_filtration_btn_label(lang: str = "ru") -> str:
@@ -10091,66 +10084,88 @@ def _tg_live_snapshot(
     return {}, False, RuntimeError("ASIC offline (stale poll)")
 
 
+def _tg_status_fleet_power(live: dict | None) -> tuple[float | None, float | None, float | None]:
+    """
+    Fleet totals for Status ⚡️ line (W, TH/s, J/T).
+    Today: single configured ASIC. When multi-host lands, sum all live rows here.
+    """
+    live = live if isinstance(live, dict) else {}
+    # Future: sum over fleet snapshots. For now one host = fleet.
+    rows = [live] if live.get("ok") or live.get("power") is not None or live.get("hashrate_th") is not None else []
+    if not rows and live:
+        rows = [live]
+    pw_sum = 0.0
+    hr_sum = 0.0
+    n_pw = 0
+    n_hr = 0
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        p = _f(r.get("power"))
+        h = _f(r.get("hashrate_th"))
+        if p is not None:
+            pw_sum += float(p)
+            n_pw += 1
+        if h is not None:
+            hr_sum += float(h)
+            n_hr += 1
+    pw = pw_sum if n_pw else None
+    hr = hr_sum if n_hr else None
+    try:
+        jt = _sample_eff_jt(pw, hr)
+    except Exception:
+        jt = None
+    return pw, hr, jt
+
+
 def _tg_status_text(lang: str = "ru") -> str:
+    """
+    Laconic Status card (no host / online / last_event):
+
+    🏊‍♂️ {project} :: Статус
+    —————————————————————
+    ⚡️  W · TH/s · J/T   (fleet total)
+    💦 Фильтрация: …
+    🌡  Температуры: …
+    ❄️ Остывание / 🔥 Нагрев …
+    policy block
+    """
     en = str(lang or "ru").lower().startswith("en")
-    proj = get_project_name()
+    proj = get_project_name() or "poolheat"
+    title = (
+        f"🏊‍♂️ {_tg_html_esc(proj)} :: Status"
+        if en
+        else f"🏊‍♂️ {_tg_html_esc(proj)} :: Статус"
+    )
+    sep = "—————————————————————"
+
     try:
         live, online, err = _tg_live_snapshot()
         if not online:
             raise err or RuntimeError("offline")
-        err = None
-    except Exception as e:
+    except Exception:
         online = False
-        err = e
         live = {}
-        try:
-            pol = get_policy_status()
-        except Exception:
-            pol = {}
-        host = f"{HOST_MINER}:{PORT_MINER}"
-        street = _tg_street_c()
-        hz = pol.get("heat_zone")
-        safety = bool(pol.get("safety_sticky"))
-        dry = bool(pol.get("dry_run"))
-        fs = bool(pol.get("force_stop"))
-        preset = _tg_active_preset_name()
-        z_lab = _tg_zone_label(hz, safety=safety)
-        z_mode = _tg_format_zone_mode(
-            _tg_zone_profile_for_status(hz, safety=safety), lang
-        )
-        policy_block = _tg_policy_block_lines(
-            preset=preset, z_lab=z_lab, z_mode=z_mode, dry=dry, fs=fs, lang=lang
-        )
-        lines = [
-            f"🏠 {_tg_html_esc(proj)}",
-            "————————————",
-            "",
-            _tg_miner_host_line_html(host),
-            "🔴 offline",
-            "",
-            f"   {_tg_html_esc(_fmt_asic_offline_msg(err, lang=lang))}",
-        ]
-        if street is not None:
-            lines.append("")
-            if en:
-                lines.append(f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>")
-            else:
-                lines.append(f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>")
-        fl_lines = _tg_filtration_status_lines(lang)
-        if fl_lines:
-            lines.append("")
-            lines.extend(fl_lines)
-        lines.append("")
-        lines.extend(policy_block)
-        return "\n".join(lines)
 
-    pol = get_policy_status()
-    # "Вода" line = selected T_ctrl (liquid|env|chip|board from zone map)
-    t_ctrl, t_ctrl_sensor = _tg_t_ctrl_from_live(live)
-    chip = live.get("chip_max")
-    pw = live.get("power")
-    hr = live.get("hashrate_th")
+    try:
+        pol = get_policy_status()
+    except Exception:
+        pol = {}
+
     street = _tg_street_c()
+    t_ctrl, _ = _tg_t_ctrl_from_live(live if online else {})
+    chip = live.get("chip_max") if online else None
+    pw, hr, jt = _tg_status_fleet_power(live if online else None)
+
+    if jt is not None and float(jt) > 0:
+        power_line = (
+            f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s ·  "
+            f"{_tg_fmt_num(jt, 1)} J/T"
+        )
+    else:
+        power_line = (
+            f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s"
+        )
 
     hz = pol.get("heat_zone")
     safety = bool(pol.get("safety_sticky"))
@@ -10173,79 +10188,28 @@ def _tg_status_text(lang: str = "ru") -> str:
     z_mode = _tg_format_zone_mode(
         _tg_zone_profile_for_status(hz, safety=safety), lang
     )
-
-    # Temps spacing (Telegram proportional font) — exact gaps as designed:
-    # Вода:    28 °C
-    # Улица:  21.9 °C
-    # Чипы:   42.9 °C
-    if en:
-        temps_h = "🌡  <b>Temperatures:</b>"
-        temp_lines = [
-            f"Water:   <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>",
-            f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>",
-            f"Chips:   <b>{_tg_fmt_num(chip, 1)} °C</b>",
-        ]
-        lab_ov, lab_left = "Override", "left"
-    else:
-        temps_h = "🌡  <b>Температуры:</b>"
-        temp_lines = [
-            f"Вода:    <b>{_tg_fmt_num(t_ctrl, 1)} °C</b>",
-            f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>",
-            f"Чипы:   <b>{_tg_fmt_num(chip, 1)} °C</b>",
-        ]
-        lab_ov, lab_left = "Override", "осталось"
     policy_block = _tg_policy_block_lines(
         preset=preset, z_lab=z_lab, z_mode=z_mode, dry=dry, fs=fs, lang=lang
     )
 
-    host = live.get("host") or f"{HOST_MINER}:{PORT_MINER}"
-    up_s = _tg_fmt_dur_sec(live.get("uptime"))
-    if online:
-        link = f"🟢 online · uptime {up_s}"
+    if en:
+        temps_h = "🌡  Temperatures:"
+        temp_lines = [
+            f"Water:    {_tg_fmt_num(t_ctrl, 1)} °C",
+            f"Street:  {_tg_fmt_num(street, 1)} °C",
+            f"Chips:   {_tg_fmt_num(chip, 1)} °C",
+        ]
     else:
-        link = "🔴 offline"
-
-    # work line under uptime: suspend · Elapsed  |  mining · Elapsed
-    # Whatsminer Elapsed can keep running in Suspend on some firmwares
-    work_m = str(live.get("work_measured") or "").strip().lower()
-    if not work_m:
-        try:
-            work_m = "suspend" if _measured_work_state(live) == "sleep" else "mining"
-        except Exception:
-            work_m = ""
-    if work_m in ("sleep", "suspend"):
-        work_lab = "suspend"
-    elif work_m in ("resume", "mining"):
-        work_lab = "mining"
-    else:
-        work_lab = "mining" if online else "—"
-    el_s = _tg_fmt_dur_sec(live.get("elapsed"))
-    if work_lab != "—" and el_s and el_s != "—":
-        work_line = f"{work_lab} · {el_s}"
-    else:
-        work_line = work_lab
-
-    # J/T = W / (TH/s)
-    try:
-        eff = _sample_eff_jt(pw, hr)
-    except Exception:
-        eff = None
-    if eff is not None and float(eff) > 0:
-        power_line = (
-            f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s  ·  "
-            f"{_tg_fmt_num(eff, 1)} J/T"
-        )
-    else:
-        power_line = f"⚡️  {_tg_fmt_num(pw, 0)} W  ·  {_tg_fmt_num(hr, 1)} TH/s"
+        temps_h = "🌡  Температуры:"
+        temp_lines = [
+            f"Вода:    {_tg_fmt_num(t_ctrl, 1)} °C",
+            f"Улица:  {_tg_fmt_num(street, 1)} °C",
+            f"Чипы:   {_tg_fmt_num(chip, 1)} °C",
+        ]
 
     lines = [
-        f"🏠 {_tg_html_esc(proj)}",
-        "————————————",
-        "",
-        _tg_miner_host_line_html(str(host)),
-        link,
-        work_line,
-        "",
+        title,
+        sep,
         power_line,
     ]
     fl_lines = _tg_filtration_status_lines(lang)
@@ -10258,77 +10222,23 @@ def _tg_status_text(lang: str = "ru") -> str:
         *temp_lines,
     ]
 
-    hb_lines = _tg_heat_balance_lines(live, street, lang)
-    if hb_lines:
-        lines.append("")
-        lines.extend(hb_lines)
+    if online:
+        hb_lines = _tg_heat_balance_lines(live, street, lang)
+        if hb_lines:
+            lines.append("")
+            lines.extend(hb_lines)
 
     if pol.get("override_active"):
         rem = int(pol.get("override_remaining_sec") or 0)
         mm, ss = divmod(max(0, rem), 60)
+        lab_ov = "Override" if en else "Override"
+        lab_left = "left" if en else "осталось"
         lines.append("")
         lines.append(f"🎛  {lab_ov} {mm}m {ss:02d}s {lab_left}")
 
-    # ASIC error codes (2000/2010/…) live on Miner card — keep Status clean
-
-    # policy summary
     lines.append("")
     lines.extend(policy_block)
-
-    # last_event at the very bottom (after policy); FAIL → multi-line control error
-    le = pol.get("last_event") or {}
-    raw_ev = str(le.get("msg") or "")
-    raw_l = raw_ev.lower()
-    is_offline_ev = (
-        "live poll fail" in raw_l
-        or "timed out" in raw_l
-        or "timeout" in raw_l
-        or "connection refused" in raw_l
-        or "asic offline" in raw_l
-        or "unreachable" in raw_l
-        or "name or service not known" in raw_l
-    )
-    is_apply_noise = (
-        raw_l.startswith("apply ")
-        or raw_l.startswith("auto ")
-        or "apply working" in raw_l
-        or raw_l.startswith("force_stop")
-        or "force stop" in raw_l
-    )
-    # TG control log / filtration — not for Status (clutter); Action log keeps them
-    is_tg_action_log = raw_l.startswith("chat ") or " · chat " in raw_l
-    is_filtration_ev = (
-        "filtration" in raw_l
-        or "фильтрац" in raw_l
-        or "насос" in raw_l
-    )
-    skip_ev = (
-        not raw_ev
-        or "dry_run" in raw_l
-        or raw_l.startswith("dry run")
-        or is_apply_noise
-        or is_tg_action_log
-        or is_filtration_ev
-        or (is_offline_ev and online)  # was offline blip; status already 🟢 online
-    )
-    if not skip_ev:
-        pretty = _tg_pretty_last_event(raw_ev)
-        pretty_l = str(pretty or "").lower()
-        if pretty and "dry run" not in pretty_l and not pretty_l.startswith("dry_run"):
-            if pretty_l.startswith("apply ") or pretty_l.startswith("auto "):
-                pass
-            elif online and (
-                "asic offline" in pretty_l
-                or ("offline" in pretty_l and "timeout" in pretty_l)
-            ):
-                pass
-            elif str(pretty).upper().startswith("FAIL "):
-                lines.append("")
-                lines.extend(_tg_status_fail_lines(pretty, lang))
-            else:
-                lines.append("")
-                lines.append(f"📝  {pretty}")
-
+    # no last_event — Status stays laconic; Action log has full history
     return "\n".join(lines)
 
 
