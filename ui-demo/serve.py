@@ -8711,22 +8711,45 @@ def _tg_dry_run_on() -> bool:
 
 
 def _tg_who(from_user: dict | None, chat_id=None) -> str:
-    """chat 123 · @username (or first name)."""
+    """
+    Laconic actor for action log (kind already shows [tg]):
+      @username   if Telegram login is set
+      chat 123    otherwise (no first-name noise)
+    """
     cid = chat_id if chat_id is not None else "?"
     uname = ""
-    fn = ""
     if isinstance(from_user, dict):
         uname = str(from_user.get("username") or "").strip().lstrip("@")
-        fn = str(from_user.get("first_name") or "").strip()
-        if not uname and not fn and from_user.get("id") is not None:
-            fn = f"id:{from_user.get('id')}"
     if uname:
-        who = f"@{uname}"
-    elif fn:
-        who = fn
-    else:
-        who = "unknown"
-    return f"chat {cid} · {who}"
+        return f"@{uname}"
+    return f"chat {cid}"
+
+
+def _rewrite_tg_event_msg(msg: str) -> str:
+    """
+    Normalize legacy TG action log lines:
+      chat 843750212 · @chogdekogo · Filtration ON  →  @chogdekogo · Filtration ON
+      chat 843750212 · John · Filtration ON         →  chat 843750212 · Filtration ON
+    """
+    m = str(msg or "").strip()
+    if not m.lower().startswith("chat "):
+        return m
+    # chat ID · @user · action
+    mm = re.match(
+        r"^chat\s+(\S+)\s+·\s+(@[A-Za-z0-9_]{1,64})\s+·\s+(.+)$",
+        m,
+    )
+    if mm:
+        return f"{mm.group(2)} · {mm.group(3).strip()}"
+    # chat ID · something · action  (no @login → keep chat id only)
+    mm = re.match(r"^chat\s+(\S+)\s+·\s+([^·]+?)\s+·\s+(.+)$", m)
+    if mm:
+        return f"chat {mm.group(1)} · {mm.group(3).strip()}"
+    # chat ID · @user   (no action tail)
+    mm = re.match(r"^chat\s+(\S+)\s+·\s+(@[A-Za-z0-9_]{1,64})\s*$", m)
+    if mm:
+        return mm.group(2)
+    return m
 
 
 def _tg_log_control(
@@ -8736,12 +8759,12 @@ def _tg_log_control(
 ) -> None:
     """
     Action log after a real control change only (not confirm dialogs).
-    Format: chat 123 · @user · Force Stop OFF
-    (kind [TG] is added by the Action log UI)
+    Format: @user · Force Stop OFF   or   chat 123 · Force Stop OFF
+    (kind [tg] is added by the Events / Action log UI)
     """
     who = _tg_who(from_user, chat_id)
     act = str(action or "?").strip()
-    msg = f"{who} · {act}"
+    msg = f"{who} · {act}" if act else who
     try:
         _policy_log(
             "tg",
@@ -13274,14 +13297,23 @@ def _load_policy_events() -> None:
     if not isinstance(evs, list):
         return
     clean: list = []
+    rewritten = 0
     for e in evs:
         if not isinstance(e, dict):
             continue
+        raw_msg = str(e.get("msg") or "")
+        kind = str(e.get("kind") or "—")
+        # rewrite verbose TG lines for display + disk
+        if kind == "tg" or raw_msg.lower().startswith("chat "):
+            new_msg = _rewrite_tg_event_msg(raw_msg)
+            if new_msg != raw_msg:
+                rewritten += 1
+                raw_msg = new_msg
         clean.append(
             {
                 "ts": str(e.get("ts") or ""),
-                "kind": str(e.get("kind") or "—"),
-                "msg": str(e.get("msg") or ""),
+                "kind": kind,
+                "msg": raw_msg,
                 **{
                     k: v
                     for k, v in e.items()
@@ -13296,6 +13328,12 @@ def _load_policy_events() -> None:
         _policy_ctrl["last_event"] = clean[0] if clean else None
     if clean:
         print(f"[policy] loaded {len(clean)} events from {POLICY_EVENTS_FILE.name}")
+    if rewritten:
+        try:
+            _save_policy_events()
+            print(f"[policy] rewrote {rewritten} laconic TG event lines on disk")
+        except Exception as e:
+            print(f"[policy] rewrite save: {e}")
 
 
 def _save_policy_events() -> None:
