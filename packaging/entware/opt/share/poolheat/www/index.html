@@ -2085,9 +2085,19 @@
                 var raw = localStorage.getItem("poolheat_wm_info_cache");
                 if (!raw) return;
                 var d = JSON.parse(raw);
-                if (d && d.brandText) {
-                  var el = document.getElementById("brand-devices");
-                  if (el) el.textContent = d.brandText;
+                var el = document.getElementById("brand-devices");
+                if (el) {
+                  // header: only Keenetic (never Whatsminer — that is LIVE strip)
+                  var bt = (d && d.brandText) ? String(d.brandText) : "";
+                  bt = bt.split(/\s*·\s*/)[0].replace(/\s*Whatsminer.*$/i, "").trim();
+                  if (d && d.router) {
+                    var code = String(d.router.model_code || "").trim();
+                    var rawM = String(d.router.model || d.router.device_tree_model || "");
+                    var kn = code.match(/^KN-/i) ? code : (rawM.match(/KN-[0-9A-Za-z]+/i) || [])[0];
+                    if (kn) bt = "Keenetic " + String(kn).toUpperCase();
+                    else if (!bt || /whatsminer/i.test(bt)) bt = "Keenetic —";
+                  }
+                  if (bt) el.textContent = bt;
                 }
                 var ver = d && (d.version || (d.poolheat && d.poolheat.version) ||
                   (d.body && d.body.poolheat && d.body.poolheat.version));
@@ -9106,12 +9116,11 @@
     }
     function updateBrandDevices(router, miner, version) {
       const el = document.getElementById("brand-devices");
-      // top subtitle: only Keenetic (miner model → LIVE line)
+      // top: only system host "Keenetic KN-xxxx" — never Whatsminer
       const brandText = fmtRouterBrand(router);
       if (el) el.textContent = brandText;
       try {
-        const minerPart = fmtMinerBrand(miner);
-        document.title = "poolheat_WM · " + brandText + " · " + minerPart;
+        document.title = "poolheat_WM · " + brandText;
       } catch (_) { /* ignore */ }
       if (version) setFooterVersion(version);
       try {
