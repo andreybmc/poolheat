@@ -7409,7 +7409,36 @@ def _record_write(action: str, value, resp, *, warning: str | None = None) -> di
         elif action == "power_limit":
             _state["power_limit_cmd"] = value
         _save_state()
-    _invalidate_cache()
+    # Soft invalidate: keep last-good for instant TG /status; also patch
+    # commanded fields so miner card reflects the write before next poll.
+    with _cache_lock:
+        if isinstance(_cache, dict) and _cache.get("ok"):
+            if action == "mode" and value is not None:
+                _cache["mode"] = value
+                _cache["mode_norm"] = str(value).strip().lower()
+                _cache["mode_measured"] = _cache["mode_norm"]
+                _cache["mode_cmd"] = value
+            elif action == "working" and value is not None:
+                v = str(value).strip().lower()
+                if v in ("sleep", "suspend"):
+                    _cache["work_measured"] = "suspend"
+                    _cache["mineroff"] = "true"
+                elif v in ("resume", "mining", "on"):
+                    _cache["work_measured"] = "resume"
+                    _cache["mineroff"] = "false"
+                _cache["work_cmd"] = value
+            elif action == "power_pct" and value is not None:
+                _cache["power_pct_cmd"] = value
+            elif action == "power_limit" and value is not None:
+                try:
+                    w = float(value)
+                    _cache["power_limit_cmd"] = value
+                    _cache["power_limit_set"] = w
+                    _cache["power_limit_measured"] = w
+                except (TypeError, ValueError):
+                    pass
+            _cache["last_write"] = entry
+    _invalidate_cache(hard=False)
     if not ok:
         # Expand laconic Whatsminer msgs so UI/TG get actionable text
         err = entry["error"] or "miner rejected command"
@@ -7746,11 +7775,20 @@ def apply_set(action: str, value, password: str) -> dict:
     raise ValueError(f"unknown action: {action}")
 
 
-def _invalidate_cache() -> None:
+def _invalidate_cache(*, hard: bool = False) -> None:
+    """
+    Soft (default): drop freshness so /api/live re-polls, but keep last-good
+    snapshot for Telegram (status/miner cards stay instant).
+    hard=True: wipe snapshot (host change, etc.).
+    """
     global _cache, _cache_ts
     with _cache_lock:
-        _cache = None
-        _cache_ts = 0.0
+        if hard:
+            _cache = None
+            _cache_ts = 0.0
+        else:
+            # keep _cache body; force next HTTP live to refresh
+            _cache_ts = 0.0
 
 
 # ─── Telegram bot (getUpdates long-poll) ──────────────────────────────────────
@@ -9925,37 +9963,59 @@ def _tg_t_ctrl_from_live(live: dict | None = None) -> tuple[float | None, str]:
 
 def _tg_live_snapshot(
     *,
-    max_age_sec: float = 20.0,
-    hard_stale_sec: float = 180.0,
+    force: bool = False,
+    online_max_age_sec: float | None = None,
 ) -> tuple[dict, bool, Exception | None]:
     """
-    Live for Telegram: NEVER block getUpdates on a multi-second miner fetch
-    when any recent cache exists (policy/collector keep it warm every ~5s).
+    Live for Telegram — default path NEVER hits the miner.
 
-    - age ≤ max_age_sec → fresh cache
-    - max_age < age ≤ hard_stale_sec → still return cache (stale OK for bot)
-    - no cache / older → fetch_live once (may take 3–5s)
+    Background policy/collector already poll :4028 and fill ``_cache``.
+    Bot commands (/status, /miner, most buttons) only read that snapshot so
+    getUpdates stays fast (~0.3–1s = Telegram RTT).
+
+    force=True (only Miner «Обновить»): run fetch_live once and refresh cache.
+
+    online: True if last successful poll is recent (see miner_is_online /
+    _last_live_ok_ts). No cache or poll too old → offline without probing.
     """
     global _cache, _cache_ts
-    now = time.time()
+    # Consider ASIC online if we polled successfully within ~3 control intervals
+    # (floor 60s so a slow Peak still counts as online between ticks).
+    if online_max_age_sec is None:
+        try:
+            with _miner_cfg_lock:
+                poll = int(POLL_INTERVAL_SEC)
+        except Exception:
+            poll = 5
+        online_max_age_sec = float(max(60, min(300, poll * 3)))
+
+    if force:
+        try:
+            live = fetch_live()
+            with _cache_lock:
+                _cache = live
+                _cache_ts = time.time()
+            return live, True, None
+        except Exception as e:
+            # fall through to last-good if any
+            with _cache_lock:
+                cached = dict(_cache) if isinstance(_cache, dict) else None
+            if cached and cached.get("ok") and miner_is_online(
+                max_age_sec=float(online_max_age_sec), probe=False
+            ):
+                return cached, True, None
+            return {}, False, e
+
     with _cache_lock:
         cached = dict(_cache) if isinstance(_cache, dict) else None
-        age = (now - float(_cache_ts or 0)) if _cache_ts else 9999.0
-    if cached and cached.get("ok"):
-        if age <= float(hard_stale_sec):
-            return cached, True, None
-    # No usable cache — must hit miner (or fail)
-    try:
-        live = fetch_live()
-        with _cache_lock:
-            _cache = live
-            _cache_ts = time.time()
-        return live, True, None
-    except Exception as e:
-        if cached and cached.get("ok"):
-            # very stale but better than offline for bot reply
-            return cached, True, None
-        return {}, False, e
+    if not cached or not cached.get("ok"):
+        return {}, False, RuntimeError("no live cache (waiting for background poll)")
+
+    if miner_is_online(max_age_sec=float(online_max_age_sec), probe=False):
+        return cached, True, None
+
+    # Cache exists but background polls have been failing → offline, no probe
+    return {}, False, RuntimeError("ASIC offline (stale poll)")
 
 
 def _tg_status_text(lang: str = "ru") -> str:
@@ -10544,7 +10604,8 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
     """Miner control card — laconic measured + last write (UI #miner)."""
     en = str(lang or "ru").lower().startswith("en")
     if live is None:
-        live, online, err = _tg_live_snapshot()
+        # Never force-poll here — caller passes force via _tg_send_miner
+        live, online, err = _tg_live_snapshot(force=False)
         if not online:
             live = {}
 
@@ -10662,8 +10723,13 @@ def _tg_send_miner(
     lang: str = "ru",
     *,
     edit_message_id: int | None = None,
+    force_refresh: bool = False,
 ) -> None:
-    live, online, err = _tg_live_snapshot()
+    """
+    Miner control card. force_refresh=True only for «Обновить» — hits ASIC;
+    all other opens use last background poll (instant).
+    """
+    live, online, err = _tg_live_snapshot(force=bool(force_refresh))
     if not online:
         live = {}
     text = _tg_miner_text(lang=lang, live=live, online=online, err=err)
@@ -11772,8 +11838,11 @@ def _tg_handle_callback(cq: dict) -> None:
             action = parts[1]
             fu = cq.get("from") if isinstance(cq.get("from"), dict) else None
             if action == "refresh":
+                # Only place that force-polls the miner for Telegram UI
                 tg_answer_callback(cq_id, "OK")
-                _tg_send_miner(chat_id, lang, edit_message_id=mid)
+                _tg_send_miner(
+                    chat_id, lang, edit_message_id=mid, force_refresh=True
+                )
                 return
             if action == "info":
                 tg_answer_callback(cq_id)
