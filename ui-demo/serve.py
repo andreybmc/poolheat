@@ -126,6 +126,7 @@ WEATHER_CFG_FILE = DATA / "weather_config.json"
 POOL_CFG_FILE = DATA / "pool_config.json"
 ZONE_CFG_FILE = DATA / "zone_map_config.json"
 ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
+POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
@@ -688,6 +689,314 @@ def apply_zone_preset(preset_id: str) -> dict:
         "config": get_zone_cfg(),
         "active_id": p.get("id"),
     }
+
+
+# ── Mining pool presets (named url/user/pass snapshots) ─────────────────────
+_pool_presets_lock = threading.Lock()
+_pool_presets: dict = {"presets": [], "active_id": None}
+
+
+def _normalize_pool_preset_pools(pools) -> list[dict]:
+    """1–3 pool entries {url, user, pass} for write/update_pools."""
+    out: list[dict] = []
+    raw = pools if isinstance(pools, list) else []
+    for p in raw[:3]:
+        if not isinstance(p, dict):
+            continue
+        out.append(
+            {
+                "url": str(p.get("url") or p.get("URL") or "").strip(),
+                "user": str(
+                    p.get("user") or p.get("User") or p.get("worker") or ""
+                ).strip(),
+                "pass": str(
+                    p.get("pass")
+                    or p.get("password")
+                    or p.get("Pass")
+                    or "x"
+                ),
+            }
+        )
+    while len(out) < 3:
+        out.append({"url": "", "user": "", "pass": "x"})
+    # drop trailing empties but keep at least one slot for UI
+    while len(out) > 1 and not out[-1].get("url") and not out[-1].get("user"):
+        out.pop()
+    if not any(x.get("url") for x in out):
+        raise ValueError("at least one pool url required")
+    return out
+
+
+def _pool_preset_summary(pools: list) -> str:
+    parts = []
+    for p in pools or []:
+        if not isinstance(p, dict):
+            continue
+        url = str(p.get("url") or "").strip()
+        if not url:
+            continue
+        # short host-ish
+        host = url.replace("stratum+tcp://", "").replace("stratum+ssl://", "")
+        host = host.split("/")[0].split(":")[0]
+        user = str(p.get("user") or "").strip()
+        worker = user.split(".")[-1] if user else ""
+        parts.append(host + (f"/{worker}" if worker else ""))
+    return " · ".join(parts[:3]) if parts else "—"
+
+
+def _load_pool_presets() -> None:
+    global _pool_presets
+    with _pool_presets_lock:
+        raw = _load_json(POOL_PRESETS_FILE, {"presets": [], "active_id": None})
+        if not isinstance(raw, dict):
+            raw = {"presets": [], "active_id": None}
+        clean = []
+        for p in raw.get("presets") or []:
+            if not isinstance(p, dict):
+                continue
+            try:
+                pools = _normalize_pool_preset_pools(p.get("pools") or p.get("config"))
+            except Exception:
+                continue
+            clean.append(
+                {
+                    "id": str(p.get("id") or "").strip() or _new_preset_id(),
+                    "name": str(p.get("name") or "Пресет")[:64],
+                    "updated_ts": p.get("updated_ts")
+                    or datetime.now().isoformat(timespec="seconds"),
+                    "pools": pools,
+                    "summary": _pool_preset_summary(pools),
+                }
+            )
+        _pool_presets = {
+            "presets": clean,
+            "active_id": raw.get("active_id") if raw.get("active_id") else None,
+        }
+        try:
+            _save_json(POOL_PRESETS_FILE, _pool_presets)
+        except Exception:
+            pass
+
+
+def _save_pool_presets() -> None:
+    with _pool_presets_lock:
+        _save_json(POOL_PRESETS_FILE, _pool_presets)
+
+
+def list_pool_presets(*, include_secrets: bool = True) -> dict:
+    with _pool_presets_lock:
+        items = []
+        for p in _pool_presets.get("presets") or []:
+            pools = p.get("pools") or []
+            if not include_secrets:
+                pools = [
+                    {
+                        "url": x.get("url"),
+                        "user": x.get("user"),
+                        "pass": "••••" if x.get("pass") else "",
+                        "pass_set": bool(x.get("pass")),
+                    }
+                    for x in pools
+                    if isinstance(x, dict)
+                ]
+            items.append(
+                {
+                    "id": p.get("id"),
+                    "name": p.get("name"),
+                    "updated_ts": p.get("updated_ts"),
+                    "summary": p.get("summary") or _pool_preset_summary(p.get("pools") or []),
+                    "pools": pools,
+                }
+            )
+        return {
+            "ok": True,
+            "presets": items,
+            "active_id": _pool_presets.get("active_id"),
+        }
+
+
+def get_pool_preset(preset_id: str) -> dict | None:
+    pid = str(preset_id or "").strip()
+    if not pid:
+        return None
+    with _pool_presets_lock:
+        for p in _pool_presets.get("presets") or []:
+            if p.get("id") == pid:
+                return json.loads(json.dumps(p))
+    return None
+
+
+def snapshot_live_pools_for_preset() -> list[dict]:
+    """Current ASIC pools → {url,user,pass}; password often unknown → 'x'."""
+    body = fetch_mining_pools(force=True)
+    if not body.get("ok"):
+        raise RuntimeError(body.get("error") or "cannot read pools from miner")
+    rows = body.get("pools") or []
+    # order by pool number
+    try:
+        rows = sorted(rows, key=lambda r: int(r.get("pool") or 99))
+    except Exception:
+        pass
+    out = []
+    for r in rows[:3]:
+        if not isinstance(r, dict):
+            continue
+        url = str(r.get("url") or "").strip()
+        if url in ("", "—"):
+            continue
+        out.append(
+            {
+                "url": url,
+                "user": str(r.get("user") or "").strip(),
+                # Whatsminer status API does not return password
+                "pass": "x",
+            }
+        )
+    if not out:
+        raise ValueError("miner has no pools configured")
+    return _normalize_pool_preset_pools(out)
+
+
+def save_pool_preset(
+    name: str,
+    pools: list | None = None,
+    *,
+    preset_id: str | None = None,
+    from_live: bool = False,
+) -> dict:
+    """Create/update pool preset. from_live → snapshot miner; pools=list → edit."""
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("name empty")
+    if len(name) > 64:
+        name = name[:64]
+
+    if from_live:
+        pools_norm = snapshot_live_pools_for_preset()
+        # keep old passwords if same url+user when overwriting preset
+        if preset_id:
+            old = get_pool_preset(preset_id)
+            if old:
+                old_by_key = {
+                    (
+                        str(x.get("url") or "").strip(),
+                        str(x.get("user") or "").strip(),
+                    ): x
+                    for x in (old.get("pools") or [])
+                    if isinstance(x, dict)
+                }
+                for p in pools_norm:
+                    key = (p.get("url") or "", p.get("user") or "")
+                    prev = old_by_key.get(key)
+                    if (
+                        prev
+                        and prev.get("pass")
+                        and prev.get("pass") not in ("x", "••••", "")
+                        and p.get("pass") in ("", "x")
+                    ):
+                        p["pass"] = prev["pass"]
+    elif pools is not None:
+        pools_norm = _normalize_pool_preset_pools(pools)
+    elif preset_id:
+        existing = get_pool_preset(preset_id)
+        if not existing:
+            raise ValueError(f"preset not found: {preset_id}")
+        pools_norm = existing.get("pools") or []
+    else:
+        raise ValueError("pools list or from_live=true required")
+    now = datetime.now().isoformat(timespec="seconds")
+    with _pool_presets_lock:
+        presets = list(_pool_presets.get("presets") or [])
+        if preset_id:
+            pid = str(preset_id).strip()
+            found = False
+            for i, p in enumerate(presets):
+                if p.get("id") == pid:
+                    presets[i] = {
+                        "id": pid,
+                        "name": name,
+                        "updated_ts": now,
+                        "pools": pools_norm,
+                        "summary": _pool_preset_summary(pools_norm),
+                    }
+                    found = True
+                    break
+            if not found:
+                raise ValueError(f"preset not found: {pid}")
+            out_id = pid
+        else:
+            out_id = _new_preset_id()
+            presets.append(
+                {
+                    "id": out_id,
+                    "name": name,
+                    "updated_ts": now,
+                    "pools": pools_norm,
+                    "summary": _pool_preset_summary(pools_norm),
+                }
+            )
+        _pool_presets["presets"] = presets
+    _save_pool_presets()
+    return {"ok": True, "id": out_id, **list_pool_presets()}
+
+
+def delete_pool_preset(preset_id: str) -> dict:
+    pid = str(preset_id or "").strip()
+    if not pid:
+        raise ValueError("id empty")
+    with _pool_presets_lock:
+        presets = [p for p in (_pool_presets.get("presets") or []) if p.get("id") != pid]
+        if len(presets) == len(_pool_presets.get("presets") or []):
+            raise ValueError(f"preset not found: {pid}")
+        _pool_presets["presets"] = presets
+        if _pool_presets.get("active_id") == pid:
+            _pool_presets["active_id"] = None
+    _save_pool_presets()
+    return list_pool_presets()
+
+
+def apply_pool_preset(preset_id: str, *, password: str | None = None) -> dict:
+    """Write preset pools to ASIC (update_pools) and mark active."""
+    p = get_pool_preset(preset_id)
+    if not p:
+        raise ValueError(f"preset not found: {preset_id}")
+    pools = _normalize_pool_preset_pools(p.get("pools") or [])
+    pw = password or DEFAULT_API_PASSWORD
+    resp = miner_write_cmd({"cmd": "update_pools", "pools": pools}, pw)
+    out = _record_write(
+        "pools",
+        pools,
+        resp,
+        warning="pools preset applied · btminer restart may follow",
+    )
+    if isinstance(resp, dict) and resp.get("transport"):
+        out["transport"] = resp.get("transport")
+    with _pool_presets_lock:
+        _pool_presets["active_id"] = p.get("id")
+    _save_pool_presets()
+    # invalidate live pools cache
+    try:
+        global _pools_cache, _pools_cache_ts
+        with _pools_cache_lock:
+            _pools_cache = None
+            _pools_cache_ts = 0.0
+    except Exception:
+        pass
+    out["ok"] = True
+    out["id"] = p.get("id")
+    out["name"] = p.get("name")
+    out["pools"] = pools
+    out["active_id"] = p.get("id")
+    # include list for UI refresh
+    try:
+        out.update(list_pool_presets())
+        out["ok"] = True
+        out["id"] = p.get("id")
+        out["name"] = p.get("name")
+        out["active_id"] = p.get("id")
+    except Exception:
+        pass
+    return out
 
 
 def _coerce_zone_config_dict(req: dict) -> dict:
@@ -3026,6 +3335,8 @@ def build_config_backup() -> dict:
     chipmap = get_chipmap_cfg(redact=False)
     telegram = get_telegram_cfg(redact=False)
     telegram.pop("status", None)
+    with _pool_presets_lock:
+        pool_presets = json.loads(json.dumps(_pool_presets))
 
     return {
         "format": CONFIG_BACKUP_FORMAT,
@@ -3041,6 +3352,7 @@ def build_config_backup() -> dict:
             "pool": pool,
             "zone_map": zone,
             "zone_presets": zone_presets,
+            "pool_presets": pool_presets,
             "filtration": filtration,
             "chipmap": chipmap,
             "telegram": telegram,
@@ -3233,6 +3545,22 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("zone_presets")
         except Exception as e:
             errors["zone_presets"] = str(e)
+
+    # 6b) mining pool presets
+    if "pool_presets" in want and isinstance(cfgs.get("pool_presets"), dict):
+        try:
+            global _pool_presets
+            raw = cfgs["pool_presets"]
+            with _pool_presets_lock:
+                _pool_presets = {
+                    "presets": list(raw.get("presets") or []),
+                    "active_id": raw.get("active_id"),
+                }
+            _save_pool_presets()
+            _load_pool_presets()
+            applied.append("pool_presets")
+        except Exception as e:
+            errors["pool_presets"] = str(e)
 
     # 7) filtration
     if "filtration" in want and isinstance(cfgs.get("filtration"), dict):
@@ -3760,6 +4088,7 @@ _load_weather_cfg()
 _load_pool_cfg()
 _load_zone_cfg()
 _load_zone_presets()
+_load_pool_presets()
 _load_filtration_cfg()
 _load_chipmap_cfg()
 
@@ -15020,6 +15349,13 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/zone/presets", "/api/zone/preset"):
             self._api_zone_presets_get()
             return
+        if path in (
+            "/api/miner/pools/presets",
+            "/api/pools/presets",
+            "/api/pool-presets",
+        ):
+            self._api_pool_presets_get()
+            return
         if path in ("/api/filtration", "/api/filtration/status", "/api/filtration/config"):
             self._json_response(200, get_filtration_status())
             return
@@ -15156,6 +15492,13 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/zone/presets", "/api/zone/preset"):
             self._api_zone_presets_post()
+            return
+        if path in (
+            "/api/miner/pools/presets",
+            "/api/pools/presets",
+            "/api/pool-presets",
+        ):
+            self._api_pool_presets_post()
             return
         if path in ("/api/filtration", "/api/filtration/config"):
             self._api_filtration_post()
@@ -15722,6 +16065,81 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_zone_presets_get(self) -> None:
         self._json_response(200, list_zone_presets())
 
+    def _api_pool_presets_get(self) -> None:
+        self._json_response(200, list_pool_presets(include_secrets=True))
+
+    def _api_pool_presets_post(self) -> None:
+        """
+        Pool presets:
+          {action: list}
+          {action: save, name, from_live?:true, pools?}
+          {action: update, id, name?, pools?, from_live?}
+          {action: delete, id}
+          {action: apply, id}  — write to ASIC
+          {action: get, id}
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            action = str(req.get("action") or "list").strip().lower()
+            if action in ("list", "ls"):
+                self._json_response(200, list_pool_presets())
+                return
+            if action in ("get", "one"):
+                p = get_pool_preset(str(req.get("id") or ""))
+                if not p:
+                    raise ValueError("preset not found")
+                self._json_response(200, {"ok": True, "preset": p})
+                return
+            if action in ("save", "create", "add"):
+                name = req.get("name")
+                from_live = bool(req.get("from_live") or req.get("use_current"))
+                pools = req.get("pools") if isinstance(req.get("pools"), list) else None
+                out = save_pool_preset(
+                    str(name or ""),
+                    pools,
+                    preset_id=None,
+                    from_live=from_live or pools is None,
+                )
+                self._json_response(200, out)
+                return
+            if action in ("update", "edit", "rename"):
+                pid = str(req.get("id") or "").strip()
+                if not pid:
+                    raise ValueError("id required")
+                existing = get_pool_preset(pid)
+                if not existing:
+                    raise ValueError("preset not found")
+                name = req.get("name")
+                if name is None or str(name).strip() == "":
+                    name = existing.get("name")
+                from_live = bool(req.get("from_live") or req.get("use_current"))
+                pools = req.get("pools") if isinstance(req.get("pools"), list) else None
+                out = save_pool_preset(
+                    str(name),
+                    pools,
+                    preset_id=pid,
+                    from_live=from_live,
+                )
+                self._json_response(200, out)
+                return
+            if action in ("delete", "remove", "del"):
+                out = delete_pool_preset(str(req.get("id") or ""))
+                self._json_response(200, out)
+                return
+            if action in ("apply", "load", "select"):
+                pw = req.get("password") or req.get("api_password")
+                out = apply_pool_preset(
+                    str(req.get("id") or ""),
+                    password=str(pw) if pw is not None else None,
+                )
+                self._json_response(200, out)
+                return
+            raise ValueError(f"unknown action: {action}")
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_filtration_post(self) -> None:
         try:
             req = self._read_json_body() or {}
@@ -16003,6 +16421,7 @@ def main() -> None:
     print(f"pool:              GET  /api/pool/config")
     print(f"zone map:          GET/POST /api/zone/config")
     print(f"zone presets:      GET/POST /api/zone/presets")
+    print(f"pool presets:      GET/POST /api/miner/pools/presets")
     print(f"filtration:        GET/POST /api/filtration · /set · /test")
     print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
     print(f"policy:            GET/POST /api/policy · server-side control")

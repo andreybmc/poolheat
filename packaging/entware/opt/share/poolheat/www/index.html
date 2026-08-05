@@ -2880,6 +2880,65 @@
             <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="miner-pools-status">—</p>
           </div>
         </div>
+
+        <div class="card" id="panel-pool-presets">
+          <div class="card-h">
+            <div>
+              <h2>Пресеты пулов</h2>
+              <div class="sub">сохранить текущие · применить на ASIC · править url/user/pass</div>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <div class="row" style="grid-template-columns:1fr auto;gap:10px;align-items:end">
+              <label class="field" style="margin:0">Пресет
+                <select id="pool-preset-select">
+                  <option value="">— выберите —</option>
+                </select>
+              </label>
+              <button class="btn primary" type="button" id="btn-pool-preset-apply" title="Записать пулы пресета на майнер">
+                Применить на ASIC
+              </button>
+            </div>
+            <p id="pool-preset-meta" style="font-size:0.75rem;color:var(--dim);margin:0">—</p>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-pool-preset-save" title="Сохранить текущие пулы с ASIC как новый пресет">
+                Сохранить текущие…
+              </button>
+              <button class="btn" type="button" id="btn-pool-preset-update" title="Перезаписать выбранный пресет текущими пулами с ASIC">
+                Перезаписать с ASIC
+              </button>
+              <button class="btn ghost" type="button" id="btn-pool-preset-rename" title="Переименовать">
+                Переименовать
+              </button>
+              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Сохранить правки url/user/pass">
+                Сохранить правки
+              </button>
+              <button class="btn danger" type="button" id="btn-pool-preset-delete" title="Удалить пресет">
+                Удалить
+              </button>
+            </div>
+            <div style="overflow:auto">
+              <table class="err-table pools-table" id="pool-preset-edit-table">
+                <thead>
+                  <tr>
+                    <th style="width:3rem">#</th>
+                    <th>URL</th>
+                    <th>User / worker</th>
+                    <th>Password</th>
+                  </tr>
+                </thead>
+                <tbody id="pool-preset-edit-body">
+                  <tr><td colspan="4" style="color:var(--muted);text-align:center">выберите пресет для правки</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.4">
+              Пароль пула в статусе ASIC <strong>не отдаётся</strong> — при «Сохранить текущие» ставится <code>x</code>,
+              если не был сохранён ранее для того же url+user. Перед «Применить» проверьте pass.
+              Write API должен быть открыт (как для Power Mode).
+            </p>
+          </div>
+        </div>
       </div>
       </div><!-- /subview-pools -->
     </section>
@@ -3502,7 +3561,7 @@
           <div class="card-b">
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
               В файл попадают: подключение майнера, dry_run, карта зон и пресеты,
-              бассейн, погода, история, фильтрация, chipmap, Telegram
+              <strong>пресеты пулов</strong>, бассейн, погода, история, фильтрация, chipmap, Telegram
               <strong>(включая пароли и bot token)</strong>,
               а также <strong>meta</strong> — версия ПО, Keenetic, hostname, пути
               (meta перезаписывается при каждом запуске сервиса на этом роутере).
@@ -4662,8 +4721,9 @@
       if (mainTab === "miner" && minerSub === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
       }
-      if (mainTab === "miner" && minerSub === "pools" && typeof loadMiningPools === "function") {
-        loadMiningPools(false);
+      if (mainTab === "miner" && minerSub === "pools") {
+        if (typeof loadMiningPools === "function") loadMiningPools(false);
+        if (typeof loadPoolPresets === "function") loadPoolPresets();
       }
       if (mainTab === "miner" && minerSub === "chips") {
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
@@ -6582,6 +6642,362 @@
       else toastError("Pools: " + ((b && b.error) || "ошибка"));
     });
 
+    /* ── Pool presets ───────────────────────────────────────────── */
+    let poolPresetsCache = { presets: [], active_id: null };
+
+    function selectedPoolPresetId() {
+      return (document.getElementById("pool-preset-select")?.value || "").trim();
+    }
+
+    function selectedPoolPresetMeta() {
+      const id = selectedPoolPresetId();
+      return (poolPresetsCache.presets || []).find((p) => p.id === id) || null;
+    }
+
+    function renderPoolPresetSelect() {
+      const sel = document.getElementById("pool-preset-select");
+      if (!sel) return;
+      const cur = sel.value;
+      const items = poolPresetsCache.presets || [];
+      const active = poolPresetsCache.active_id || "";
+      sel.innerHTML = "";
+      const opt0 = document.createElement("option");
+      opt0.value = "";
+      opt0.textContent = items.length ? "— выберите —" : "— нет пресетов —";
+      sel.appendChild(opt0);
+      items.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.id;
+        let label = p.name || p.id;
+        if (p.id === active) label = "● " + label;
+        if (p.summary) label += " · " + p.summary;
+        o.textContent = label;
+        sel.appendChild(o);
+      });
+      if (cur && items.some((p) => p.id === cur)) sel.value = cur;
+      else if (active && items.some((p) => p.id === active)) sel.value = active;
+      updatePoolPresetMetaLine();
+      renderPoolPresetEditor();
+    }
+
+    function updatePoolPresetMetaLine() {
+      const meta = document.getElementById("pool-preset-meta");
+      if (!meta) return;
+      const p = selectedPoolPresetMeta();
+      if (!p) {
+        meta.textContent = (poolPresetsCache.presets || []).length
+          ? "Выберите пресет · «Сохранить текущие» — снимок с ASIC"
+          : "Пресеты пусты — «Сохранить текущие…»";
+        return;
+      }
+      const act = p.id === poolPresetsCache.active_id ? " · активный" : "";
+      meta.textContent =
+        (p.name || p.id) +
+        (p.summary ? " · " + p.summary : "") +
+        (p.updated_ts ? " · " + String(p.updated_ts).replace("T", " ") : "") +
+        act;
+    }
+
+    function renderPoolPresetEditor() {
+      const tbody = document.getElementById("pool-preset-edit-body");
+      if (!tbody) return;
+      const p = selectedPoolPresetMeta();
+      if (!p) {
+        tbody.innerHTML =
+          '<tr><td colspan="4" style="color:var(--muted);text-align:center">выберите пресет для правки</td></tr>';
+        return;
+      }
+      const pools = Array.isArray(p.pools) ? p.pools.slice() : [];
+      while (pools.length < 3) pools.push({ url: "", user: "", pass: "x" });
+      tbody.innerHTML = pools
+        .slice(0, 3)
+        .map((row, i) => {
+          return (
+            "<tr>" +
+            "<td>" +
+            (i + 1) +
+            "</td>" +
+            '<td><input type="text" class="pool-pe-url" data-i="' +
+            i +
+            '" value="' +
+            escHtml(row.url || "") +
+            '" placeholder="stratum+tcp://…" style="width:100%;min-width:12rem;font:inherit;font-size:0.8rem;padding:4px 6px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text)" /></td>' +
+            '<td><input type="text" class="pool-pe-user" data-i="' +
+            i +
+            '" value="' +
+            escHtml(row.user || "") +
+            '" placeholder="wallet.worker" style="width:100%;min-width:8rem;font:inherit;font-size:0.8rem;padding:4px 6px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text)" /></td>' +
+            '<td><input type="text" class="pool-pe-pass" data-i="' +
+            i +
+            '" value="' +
+            escHtml(row.pass || "x") +
+            '" placeholder="x" style="width:100%;min-width:5rem;font:inherit;font-size:0.8rem;padding:4px 6px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--text)" autocomplete="off" /></td>' +
+            "</tr>"
+          );
+        })
+        .join("");
+    }
+
+    function readPoolPresetEditorPools() {
+      const urls = document.querySelectorAll(".pool-pe-url");
+      const users = document.querySelectorAll(".pool-pe-user");
+      const passes = document.querySelectorAll(".pool-pe-pass");
+      const pools = [];
+      for (let i = 0; i < 3; i++) {
+        const url = (urls[i] && urls[i].value) || "";
+        const user = (users[i] && users[i].value) || "";
+        const pass = (passes[i] && passes[i].value) || "x";
+        if (!String(url).trim() && !String(user).trim()) continue;
+        pools.push({
+          url: String(url).trim(),
+          user: String(user).trim(),
+          pass: String(pass).trim() || "x",
+        });
+      }
+      return pools;
+    }
+
+    async function loadPoolPresets() {
+      try {
+        const res = await fetch("/api/miner/pools/presets", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok && body.presets == null)
+          throw new Error(body.error || "presets fail");
+        poolPresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderPoolPresetSelect();
+        return poolPresetsCache;
+      } catch (e) {
+        console.warn("pool presets:", e);
+        const meta = document.getElementById("pool-preset-meta");
+        if (meta) meta.textContent = "не загружено: " + e.message;
+        return null;
+      }
+    }
+
+    async function poolPresetApi(payload) {
+      const res = await fetch("/api/miner/pools/presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      const body = await res.json();
+      if (!res.ok || body.ok === false)
+        throw new Error((body && body.error) || "HTTP " + res.status);
+      return body;
+    }
+
+    async function poolPresetSaveAs() {
+      const name = window.prompt("Имя нового пресета пулов:", "");
+      if (name == null) return;
+      if (!String(name).trim()) {
+        toastError("Имя пустое");
+        return;
+      }
+      try {
+        const body = await poolPresetApi({
+          action: "save",
+          name: String(name).trim(),
+          from_live: true,
+        });
+        poolPresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderPoolPresetSelect();
+        if (body.id) {
+          const sel = document.getElementById("pool-preset-select");
+          if (sel) sel.value = body.id;
+          updatePoolPresetMetaLine();
+          renderPoolPresetEditor();
+        }
+        toastSuccess("Пресет сохранён (проверьте password — с ASIC не приходит)");
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function poolPresetUpdateFromLive() {
+      const id = selectedPoolPresetId();
+      if (!id) {
+        toastError("Выберите пресет");
+        return;
+      }
+      const p = selectedPoolPresetMeta();
+      if (
+        !window.confirm(
+          "Перезаписать «" +
+            (p && p.name ? p.name : id) +
+            "» текущими пулами с ASIC?"
+        )
+      )
+        return;
+      try {
+        const body = await poolPresetApi({
+          action: "update",
+          id: id,
+          from_live: true,
+        });
+        poolPresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderPoolPresetSelect();
+        toastSuccess("Пресет перезаписан с ASIC");
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function poolPresetSaveEdit() {
+      const id = selectedPoolPresetId();
+      if (!id) {
+        toastError("Выберите пресет");
+        return;
+      }
+      const pools = readPoolPresetEditorPools();
+      if (!pools.length || !pools.some((x) => x.url)) {
+        toastError("Нужен хотя бы один URL");
+        return;
+      }
+      const p = selectedPoolPresetMeta();
+      try {
+        const body = await poolPresetApi({
+          action: "update",
+          id: id,
+          name: (p && p.name) || id,
+          pools: pools,
+        });
+        poolPresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderPoolPresetSelect();
+        toastSuccess("Правки пресета сохранены");
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function poolPresetRename() {
+      const id = selectedPoolPresetId();
+      if (!id) {
+        toastError("Выберите пресет");
+        return;
+      }
+      const p = selectedPoolPresetMeta();
+      const name = window.prompt("Новое имя:", (p && p.name) || "");
+      if (name == null) return;
+      if (!String(name).trim()) {
+        toastError("Имя пустое");
+        return;
+      }
+      try {
+        const body = await poolPresetApi({
+          action: "update",
+          id: id,
+          name: String(name).trim(),
+        });
+        poolPresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderPoolPresetSelect();
+        toastSuccess("Переименовано");
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function poolPresetDelete() {
+      const id = selectedPoolPresetId();
+      if (!id) {
+        toastError("Выберите пресет");
+        return;
+      }
+      const p = selectedPoolPresetMeta();
+      if (
+        !window.confirm(
+          "Удалить пресет «" + (p && p.name ? p.name : id) + "»?"
+        )
+      )
+        return;
+      try {
+        const body = await poolPresetApi({ action: "delete", id: id });
+        poolPresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || null,
+        };
+        renderPoolPresetSelect();
+        toastSuccess("Пресет удалён");
+      } catch (e) {
+        toastError("Пресет: " + e.message);
+      }
+    }
+
+    async function poolPresetApply() {
+      const id = selectedPoolPresetId();
+      if (!id) {
+        toastError("Выберите пресет");
+        return;
+      }
+      const p = selectedPoolPresetMeta();
+      if (
+        !window.confirm(
+          "Применить «" +
+            (p && p.name ? p.name : id) +
+            "» на ASIC?\nПулы будут перезаписаны (write API)."
+        )
+      )
+        return;
+      try {
+        toastInfo("Запись пулов…", 2000);
+        const body = await poolPresetApi({ action: "apply", id: id });
+        poolPresetsCache = {
+          presets: body.presets || poolPresetsCache.presets || [],
+          active_id: body.active_id || body.id || id,
+        };
+        // list may not be in apply response fully
+        if (!body.presets) await loadPoolPresets();
+        else renderPoolPresetSelect();
+        toastSuccess(
+          "Пулы применены" +
+            (body.name ? ": " + body.name : "") +
+            (body.warning ? " · " + body.warning : "")
+        );
+        void loadMiningPools(true);
+      } catch (e) {
+        toastError("Применить: " + e.message);
+      }
+    }
+
+    document
+      .getElementById("pool-preset-select")
+      ?.addEventListener("change", () => {
+        updatePoolPresetMetaLine();
+        renderPoolPresetEditor();
+      });
+    document
+      .getElementById("btn-pool-preset-apply")
+      ?.addEventListener("click", () => void poolPresetApply());
+    document
+      .getElementById("btn-pool-preset-save")
+      ?.addEventListener("click", () => void poolPresetSaveAs());
+    document
+      .getElementById("btn-pool-preset-update")
+      ?.addEventListener("click", () => void poolPresetUpdateFromLive());
+    document
+      .getElementById("btn-pool-preset-rename")
+      ?.addEventListener("click", () => void poolPresetRename());
+    document
+      .getElementById("btn-pool-preset-save-edit")
+      ?.addEventListener("click", () => void poolPresetSaveEdit());
+    document
+      .getElementById("btn-pool-preset-delete")
+      ?.addEventListener("click", () => void poolPresetDelete());
+
     function appendActionLog(kind, text) {
       const log = document.getElementById("log");
       if (!log) return;
@@ -8157,6 +8573,7 @@
           if (typeof loadHistoryConfig === "function") await loadHistoryConfig();
           if (typeof loadZoneMapConfig === "function") await loadZoneMapConfig();
           if (typeof loadZonePresets === "function") await loadZonePresets();
+          if (typeof loadPoolPresets === "function") await loadPoolPresets();
           if (typeof loadPoolConfig === "function") await loadPoolConfig();
           if (typeof loadWeatherConfig === "function") await loadWeatherConfig();
           if (typeof loadTelegramConfig === "function") await loadTelegramConfig();
