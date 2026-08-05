@@ -1749,9 +1749,7 @@
       flex-direction: column;
       gap: 6px;
       min-height: 0;
-      padding: 14px 16px 12px;
-      /* room for absolute icon top-right */
-      padding-right: 78px;
+      padding: 14px 14px 12px;
       border: 1px solid rgba(255, 255, 255, 0.12);
       background:
         radial-gradient(ellipse 90% 80% at 85% 15%, rgba(255, 220, 120, 0.22), transparent 55%),
@@ -1803,18 +1801,16 @@
       box-shadow: none;
     }
     .wx-widget .wx-top {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 10px;
+      display: block;
       min-height: 0;
+      position: relative;
     }
     .wx-widget .wx-main {
-      flex: 1;
       min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 2px;
+      padding-right: 0;
     }
     /* same label style as other temp-cards (uppercase · dim) */
     .wx-widget .tc-label.wx-label {
@@ -1897,18 +1893,23 @@
       margin-right: 8px;
       color: rgba(255, 255, 255, 0.4);
     }
+    /* icon pinned top-right — out of document flow so row height matches siblings */
     .wx-widget .wx-icon-wrap {
-      flex-shrink: 0;
-      width: 88px;
-      height: 88px;
+      position: absolute;
+      top: 6px;
+      right: 4px;
+      width: 68px;
+      height: 68px;
       display: grid;
       place-items: center;
-      filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.32));
+      filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));
+      pointer-events: none;
+      z-index: 1;
     }
     .wx-widget .wx-icon-wrap img,
     .wx-widget .wx-icon-wrap svg {
-      width: 84px;
-      height: 84px;
+      width: 64px;
+      height: 64px;
       display: block;
       object-fit: contain;
       user-select: none;
@@ -1917,8 +1918,8 @@
     .wx-widget .wx-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 14px;
-      margin-top: auto;
+      gap: 8px 12px;
+      margin-top: 4px;
       padding-top: 8px;
       border-top: 1px solid rgba(255, 255, 255, 0.14);
       font-size: 0.72rem;
@@ -2524,6 +2525,7 @@
             </div>
           </div>
           <div class="temp-card outdoor wx-widget wx-cloud" id="card-weather" data-wx-theme="cloud">
+            <div class="wx-icon-wrap" id="wx-icon" aria-hidden="true"></div>
             <div class="tc-label wx-label">
               <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
               <span class="wx-label-sep" aria-hidden="true"> · </span>
@@ -2539,7 +2541,6 @@
                   <span class="wx-feels" id="wx-feels" hidden></span>
                 </div>
               </div>
-              <div class="wx-icon-wrap" id="wx-icon" aria-hidden="true"></div>
             </div>
             <div class="wx-meta" id="wx-extra">
               <span class="wx-meta-item" id="wx-meta-rh" hidden>
