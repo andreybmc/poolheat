@@ -2928,6 +2928,19 @@
                 <option value="oval">Овал</option>
               </select>
             </label>
+            <label class="field">
+              <span class="tip" data-tip-key="pool_water_sensor">Датчик воды в бассейне</span>
+              <select id="pool-water-sensor">
+                <option value="liquid">liquid — liquid_temp ASIC (теплоноситель)</option>
+                <option value="env">env — Env Temp (окружение)</option>
+                <option value="chip_avg">chip avg — средняя по чипам</option>
+                <option value="chip_max">chip max — макс. по чипам</option>
+                <option value="board_max">board max — макс. PCB</option>
+              </select>
+              <span class="hint" style="font-size:0.72rem;color:var(--dim);display:block;margin-top:4px">
+                Источник t°C воды для модели нагрева/остывания (Tw = t_воды − ΔT ТО)
+              </span>
+            </label>
             <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
               <label class="field" id="pool-length-field">
                 <span class="tip" data-tip-key="pool_geometry" id="pool-length-label">Длина, м</span>
@@ -3870,6 +3883,10 @@
       pool_geometry: {
         title: "Геометрия бассейна",
         body: "Прямоугольный: V=L·W·D, S=L·W.\nКруглый: Ø и глубина, V=π(Ø/2)²·D.\nОвал: оси L×W, V=π(L/2)(W/2)·D.",
+      },
+      pool_water_sensor: {
+        title: "Датчик воды в бассейне",
+        body: "Какое live-поле = t°C воды для модели нагрева/остывания.\n• liquid — liquid_temp ASIC (часто теплоноситель)\n• env / chip / board — запасные источники\nTw = t_воды − ΔT теплообменника.",
       },
       pool_flow: {
         title: "Циркуляция / водообмен",
@@ -9267,15 +9284,36 @@
         }
       }
 
+      // Pool water °C from selected sensor (Бассейн → water_sensor)
+      let waterSens =
+        (poolDerived && poolDerived.water_sensor) ||
+        document.getElementById("pool-water-sensor")?.value ||
+        "liquid";
+      waterSens = String(waterSens || "liquid").trim().toLowerCase();
       let Tliq = NaN;
-      if (live && live.ok !== false && live.liquid != null && live.liquid !== "") {
-        Tliq = Number(live.liquid);
+      if (live && live.ok !== false) {
+        if (waterSens === "liquid" && live.liquid != null && live.liquid !== "") {
+          Tliq = Number(live.liquid);
+        } else if (waterSens === "env" && live.env != null) {
+          Tliq = Number(live.env);
+        } else if (waterSens === "chip_avg" && live.chip_avg != null) {
+          Tliq = Number(live.chip_avg);
+        } else if (waterSens === "chip_max" && live.chip_max != null) {
+          Tliq = Number(live.chip_max);
+        } else if (waterSens === "board_max") {
+          const arr = (live.boards || [])
+            .map(Number)
+            .filter((x) => Number.isFinite(x) && x > 0);
+          if (arr.length) Tliq = Math.max(...arr);
+        } else if (live.liquid != null && live.liquid !== "") {
+          Tliq = Number(live.liquid);
+        }
       }
-      if (!Number.isFinite(Tliq)) {
+      if (!Number.isFinite(Tliq) && waterSens === "liquid") {
         const el = document.getElementById("t-liquid");
         if (el) Tliq = parseFloat(String(el.textContent).replace(",", "."));
       }
-      if (!Number.isFinite(Tliq) && simLiquid) {
+      if (!Number.isFinite(Tliq) && simLiquid && waterSens === "liquid") {
         Tliq = parseFloat(simLiquid.value);
       }
       const Tw = Number.isFinite(Tliq) ? Tliq - hexDt : NaN;
@@ -9831,6 +9869,12 @@
         }
         if (c.hex_delta_c != null) setVal("pool-hex-dt", c.hex_delta_c);
         setVal("pool-comment", c.comment || "");
+        const wsens = document.getElementById("pool-water-sensor");
+        if (wsens) {
+          const s = c.water_sensor || (d && d.water_sensor) || "liquid";
+          if ([...wsens.options].some((o) => o.value === s)) wsens.value = s;
+          else wsens.value = "liquid";
+        }
         syncPoolShapeUI();
         const setTxt = (id, v, d) => {
           const el = document.getElementById(id);
@@ -9870,6 +9914,8 @@
         hex_delta_c: Number(document.getElementById("pool-hex-dt")?.value) || 5,
         comment: document.getElementById("pool-comment")?.value || "",
         shape,
+        water_sensor:
+          document.getElementById("pool-water-sensor")?.value || "liquid",
       };
       try {
         const res = await fetch("/api/pool/config", {
@@ -9897,6 +9943,14 @@
       el.addEventListener("input", recalcPoolLocal);
     });
     document.getElementById("pool-shape")?.addEventListener("change", recalcPoolLocal);
+    document.getElementById("pool-water-sensor")?.addEventListener("change", () => {
+      if (poolDerived) {
+        poolDerived = Object.assign({}, poolDerived, {
+          water_sensor: document.getElementById("pool-water-sensor")?.value || "liquid",
+        });
+      }
+      updateHeatLoss();
+    });
     document.getElementById("btn-pool-save")?.addEventListener("click", savePoolConfig);
 
     // welcome once per session

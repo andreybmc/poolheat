@@ -2837,10 +2837,22 @@ DEFAULT_POOL_CFG = {
     "flow_m3h": 12.0,
     # ΔT heat exchanger (water in − water out), °C
     "hex_delta_c": 5.0,
+    # Which live field is pool water temperature for heat balance / Tw
+    # (same ids as zone T_ctrl sensors)
+    "water_sensor": "liquid",
     # optional notes
     "shape": "rect",
     "comment": "",
 }
+
+# Sensors selectable as «вода в бассейне» (pool water °C)
+POOL_WATER_SENSORS: tuple[str, ...] = (
+    "liquid",
+    "env",
+    "chip_avg",
+    "chip_max",
+    "board_max",
+)
 
 DEFAULT_HISTORY_CFG = {
     "enabled": True,
@@ -3015,6 +3027,27 @@ def _load_pool_cfg() -> None:
             shape = "rect"
         _pool_cfg["shape"] = shape
         _pool_cfg["comment"] = str(_pool_cfg.get("comment") or "")
+        _pool_cfg["water_sensor"] = _normalize_pool_water_sensor(
+            _pool_cfg.get("water_sensor", "liquid")
+        )
+
+
+def _normalize_pool_water_sensor(v) -> str:
+    """Pool water °C source — subset of T_ctrl sensor ids."""
+    s = _normalize_t_ctrl_sensor(v)
+    if s not in POOL_WATER_SENSORS:
+        return "liquid"
+    return s
+
+
+def resolve_pool_water(
+    live: dict | None, sensor: str | None = None
+) -> tuple[float | None, str]:
+    """Pool water temperature from live snapshot + pool_config.water_sensor."""
+    if sensor is None:
+        with _pool_cfg_lock:
+            sensor = _pool_cfg.get("water_sensor") or "liquid"
+    return resolve_t_ctrl(live, _normalize_pool_water_sensor(sensor))
 
 
 def _save_pool_cfg() -> None:
@@ -3088,6 +3121,8 @@ def pool_derived(cfg: dict | None = None) -> dict:
         "formula_v": formula_v,
         "formula_s": formula_s,
         "comment": c.get("comment") or "",
+        "water_sensor": _normalize_pool_water_sensor(c.get("water_sensor")),
+        "water_sensors": list(POOL_WATER_SENSORS),
     }
 
 
@@ -9978,7 +10013,8 @@ def compute_heat_balance(
 ) -> dict | None:
     """
     Same model as UI «Нагрев / остывание»:
-      Tw = T_liquid − hex_delta_c
+      T_water = pool water sensor (config water_sensor, default liquid)
+      Tw = T_water − hex_delta_c
       Q_loss = U · S · max(0, Tw − Ta)
       Q_in   = min(P_miner, HEX capacity)   [HEX = ṁ·c·ΔT if known]
       Q_net  = Q_in − Q_loss
@@ -9995,7 +10031,7 @@ def compute_heat_balance(
         return None
 
     live = live or {}
-    Tliq = _f(live.get("liquid"))
+    Tliq, water_sens = resolve_pool_water(live, der.get("water_sensor"))
     if Tliq is None:
         return None
     hex_dt = _f(der.get("hex_delta_c")) or 0.0
@@ -10050,6 +10086,8 @@ def compute_heat_balance(
         "q_in_kw": Q_in_W / 1000.0,
         "q_loss_kw": Q_loss_W / 1000.0,
         "tw_c": Tw,
+        "t_water_c": float(Tliq),
+        "water_sensor": water_sens,
         "ta_c": float(Ta),
         "dt_c": dT,
         "limited_by_hex": limited,
@@ -15114,6 +15152,10 @@ class Handler(SimpleHTTPRequestHandler):
                     _pool_cfg["shape"] = str(req["shape"])
                 if "comment" in req and req["comment"] is not None:
                     _pool_cfg["comment"] = str(req["comment"])
+                if "water_sensor" in req and req["water_sensor"] is not None:
+                    _pool_cfg["water_sensor"] = _normalize_pool_water_sensor(
+                        req["water_sensor"]
+                    )
                 cfg = dict(_pool_cfg)
             _save_pool_cfg()
             derived = pool_derived(cfg)
