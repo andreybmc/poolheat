@@ -3461,58 +3461,58 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.pool_geo">Pool · geometry</h2>
-              <div class="sub">shape · volume and surface calculated automatically</div>
+              <div class="sub" data-i18n="sub.pool_geo">shape · volume and surface calculated automatically</div>
             </div>
-            <button class="btn primary" type="button" id="btn-pool-save">Save</button>
+            <button class="btn primary" type="button" id="btn-pool-save" data-i18n="btn.save">Save</button>
           </div>
           <div class="card-b stack" style="gap:14px">
-            <label class="field"><span class="tip" data-tip-key="pool_geometry">Pool type</span>
+            <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
               <select id="pool-shape">
-                <option value="rect">Rectangular</option>
-                <option value="circle">Round</option>
-                <option value="oval">Oval</option>
+                <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
+                <option value="circle" data-i18n="pool.shape.circle">Round</option>
+                <option value="oval" data-i18n="pool.shape.oval">Oval</option>
               </select>
             </label>
             <label class="field">
-              <span class="tip" data-tip-key="pool_water_sensor">Pool water sensor</span>
+              <span class="tip" data-tip-key="pool_water_sensor" data-i18n="pool.water_sensor">Pool water sensor</span>
               <select id="pool-water-sensor">
-                <option value="liquid">liquid — ASIC liquid_temp (coolant)</option>
-                <option value="env">env — Env Temp (ambient)</option>
-                <option value="chip_avg">chip avg — average across chips</option>
-                <option value="chip_max">chip max — max across chips</option>
-                <option value="board_max">board max — max PCB</option>
+                <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
+                <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
+                <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
+                <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
+                <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
               </select>
-              <span class="hint" style="font-size:0.72rem;color:var(--dim);display:block;margin-top:4px">
+              <span class="hint" style="font-size:0.72rem;color:var(--dim);display:block;margin-top:4px" data-i18n="pool.ws.hint">
                 Water °C source for heat/cool model (Tw = water − ΔT HX)
               </span>
             </label>
             <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
               <label class="field" id="pool-length-field">
-                <span class="tip" data-tip-key="pool_geometry" id="pool-length-label">Length, m</span>
+                <span class="tip" data-tip-key="pool_geometry" id="pool-length-label" data-i18n="pool.length_m">Length, m</span>
                 <input type="number" id="pool-length" value="8" min="0.5" max="200" step="0.1" />
               </label>
               <label class="field" id="pool-width-field">
-                <span id="pool-width-label">Width, m</span>
+                <span id="pool-width-label" data-i18n="pool.width_m">Width, m</span>
                 <input type="number" id="pool-width" value="4" min="0.5" max="200" step="0.1" />
               </label>
               <label class="field">
-                <span>Depth, m</span>
+                <span data-i18n="pool.depth_m">Depth, m</span>
                 <input type="number" id="pool-depth" value="1.5" min="0.3" max="20" step="0.05" />
               </label>
             </div>
             <div class="grid-3">
               <div class="metric">
-                <label>Surface S</label>
+                <label data-i18n="pool.metric.surface">Surface S</label>
                 <div class="val" style="font-size:1.25rem"><span id="pool-surface">—</span> <small>m²</small></div>
-                <div class="hint" id="pool-formula-s">water surface area</div>
+                <div class="hint" id="pool-formula-s" data-i18n="pool.hint.surface">water surface area</div>
               </div>
               <div class="metric highlight-accent">
-                <label>Volume V</label>
+                <label data-i18n="pool.metric.volume">Volume V</label>
                 <div class="val" style="font-size:1.25rem"><span id="pool-volume">—</span> <small>m³</small></div>
                 <div class="hint" id="pool-formula-v">V = L × W × D</div>
               </div>
               <div class="metric">
-                <label>Full cycle</label>
+                <label data-i18n="pool.metric.cycle">Full cycle</label>
                 <div class="val" style="font-size:1.15rem"><span id="pool-turnover">—</span> <small>h</small></div>
                 <div class="hint">T = V × 1000 / Q</div>
               </div>
@@ -3524,29 +3524,29 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.circulation">Water exchange · circulation</h2>
-              <div class="sub">pumping rate through heat exchanger</div>
+              <div class="sub" data-i18n="sub.circulation">pumping rate through heat exchanger</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:14px">
             <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
-              <label class="field"><span class="tip" data-tip-key="pool_flow">Flow Q, L/h</span>
+              <label class="field"><span class="tip" data-tip-key="pool_flow" data-i18n="pool.flow">Flow Q, L/h</span>
                 <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
               </label>
-              <label class="field"><span class="tip" data-tip-key="hex_delta">HX ΔT, °C</span>
+              <label class="field"><span class="tip" data-tip-key="hex_delta" data-i18n="pool.hex_dt">HX ΔT, °C</span>
                 <input type="number" id="pool-hex-dt" value="5" min="0.1" max="40" step="0.1" />
               </label>
             </div>
             <div class="metric" style="margin:0">
-              <label>HX power (from Q and ΔT)</label>
+              <label data-i18n="pool.hex_power">HX power (from Q and ΔT)</label>
               <div class="val" style="font-size:1.15rem"><span id="pool-hex-kw">—</span> <small>kW</small></div>
               <div class="hint">Q_hex = ṁ · c · ΔT · c=4186</div>
             </div>
-            <p style="font-size:0.78rem;color:var(--muted);line-height:1.45">
+            <p style="font-size:0.78rem;color:var(--muted);line-height:1.45" data-i18n="pool.circ_help">
               Flow — liters through heat exchanger per hour.
               ΔT — temperature difference in pool vs miner loop.
             </p>
-            <label class="field">Comment
-              <input type="text" id="pool-comment" placeholder="e.g. 8×4, heat exchanger on bypass" autocomplete="off" />
+            <label class="field"><span data-i18n="pool.comment">Comment</span>
+              <input type="text" id="pool-comment" data-i18n-placeholder="pool.comment_ph" placeholder="e.g. 8×4, heat exchanger on bypass" autocomplete="off" />
             </label>
           </div>
         </div>
@@ -3555,23 +3555,23 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.weather">Weather · city</h2>
-              <div class="sub">Open-Meteo · outdoor °C · no API key</div>
+              <div class="sub" data-i18n="sub.weather">Open-Meteo · outdoor °C · no API key</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn" type="button" id="btn-wx-refresh" data-i18n="btn.refresh_weather">Refresh weather</button>
-              <button class="btn primary" type="button" id="btn-wx-interval-save">Save</button>
+              <button class="btn primary" type="button" id="btn-wx-interval-save" data-i18n="btn.save">Save</button>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
             <label class="check">
               <input type="checkbox" id="wx-enabled" checked />
-              <span>Show weather
-                <span class="desc">Outdoor card · saved with Save</span>
+              <span data-i18n="wx.show">Show weather
+                <span class="desc" data-i18n="wx.show_desc">Outdoor card · saved with Save</span>
               </span>
             </label>
             <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
               <div class="metric" style="margin:0">
-                <label>Current city</label>
+                <label data-i18n="wx.current_city">Current city</label>
                 <div class="val" style="font-size:1.05rem" id="wx-cfg-city">—</div>
                 <div class="hint" id="wx-cfg-meta">—</div>
               </div>
@@ -3581,7 +3581,7 @@
             </div>
             <div class="row" style="align-items:end">
               <label class="field" style="flex:1"><span data-i18n="field.city_search">City search</span>
-                <input type="text" id="wx-search" placeholder="e.g. Moscow" autocomplete="off" />
+                <input type="text" id="wx-search" data-i18n-placeholder="wx.city_ph" placeholder="e.g. Moscow" autocomplete="off" />
               </label>
               <button class="btn primary" type="button" id="btn-wx-search" data-i18n="btn.find">Find</button>
             </div>
@@ -4499,6 +4499,44 @@
         "h2.pool_geo": "Pool · geometry",
         "h2.circulation": "Water exchange · circulation",
         "h2.weather": "Weather · city",
+        "sub.pool_geo": "shape · volume and surface calculated automatically",
+        "sub.circulation": "pumping rate through heat exchanger",
+        "sub.weather": "Open-Meteo · outdoor °C · no API key",
+        "pool.type": "Pool type",
+        "pool.shape.rect": "Rectangular",
+        "pool.shape.circle": "Round",
+        "pool.shape.oval": "Oval",
+        "pool.water_sensor": "Pool water sensor",
+        "pool.ws.liquid": "liquid — ASIC liquid_temp (coolant)",
+        "pool.ws.env": "env — Env Temp (ambient)",
+        "pool.ws.chip_avg": "chip avg — average across chips",
+        "pool.ws.chip_max": "chip max — max across chips",
+        "pool.ws.board_max": "board max — max PCB",
+        "pool.ws.hint": "Water °C source for heat/cool model (Tw = water − ΔT HX)",
+        "pool.length_m": "Length, m",
+        "pool.width_m": "Width, m",
+        "pool.depth_m": "Depth, m",
+        "pool.diameter_m": "Diameter, m",
+        "pool.metric.surface": "Surface S",
+        "pool.metric.volume": "Volume V",
+        "pool.metric.cycle": "Full cycle",
+        "pool.hint.surface": "water surface area",
+        "pool.flow": "Flow Q, L/h",
+        "pool.hex_dt": "HX ΔT, °C",
+        "pool.hex_power": "HX power (from Q and ΔT)",
+        "pool.circ_help": "Flow — liters through heat exchanger per hour. ΔT — temperature difference in pool vs miner loop.",
+        "pool.comment": "Comment",
+        "pool.comment_ph": "e.g. 8×4, heat exchanger on bypass",
+        "pool.toast_saved": "Pool: V={vol} m³ · S={surf} m² · turnover {turn}",
+        "pool.toast_fail": "Failed to save pool: {err}",
+        "pool.toast_cfg_fail": "Pool config: {err}",
+        "wx.show": "Show weather",
+        "wx.show_desc": "Outdoor card · saved with Save",
+        "wx.current_city": "Current city",
+        "wx.city_ph": "e.g. Moscow",
+        "wx.display_on": "display on",
+        "wx.display_off": "display off",
+        "wx.not_saved": " · not saved — press Save",
         "h2.backup": "Configuration backup",
         "h2.connection": "Whatsminer connection",
         "h2.filtration": "Filtration · pump",
@@ -4662,6 +4700,44 @@
         "h2.pool_geo": "Бассейн · геометрия",
         "h2.circulation": "Водообмен · циркуляция",
         "h2.weather": "Погода · город",
+        "sub.pool_geo": "форма · объём и площадь считаются автоматически",
+        "sub.circulation": "расход через теплообменник",
+        "sub.weather": "Open-Meteo · уличная °C · без API-ключа",
+        "pool.type": "Тип бассейна",
+        "pool.shape.rect": "Прямоугольный",
+        "pool.shape.circle": "Круглый",
+        "pool.shape.oval": "Овальный",
+        "pool.water_sensor": "Датчик воды бассейна",
+        "pool.ws.liquid": "liquid — ASIC liquid_temp (теплоноситель)",
+        "pool.ws.env": "env — Env Temp (окружающая среда)",
+        "pool.ws.chip_avg": "chip avg — среднее по чипам",
+        "pool.ws.chip_max": "chip max — максимум по чипам",
+        "pool.ws.board_max": "board max — максимум PCB",
+        "pool.ws.hint": "Источник °C воды для модели нагрева/остывания (Tw = вода − ΔT ТО)",
+        "pool.length_m": "Длина, м",
+        "pool.width_m": "Ширина, м",
+        "pool.depth_m": "Глубина, м",
+        "pool.diameter_m": "Диаметр, м",
+        "pool.metric.surface": "Площадь S",
+        "pool.metric.volume": "Объём V",
+        "pool.metric.cycle": "Полный цикл",
+        "pool.hint.surface": "площадь зеркала воды",
+        "pool.flow": "Расход Q, л/ч",
+        "pool.hex_dt": "ΔT ТО, °C",
+        "pool.hex_power": "Мощность ТО (из Q и ΔT)",
+        "pool.circ_help": "Расход — литры через теплообменник в час. ΔT — разница температур контура бассейна и майнера.",
+        "pool.comment": "Комментарий",
+        "pool.comment_ph": "напр. 8×4, теплообменник на байпасе",
+        "pool.toast_saved": "Бассейн: V={vol} м³ · S={surf} м² · цикл {turn}",
+        "pool.toast_fail": "Не удалось сохранить бассейн: {err}",
+        "pool.toast_cfg_fail": "Конфиг бассейна: {err}",
+        "wx.show": "Показывать погоду",
+        "wx.show_desc": "карточка Outdoor · сохраняется кнопкой Сохранить",
+        "wx.current_city": "Текущий город",
+        "wx.city_ph": "напр. Москва",
+        "wx.display_on": "показ вкл",
+        "wx.display_off": "показ выкл",
+        "wx.not_saved": " · не сохранено — нажмите Сохранить",
         "h2.backup": "Бэкап конфигурации",
         "h2.connection": "Подключение Whatsminer",
         "h2.filtration": "Фильтрация · насос",
@@ -4847,6 +4923,10 @@
         if (typeof renderUpdateCheck === "function" && window.__lastUpdateCheck) {
           renderUpdateCheck(window.__lastUpdateCheck);
         }
+      } catch (_) {}
+      // re-apply dynamic pool labels (diameter vs length etc.)
+      try {
+        if (typeof syncPoolShapeUI === "function") syncPoolShapeUI();
       } catch (_) {}
       return lang;
     }
@@ -11998,7 +12078,8 @@
       if (st) {
         const on = document.getElementById("wx-enabled").checked;
         st.textContent =
-          (on ? "display on" : "display off") + " · not saved — press Save";
+          (on ? t("wx.display_on", "display on") : t("wx.display_off", "display off")) +
+          t("wx.not_saved", " · not saved — press Save");
       }
     });
 
@@ -12017,17 +12098,17 @@
       const widField = document.getElementById("pool-width-field");
       const row = document.getElementById("pool-dims-row");
       if (shape === "circle") {
-        if (lenLab) lenLab.textContent = "Diameter, m";
+        if (lenLab) lenLab.textContent = t("pool.diameter_m", "Diameter, m");
         if (widField) widField.style.display = "none";
         if (row) row.style.gridTemplateColumns = "1fr 1fr";
       } else if (shape === "oval") {
-        if (lenLab) lenLab.textContent = "Length, m";
-        if (widLab) widLab.textContent = "Width, m";
+        if (lenLab) lenLab.textContent = t("pool.length_m", "Length, m");
+        if (widLab) widLab.textContent = t("pool.width_m", "Width, m");
         if (widField) widField.style.display = "";
         if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr";
       } else {
-        if (lenLab) lenLab.textContent = "Length, m";
-        if (widLab) widLab.textContent = "Width, m";
+        if (lenLab) lenLab.textContent = t("pool.length_m", "Length, m");
+        if (widLab) widLab.textContent = t("pool.width_m", "Width, m");
         if (widField) widField.style.display = "";
         if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr";
       }
@@ -12136,12 +12217,12 @@
           document.getElementById("pool-formula-v").textContent = d.formula_v;
         }
         const fs = document.getElementById("pool-formula-s");
-        if (fs) fs.textContent = "water surface area";
+        if (fs) fs.textContent = t("pool.hint.surface", "water surface area");
         poolDerived = d;
         updateHeatLoss();
         return body;
       } catch (e) {
-        toastError("Pool config: " + e.message);
+        toastError(tf("pool.toast_cfg_fail", { err: e.message }, "Pool config: " + e.message));
         recalcPoolLocal();
         return null;
       }
@@ -12173,14 +12254,14 @@
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "save fail");
         const d = body.derived || {};
-        toastSuccess(
-          "Pool: V=" + (d.volume_m3 != null ? d.volume_m3 : "—") + " m³ · S=" +
-          (d.surface_m2 != null ? d.surface_m2 : "—") + " m² · turnover " +
-          (d.turnover_h != null ? d.turnover_h + " h" : "—")
-        );
+        toastSuccess(tf("pool.toast_saved", {
+          vol: d.volume_m3 != null ? d.volume_m3 : "—",
+          surf: d.surface_m2 != null ? d.surface_m2 : "—",
+          turn: d.turnover_h != null ? d.turnover_h + " h" : "—",
+        }, "Pool: V={vol} m³ · S={surf} m² · turnover {turn}"));
         await loadPoolConfig();
       } catch (e) {
-        toastError("Failed to save pool: " + e.message);
+        toastError(tf("pool.toast_fail", { err: e.message }, "Failed to save pool: " + e.message));
       }
     }
 

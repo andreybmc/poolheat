@@ -6680,6 +6680,44 @@ def _normalize_notes_lang(lang: str | None) -> str:
     return "en"
 
 
+def _strip_md_fenced_code(text: str) -> str:
+    """
+    Blank out fenced code blocks (``` … ``` / ~~~ … ~~~) so language
+    markers inside documentation examples are not treated as real sections.
+    Replaces non-newline chars with spaces to keep offsets aligned with
+    the original text.
+    """
+    if not text:
+        return text
+
+    def _blank(m: re.Match) -> str:
+        return re.sub(r"[^\n]", " ", m.group(0))
+
+    return re.sub(
+        r"(?ms)^[ \t]*(```|~~~)[^\n]*\n.*?^[ \t]*\1[ \t]*$",
+        _blank,
+        text,
+    )
+
+
+def _looks_like_notes_placeholder(chunk: str) -> bool:
+    """True for example/placeholder RU/EN snippets, not real release notes."""
+    s = (chunk or "").strip()
+    if not s:
+        return True
+    # very short example lines from docs ("Русский текст…", "English text…")
+    if len(s) < 48 and re.search(
+        r"(текст|text|feature|фича|fix|исправлен)\s*[.…]*$", s, re.I
+    ):
+        return True
+    # leftover fence / behaviour docs leaked after a bogus split
+    if "### Behaviour" in s or "### Behavior" in s:
+        return True
+    if re.search(r"UI\s+\*\*RU\*\*", s):
+        return True
+    return False
+
+
 def _split_bilingual_release_notes(body: str) -> dict[str, str]:
     """
     Split a GitHub release body into language sections.
@@ -6697,6 +6735,10 @@ def _split_bilingual_release_notes(body: str) -> dict[str, str]:
          ## Русский
          ...
        (also: ## EN / ## RU / ## Russian)
+
+    Markers inside fenced code blocks (``` … ```) are ignored so that
+    documentation-style release bodies (with authoring examples) are not
+    mis-parsed as bilingual notes.
 
     If no markers found, the whole body is treated as English (default).
     """
@@ -6716,38 +6758,42 @@ def _split_bilingual_release_notes(body: str) -> dict[str, str]:
             return "en"
         return None
 
+    # Find markers only outside code fences; slice chunks from original text
+    # (fence blanking preserves character offsets).
+    search_text = _strip_md_fenced_code(text)
     sections: dict[str, str] = {}
 
-    # 1) <!--en--> / <!--lang:ru--> markers
+    # 1) <!--en--> / <!--lang:ru--> markers (outside fences only)
     marker_re = re.compile(
         r"<!--\s*(?:lang\s*[:=]\s*)?"
         r"(en|eng|english|ru|rus|russian|русск\w*|англ\w*)"
         r"\s*-->",
         re.I,
     )
-    if marker_re.search(text):
-        parts = marker_re.split(text)
-        # parts: [preamble, lang1, body1, lang2, body2, ...]
-        if len(parts) >= 3:
-            for i in range(1, len(parts) - 1, 2):
-                lang = _canon(parts[i])
-                chunk = (parts[i + 1] or "").strip()
-                if lang and chunk:
-                    sections[lang] = chunk
-            # preamble without markers: use as EN fallback if no en section
-            pre = (parts[0] or "").strip()
-            if pre and "en" not in sections:
-                sections["en"] = pre
-            if sections:
-                return sections
+    matches = list(marker_re.finditer(search_text))
+    if matches:
+        for idx, m in enumerate(matches):
+            lang = _canon(m.group(1))
+            if not lang:
+                continue
+            start = m.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            chunk = text[start:end].strip()
+            if chunk and not _looks_like_notes_placeholder(chunk):
+                sections[lang] = chunk
+        pre = text[: matches[0].start()].strip()
+        if pre and "en" not in sections and not _looks_like_notes_placeholder(pre):
+            sections["en"] = pre
+        if sections:
+            return sections
 
-    # 2) ## English / ## Русский headings (at line start)
+    # 2) ## English / ## Русский headings (at line start, outside fences)
     head_re = re.compile(
         r"(?m)^(#{1,3}\s*)"
         r"(English|EN|Eng|Английский|Russian|RU|Rus|Русский|Русская)\s*$",
         re.I,
     )
-    matches = list(head_re.finditer(text))
+    matches = list(head_re.finditer(search_text))
     if matches:
         for idx, m in enumerate(matches):
             lang = _canon(m.group(2))
@@ -6758,11 +6804,10 @@ def _split_bilingual_release_notes(body: str) -> dict[str, str]:
             chunk = text[start:end].strip()
             # drop a horizontal rule right after heading
             chunk = re.sub(r"^(?:---|\*\*\*|___)\s*\n+", "", chunk)
-            if chunk:
+            if chunk and not _looks_like_notes_placeholder(chunk):
                 sections[lang] = chunk
-        # text before first heading → EN fallback
         pre = text[: matches[0].start()].strip()
-        if pre and "en" not in sections:
+        if pre and "en" not in sections and not _looks_like_notes_placeholder(pre):
             sections["en"] = pre
         if sections:
             return sections
