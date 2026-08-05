@@ -11196,17 +11196,40 @@
       }
       if (notesEl) {
         const bodyEl = document.getElementById("info-update-notes-body");
-        // Preserve newlines; drop leading blank lines and a duplicated title
-        // (UI already shows «Release notes» — GitHub body must not repeat it)
-        let raw = (chk.notes || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        // Prefer notes for current UI language; server already selected,
+        // but re-pick from notes_en/notes_ru if user switched language.
+        const uiLang =
+          typeof getUiLang === "function" ? getUiLang() : "en";
+        let raw = "";
+        if (uiLang === "ru" && chk.notes_ru) raw = chk.notes_ru;
+        else if (uiLang === "en" && chk.notes_en) raw = chk.notes_en;
+        else if (uiLang === "ru" && chk.notes_en) raw = chk.notes_en; // fallback EN
+        else raw = chk.notes || "";
+        raw = String(raw || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
         raw = raw.replace(/^\s+/, "").replace(/\s+$/, "");
+        // UI already shows «Release notes» — strip a duplicated title line
         raw = raw.replace(/^#+\s*Release\s*notes\s*\n+/i, "");
         raw = raw.replace(/^Release\s*notes\s*\n+/i, "");
+        raw = raw.replace(/^#+\s*Заметки\s+к\s+релизу\s*\n+/i, "");
+        raw = raw.replace(/^Заметки\s+к\s+релизу\s*\n+/i, "");
         raw = raw.replace(/^\s+/, "").replace(/\s+$/, "");
         if (raw) {
           notesEl.hidden = false;
           notesEl.classList.add("is-visible");
-          if (bodyEl) bodyEl.textContent = raw;
+          if (bodyEl) {
+            bodyEl.textContent = raw;
+            // subtle hint when RU requested but only EN body exists
+            if (
+              uiLang === "ru" &&
+              chk.notes_fallback &&
+              !chk.notes_ru &&
+              (chk.notes_en || chk.notes)
+            ) {
+              bodyEl.textContent =
+                raw +
+                "\n\n—\n(Русской версии release notes нет — показан английский текст.)";
+            }
+          }
         } else {
           notesEl.hidden = true;
           notesEl.classList.remove("is-visible");
@@ -11272,7 +11295,12 @@
       }
       if (statusEl) statusEl.textContent = "checking…";
       try {
-        const res = await fetch("/api/update/check", { cache: "no-store" });
+        const lang =
+          typeof getUiLang === "function" ? getUiLang() : "en";
+        const res = await fetch(
+          "/api/update/check?lang=" + encodeURIComponent(lang),
+          { cache: "no-store" }
+        );
         const body = await res.json();
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || ("HTTP " + res.status));

@@ -6673,14 +6673,163 @@ def _http_bytes(url: str, timeout: float = 60.0) -> bytes:
         return resp.read()
 
 
-def check_github_update() -> dict:
+def _normalize_notes_lang(lang: str | None) -> str:
+    s = str(lang or "en").strip().lower()
+    if s.startswith("ru") or s in ("рус", "russian", "русск"):
+        return "ru"
+    return "en"
+
+
+def _split_bilingual_release_notes(body: str) -> dict[str, str]:
+    """
+    Split a GitHub release body into language sections.
+
+    Supported layouts (any one is enough):
+
+    1) HTML comment markers:
+         <!--en-->  ...english...
+         <!--ru-->  ...russian...
+       (also: <!--lang:en-->, <!--english-->, <!--русский-->)
+
+    2) Markdown headings:
+         ## English
+         ...
+         ## Русский
+         ...
+       (also: ## EN / ## RU / ## Russian)
+
+    If no markers found, the whole body is treated as English (default).
+    """
+    text = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return {}
+
+    def _canon(tok: str) -> str | None:
+        t = (tok or "").strip().lower()
+        if t in ("en", "eng", "english", "англ", "английский"):
+            return "en"
+        if t in ("ru", "rus", "russian", "рус", "русский", "русская", "русск"):
+            return "ru"
+        if t.startswith("ru") or "русск" in t:
+            return "ru"
+        if t.startswith("en") or "англ" in t:
+            return "en"
+        return None
+
+    sections: dict[str, str] = {}
+
+    # 1) <!--en--> / <!--lang:ru--> markers
+    marker_re = re.compile(
+        r"<!--\s*(?:lang\s*[:=]\s*)?"
+        r"(en|eng|english|ru|rus|russian|русск\w*|англ\w*)"
+        r"\s*-->",
+        re.I,
+    )
+    if marker_re.search(text):
+        parts = marker_re.split(text)
+        # parts: [preamble, lang1, body1, lang2, body2, ...]
+        if len(parts) >= 3:
+            for i in range(1, len(parts) - 1, 2):
+                lang = _canon(parts[i])
+                chunk = (parts[i + 1] or "").strip()
+                if lang and chunk:
+                    sections[lang] = chunk
+            # preamble without markers: use as EN fallback if no en section
+            pre = (parts[0] or "").strip()
+            if pre and "en" not in sections:
+                sections["en"] = pre
+            if sections:
+                return sections
+
+    # 2) ## English / ## Русский headings (at line start)
+    head_re = re.compile(
+        r"(?m)^(#{1,3}\s*)"
+        r"(English|EN|Eng|Английский|Russian|RU|Rus|Русский|Русская)\s*$",
+        re.I,
+    )
+    matches = list(head_re.finditer(text))
+    if matches:
+        for idx, m in enumerate(matches):
+            lang = _canon(m.group(2))
+            if not lang:
+                continue
+            start = m.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            chunk = text[start:end].strip()
+            # drop a horizontal rule right after heading
+            chunk = re.sub(r"^(?:---|\*\*\*|___)\s*\n+", "", chunk)
+            if chunk:
+                sections[lang] = chunk
+        # text before first heading → EN fallback
+        pre = text[: matches[0].start()].strip()
+        if pre and "en" not in sections:
+            sections["en"] = pre
+        if sections:
+            return sections
+
+    # 3) no structure → entire body is default English
+    return {"en": text}
+
+
+def _select_release_notes(
+    body: str | None, *, lang: str = "en"
+) -> dict:
+    """
+    Pick notes for UI language. Prefer requested lang; else English; else any.
+    """
+    want = _normalize_notes_lang(lang)
+    raw = (body or "").replace("\r\n", "\n").strip()
+    split = _split_bilingual_release_notes(raw) if raw else {}
+    notes_en = (split.get("en") or "").strip() or None
+    notes_ru = (split.get("ru") or "").strip() or None
+    # if only one blob stored as en and request ru — fallback
+    chosen = None
+    used = "en"
+    fallback = False
+    if want == "ru" and notes_ru:
+        chosen, used = notes_ru, "ru"
+    elif want == "en" and notes_en:
+        chosen, used = notes_en, "en"
+    elif notes_en:
+        chosen, used, fallback = notes_en, "en", want != "en"
+    elif notes_ru:
+        chosen, used, fallback = notes_ru, "ru", want != "ru"
+    elif raw:
+        chosen, used, fallback = raw, "en", want != "en"
+
+    # soft cap for UI
+    def _cap(s: str | None) -> str | None:
+        if not s:
+            return None
+        s = s.strip()
+        return s[:4000] if s else None
+
+    available = [k for k in ("en", "ru") if split.get(k)]
+    if not available and chosen:
+        available = [used]
+
+    return {
+        "notes": _cap(chosen),
+        "notes_lang": used if chosen else None,
+        "notes_fallback": bool(fallback and chosen),
+        "notes_en": _cap(notes_en) if notes_en else (_cap(raw) if raw and not notes_ru else None),
+        "notes_ru": _cap(notes_ru),
+        "notes_available": available,
+    }
+
+
+def check_github_update(*, lang: str = "en") -> dict:
     """
     Compare installed VERSION with GitHub:
       1) latest release tag (if any)
       2) latest git tag
       3) VERSION file on default branch
     Also returns latest commit on branch for reference.
+
+    Release notes support bilingual bodies (see _split_bilingual_release_notes).
+    ``lang`` selects preferred notes language; missing RU → English default.
     """
+    ui_lang = _normalize_notes_lang(lang)
     current = get_app_version()
     out: dict = {
         "ok": True,
@@ -6700,6 +6849,12 @@ def check_github_update() -> dict:
         "checked_at": datetime.now().isoformat(timespec="seconds"),
         "error": None,
         "notes": None,
+        "notes_lang": None,
+        "notes_fallback": False,
+        "notes_en": None,
+        "notes_ru": None,
+        "notes_available": [],
+        "ui_lang": ui_lang,
     }
     latest: str | None = None
     try:
@@ -6715,9 +6870,9 @@ def check_github_update() -> dict:
                 out["release_name"] = rel.get("name") or rel.get("tag_name")
                 out["release_url"] = rel.get("html_url")
                 out["published_at"] = rel.get("published_at")
-                # keep newlines for UI pre-wrap; soft cap length
                 body_notes = (rel.get("body") or "").replace("\r\n", "\n").strip()
-                out["notes"] = body_notes[:4000] if body_notes else None
+                note_pack = _select_release_notes(body_notes, lang=ui_lang)
+                out.update(note_pack)
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 raise
@@ -6813,12 +6968,24 @@ def check_github_update() -> dict:
             out["update_available"] = False
             out["latest_version"] = None
             out["error"] = None
-            out["notes"] = (
-                f"На GitHub нет release/tag/VERSION. "
-                f"Можно поставить код с ветки {GITHUB_BRANCH}"
-                + (f" ({out['commit_sha']})" if out.get("commit_sha") else "")
-                + ". После push VERSION или Release vX.Y.Z проверка станет точной."
-            )
+            sha = f" ({out['commit_sha']})" if out.get("commit_sha") else ""
+            if ui_lang == "ru":
+                out["notes"] = (
+                    f"На GitHub нет release/tag/VERSION. "
+                    f"Можно поставить код с ветки {GITHUB_BRANCH}{sha}. "
+                    f"После push VERSION или Release vX.Y.Z проверка станет точной."
+                )
+                out["notes_lang"] = "ru"
+                out["notes_fallback"] = False
+            else:
+                out["notes"] = (
+                    f"No release/tag/VERSION on GitHub yet. "
+                    f"You can install from branch {GITHUB_BRANCH}{sha}. "
+                    f"After pushing VERSION or Release vX.Y.Z, checks become exact."
+                )
+                out["notes_lang"] = "en"
+                out["notes_fallback"] = False
+            out["notes_available"] = [out["notes_lang"]]
         # drop internal diagnostics from public payload
         out.pop("_version_http", None)
         out.pop("_version_err", None)
@@ -13744,7 +13911,7 @@ def _tg_handle_callback(cq: dict) -> None:
                     except Exception:
                         pass
                     try:
-                        chk = check_github_update()
+                        chk = check_github_update(lang=str(lang or "en"))
                     except Exception as e:
                         chk = {
                             "ok": False,
@@ -16492,7 +16659,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/update/check":
             try:
-                self._json_response(200, check_github_update())
+                qs = parse_qs(urlparse(self.path).query)
+                lang = (qs.get("lang") or ["en"])[0]
+                self._json_response(200, check_github_update(lang=str(lang or "en")))
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
@@ -16735,7 +16904,17 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/update/check",):
             try:
-                self._json_response(200, check_github_update())
+                req = {}
+                try:
+                    req = self._read_json_body() or {}
+                except Exception:
+                    req = {}
+                if not isinstance(req, dict):
+                    req = {}
+                lang = req.get("lang") or "en"
+                self._json_response(
+                    200, check_github_update(lang=str(lang or "en"))
+                )
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
