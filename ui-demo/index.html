@@ -166,8 +166,42 @@
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
     }
 
+    nav.subtabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      padding: 3px;
+      background: var(--bg2);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+      max-width: 320px;
+    }
+
+    nav.subtabs button {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 12px;
+      border-radius: calc(var(--radius-sm) - 1px);
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 550;
+      cursor: pointer;
+      transition: 0.15s ease;
+    }
+
+    nav.subtabs button:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
+    nav.subtabs button.active {
+      color: var(--text);
+      background: var(--panel2);
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
     .view { display: none; }
     .view.active { display: block; }
+    .subview { display: none; }
+    .subview.active { display: block; }
 
     /* —— grid —— */
     .grid-2 {
@@ -1997,8 +2031,7 @@
       <button type="button" data-tab="map">Карта зон</button>
       <button type="button" data-tab="pool">Бассейн</button>
       <button type="button" data-tab="settings">Настройки</button>
-      <button type="button" data-tab="info">Info</button>
-      <button type="button" data-tab="logs">Логи</button>
+      <button type="button" data-tab="info">Инфо</button>
     </nav>
 
     <!-- ========== DASHBOARD ========== -->
@@ -3547,6 +3580,11 @@
 
     <!-- ========== INFO ========== -->
     <section class="view" id="view-info">
+      <nav class="subtabs" role="tablist" aria-label="Инфо">
+        <button type="button" class="active" data-subtab="info">Инфо</button>
+        <button type="button" data-subtab="logs">Логи</button>
+      </nav>
+      <div class="subview active" id="subview-info">
       <div class="stack">
         <div class="card">
           <div class="card-h">
@@ -3555,7 +3593,7 @@
               <div class="sub">версия · проверка обновлений GitHub</div>
             </div>
             <div class="btn-row" style="gap:8px">
-              <button class="btn ghost" type="button" id="btn-info-refresh">Обновить Info</button>
+              <button class="btn ghost" type="button" id="btn-info-refresh">Обновить</button>
               <button class="btn" type="button" id="btn-update-check">Проверить обновления</button>
               <button class="btn primary" type="button" id="btn-update-apply" hidden>Установить</button>
             </div>
@@ -3730,10 +3768,9 @@
           </div>
         </div>
       </div>
-    </section>
+      </div><!-- /subview-info -->
 
-    <!-- ========== LOGS ========== -->
-    <section class="view" id="view-logs">
+      <div class="subview" id="subview-logs">
       <div class="stack">
         <div class="card" id="panel-miner-error-log">
           <div class="card-h">
@@ -3786,6 +3823,7 @@
           </div>
         </div>
       </div>
+      </div><!-- /subview-logs -->
     </section>
 
     <footer class="demo-note" id="app-footer">
@@ -4133,6 +4171,7 @@
     }
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
+    /* "logs" is a virtual tab → main "info" + subtab "logs" */
     const TAB_IDS = ["dash", "miner", "chips", "map", "pool", "settings", "info", "logs"];
     const TAB_ALIASES = {
       "": "dash",
@@ -4154,6 +4193,24 @@
       log: "logs",
       errors: "logs",
     };
+
+    function setInfoSubtab(subId) {
+      const sub = subId === "logs" ? "logs" : "info";
+      document.querySelectorAll("#view-info nav.subtabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.subtab === sub);
+      });
+      document.querySelectorAll("#view-info .subview").forEach((v) => {
+        v.classList.toggle("active", v.id === "subview-" + sub);
+      });
+      return sub;
+    }
+
+    function isLogsSubtabActive() {
+      return (
+        document.getElementById("view-info")?.classList.contains("active") &&
+        document.getElementById("subview-logs")?.classList.contains("active")
+      );
+    }
 
     function resolveTabId(raw) {
       let t = String(raw || "").trim().toLowerCase();
@@ -4227,17 +4284,17 @@
     function activateTab(tabId, opts) {
       opts = opts || {};
       if (!TAB_IDS.includes(tabId)) tabId = "dash";
-      const btn = document.querySelector(
-        'nav.tabs button[data-tab="' + tabId + '"]'
-      );
+      // virtual "logs" → main view info + subtab logs
+      const mainTab = tabId === "logs" ? "info" : tabId;
+      const infoSub = tabId === "logs" ? "logs" : "info";
       document.querySelectorAll("nav.tabs button").forEach((b) => {
-        b.classList.toggle("active", b.dataset.tab === tabId);
+        b.classList.toggle("active", b.dataset.tab === mainTab);
       });
       document.querySelectorAll(".view").forEach((v) => {
-        v.classList.toggle("active", v.id === "view-" + tabId);
+        v.classList.toggle("active", v.id === "view-" + mainTab);
       });
-      if (!btn) {
-        // still try show view
+      if (mainTab === "info") {
+        setInfoSubtab(infoSub);
       }
       if (tabId === "dash") {
         try {
@@ -4246,11 +4303,11 @@
           if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
         } catch (_) { /* ignore */ }
       }
-      if (tabId === "logs") {
+      if (tabId === "logs" || (mainTab === "info" && infoSub === "logs")) {
         if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
         if (typeof loadActionLog === "function") loadActionLog();
       }
-      if (tabId === "info" && typeof loadSystemInfo === "function") {
+      if (mainTab === "info" && infoSub === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
       }
       if (tabId === "miner" && typeof loadMiningPools === "function") {
@@ -4261,6 +4318,7 @@
         if (typeof loadChipmap === "function") loadChipmap(false);
       }
       if (!opts.skipUrl) {
+        // #logs when logs subtab; #info when info subtab
         setTabUrl(tabId, opts.replaceUrl ? "replace" : "push");
       }
       return tabId;
@@ -4269,6 +4327,12 @@
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         activateTab(btn.dataset.tab);
+      });
+    });
+    document.querySelectorAll("#view-info nav.subtabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const sub = btn.dataset.subtab === "logs" ? "logs" : "info";
+        activateTab(sub);
       });
     });
     window.addEventListener("hashchange", () => {
@@ -8690,19 +8754,15 @@
       ?.addEventListener("click", () => {
         void loadActionLog().then(() => toastSuccess("Action log обновлён"));
       });
-    // poll while Logs tab is open
+    // poll while Логи subtab (under Инфо) is open
     if (actionLogTimer) clearInterval(actionLogTimer);
     actionLogTimer = setInterval(() => {
-      const onLogs =
-        document.getElementById("view-logs")?.classList.contains("active") ||
-        document.querySelector('nav.tabs button[data-tab="logs"].active');
-      if (onLogs) void loadActionLog();
+      if (typeof isLogsSubtabActive === "function" ? isLogsSubtabActive() : false) {
+        void loadActionLog();
+      }
     }, 5000);
     // first paint if already on logs
-    if (
-      document.getElementById("view-logs")?.classList.contains("active") ||
-      document.querySelector('nav.tabs button[data-tab="logs"].active')
-    ) {
+    if (typeof isLogsSubtabActive === "function" && isLogsSubtabActive()) {
       void loadActionLog();
     }
     document.getElementById("btn-dry-goto")?.addEventListener("click", () => {
