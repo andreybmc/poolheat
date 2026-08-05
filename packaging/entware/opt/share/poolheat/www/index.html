@@ -2111,7 +2111,7 @@
         <input type="range" id="sim-env" min="10" max="45" step="0.1" value="26.5" />
         <strong id="sim-env-v">26.5</strong>
       </label>
-      <label>board0/1 °C
+      <label>board0/1/2 °C
         <input type="range" id="sim-tctrl" min="25" max="60" step="0.1" value="41.3" />
         <strong id="sim-tctrl-v">41.3</strong>
       </label>
@@ -7306,9 +7306,10 @@
               { label: "liquid", data: [], borderColor: "#3d9cf0", backgroundColor: "rgba(61,156,240,0.1)", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
               { label: "env", data: [], borderColor: "#3ecf8e", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
               { label: "outdoor", data: [], borderColor: "#7dd3fc", tension: 0.15, pointRadius: 0, borderWidth: 2, borderDash: [6, 3], fill: false },
-              // PCB chart slots: M63 often [0,2] (paired); M60S [0,1]
+              // PCB chart slots: M63 [0,2]; M60S 3-board [0,1,2]
               { label: "board0", data: [], borderColor: "#f0b429", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
-              { label: "boardA", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "board1", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "board2", data: [], borderColor: "#38bdf8", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false, hidden: true },
               { label: "chip max", data: [], borderColor: "#f07178", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
             ],
           },
@@ -7373,36 +7374,45 @@
       chartTemp.data.datasets[0].data = xySeries("liquid");
       chartTemp.data.datasets[1].data = xySeries("env");
       chartTemp.data.datasets[2].data = xySeries("outdoor_c", { requireOnline: false });
-      // chart slots from last live snapshot (M63→0+2, M60S→0+1)
-      let slot0 = 0;
-      let slot1 = 2;
+      // chart slots from last live snapshot (M63→[0,2], M60S 3-board→[0,1,2])
+      let chartSlots = [0, 2];
       try {
         const slots =
           (window.__lastLive && window.__lastLive.board_chart_slots) ||
           null;
         if (Array.isArray(slots) && slots.length >= 1) {
-          slot0 = Number(slots[0]) || 0;
-          slot1 =
-            slots.length >= 2
-              ? Number(slots[1])
-              : slot0 === 0
-                ? 1
-                : 0;
-          if (!Number.isFinite(slot1)) slot1 = slot0 === 0 ? 1 : 0;
+          chartSlots = slots
+            .map((x) => Number(x))
+            .filter((x) => Number.isFinite(x) && x >= 0 && x <= 7);
+          if (!chartSlots.length) chartSlots = [0, 2];
         } else {
-          const nb =
-            (window.__lastLive && window.__lastLive.board_count) || 4;
-          if (Number(nb) < 4) {
-            slot0 = 0;
-            slot1 = 1;
-          }
+          const nb = Number(
+            (window.__lastLive && window.__lastLive.board_count) || 4
+          );
+          if (nb >= 3 && nb < 4) chartSlots = [0, 1, 2];
+          else if (nb < 3) chartSlots = nb >= 2 ? [0, 1] : [0];
+          else chartSlots = [0, 2];
         }
       } catch (_) { /* keep defaults */ }
-      chartTemp.data.datasets[3].label = "board" + slot0;
-      chartTemp.data.datasets[3].data = xySeries("board" + slot0);
-      chartTemp.data.datasets[4].label = "board" + slot1;
-      chartTemp.data.datasets[4].data = xySeries("board" + slot1);
-      chartTemp.data.datasets[5].data = xySeries("chip_max");
+      // datasets[3..5] = up to 3 board series; datasets[6] = chip max
+      const boardDs = [
+        chartTemp.data.datasets[3],
+        chartTemp.data.datasets[4],
+        chartTemp.data.datasets[5],
+      ];
+      for (let i = 0; i < boardDs.length; i++) {
+        if (i < chartSlots.length) {
+          const s = chartSlots[i] | 0;
+          boardDs[i].label = "board" + s;
+          boardDs[i].data = xySeries("board" + s);
+          boardDs[i].hidden = false;
+        } else {
+          boardDs[i].label = "board—";
+          boardDs[i].data = [];
+          boardDs[i].hidden = true;
+        }
+      }
+      chartTemp.data.datasets[6].data = xySeries("chip_max");
       chartPower.data.datasets[0].data = xySeries("power");
       chartPower.data.datasets[1].data = xySeries("power_limit");
       chartPower.data.datasets[2].data = xySeries("hashrate_th");

@@ -4348,21 +4348,21 @@ def _ghs_to_th(ghs: float | None) -> float | None:
 
 # Whatsminer hashboard layout by model family.
 # M63-class: 4 logical slots (2 physical PCBs × 2 virtual halves → paired temps).
-# M60S-class: 3 physical hashboards, 3 sensors.
+# M60S-class: 3 physical hashboards, 3 sensors → chart all three board0/1/2.
 HASHBOARD_LAYOUT: dict[str, dict] = {
     "M66": {"boards": 4, "chart": [0, 2], "note": "4 slots · paired sensors"},
     "M63": {"boards": 4, "chart": [0, 2], "note": "2 physical × 2 virtual slots"},
-    "M60S": {"boards": 3, "chart": [0, 1], "note": "3 hashboards"},
-    "M60": {"boards": 3, "chart": [0, 1]},
-    "M56": {"boards": 3, "chart": [0, 1]},
-    "M53": {"boards": 3, "chart": [0, 1]},
-    "M50S": {"boards": 3, "chart": [0, 1]},
-    "M50": {"boards": 3, "chart": [0, 1]},
-    "M33S": {"boards": 3, "chart": [0, 1]},
-    "M30S": {"boards": 3, "chart": [0, 1]},
-    "M30": {"boards": 3, "chart": [0, 1]},
-    "M21S": {"boards": 3, "chart": [0, 1]},
-    "M20S": {"boards": 3, "chart": [0, 1]},
+    "M60S": {"boards": 3, "chart": [0, 1, 2], "note": "3 hashboards"},
+    "M60": {"boards": 3, "chart": [0, 1, 2]},
+    "M56": {"boards": 3, "chart": [0, 1, 2]},
+    "M53": {"boards": 3, "chart": [0, 1, 2]},
+    "M50S": {"boards": 3, "chart": [0, 1, 2]},
+    "M50": {"boards": 3, "chart": [0, 1, 2]},
+    "M33S": {"boards": 3, "chart": [0, 1, 2]},
+    "M30S": {"boards": 3, "chart": [0, 1, 2]},
+    "M30": {"boards": 3, "chart": [0, 1, 2]},
+    "M21S": {"boards": 3, "chart": [0, 1, 2]},
+    "M20S": {"boards": 3, "chart": [0, 1, 2]},
 }
 
 
@@ -4396,25 +4396,49 @@ def resolve_hashboard_layout(
         elif n_devs and int(n_devs) > 0:
             n_guess = int(n_devs)
         n_guess = max(1, min(8, n_guess))
-        chart = [0, 2] if n_guess >= 4 else ([0, 1] if n_guess >= 2 else [0])
+        if n_guess >= 4:
+            chart = [0, 2]
+        elif n_guess >= 3:
+            chart = [0, 1, 2]
+        elif n_guess >= 2:
+            chart = [0, 1]
+        else:
+            chart = [0]
         layout = {
             "boards": n_guess,
             "chart": chart,
             "model_key": "auto",
             "note": "auto from DEVS/board-num",
         }
-    # Live DEVS wins when present
+    # Live DEVS wins when present — also fix chart slots for board count
     if n_devs is not None and int(n_devs) > 0:
         n = max(1, min(8, int(n_devs)))
         layout["boards"] = n
-        if n < 4 and list(layout.get("chart") or []) == [0, 2]:
-            layout["chart"] = [0, 1] if n >= 2 else [0]
+        layout["chart"] = _chart_slots_for_boards(n, layout.get("chart"))
     elif board_num is not None and int(board_num) > 0:
         n = max(1, min(8, int(board_num)))
         layout["boards"] = n
-        if n < 4 and list(layout.get("chart") or []) == [0, 2]:
-            layout["chart"] = [0, 1] if n >= 2 else [0]
+        layout["chart"] = _chart_slots_for_boards(n, layout.get("chart"))
     return layout
+
+
+def _chart_slots_for_boards(n: int, preferred: list | None = None) -> list[int]:
+    """Pick board indices for temp chart. 3-board ASICs → all three sensors."""
+    n = max(1, min(8, int(n)))
+    pref = [int(x) for x in (preferred or []) if isinstance(x, (int, float))]
+    pref = [x for x in pref if 0 <= x < n]
+    if n >= 4:
+        # M63-class: keep paired physical sensors if still valid
+        if pref == [0, 2] or (len(pref) == 2 and pref[0] == 0 and pref[-1] == 2):
+            return [0, 2]
+        if len(pref) >= 2:
+            return pref[:3]
+        return [0, 2]
+    if n >= 3:
+        return [0, 1, 2]
+    if n >= 2:
+        return [0, 1]
+    return [0]
 
 
 def _boards_from_v3_device_msg(msg: dict | None) -> list[dict]:
