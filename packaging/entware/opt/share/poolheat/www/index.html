@@ -808,7 +808,7 @@
       margin-top: 6px;
     }
 
-    /* —— temp bar (liquid zone map, 20–40 °C) + Safety red —— */
+    /* —— temp bar (T_ctrl zone map, dynamic °C range) + Safety red —— */
     .temp-scale {
       position: relative;
       height: 28px;
@@ -844,11 +844,27 @@
     }
 
     .temp-labels {
-      display: flex;
-      justify-content: space-between;
+      position: relative;
+      height: 1.1rem;
+      margin-top: 2px;
       font-size: 0.68rem;
       color: var(--dim);
       font-family: var(--mono);
+    }
+    .temp-labels > span {
+      position: absolute;
+      top: 0;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+    .temp-labels > span.scale-end-l {
+      left: 0 !important;
+      transform: none;
+    }
+    .temp-labels > span.scale-end-r {
+      left: auto !important;
+      right: 0;
+      transform: none;
     }
 
     .scale-legend {
@@ -2567,13 +2583,13 @@
                 <div class="temp-scale" id="liquid-temp-scale">
                   <div class="needle" id="needle" style="left:40%"></div>
                 </div>
-                <div class="temp-labels">
-                  <span>20</span>
+                <div class="temp-labels" id="liquid-temp-labels">
+                  <span class="scale-end-l" id="scale-min">20</span>
                   <span id="scale-low">24</span>
                   <span id="scale-mid">26</span>
                   <span id="scale-high">28</span>
                   <span id="scale-crit">35</span>
-                  <span>40</span>
+                  <span class="scale-end-r" id="scale-max">40</span>
                 </div>
                 <div class="scale-legend">
                   <span><i class="lg-z0"></i> Z0 High</span>
@@ -5328,37 +5344,86 @@
       paintLiquidScale(th);
     }
 
-    /** Paint Z0–Z3 + Safety red on liquid scale (20–40 °C). */
+    /**
+     * Dynamic °C range for T_ctrl scale.
+     * Liquid thresholds (~24–28) → ~20–40; board/chip (~45–70) expand to fit.
+     */
+    function tctrlScaleRange(th, tNow) {
+      const t0 = Number(th && th.t0);
+      const t1 = Number(th && th.t1);
+      const t2 = Number(th && th.t2);
+      const crit = Number(th && th.crit);
+      const vals = [t0, t1, t2].filter((v) => Number.isFinite(v));
+      if (Number.isFinite(Number(tNow))) vals.push(Number(tNow));
+      // Include T_crit on scale only when it is not wildly above T2
+      // (board max map with T2=65, crit=70 → include; liquid T2=28, crit=70 → tip only)
+      if (
+        Number.isFinite(crit) &&
+        Number.isFinite(t2) &&
+        crit > t2 &&
+        crit <= t2 + 25
+      ) {
+        vals.push(crit);
+      }
+      let lo = vals.length ? Math.min(...vals) : 20;
+      let hi = vals.length ? Math.max(...vals) : 40;
+      // classic liquid band as soft floor when thresholds sit there
+      if (Number.isFinite(t0) && t0 <= 35 && Number.isFinite(t2) && t2 <= 40) {
+        lo = Math.min(lo, 20);
+        hi = Math.max(hi, 40);
+      }
+      const pad = Math.max(4, (hi - lo) * 0.12);
+      lo = Math.floor((lo - pad) / 5) * 5;
+      hi = Math.ceil((hi + pad) / 5) * 5;
+      if (hi - lo < 15) hi = lo + 15;
+      if (lo < -10) lo = -10;
+      if (hi > 120) hi = 120;
+      return { minT: lo, maxT: hi };
+    }
+
+    function tctrlTempToPct(t, range) {
+      const v = Number(t);
+      if (!Number.isFinite(v) || !range) return 0;
+      const span = range.maxT - range.minT;
+      if (!(span > 0)) return 0;
+      return Math.min(100, Math.max(0, ((v - range.minT) / span) * 100));
+    }
+
+    /** Paint Z0–Z3 + Safety on dynamic T_ctrl scale; place numeric labels by °C. */
     function paintLiquidScale(th) {
       const scale = document.getElementById("liquid-temp-scale");
       if (!scale || !th) return;
-      const minT = 20;
-      const maxT = 40;
-      const span = maxT - minT;
-      const pct = (t) => {
-        const v = Number(t);
-        if (!Number.isFinite(v)) return 0;
-        return Math.min(100, Math.max(0, ((v - minT) / span) * 100));
-      };
+      // current needle value if known
+      let tNow = NaN;
+      try {
+        const r = typeof getReading === "function" ? getReading() : null;
+        tNow = r ? Number(resolveTctrl(r)) : NaN;
+      } catch (_) { /* ignore */ }
+      const range = tctrlScaleRange(th, tNow);
+      window.__tctrlScaleRange = range;
+      const minT = range.minT;
+      const maxT = range.maxT;
+      const pct = (t) => tctrlTempToPct(t, range);
+
       let p0 = pct(th.t0);
       let p1 = pct(th.t1);
       let p2 = pct(th.t2);
-      // keep monotonic zone stops
       if (p1 < p0) p1 = p0;
       if (p2 < p1) p2 = p1;
-      // Safety red tip: chip T_crit rarely maps into 20–40 — always reserve
-      // a visible red strip after Z3 (numbers for T_crit stay in labels).
+
+      // Safety red: map T_crit if it falls on scale; else small tip after Z3
       let pSafe = pct(th.crit);
-      const critOnScale = Number.isFinite(Number(th.crit)) &&
-        th.crit > minT && th.crit < maxT && th.crit > th.t2;
+      const critOnScale =
+        Number.isFinite(Number(th.crit)) &&
+        th.crit > minT &&
+        th.crit < maxT &&
+        th.crit > Number(th.t2);
       if (!critOnScale) {
-        // T_crit usually ~70 (chip) — fixed red tip after No-heat band
-        pSafe = Math.min(92, Math.max(p2 + 12, 80));
+        pSafe = Math.min(96, Math.max(p2 + 8, p2 + (100 - p2) * 0.35));
       }
-      // red strip at least ~8% wide
-      if (pSafe > 92) pSafe = 92;
-      if (pSafe < p2 + 6) pSafe = Math.min(92, p2 + 10);
-      // Z0 saturated dark green · Z1 green · Z2 blue · Z3 amber · Safety red
+      if (pSafe > 96) pSafe = 96;
+      if (pSafe < p2 + 4) pSafe = Math.min(96, p2 + 6);
+
       scale.style.background =
         "linear-gradient(90deg," +
         " #00a63e 0%," +
@@ -5371,6 +5436,45 @@
         " #f0b429 " + pSafe + "%," +
         " #f07178 " + pSafe + "%," +
         " #f07178 100%)";
+
+      // Labels: ends = range; mid = T0 T1 T2; optional crit if on scale
+      const setLab = (id, text, leftPct, endClass) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        if (endClass) {
+          el.style.left = "";
+          return;
+        }
+        el.style.left = leftPct + "%";
+      };
+      const fmtT = (t) => {
+        const v = Number(t);
+        if (!Number.isFinite(v)) return "—";
+        return Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toFixed(1);
+      };
+      setLab("scale-min", fmtT(minT), 0, true);
+      setLab("scale-max", fmtT(maxT), 100, true);
+      setLab("scale-low", fmtT(th.t0), p0);
+      setLab("scale-mid", fmtT(th.t1), p1);
+      setLab("scale-high", fmtT(th.t2), p2);
+      // crit label: real value if on scale, else show T_crit at red tip (info only)
+      const critEl = document.getElementById("scale-crit");
+      if (critEl) {
+        if (critOnScale) {
+          critEl.textContent = fmtT(th.crit);
+          critEl.style.left = pSafe + "%";
+          critEl.style.opacity = "1";
+        } else if (Number.isFinite(Number(th.crit))) {
+          // show chip T_crit near red tip without claiming it's on T_ctrl axis
+          critEl.textContent = "c" + fmtT(th.crit);
+          critEl.style.left = Math.min(94, pSafe + 2) + "%";
+          critEl.style.opacity = "0.75";
+        } else {
+          critEl.textContent = "";
+          critEl.style.opacity = "0";
+        }
+      }
     }
 
     function resetPresetThresholds() {
@@ -5964,9 +6068,14 @@
       const upfreq = r.upfreq_block;
       const dry = r.dry;
 
-      // needle on T_ctrl scale 20..40 °C (may clip for chip sensors)
-      const needleT = Number.isFinite(tLiquid) ? tLiquid : 20;
-      const pct = Math.min(100, Math.max(0, ((needleT - 20) / 20) * 100));
+      // needle on dynamic T_ctrl scale (range from paintLiquidScale)
+      const range = window.__tctrlScaleRange || { minT: 20, maxT: 40 };
+      const needleT = Number.isFinite(tLiquid) ? tLiquid : range.minT;
+      const span = range.maxT - range.minT;
+      const pct =
+        span > 0
+          ? Math.min(100, Math.max(0, ((needleT - range.minT) / span) * 100))
+          : 0;
       const needleEl = document.getElementById("needle");
       if (needleEl) needleEl.style.left = pct + "%";
 
