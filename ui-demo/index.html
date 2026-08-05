@@ -550,6 +550,49 @@
       position: relative;
       top: 0;
     }
+    /* Frequency: vol top-left · chip# top-right · freq center · err bottom */
+    .chip-cell.chip-freq {
+      justify-content: space-between;
+      padding: 1px;
+    }
+    .chip-cell.chip-freq .c-top {
+      display: none;
+    }
+    .chip-cell.chip-freq .c-vol {
+      position: absolute;
+      top: 1px;
+      left: 2px;
+      font-size: 0.4rem;
+      font-weight: 600;
+      opacity: 0.55;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .chip-cell.chip-freq .c-id {
+      position: absolute;
+      top: 1px;
+      right: 2px;
+      left: auto;
+      text-align: right;
+      font-size: 0.4rem;
+      font-weight: 500;
+      opacity: 0.38;
+      letter-spacing: 0;
+    }
+    .chip-cell.chip-freq .c-main {
+      font-size: 0.78rem;
+      font-weight: 700;
+      width: 100%;
+      padding-top: 8px;
+      padding-left: 0;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .chip-cell.chip-freq .c-bot {
+      display: flex;
+    }
     .chip-cell.chip-light {
       color: rgba(12, 18, 14, 0.92);
       text-shadow: none;
@@ -557,6 +600,8 @@
     }
     .chip-cell.chip-light .c-id { opacity: 0.4; }
     .chip-cell.chip-simple.chip-light .c-id { opacity: 0.42; }
+    .chip-cell.chip-freq.chip-light .c-id { opacity: 0.4; }
+    .chip-cell.chip-freq.chip-light .c-vol { opacity: 0.5; }
     .chip-cell.chip-light .c-top,
     .chip-cell.chip-light .c-bot { opacity: 0.8; }
     .chip-legend {
@@ -11817,17 +11862,20 @@
      * Cell layout:
      * - temp / gradient / outliers → °C center
      * - nonce_def → deficit % center (−12%)
-     * - hash metrics → dense HashSource-style
+     * - freq → vol top-left · # top-right · MHz center · err bottom
+     * - other hash metrics → dense HashSource-style
      */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
       cell.className = "chip-cell";
       const simple = chipmapIsTempSimpleMetric(metric);
+      const isFreq = metric === "freq";
       if (simple) cell.classList.add("chip-simple");
+      if (isFreq) cell.classList.add("chip-freq");
       if (!c) {
         cell.classList.add("empty");
         cell.innerHTML =
-          '<span class="c-id">' +
+          '<span class="c-vol"></span><span class="c-id">' +
           id +
           '</span><span class="c-top"></span><span class="c-main">—</span><span class="c-bot"></span>';
         return cell;
@@ -11839,7 +11887,7 @@
         metricRange.min,
         metricRange.max
       );
-      // light fill → dark text (HashSource yellow/lime cells)
+      // light fill → dark text
       if (v != null && metricRange.max > metricRange.min) {
         const t =
           (Number(v) - metricRange.min) /
@@ -11871,8 +11919,22 @@
             ? String(c.x2 | 0)
             : "0";
       const mainHtml = chipmapMainHtml(c, metric, analysis);
-      if (simple) {
+      const bot =
+        '<span class="c-bot"><span>' +
+        err +
+        "</span><span>" +
+        crc +
+        "</span><span>" +
+        x +
+        "</span><span>" +
+        rep +
+        "</span></span>";
+      if (isFreq) {
+        // vol · # · large freq — no double freq in header
         cell.innerHTML =
+          '<span class="c-vol">' +
+          vol +
+          "</span>" +
           '<span class="c-id">' +
           chipNo +
           "</span>" +
@@ -11880,17 +11942,21 @@
           '<span class="c-main">' +
           mainHtml +
           "</span>" +
-          '<span class="c-bot"><span>' +
-          err +
-          "</span><span>" +
-          crc +
-          "</span><span>" +
-          x +
-          "</span><span>" +
-          rep +
-          "</span></span>";
+          bot;
+      } else if (simple) {
+        cell.innerHTML =
+          '<span class="c-vol"></span>' +
+          '<span class="c-id">' +
+          chipNo +
+          "</span>" +
+          '<span class="c-top"></span>' +
+          '<span class="c-main">' +
+          mainHtml +
+          "</span>" +
+          bot;
       } else {
         cell.innerHTML =
+          '<span class="c-vol"></span>' +
           '<span class="c-id">C' +
           chipNo +
           "</span>" +
@@ -11902,15 +11968,7 @@
           '<span class="c-main">' +
           mainHtml +
           "</span>" +
-          '<span class="c-bot"><span>' +
-          err +
-          "</span><span>" +
-          crc +
-          "</span><span>" +
-          x +
-          "</span><span>" +
-          rep +
-          "</span></span>";
+          bot;
       }
       cell.dataset.tip = chipmapBuildTip(c, metric, analysis);
       return cell;
@@ -12425,7 +12483,7 @@
       outliers:
         "Outliers — чип горячее того же C# на других платах (z-score)",
       nonce_def:
-        "Nonce deficit — nonce ниже среднего по слоту (слабый / мёртвый чип)",
+        "Nonce deficit — в центре % ниже среднего nonce слота (−12% = слабее avg)",
       est_th: "Hash est — оценка TH/s чипа (доля nonce × hashrate ASIC)",
       nonce: "Hash (nonce) — сырой счётчик nonce чипа",
       nonce_rate: "Nonce/s — nonce / mining elapsed",
