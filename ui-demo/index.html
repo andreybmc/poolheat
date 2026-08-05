@@ -1721,12 +1721,20 @@
 
     .board-chip-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      /* column count set via --board-cols (JS) so 3 boards fill full width */
+      grid-template-columns: repeat(var(--board-cols, 4), minmax(0, 1fr));
       gap: 10px;
+      width: 100%;
     }
 
     @media (max-width: 720px) {
-      .board-chip-grid { grid-template-columns: 1fr 1fr; }
+      /* keep stretch by count when 1–2; 3+ wrap to 2 cols on narrow */
+      .board-chip-grid[data-cols="3"],
+      .board-chip-grid[data-cols="4"],
+      .board-chip-grid[data-cols="5"],
+      .board-chip-grid[data-cols="6"] {
+        grid-template-columns: 1fr 1fr;
+      }
     }
 
     .bc-cell {
@@ -5418,6 +5426,9 @@
       const grid = document.getElementById("boards-grid");
       if (!grid) return;
       const nWant = Math.max(1, Math.min(8, Number(n) || 4));
+      // stretch columns across full card width (3 → three equal fr columns)
+      grid.style.setProperty("--board-cols", String(nWant));
+      grid.setAttribute("data-cols", String(nWant));
       const cur = grid.querySelectorAll(".bc-cell").length;
       if (cur === nWant) return;
       let html = "";
