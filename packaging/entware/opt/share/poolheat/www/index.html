@@ -1297,7 +1297,6 @@
       color: var(--muted);
       font-size: 0.78rem;
       line-height: 1.5;
-      white-space: pre-wrap;
       word-break: break-word;
       max-height: 280px;
       overflow: auto;
@@ -1306,14 +1305,31 @@
     .update-notes.is-visible {
       display: block;
     }
+    /* Visual layout:
+         Release notes
+         <blank>
+         <blank>
+         body text…
+    */
     .update-notes .rn-label {
       display: block;
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--dim);
-      margin-bottom: 6px;
+      font-size: 0.78rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      color: var(--text);
+      margin: 0;
+      padding: 0;
       font-family: var(--font);
+      text-transform: none;
+    }
+    .update-notes #info-update-notes-body {
+      display: block;
+      margin: 0;
+      padding: 0;
+      /* two blank lines after title (line-height 1.5 × 2 ≈ 3em) */
+      margin-top: 3em;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
 
     .sim-panel {
@@ -9222,11 +9238,13 @@
       }
       if (notesEl) {
         const bodyEl = document.getElementById("info-update-notes-body");
-        const raw = (chk.notes || "").replace(/\r\n/g, "\n").trim();
+        // Preserve author line breaks; trim only leading/trailing blank lines
+        let raw = (chk.notes || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+        raw = raw.replace(/^\n+/, "").replace(/\n+$/, "");
         if (raw) {
           notesEl.hidden = false;
           notesEl.classList.add("is-visible");
-          // keep newlines; strip a leading single "# " title only if pure markdown noise
+          // Label is «Release notes»; body starts after two blank lines (CSS margin-top)
           if (bodyEl) bodyEl.textContent = raw;
         } else {
           notesEl.hidden = true;
