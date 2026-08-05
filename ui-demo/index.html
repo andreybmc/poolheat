@@ -400,51 +400,112 @@
     .chip-snake {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 12px;
       width: max-content;
       max-width: none;
     }
     .chip-section {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 3px;
     }
     .chip-row {
       display: flex;
       flex-direction: row;
-      gap: 2px;
+      gap: 3px;
     }
     /* legacy flat grid (fallback when layout unknown) */
     .chip-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
       gap: 3px;
       max-width: 100%;
     }
+    /*
+     * HashSource-style cell (~55×55):
+     *  top:    freq  vol
+     *  mid:    large value (temp / metric)
+     *  bot:    err crc x repeat
+     *  corner: C#
+     */
     .chip-cell {
-      width: 28px;
-      height: 28px;
-      flex: 0 0 28px;
-      border-radius: 3px;
+      width: 54px;
+      height: 54px;
+      flex: 0 0 54px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
       background: var(--border2);
       cursor: default;
       position: relative;
       display: flex;
+      flex-direction: column;
       align-items: center;
-      justify-content: center;
-      font-size: 0.58rem;
-      font-weight: 650;
+      justify-content: space-between;
+      padding: 3px 2px 2px;
+      font-weight: 600;
       line-height: 1;
       color: rgba(255, 255, 255, 0.92);
-      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
+      text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
       user-select: none;
       box-sizing: border-box;
+      overflow: hidden;
     }
     .chip-cell.empty {
-      opacity: 0.22;
+      opacity: 0.28;
       color: transparent;
       text-shadow: none;
+      border-color: transparent;
     }
+    .chip-cell .c-id {
+      position: absolute;
+      top: 1px;
+      right: 2px;
+      font-size: 0.52rem;
+      font-weight: 700;
+      opacity: 0.55;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .chip-cell .c-top {
+      display: flex;
+      justify-content: center;
+      gap: 5px;
+      width: 100%;
+      font-size: 0.58rem;
+      font-weight: 600;
+      opacity: 0.9;
+      padding-right: 10px; /* room for C# */
+      box-sizing: border-box;
+    }
+    .chip-cell .c-main {
+      font-size: 1.05rem;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .chip-cell .c-bot {
+      display: flex;
+      justify-content: center;
+      gap: 3px;
+      width: 100%;
+      font-size: 0.5rem;
+      font-weight: 600;
+      opacity: 0.78;
+      font-variant-numeric: tabular-nums;
+    }
+    .chip-cell.chip-light {
+      color: rgba(12, 18, 14, 0.92);
+      text-shadow: none;
+      border-color: rgba(0, 0, 0, 0.12);
+    }
+    .chip-cell.chip-light .c-id { opacity: 0.45; }
+    .chip-cell.chip-light .c-top,
+    .chip-cell.chip-light .c-bot { opacity: 0.8; }
     .chip-legend {
       display: flex;
       flex-wrap: wrap;
@@ -11050,7 +11111,10 @@
       return "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)";
     }
 
-    /** green (ok) → yellow → orange → red (bad) */
+    /**
+     * HashSource-like hazard: deep green (ok) → olive → amber → orange → red (bad).
+     * Matches demo_nonce.png palette.
+     */
     function chipHazardColor(value, vmin, vmax) {
       if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
       const v = Number(value);
@@ -11066,10 +11130,13 @@
         Math.floor(t * CHIP_TEMP_STEPS + 1e-9)
       );
       const tq = step / (CHIP_TEMP_STEPS - 1);
-      // hue 145 green → 0 red
-      const h = 145 - tq * 145;
-      const s = 62 + tq * 18;
-      const l = 28 + tq * 18;
+      // stops: green 145 → yellow 55 → orange 28 → red 0
+      let h;
+      if (tq < 0.4) h = 145 - (tq / 0.4) * 90;
+      else if (tq < 0.7) h = 55 - ((tq - 0.4) / 0.3) * 27;
+      else h = 28 - ((tq - 0.7) / 0.3) * 28;
+      const s = 58 + tq * 22;
+      const l = 22 + tq * 16;
       return "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)";
     }
 
@@ -11306,12 +11373,47 @@
       return bySlot;
     }
 
+    /**
+     * Center value (HashSource always shows temp so the physical map stays readable;
+     * color encodes the selected metric). For hash-only metrics we still show temp
+     * as primary — nonce/TH are in the tooltip.
+     */
+    function chipmapMainLabel(c, metric, analysis) {
+      if (!c) return "—";
+      // optional: show metric number when it's not temperature-colored
+      if (metric === "est_th" && c.est_th != null && Number.isFinite(Number(c.est_th))) {
+        const t = Number(c.est_th);
+        return t >= 10 ? t.toFixed(1) : t.toFixed(2);
+      }
+      if (metric === "nonce" && c.nonce != null && Number.isFinite(Number(c.nonce))) {
+        const n = Number(c.nonce);
+        if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+        if (n >= 10000) return Math.round(n / 1000) + "k";
+        if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+        return String(Math.round(n));
+      }
+      // default + gradient/outliers/nonce_def/temp/freq: large = °C
+      return c.temp != null && Number.isFinite(Number(c.temp))
+        ? String(Math.round(Number(c.temp)))
+        : "—";
+    }
+
+    /**
+     * HashSource-style cell:
+     *   freq  vol
+     *     MAIN
+     *  err crc x r
+     * + C# corner · color by metric
+     */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
       cell.className = "chip-cell";
-      cell.textContent = String(id);
       if (!c) {
         cell.classList.add("empty");
+        cell.innerHTML =
+          '<span class="c-id">' +
+          id +
+          '</span><span class="c-top"></span><span class="c-main">—</span><span class="c-bot"></span>';
         return cell;
       }
       const v = chipmapChipValue(c, metric, analysis);
@@ -11321,29 +11423,78 @@
         metricRange.min,
         metricRange.max
       );
+      // light fill → dark text (HashSource yellow/lime cells)
       if (v != null && metricRange.max > metricRange.min) {
         const t =
           (Number(v) - metricRange.min) /
           (metricRange.max - metricRange.min);
-        // analysis: higher worse → red/light → dark text when hot
-        // temp/perf: higher → lighter fill
-        if (chipmapIsAnalysisMetric(metric)) {
-          if (t > 0.55) {
-            cell.style.color = "rgba(255,255,255,0.95)";
-          }
-        } else if (t > 0.55) {
-          cell.style.color = "rgba(12, 28, 16, 0.9)";
-          cell.style.textShadow = "none";
+        const lightFill =
+          chipmapIsAnalysisMetric(metric)
+            ? t > 0.35 && t < 0.75 // mid yellows
+            : t > 0.5;
+        // also force dark text on very light greens/yellows via luminance heuristic
+        if (lightFill && !chipmapIsAnalysisMetric(metric)) {
+          cell.classList.add("chip-light");
+        } else if (metric === "temp" && t > 0.55) {
+          cell.classList.add("chip-light");
+        } else if (
+          (metric === "nonce" ||
+            metric === "est_th" ||
+            metric === "nonce_rate" ||
+            metric === "freq") &&
+          t > 0.55
+        ) {
+          cell.classList.add("chip-light");
         }
       }
+      const freq =
+        c.freq != null && Number.isFinite(Number(c.freq))
+          ? String(Math.round(Number(c.freq)))
+          : "—";
+      const vol =
+        c.vol != null && Number.isFinite(Number(c.vol))
+          ? String(Math.round(Number(c.vol)))
+          : "—";
+      const err = c.err != null ? String(c.err | 0) : "0";
+      const crc = c.crc != null ? String(c.crc | 0) : "0";
+      const x = c.x != null ? String(c.x | 0) : "0";
+      const rep =
+        c.repeat != null
+          ? String(c.repeat | 0)
+          : c.x2 != null
+            ? String(c.x2 | 0)
+            : "0";
+      const main = chipmapMainLabel(c, metric, analysis);
+      cell.innerHTML =
+        '<span class="c-id">C' +
+        (c.id != null ? c.id : id) +
+        "</span>" +
+        '<span class="c-top"><span>' +
+        freq +
+        "</span><span>" +
+        vol +
+        "</span></span>" +
+        '<span class="c-main">' +
+        main +
+        "</span>" +
+        '<span class="c-bot"><span>' +
+        err +
+        "</span><span>" +
+        crc +
+        "</span><span>" +
+        x +
+        "</span><span>" +
+        rep +
+        "</span></span>";
       let tip =
         "C" +
         c.id +
-        " · " +
+        " · temp " +
         (c.temp != null ? c.temp + "°C" : "—") +
-        " · " +
-        (c.freq != null ? c.freq + " MHz" : "");
-      if (c.vol != null) tip += " · vol " + c.vol;
+        " · freq " +
+        freq +
+        " · vol " +
+        vol;
       if (c.est_th != null && Number.isFinite(Number(c.est_th)))
         tip += " · ≈" + Number(c.est_th).toFixed(3) + " TH/s";
       if (c.nonce != null) tip += " · nonce " + c.nonce;
@@ -11351,7 +11502,7 @@
         tip += " · " + Number(c.nonce_rate).toFixed(2) + " n/s";
       if (c.hash_share_asic != null)
         tip += " · " + Number(c.hash_share_asic).toFixed(2) + "% ASIC";
-      if (c.err) tip += " · err " + c.err;
+      tip += " · err " + err + " crc " + crc + " x " + x + " r " + rep;
       if (analysis) {
         if (analysis.gradient > 0)
           tip += " · Δup " + analysis.gradient.toFixed(1) + "°C";
@@ -11694,7 +11845,7 @@
           " → " +
           labels.high +
           " (10 steps)</span>" +
-          "<span>номер = C# · layout " +
+          "<span>ячейка: C# · freq/vol · temp · err/crc/x/r · layout " +
           (isHydro ? "hydro/link" : "snake") +
           "</span>";
       }
