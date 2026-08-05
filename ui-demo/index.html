@@ -2124,6 +2124,23 @@
     .chart-zoom-row label.field {
       min-width: 140px;
     }
+
+    .lang-select {
+      appearance: none;
+      background: var(--panel2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 4px 28px 4px 10px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+        linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+      background-position: calc(100% - 14px) calc(50% - 2px), calc(100% - 9px) calc(50% - 2px);
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+    }
+    .lang-select:focus { outline: none; border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -2167,6 +2184,13 @@
         </div>
       </div>
       <div class="header-meta">
+        <label class="lang-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-right:4px" title="Language / Язык">
+          <span style="font-size:0.72rem;color:var(--dim)" data-i18n="lang.label_short">Язык</span>
+          <select id="ui-lang-select" class="lang-select" aria-label="Language">
+            <option value="ru">RU</option>
+            <option value="en">EN</option>
+          </select>
+        </label>
         <span class="pill accent tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
         <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
         <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
@@ -2177,8 +2201,8 @@
 
     <div class="banner dry" id="banner-dry">
       <strong>DRY RUN</strong>
-      <span>Авто-зоны не пишутся · Safety работает · лог only</span>
-      <button class="btn ghost" type="button" style="margin-left:auto" id="btn-dry-goto">Майнер · Dry Run</button>
+      <span data-i18n="banner.dry_span">Авто-зоны не пишутся · Safety работает · лог only</span>
+      <button class="btn ghost" type="button" style="margin-left:auto" id="btn-dry-goto" data-i18n="btn.dry_goto">Майнер · Dry Run</button>
     </div>
 
     <div class="banner warmup" id="banner-warmup" style="display:none">
@@ -2196,7 +2220,7 @@
         Auto-зоны Z0–Z2 на паузе · Safety Critical работает ·
         осталось <span id="override-timer">—:—</span>
       </span>
-      <button class="btn danger" type="button" style="margin-left:auto" id="btn-override-clear">
+      <button class="btn danger" type="button" style="margin-left:auto" id="btn-override-clear" data-i18n="btn.override_off">
         Отключить Override
       </button>
     </div>
@@ -2205,10 +2229,10 @@
       <span class="tag" id="src-tag">LIVE</span>
       <span class="src" id="src-detail">— · Whatsminer — · обновлено —</span>
       <span class="src" id="src-updated" hidden></span>
-      <button class="btn ghost" type="button" id="btn-refresh" onclick="fetchLive(true)">Обновить</button>
+      <button class="btn ghost" type="button" id="btn-refresh" onclick="fetchLive(true)" data-i18n="btn.refresh">Обновить</button>
       <label class="check" style="margin:0 0 0 auto">
         <input type="checkbox" id="use-live" checked />
-        <span>Live с майнера</span>
+        <span data-i18n="check.live">Live с майнера</span>
       </label>
     </div>
 
@@ -2237,12 +2261,12 @@
     </div>
 
     <nav class="tabs" role="tablist">
-      <button type="button" class="active" data-tab="dash">Обзор</button>
-      <button type="button" data-tab="miner">Майнер</button>
-      <button type="button" data-tab="map">Карта зон</button>
-      <button type="button" data-tab="pool">Бассейн</button>
-      <button type="button" data-tab="settings">Настройки</button>
-      <button type="button" data-tab="info">Инфо</button>
+      <button type="button" class="active" data-tab="dash" data-i18n="tab.dash">Обзор</button>
+      <button type="button" data-tab="miner" data-i18n="tab.miner">Майнер</button>
+      <button type="button" data-tab="map" data-i18n="tab.map">Карта зон</button>
+      <button type="button" data-tab="pool" data-i18n="tab.pool">Бассейн</button>
+      <button type="button" data-tab="settings" data-i18n="tab.settings">Настройки</button>
+      <button type="button" data-tab="info" data-i18n="tab.info">Инфо</button>
     </nav>
 
     <!-- ========== DASHBOARD ========== -->
@@ -2352,7 +2376,7 @@
         <div class="card errors-card" id="panel-miner-errors" style="display:none" hidden role="alert">
           <div class="card-h">
             <div>
-              <h2>Errors</h2>
+              <h2 data-i18n="h2.errors">Errors</h2>
               <div class="sub">активные · get_error_code · ErrorCode · Cause · Time</div>
             </div>
             <span class="pill danger" id="pill-err-count" style="display:none"><span class="dot"></span> 0</span>
@@ -2375,9 +2399,9 @@
         <div class="card" id="panel-history-charts">
           <div class="card-h">
             <div>
-              <h2>История и графики</h2>
+              <h2 data-i18n="h2.history">История и графики</h2>
             </div>
-            <button class="btn" type="button" id="btn-hist-refresh">Обновить</button>
+            <button class="btn" type="button" id="btn-hist-refresh" data-i18n="btn.refresh">Обновить</button>
           </div>
           <div class="card-b">
             <div class="chart-zoom-row">
@@ -2398,13 +2422,13 @@
             </div>
 
             <div class="card" style="box-shadow:none;margin-bottom:14px">
-              <div class="card-h"><div><h2>Температуры °C</h2></div></div>
+              <div class="card-h"><div><h2 data-i18n="h2.temps">Температуры °C</h2></div></div>
               <div class="card-b" style="height:260px;position:relative">
                 <canvas id="chart-temp"></canvas>
               </div>
             </div>
             <div class="card" style="box-shadow:none;margin-bottom:10px">
-              <div class="card-h"><div><h2>Мощность · Хешрейт · J/T</h2></div></div>
+              <div class="card-h"><div><h2 data-i18n="h2.power">Мощность · Хешрейт · J/T</h2></div></div>
               <div class="card-b" style="height:240px;position:relative">
                 <canvas id="chart-power"></canvas>
               </div>
@@ -2429,10 +2453,10 @@
     <!-- ========== MINER ========== -->
     <section class="view" id="view-miner">
       <nav class="subtabs" role="tablist" aria-label="Майнер">
-        <button type="button" class="active" data-subtab="miner">Майнер</button>
-        <button type="button" data-subtab="pools">Пулы</button>
-        <button type="button" data-subtab="chips">Чипы</button>
-        <button type="button" data-subtab="info">Инфо</button>
+        <button type="button" class="active" data-subtab="miner" data-i18n="sub.miner">Майнер</button>
+        <button type="button" data-subtab="pools" data-i18n="sub.pools">Пулы</button>
+        <button type="button" data-subtab="chips" data-i18n="sub.chips">Чипы</button>
+        <button type="button" data-subtab="info" data-i18n="sub.info">Инфо</button>
       </nav>
 
       <div class="subview active" id="subview-miner">
@@ -2440,15 +2464,15 @@
         <div class="card" id="panel-dry-run">
           <div class="card-h">
             <div>
-              <h2 class="tip" data-tip-key="dry_run">Dry Run</h2>
-              <div class="sub">авто-зоны · Safety всегда · после галки — Сохранить</div>
+              <h2 class="tip" data-tip-key="dry_run" data-i18n="h2.dry">Dry Run</h2>
+              <div class="sub" data-i18n="sub.dry">авто-зоны · Safety всегда · после галки — Сохранить</div>
             </div>
             <div class="btn-row" style="gap:10px;align-items:center">
               <label class="check" style="margin:0">
                 <input type="checkbox" id="dry-run" checked />
                 <span>Dry Run</span>
               </label>
-              <button class="btn primary" type="button" id="btn-dry-save" hidden>Сохранить</button>
+              <button class="btn primary" type="button" id="btn-dry-save" hidden data-i18n="btn.save">Сохранить</button>
             </div>
           </div>
           <div class="card-b">
@@ -2461,7 +2485,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Режим майнера</h2>
+              <h2 data-i18n="h2.mode">Режим майнера</h2>
               <div class="sub">measured с API майнера (mineroff · mode · power_limit_set) · ручная установка ниже</div>
             </div>
             <span class="pill" id="pill-write" style="display:none"><span class="dot"></span> write…</span>
@@ -2558,7 +2582,7 @@
                     <span class="desc">установите галку для изменения режимов</span>
                   </span>
                 </label>
-                <button class="btn ghost" type="button" id="btn-refresh-pw" onclick="fetchLive(true)">Обновить статус</button>
+                <button class="btn ghost" type="button" id="btn-refresh-pw" onclick="fetchLive(true)" data-i18n="btn.refresh_status">Обновить статус</button>
               </div>
               <div class="write-log" id="write-log">
                 <p id="write-status" class="write-status">last write: —</p>
@@ -2571,7 +2595,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2 id="boards-pcb-title">Платы (PCB) · hashboard</h2>
+              <h2 id="boards-pcb-title" data-i18n="h2.boards">Платы (PCB) · hashboard</h2>
               <div class="sub" id="boards-pcb-sub">devs[].Temperature · Upfreq Complete</div>
             </div>
           </div>
@@ -2584,7 +2608,7 @@
           <div class="card">
             <div class="card-h">
               <div>
-                <h2>Слои решения</h2>
+                <h2 data-i18n="h2.layers">Слои решения</h2>
                 <div class="sub">приоритет сверху вниз</div>
               </div>
             </div>
@@ -2601,7 +2625,7 @@
           <div class="card">
             <div class="card-h">
               <div>
-                <h2>Что применили бы сейчас</h2>
+                <h2 data-i18n="h2.would_apply">Что применили бы сейчас</h2>
                 <div class="sub">preview · dry_run</div>
               </div>
             </div>
@@ -2656,7 +2680,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Карта чипов</h2>
+              <h2 data-i18n="h2.chipmap">Карта чипов</h2>
               <div class="sub" id="chipmap-mode-hint" style="line-height:1.45;max-width:52rem">
                 —
               </div>
@@ -2674,7 +2698,7 @@
                   <option value="freq">Frequency</option>
                 </select>
               </label>
-              <button class="btn" type="button" id="btn-chipmap-refresh">Обновить</button>
+              <button class="btn" type="button" id="btn-chipmap-refresh" data-i18n="btn.refresh">Обновить</button>
             </div>
           </div>
           <div class="card-b">
@@ -2687,7 +2711,7 @@
         <div class="card" id="panel-chipmap-glossary">
           <div class="card-h">
             <div>
-              <h2>Параметры чипа</h2>
+              <h2 data-i18n="h2.chip_params">Параметры чипа</h2>
               <div class="sub">кратко · что видно на карте и в tooltip</div>
             </div>
           </div>
@@ -2714,8 +2738,8 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Опрос карты чипов</h2>
-              <div class="sub">отдельный интервал · web admin · не смешивается с live poll</div>
+              <h2 data-i18n="h2.chip_poll">Опрос карты чипов</h2>
+              <div class="sub" data-i18n="sub.chip_poll">отдельный интервал · web admin · не смешивается с live poll</div>
             </div>
             <button class="btn primary" type="button" id="btn-chipmap-cfg-save">Сохранить</button>
           </div>
@@ -2852,7 +2876,7 @@
               <h2>Pools</h2>
               <div class="sub">stratum · Active · shares · Whatsminer pools</div>
             </div>
-            <button class="btn" type="button" id="btn-pools-refresh">Обновить</button>
+            <button class="btn" type="button" id="btn-pools-refresh" data-i18n="btn.refresh">Обновить</button>
           </div>
           <div class="card-b" style="padding-top:8px">
             <div style="overflow:auto">
@@ -2884,7 +2908,7 @@
         <div class="card" id="panel-pool-presets">
           <div class="card-h">
             <div>
-              <h2>Пресеты пулов</h2>
+              <h2 data-i18n="h2.pool_presets">Пресеты пулов</h2>
               <div class="sub">сохранить текущие · применить на ASIC · править url/user/pass</div>
             </div>
           </div>
@@ -2948,7 +2972,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Карта зон · нагрев бассейна</h2>
+              <h2 data-i18n="h2.zone_map">Карта зон · нагрев бассейна</h2>
               <div class="sub">Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat · safety отдельно</div>
             </div>
             <button class="btn primary" type="button" id="btn-save-map">Сохранить карту</button>
@@ -2964,7 +2988,7 @@
             <div class="card" style="margin-bottom:14px;box-shadow:none" id="panel-zone-presets">
               <div class="card-h">
                 <div>
-                  <h2>Пресеты карты</h2>
+                  <h2 data-i18n="h2.zone_presets">Пресеты карты</h2>
                   <div class="sub">сохранить · применить · перезаписать · удалить</div>
                 </div>
               </div>
@@ -3000,7 +3024,7 @@
             <div class="card" style="margin-bottom:14px;box-shadow:none">
               <div class="card-h">
                 <div>
-                  <h2>Пороги (°C)</h2>
+                  <h2 data-i18n="h2.thresholds">Пороги (°C)</h2>
                   <div class="sub">T_ctrl датчик · T0 · T1 · T2 · h · chip Critical</div>
                 </div>
                 <button class="btn ghost" type="button" onclick="resetPresetThresholds()">Пороги 24 / 26 / 28 · h 0.5</button>
@@ -3050,7 +3074,7 @@
             <div class="card" style="margin-bottom:14px;box-shadow:none" id="panel-liquid-scale">
               <div class="card-h">
                 <div>
-                  <h2>Шкала T_ctrl (карта зон)</h2>
+                  <h2 data-i18n="h2.scale">Шкала T_ctrl (карта зон)</h2>
                   <div class="sub" id="scale-tctrl-sub">игла = T_ctrl · T0 / T1 / T2 · зоны Z0–Z3</div>
                 </div>
               </div>
@@ -3296,7 +3320,7 @@
                 <div class="card" style="box-shadow:none;margin-bottom:12px;border-color:rgba(240,113,120,0.35)">
                   <div class="card-h" style="padding:10px 12px">
                     <div>
-                      <h2 style="font-size:0.85rem">Если T_crit</h2>
+                      <h2 style="font-size:0.85rem" data-i18n="h2.if_tcrit">Если T_crit</h2>
                       <div class="sub">вход · T_safe ≥ T_crit · аварийный профиль</div>
                     </div>
                   </div>
@@ -3346,7 +3370,7 @@
                 <div class="card" style="box-shadow:none;border-color:rgba(61,156,240,0.3)">
                   <div class="card-h" style="padding:10px 12px">
                     <div>
-                      <h2 style="font-size:0.85rem">Если T_crit_clear</h2>
+                      <h2 style="font-size:0.85rem" data-i18n="h2.if_tcrit_clear">Если T_crit_clear</h2>
                       <div class="sub">выход · T_safe ≤ T_crit_clear · снять Critical</div>
                     </div>
                   </div>
@@ -3406,7 +3430,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Бассейн · геометрия</h2>
+              <h2 data-i18n="h2.pool_geo">Бассейн · геометрия</h2>
               <div class="sub">тип формы · кубатура и зеркало считаются автоматически</div>
             </div>
             <button class="btn primary" type="button" id="btn-pool-save">Сохранить</button>
@@ -3469,7 +3493,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Водообмен · циркуляция</h2>
+              <h2 data-i18n="h2.circulation">Водообмен · циркуляция</h2>
               <div class="sub">скорость прокачки через теплообменник</div>
             </div>
           </div>
@@ -3500,11 +3524,11 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Погода · город</h2>
+              <h2 data-i18n="h2.weather">Погода · город</h2>
               <div class="sub">Open-Meteo · текущая t°C на улице · без API-ключа</div>
             </div>
             <div class="btn-row" style="gap:8px">
-              <button class="btn" type="button" id="btn-wx-refresh">Обновить погоду</button>
+              <button class="btn" type="button" id="btn-wx-refresh" data-i18n="btn.refresh_weather">Обновить погоду</button>
               <button class="btn primary" type="button" id="btn-wx-interval-save">Сохранить</button>
             </div>
           </div>
@@ -3521,19 +3545,19 @@
                 <div class="val" style="font-size:1.05rem" id="wx-cfg-city">—</div>
                 <div class="hint" id="wx-cfg-meta">—</div>
               </div>
-              <label class="field" style="margin:0;align-self:start">Интервал обновления, мин
+              <label class="field" style="margin:0;align-self:start"><span data-i18n="wx.interval">Интервал обновления, мин</span>
                 <input type="number" id="wx-interval-min" value="10" min="1" max="1440" step="1" />
               </label>
             </div>
             <div class="row" style="align-items:end">
-              <label class="field" style="flex:1">Поиск города
+              <label class="field" style="flex:1"><span data-i18n="field.city_search">Поиск города</span>
                 <input type="text" id="wx-search" placeholder="Например: Москва" autocomplete="off" />
               </label>
-              <button class="btn primary" type="button" id="btn-wx-search">Найти</button>
+              <button class="btn primary" type="button" id="btn-wx-search" data-i18n="btn.find">Найти</button>
             </div>
             <div class="weather-results" id="wx-results" hidden></div>
             <div>
-              <div style="font-size:0.75rem;color:var(--dim);margin-bottom:4px">Быстрый выбор</div>
+              <div style="font-size:0.75rem;color:var(--dim);margin-bottom:4px" data-i18n="label.quick_pick">Быстрый выбор</div>
               <div class="weather-preset-row" id="wx-presets"></div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted)" id="wx-status">—</p>
@@ -3545,20 +3569,39 @@
     <!-- ========== SETTINGS ========== -->
     <section class="view" id="view-settings">
       <nav class="subtabs" role="tablist" aria-label="Настройки">
-        <button type="button" class="active" data-subtab="main">Основные</button>
-        <button type="button" data-subtab="advanced">Расширенные</button>
+        <button type="button" class="active" data-subtab="main" data-i18n="sub.main">Основные</button>
+        <button type="button" data-subtab="advanced" data-i18n="sub.advanced">Расширенные</button>
       </nav>
       <div class="subview active" id="subview-settings-main">
       <div class="stack">
+        <div class="card" id="panel-ui-lang">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="lang.label">Язык интерфейса</h2>
+              <div class="sub" data-i18n="lang.sub">русский · English</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-ui-lang-save" data-i18n="btn.save">Сохранить</button>
+          </div>
+          <div class="card-b">
+            <label class="field" style="max-width:280px">
+              <span data-i18n="lang.label">Язык интерфейса</span>
+              <select id="settings-ui-lang" class="lang-select" style="width:100%;padding:10px 28px 10px 12px;font-size:0.9rem">
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="ui-lang-status">—</p>
+          </div>
+        </div>
         <div class="card" id="panel-config-backup">
           <div class="card-h">
             <div>
-              <h2>Бэкап конфигурации</h2>
-              <div class="sub">скачать / восстановить все настройки (JSON)</div>
+              <h2 data-i18n="h2.backup">Бэкап конфигурации</h2>
+              <div class="sub" data-i18n="sub.backup">скачать / восстановить все настройки (JSON)</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn primary" type="button" id="btn-config-backup">Скачать бэкап</button>
-              <button class="btn" type="button" id="btn-config-restore">Загрузить бэкап…</button>
+              <button class="btn primary" type="button" id="btn-config-backup" data-i18n="btn.download_backup">Скачать бэкап</button>
+              <button class="btn" type="button" id="btn-config-restore" data-i18n="btn.restore_backup">Загрузить бэкап…</button>
               <input type="file" id="input-config-restore" accept="application/json,.json" hidden />
             </div>
           </div>
@@ -3579,14 +3622,14 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Подключение Whatsminer</h2>
-              <div class="sub">TCP · сохраняется в config.json · применяется сразу</div>
+              <h2 data-i18n="h2.connection">Подключение Whatsminer</h2>
+              <div class="sub" data-i18n="sub.connection">TCP · сохраняется в config.json · применяется сразу</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-test-conn">Проверить</button>
+              <button class="btn" type="button" id="btn-test-conn" data-i18n="btn.test">Проверить</button>
               <button class="btn" type="button" id="btn-write-api-check" title="Статус Miner API Switch / write">Write API</button>
               <button class="btn primary" type="button" id="btn-write-api-enable" title="Попытка enable + password cycle">Enable Write</button>
-              <button class="btn primary" type="button" id="btn-save-miner">Сохранить</button>
+              <button class="btn primary" type="button" id="btn-save-miner" data-i18n="btn.save">Сохранить</button>
             </div>
           </div>
           <div class="card-b">
@@ -3636,8 +3679,8 @@
         <div class="card" id="panel-filtration">
           <div class="card-h">
             <div>
-              <h2>Фильтрация · насос</h2>
-              <div class="sub">розетка / webhook · auto ON при майнинге</div>
+              <h2 data-i18n="h2.filtration">Фильтрация · насос</h2>
+              <div class="sub" data-i18n="sub.filtration">розетка / webhook · auto ON при майнинге</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" id="btn-filt-test">Проверить</button>
@@ -3799,8 +3842,8 @@
         <div class="card" id="panel-telegram">
           <div class="card-h">
             <div>
-              <h2 class="tip" data-tip-key="telegram">Telegram bot</h2>
-              <div class="sub">уведомления policy · команды /status</div>
+              <h2 class="tip" data-tip-key="telegram" data-i18n="h2.telegram">Telegram bot</h2>
+              <div class="sub" data-i18n="sub.telegram">уведомления policy · команды /status</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn" type="button" id="btn-tg-test">Тест</button>
@@ -3875,8 +3918,8 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Политика · anti-thrash</h2>
-              <div class="sub">dwell · settle · streak · сохраняется с картой зон</div>
+              <h2 data-i18n="h2.policy">Политика · anti-thrash</h2>
+              <div class="sub" data-i18n="sub.policy">dwell · settle · streak · сохраняется с картой зон</div>
             </div>
             <button class="btn primary" type="button" id="btn-save-policy">Сохранить</button>
           </div>
@@ -3910,8 +3953,8 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Warmup / upfreq gate</h2>
-              <div class="sub">пока не ready — нет смысла повышать профиль</div>
+              <h2 data-i18n="h2.warmup">Warmup / upfreq gate</h2>
+              <div class="sub" data-i18n="sub.warmup">пока не ready — нет смысла повышать профиль</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
@@ -3952,8 +3995,8 @@
         <div class="card" id="panel-advanced-settings">
           <div class="card-h">
             <div>
-              <h2>Расширенные настройки</h2>
-              <div class="sub">история · кеш карты чипов · редкие опции</div>
+              <h2 data-i18n="h2.advanced">Расширенные настройки</h2>
+              <div class="sub" data-i18n="sub.advanced_card">история · кеш карты чипов · редкие опции</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:18px">
@@ -3961,16 +4004,16 @@
             <div>
               <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
                 <div>
-                  <div style="font-weight:600;color:var(--text);font-size:0.92rem">История и графики</div>
-                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px">хранение · интервал сбора · включение записи</div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem" data-i18n="section.history">История и графики</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.history">хранение · интервал сбора · включение записи</div>
                 </div>
                 <div class="btn-row" style="gap:8px">
-                  <button class="btn danger ghost" type="button" id="btn-hist-clear">Очистить базу</button>
-                  <button class="btn primary" type="button" id="btn-hist-save">Сохранить</button>
+                  <button class="btn danger ghost" type="button" id="btn-hist-clear" data-i18n="btn.clear_db">Очистить базу</button>
+                  <button class="btn primary" type="button" id="btn-hist-save" data-i18n="btn.save">Сохранить</button>
                 </div>
               </div>
               <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
-                <label class="field">Хранить, дней
+                <label class="field"><span data-i18n="field.store_days">Хранить, дней</span>
                   <input type="number" id="hist-retention" value="7" min="1" max="90" />
                 </label>
                 <label class="field"><span class="tip" data-tip-key="hist_interval">Интервал сбора, сек</span>
@@ -3978,8 +4021,8 @@
                 </label>
                 <label class="check" style="padding-bottom:6px">
                   <input type="checkbox" id="hist-enabled" checked />
-                  <span>Сбор данных
-                    <span class="desc">писать samples в history.db</span>
+                  <span><span data-i18n="check.hist_enabled">Сбор данных</span>
+                    <span class="desc" data-i18n="check.hist_desc">писать samples в history.db</span>
                   </span>
                 </label>
               </div>
@@ -3995,14 +4038,14 @@
             <div id="panel-chipmap-persist">
               <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
                 <div>
-                  <div style="font-weight:600;color:var(--text);font-size:0.92rem">Карта чипов · кеш</div>
-                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px">сохранение на диск · переживает рестарт сервиса</div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem" data-i18n="section.chip_cache">Карта чипов · кеш</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.chip_cache">сохранение на диск · переживает рестарт сервиса</div>
                 </div>
-                <button class="btn primary" type="button" id="btn-chipmap-persist-save">Сохранить</button>
+                <button class="btn primary" type="button" id="btn-chipmap-persist-save" data-i18n="btn.save">Сохранить</button>
               </div>
               <label class="check">
                 <input type="checkbox" id="chipmap-persist-cache" checked />
-                <span>Сохранять кеш карты чипов
+                <span><span data-i18n="check.chip_cache">Сохранять кеш карты чипов</span>
                   <span class="desc">chipmap_cache.json · показ последней карты после рестарта</span>
                 </span>
               </label>
@@ -4019,20 +4062,20 @@
         <div class="card" id="panel-access-settings">
           <div class="card-h">
             <div>
-              <h2>Настройки доступа</h2>
-              <div class="sub">Remote · auth · LuCI proxy :8788</div>
+              <h2 data-i18n="h2.access">Настройки доступа</h2>
+              <div class="sub" data-i18n="sub.access">Remote · auth · LuCI proxy :8788</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <a class="btn" id="btn-luci-proxy-open" href="#" target="_blank" rel="noopener">Открыть LuCI</a>
-              <button class="btn primary" type="button" id="btn-luci-proxy-save">Сохранить</button>
+              <a class="btn" id="btn-luci-proxy-open" href="#" target="_blank" rel="noopener" data-i18n="btn.open_luci">Открыть LuCI</a>
+              <button class="btn primary" type="button" id="btn-luci-proxy-save" data-i18n="btn.save">Сохранить</button>
             </div>
           </div>
           <div class="card-b stack" style="gap:18px">
             <!-- Remote / auth (UI guidance) -->
             <div id="panel-remote-access">
-              <div style="font-weight:600;color:var(--text);font-size:0.92rem;margin-bottom:2px">Remote · auth</div>
+              <div style="font-weight:600;color:var(--text);font-size:0.92rem;margin-bottom:2px" data-i18n="section.remote">Remote · auth</div>
               <div style="font-size:0.72rem;color:var(--dim);margin-bottom:10px">
-                доступ к poolheat UI · не пробрасывать :8787 в WAN
+                <span data-i18n="sub.desc.remote">доступ к poolheat UI · не пробрасывать :8787 в WAN</span>
               </div>
               <div class="row">
                 <label class="field">Auth mode
@@ -4059,13 +4102,13 @@
 
             <!-- LuCI proxy -->
             <div id="panel-luci-proxy">
-              <div style="font-weight:600;color:var(--text);font-size:0.92rem;margin-bottom:2px">LuCI proxy · :8788</div>
+              <div style="font-weight:600;color:var(--text);font-size:0.92rem;margin-bottom:2px" data-i18n="section.luci">LuCI proxy · :8788</div>
               <div style="font-size:0.72rem;color:var(--dim);margin-bottom:10px">
-                доступ к web-UI майнера через роутер
+                <span data-i18n="sub.desc.luci">доступ к web-UI майнера через роутер</span>
               </div>
               <label class="check">
                 <input type="checkbox" id="luci-proxy-enabled" />
-                <span>Включить прокси на порт 8788
+                <span><span data-i18n="check.luci_proxy">Включить прокси на порт 8788</span>
                   <span class="desc">http://&lt;router&gt;:8788/ → HTTPS LuCI майнера</span>
                 </span>
               </label>
@@ -4100,19 +4143,19 @@
     <!-- ========== INFO ========== -->
     <section class="view" id="view-info">
       <nav class="subtabs" role="tablist" aria-label="Инфо">
-        <button type="button" class="active" data-subtab="info">Инфо</button>
-        <button type="button" data-subtab="logs">Логи</button>
+        <button type="button" class="active" data-subtab="info" data-i18n="sub.info">Инфо</button>
+        <button type="button" data-subtab="logs" data-i18n="sub.logs">Логи</button>
       </nav>
       <div class="subview active" id="subview-info">
       <div class="stack">
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>poolheat_WM · ПО</h2>
-              <div class="sub">версия · проверка обновлений GitHub</div>
+              <h2 data-i18n="h2.software">poolheat_WM · ПО</h2>
+              <div class="sub" data-i18n="sub.software">версия · проверка обновлений GitHub</div>
             </div>
             <div class="btn-row" style="gap:8px">
-              <button class="btn ghost" type="button" id="btn-info-refresh">Обновить</button>
+              <button class="btn ghost" type="button" id="btn-info-refresh" data-i18n="btn.refresh">Обновить</button>
               <button class="btn" type="button" id="btn-update-check">Проверить обновления</button>
               <button class="btn primary" type="button" id="btn-update-apply" hidden>Установить</button>
             </div>
@@ -4149,7 +4192,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Keenetic</h2>
+              <h2 data-i18n="h2.keenetic">Keenetic</h2>
               <div class="sub">модель · прошивка · hostname</div>
             </div>
           </div>
@@ -4177,7 +4220,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Ресурсы</h2>
+              <h2 data-i18n="h2.resources">Ресурсы</h2>
               <div class="sub">диск · RAM · uptime · history.db</div>
             </div>
           </div>
@@ -4210,12 +4253,12 @@
         <div class="card" id="panel-miner-error-log">
           <div class="card-h">
             <div>
-              <h2>Журнал ошибок майнера</h2>
+              <h2 data-i18n="h2.error_log">Журнал ошибок майнера</h2>
               <div class="sub">последние 100 · дата · код · cause · майнер · SN компонента</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn danger ghost" type="button" id="btn-err-log-clear">Clear</button>
-              <button class="btn ghost" type="button" id="btn-err-log-refresh">Обновить</button>
+              <button class="btn ghost" type="button" id="btn-err-log-refresh" data-i18n="btn.refresh">Обновить</button>
             </div>
           </div>
           <div class="card-b" style="padding-top:12px;padding-bottom:8px">
@@ -4242,11 +4285,11 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Action log</h2>
+              <h2 data-i18n="h2.action_log">Action log</h2>
               <div class="sub">policy events · last write · live</div>
             </div>
             <div class="btn-row" style="gap:8px">
-              <button class="btn ghost" type="button" id="btn-refresh-log">Обновить</button>
+              <button class="btn ghost" type="button" id="btn-refresh-log" data-i18n="btn.refresh">Обновить</button>
               <button class="btn ghost" type="button" id="btn-export-log">Export JSONL</button>
             </div>
           </div>
@@ -4293,6 +4336,322 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script>
+
+    /* —— UI i18n (ru / en) —— */
+    const UI_LANG_KEY = "poolheat_ui_lang";
+    const I18N = {
+      ru: {
+  "tab.dash": "Обзор",
+  "tab.miner": "Майнер",
+  "tab.map": "Карта зон",
+  "tab.pool": "Бассейн",
+  "tab.settings": "Настройки",
+  "tab.info": "Инфо",
+  "sub.miner": "Майнер",
+  "sub.pools": "Пулы",
+  "sub.chips": "Чипы",
+  "sub.info": "Инфо",
+  "sub.main": "Основные",
+  "sub.advanced": "Расширенные",
+  "sub.logs": "Логи",
+  "btn.refresh": "Обновить",
+  "btn.save": "Сохранить",
+  "btn.clear_db": "Очистить базу",
+  "btn.download_backup": "Скачать бэкап",
+  "btn.restore_backup": "Загрузить бэкап…",
+  "btn.test": "Проверить",
+  "btn.open_luci": "Открыть LuCI",
+  "btn.override_off": "Отключить Override",
+  "btn.dry_goto": "Майнер · Dry Run",
+  "btn.hist_clear": "Очистить базу",
+  "live.from_miner": "Live с майнера",
+  "banner.dry_span": "Авто-зоны не пишутся · Safety работает · лог only",
+  "banner.warmup_span": "Майнер ещё выходит на режим —\n        <em class=\"tip\" data-tip-key=\"upward\">upward</em> заблокирован.\n        <em class=\"tip\" data-tip-key=\"downward\">Downward</em> и\n        <em class=\"tip\" data-tip-key=\"critical\">Critical</em> разрешены.",
+  "h2.history": "История и графики",
+  "h2.temps": "Температуры °C",
+  "h2.power": "Мощность · Хешрейт · J/T",
+  "h2.mode": "Режим майнера",
+  "h2.boards": "Платы (PCB) · hashboard",
+  "h2.layers": "Слои решения",
+  "h2.would_apply": "Что применили бы сейчас",
+  "h2.chipmap": "Карта чипов",
+  "h2.chip_params": "Параметры чипа",
+  "h2.chip_poll": "Опрос карты чипов",
+  "h2.pool_presets": "Пресеты пулов",
+  "h2.zone_map": "Карта зон · нагрев бассейна",
+  "h2.zone_presets": "Пресеты карты",
+  "h2.thresholds": "Пороги (°C)",
+  "h2.scale": "Шкала T_ctrl (карта зон)",
+  "h2.if_tcrit": "Если T_crit",
+  "h2.if_tcrit_clear": "Если T_crit_clear",
+  "h2.pool_geo": "Бассейн · геометрия",
+  "h2.circulation": "Водообмен · циркуляция",
+  "h2.weather": "Погода · город",
+  "h2.backup": "Бэкап конфигурации",
+  "h2.connection": "Подключение Whatsminer",
+  "h2.filtration": "Фильтрация · насос",
+  "h2.policy": "Политика · anti-thrash",
+  "h2.advanced": "Расширенные настройки",
+  "h2.access": "Настройки доступа",
+  "h2.software": "poolheat_WM · ПО",
+  "h2.resources": "Ресурсы",
+  "h2.error_log": "Журнал ошибок майнера",
+  "h2.errors": "Errors",
+  "h2.action_log": "Action log",
+  "lang.label": "Язык интерфейса",
+  "lang.sub": "русский · English",
+  "lang.ru": "Русский",
+  "lang.en": "English",
+  "lang.saved": "Язык сохранён",
+  "sub.desc.history": "хранение · интервал сбора · включение записи",
+  "sub.desc.chip_cache": "сохранение на диск · переживает рестарт сервиса",
+  "sub.desc.remote": "доступ к poolheat UI · не пробрасывать :8787 в WAN",
+  "sub.desc.luci": "доступ к web-UI майнера через роутер",
+  "check.hist_enabled": "Сбор данных",
+  "check.hist_desc": "писать samples в history.db",
+  "check.chip_cache": "Сохранять кеш карты чипов",
+  "check.luci_proxy": "Включить прокси на порт 8788",
+  "field.store_days": "Хранить, дней",
+  "field.interval_sec": "Интервал сбора, сек",
+  "field.project": "Название проекта",
+  "field.api_password": "API password",
+  "field.poll": "Интервал опроса, сек",
+  "label.auth_mode": "Auth mode",
+  "label.remote": "Remote",
+  "section.history": "История и графики",
+  "section.chip_cache": "Карта чипов · кеш",
+  "section.remote": "Remote · auth",
+  "section.luci": "LuCI proxy · :8788",
+  "btn.write_api": "Write API",
+  "btn.enable_write": "Enable Write",
+  "check.live": "Live с майнера",
+  "lang.label_short": "Язык"
+},
+      en: {
+  "tab.dash": "Overview",
+  "tab.miner": "Miner",
+  "tab.map": "Zone map",
+  "tab.pool": "Pool",
+  "tab.settings": "Settings",
+  "tab.info": "Info",
+  "sub.miner": "Miner",
+  "sub.pools": "Pools",
+  "sub.chips": "Chips",
+  "sub.info": "Info",
+  "sub.main": "General",
+  "sub.advanced": "Advanced",
+  "sub.logs": "Logs",
+  "btn.refresh": "Refresh",
+  "btn.save": "Save",
+  "btn.clear_db": "Clear database",
+  "btn.download_backup": "Download backup",
+  "btn.restore_backup": "Restore backup…",
+  "btn.test": "Test",
+  "btn.open_luci": "Open LuCI",
+  "btn.override_off": "Disable Override",
+  "btn.dry_goto": "Miner · Dry Run",
+  "btn.hist_clear": "Clear database",
+  "live.from_miner": "Live from miner",
+  "banner.dry_span": "Auto zones not written · Safety active · log only",
+  "banner.warmup_span": "Miner still warming up —\n        <em class=\"tip\" data-tip-key=\"upward\">upward</em> blocked.\n        <em class=\"tip\" data-tip-key=\"downward\">Downward</em> and\n        <em class=\"tip\" data-tip-key=\"critical\">Critical</em> allowed.",
+  "h2.history": "History & charts",
+  "h2.temps": "Temperatures °C",
+  "h2.power": "Power · Hashrate · J/T",
+  "h2.mode": "Miner mode",
+  "h2.boards": "Boards (PCB) · hashboard",
+  "h2.layers": "Decision layers",
+  "h2.would_apply": "What would apply now",
+  "h2.chipmap": "Chip map",
+  "h2.chip_params": "Chip parameters",
+  "h2.chip_poll": "Chip map polling",
+  "h2.pool_presets": "Pool presets",
+  "h2.zone_map": "Zone map · pool heating",
+  "h2.zone_presets": "Map presets",
+  "h2.thresholds": "Thresholds (°C)",
+  "h2.scale": "T_ctrl scale (zone map)",
+  "h2.if_tcrit": "On T_crit",
+  "h2.if_tcrit_clear": "On T_crit_clear",
+  "h2.pool_geo": "Pool · geometry",
+  "h2.circulation": "Water exchange · circulation",
+  "h2.weather": "Weather · city",
+  "h2.backup": "Configuration backup",
+  "h2.connection": "Whatsminer connection",
+  "h2.filtration": "Filtration · pump",
+  "h2.policy": "Policy · anti-thrash",
+  "h2.advanced": "Advanced settings",
+  "h2.access": "Access settings",
+  "h2.software": "poolheat_WM · software",
+  "h2.resources": "Resources",
+  "h2.error_log": "Miner error log",
+  "h2.errors": "Errors",
+  "h2.action_log": "Action log",
+  "lang.label": "Interface language",
+  "lang.sub": "Russian · English",
+  "lang.ru": "Russian",
+  "lang.en": "English",
+  "lang.saved": "Language saved",
+  "sub.desc.history": "retention · sample interval · enable logging",
+  "sub.desc.chip_cache": "disk cache · survives service restart",
+  "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
+  "sub.desc.luci": "miner web UI via the router",
+  "check.hist_enabled": "Data collection",
+  "check.hist_desc": "write samples to history.db",
+  "check.chip_cache": "Save chip map cache",
+  "check.luci_proxy": "Enable proxy on port 8788",
+  "field.store_days": "Keep, days",
+  "field.interval_sec": "Sample interval, sec",
+  "field.project": "Project name",
+  "field.api_password": "API password",
+  "field.poll": "Poll interval, sec",
+  "label.auth_mode": "Auth mode",
+  "label.remote": "Remote",
+  "section.history": "History & charts",
+  "section.chip_cache": "Chip map · cache",
+  "section.remote": "Remote · auth",
+  "section.luci": "LuCI proxy · :8788",
+  "btn.write_api": "Write API",
+  "btn.enable_write": "Enable Write",
+  "check.live": "Live from miner",
+  "lang.label_short": "Lang"
+},
+    };
+    // Extended EN UI strings applied by data-i18n-html (innerHTML) and data-i18n-title
+    Object.assign(I18N.en, {
+      "banner.dry_span": "Auto zones not written · Safety active · log only",
+      "btn.refresh": "Refresh",
+      "btn.save": "Save",
+      "toast.lang_saved": "Language saved",
+      "src.updated": "updated",
+    });
+    Object.assign(I18N.ru, {
+      "banner.dry_span": "Авто-зоны не пишутся · Safety работает · лог only",
+      "toast.lang_saved": "Язык сохранён",
+      "src.updated": "обновлено",
+    });
+    Object.assign(I18N.en, {"sub.backup": "download / restore all settings (JSON)", "sub.connection": "TCP · saved to config.json · applied immediately", "sub.filtration": "outlet / webhook · auto ON while mining", "sub.telegram": "policy notifications · /status commands", "sub.policy": "dwell · settle · streak · saved with zone map", "sub.warmup": "until ready — no upward profile changes", "sub.advanced_card": "history · chip map cache · rare options", "sub.access": "Remote · auth · LuCI proxy :8788", "sub.software": "version · GitHub update check", "sub.dry": "auto zones · Safety always · then Save", "sub.mode": "manual / policy · power limit · pct", "sub.chip_poll": "own interval · web admin · separate from live poll", "sub.pool_presets": "save · apply · edit URL/worker/pass", "h2.telegram": "Telegram bot", "h2.dry": "Dry Run", "h2.warmup": "Warmup / upfreq gate", "h2.keenetic": "Keenetic", "btn.search": "Search", "btn.find": "Find", "field.city_search": "City search", "label.quick_pick": "Quick pick", "wx.interval": "Refresh interval, min", "backup.hint": "Includes: miner connection, dry_run, zone map & presets, pool presets, pool, weather, history, filtration, chipmap, luci_proxy, Telegram (including passwords and bot token), and meta — app version, Keenetic, hostname, paths (meta is rewritten on each service start on this router). Excluded: history.db, caches, event log."});
+    Object.assign(I18N.ru, {"sub.backup": "скачать / восстановить все настройки (JSON)", "sub.connection": "TCP · сохраняется в config.json · применяется сразу", "sub.filtration": "розетка / webhook · auto ON при майнинге", "sub.telegram": "уведомления policy · команды /status", "sub.policy": "dwell · settle · streak · сохраняется с картой зон", "sub.warmup": "пока не ready — нет смысла повышать профиль", "sub.advanced_card": "история · кеш карты чипов · редкие опции", "sub.access": "Remote · auth · LuCI proxy :8788", "sub.software": "версия · проверка обновлений GitHub", "sub.dry": "авто-зоны · Safety всегда · после галки — Сохранить", "sub.mode": "ручной / policy · power limit · pct", "sub.chip_poll": "отдельный интервал · web admin · не смешивается с live poll", "sub.pool_presets": "сохранение · apply · правка URL/worker/pass", "h2.telegram": "Telegram bot", "h2.dry": "Dry Run", "h2.warmup": "Warmup / upfreq gate", "h2.keenetic": "Keenetic", "btn.search": "Найти", "btn.find": "Найти", "field.city_search": "Поиск города", "label.quick_pick": "Быстрый выбор", "wx.interval": "Интервал обновления, мин", "backup.hint": "В файл попадают: подключение майнера, dry_run, карта зон и пресеты, пресеты пулов, бассейн, погода, история, фильтрация, chipmap, luci_proxy, Telegram (включая пароли и bot token), а также meta — версия ПО, Keenetic, hostname, пути (meta перезаписывается при каждом запуске сервиса на этом роутере). Не входит: history.db, кэши, журнал событий."});
+
+
+    let _uiLang = "ru";
+    try {
+      const saved = (localStorage.getItem(UI_LANG_KEY) || "").toLowerCase();
+      if (saved === "en" || saved === "ru") _uiLang = saved;
+      else if ((navigator.language || "").toLowerCase().startsWith("en")) _uiLang = "en";
+    } catch (_) { /* ignore */ }
+
+    function getUiLang() {
+      return _uiLang === "en" ? "en" : "ru";
+    }
+
+    function t(key, fallback) {
+      const lang = getUiLang();
+      const dict = I18N[lang] || I18N.ru;
+      if (key && dict[key] != null) return dict[key];
+      if (key && I18N.ru[key] != null) return I18N.ru[key];
+      return fallback != null ? fallback : (key || "");
+    }
+
+    function applyUiLang(lang, opts) {
+      opts = opts || {};
+      lang = (lang === "en") ? "en" : "ru";
+      _uiLang = lang;
+      try {
+        document.documentElement.lang = lang;
+      } catch (_) {}
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        if (!key) return;
+        const val = t(key, null);
+        if (val == null) return;
+        // preserve child structure if only wrapping text
+        if (el.children.length === 0) {
+          el.textContent = val;
+        } else {
+          // set first text-like: replace whole text if simple
+          el.childNodes.forEach((n) => {
+            if (n.nodeType === 3 && n.textContent.trim()) {
+              n.textContent = val;
+            }
+          });
+        }
+      });
+      document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-html");
+        if (!key) return;
+        const val = t(key, null);
+        if (val != null) el.innerHTML = val;
+      });
+      document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-placeholder");
+        if (!key) return;
+        const val = t(key, null);
+        if (val != null) el.setAttribute("placeholder", val);
+      });
+      document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-title");
+        if (!key) return;
+        const val = t(key, null);
+        if (val != null) el.setAttribute("title", val);
+      });
+      // sync selects
+      const hs = document.getElementById("ui-lang-select");
+      if (hs && hs.value !== lang) hs.value = lang;
+      const ss = document.getElementById("settings-ui-lang");
+      if (ss && ss.value !== lang) ss.value = lang;
+      // option labels in settings
+      if (ss) {
+        const o0 = ss.querySelector('option[value="ru"]');
+        const o1 = ss.querySelector('option[value="en"]');
+        if (o0) o0.textContent = t("lang.ru", "Русский");
+        if (o1) o1.textContent = t("lang.en", "English");
+      }
+      if (typeof applyTipsLang === "function") applyTipsLang(lang);
+      if (opts.persist !== false) {
+        try { localStorage.setItem(UI_LANG_KEY, lang); } catch (_) {}
+      }
+      const stEl = document.getElementById("ui-lang-status");
+      if (stEl) stEl.textContent = lang === "en" ? "English" : "Русский";
+      document.dispatchEvent(new CustomEvent("poolheat:lang", { detail: { lang } }));
+      return lang;
+    }
+
+    
+    Object.assign(I18N.en, {
+      "live.sim_off": "simulation · Live off · updated ",
+      "live.updated_sep": " · updated ",
+      "btn.refresh_status": "Refresh status",
+      "btn.refresh_weather": "Refresh weather",
+      "btn.refresh_all": "Refresh",
+    });
+    Object.assign(I18N.ru, {
+      "live.sim_off": "симуляция · Live выкл · обновлено ",
+      "live.updated_sep": " · обновлено ",
+      "btn.refresh_status": "Обновить статус",
+      "btn.refresh_weather": "Обновить погоду",
+      "btn.refresh_all": "Обновить",
+    });
+
+    function initUiLangControls() {
+      const applyFrom = (sel) => {
+        const lang = (sel && sel.value) || "ru";
+        applyUiLang(lang);
+        if (typeof toastSuccess === "function") toastSuccess(t("toast.lang_saved"));
+        const st = document.getElementById("ui-lang-status");
+        if (st) st.textContent = lang === "en" ? "English" : "Русский";
+      };
+      document.getElementById("ui-lang-select")?.addEventListener("change", (e) => {
+        applyUiLang(e.target.value);
+      });
+      document.getElementById("settings-ui-lang")?.addEventListener("change", (e) => {
+        applyUiLang(e.target.value);
+      });
+      document.getElementById("btn-ui-lang-save")?.addEventListener("click", () => {
+        const sel = document.getElementById("settings-ui-lang") || document.getElementById("ui-lang-select");
+        applyFrom(sel);
+      });
+      applyUiLang(_uiLang, { persist: false });
+    }
+
     /* —— glossary tooltips —— */
     const TIPS = {
       t_ctrl: {
@@ -4605,6 +4964,67 @@
       window.addEventListener("resize", () => { if (active) place(active); });
     }
 
+
+    const TIPS_I18N = {
+      en: {
+        t_ctrl: {
+          title: "T_ctrl · zone map sensor",
+          body: "Temperature for heat zones Z0–Z3 (not Safety).\nSource is selected in Thresholds: liquid · env · chip avg/max · board max.\nThresholds T0 · T1 · T2 · h. Safety Critical always uses chip max.",
+        },
+        dry_run: {
+          title: "Dry Run",
+          body: "Auto zone writes disabled. Safety Critical still applies. Actions are logged only.",
+        },
+        api_live: {
+          title: "API live",
+          body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe / SIM / error.",
+        },
+        lan_token: {
+          title: "LAN · token",
+          body: "UI on LAN; Bearer token recommended for API/UI.\nRemote via VPN / Keenetic Cloud — never raw :8787 to the Internet.",
+        },
+        warmup: {
+          title: "Warmup / upfreq",
+          body: "Miner still ramping. Upward profile changes blocked until ready.",
+        },
+        override: {
+          title: "Override 30m",
+          body: "Pause auto zones for 30 min (server).\nBelow Safety and Force Stop. Manual mode buttons still work.",
+        },
+        poll: {
+          title: "Poll interval, sec",
+          body: "Live miner poll period. Saved with IP / password.",
+        },
+        hist_interval: {
+          title: "Sample interval, sec",
+          body: "How often samples are written to history.db.",
+        },
+        telegram: {
+          title: "Telegram bot",
+          body: "Profile (/profile): language + notify + Cmd.\n/lang_en · /notify_zone · /notify_all.",
+        },
+      },
+    };
+    const TIPS_RU_BASE = {};
+    function applyTipsLang(lang) {
+      // snapshot RU originals once
+      if (!Object.keys(TIPS_RU_BASE).length) {
+        Object.keys(TIPS).forEach((k) => {
+          TIPS_RU_BASE[k] = { title: TIPS[k].title, body: TIPS[k].body };
+        });
+      }
+      const en = TIPS_I18N.en || {};
+      Object.keys(TIPS).forEach((k) => {
+        if (lang === "en" && en[k]) {
+          TIPS[k].title = en[k].title;
+          TIPS[k].body = en[k].body;
+        } else if (TIPS_RU_BASE[k]) {
+          TIPS[k].title = TIPS_RU_BASE[k].title;
+          TIPS[k].body = TIPS_RU_BASE[k].body;
+        }
+      });
+    }
+
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
     /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings */
     const TAB_IDS = [
@@ -4856,6 +5276,8 @@
       }
       return tabId;
     }
+
+    initUiLangControls();
 
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -5849,7 +6271,7 @@
         if (tag) tag.textContent = "SIM";
         if (det)
           det.textContent =
-            "симуляция · Live выкл · обновлено " + tstr;
+            (typeof t === "function" ? t("live.sim_off") : "симуляция · Live выкл · обновлено ") + tstr;
         return;
       }
       const online = !!(r && r.online);
@@ -5871,7 +6293,7 @@
           minerHostDisplay() +
           " · " +
           minerLabel +
-          " · обновлено " +
+          (typeof t === "function" ? t("live.updated_sep") : " · обновлено ") +
           tstr +
           " · " +
           (online ? "Online" : "Offline");
