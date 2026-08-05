@@ -5062,7 +5062,7 @@ def _http_get_json(url: str, timeout: float = 12.0) -> dict:
     return data
 
 
-# WMO weather codes → short RU labels (Open-Meteo)
+# WMO weather codes → short labels (Open-Meteo)
 _WMO_RU = {
     0: "ясно",
     1: "преим. ясно",
@@ -5073,19 +5073,63 @@ _WMO_RU = {
     51: "морось",
     53: "морось",
     55: "морось",
+    56: "ледяная морось",
+    57: "ледяная морось",
     61: "дождь",
     63: "дождь",
     65: "ливень",
+    66: "ледяной дождь",
+    67: "ледяной дождь",
     71: "снег",
     73: "снег",
     75: "снегопад",
+    77: "снежная крупа",
     80: "ливень",
     81: "ливень",
     82: "сильный ливень",
+    85: "снегопад",
+    86: "снегопад",
     95: "гроза",
     96: "гроза с градом",
     99: "гроза с градом",
 }
+_WMO_EN = {
+    0: "clear",
+    1: "mainly clear",
+    2: "partly cloudy",
+    3: "overcast",
+    45: "fog",
+    48: "rime fog",
+    51: "drizzle",
+    53: "drizzle",
+    55: "drizzle",
+    56: "freezing drizzle",
+    57: "freezing drizzle",
+    61: "rain",
+    63: "rain",
+    65: "heavy rain",
+    66: "freezing rain",
+    67: "freezing rain",
+    71: "snow",
+    73: "snow",
+    75: "heavy snow",
+    77: "snow grains",
+    80: "showers",
+    81: "showers",
+    82: "heavy showers",
+    85: "snow showers",
+    86: "snow showers",
+    95: "thunderstorm",
+    96: "thunderstorm + hail",
+    99: "thunderstorm + hail",
+}
+
+
+def _wmo_text(code: int | None, lang: str = "ru") -> str:
+    if code is None:
+        return "—"
+    table = _WMO_EN if str(lang or "").lower().startswith("en") else _WMO_RU
+    return table.get(int(code), "—")
 
 
 def weather_search_cities(query: str, count: int = 12) -> list[dict]:
@@ -5158,7 +5202,10 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             {
                 "latitude": lat,
                 "longitude": lon,
-                "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
+                "current": (
+                    "temperature_2m,relative_humidity_2m,weather_code,"
+                    "wind_speed_10m,is_day,apparent_temperature"
+                ),
                 "timezone": tz,
                 "wind_speed_unit": "ms",
             }
@@ -5172,6 +5219,11 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             code_i = int(code) if code is not None else None
         except (TypeError, ValueError):
             code_i = None
+        is_day_raw = cur.get("is_day")
+        try:
+            is_day = bool(int(is_day_raw)) if is_day_raw is not None else True
+        except (TypeError, ValueError):
+            is_day = True
         body = {
             "ok": True,
             "enabled": True,
@@ -5182,10 +5234,13 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             "longitude": lon,
             "timezone": data.get("timezone") or tz,
             "temp_c": cur.get("temperature_2m"),
+            "feels_like_c": cur.get("apparent_temperature"),
             "humidity": cur.get("relative_humidity_2m"),
             "wind_ms": cur.get("wind_speed_10m"),
             "weather_code": code_i,
-            "weather_text": _WMO_RU.get(code_i, "—") if code_i is not None else "—",
+            "weather_text": _wmo_text(code_i, "ru"),
+            "weather_text_en": _wmo_text(code_i, "en"),
+            "is_day": is_day,
             "observed_at": cur.get("time"),
             "refresh_interval_sec": int(ttl),
             "source": "open-meteo",
