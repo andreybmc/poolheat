@@ -2696,7 +2696,7 @@
               <div><strong style="color:var(--text)">#</strong> — номер чипа на плате (C0…)</div>
               <div><strong style="color:var(--text)">temp / °C</strong> — температура чипа</div>
               <div><strong style="color:var(--text)">Freq</strong> — частота, MHz</div>
-              <div><strong style="color:var(--text)">Vol</strong> — напряжение домена, mV (как в Miner API Log)</div>
+              <div><strong style="color:var(--text)">Vol</strong> — напряжение домена, mV (только режим Frequency; из Miner API Log)</div>
               <div><strong style="color:var(--text)">Nonce</strong> — счётчик найденных nonce с старта майнинга</div>
               <div><strong style="color:var(--text)">Nonce/s</strong> — nonce / mining elapsed</div>
               <div><strong style="color:var(--text)">Hash est</strong> — оценка TH/s: доля nonce × hashrate ASIC</div>
@@ -11867,27 +11867,59 @@
       return "—";
     }
 
-    /** Multi-line laconic tooltip (one param per line). */
+    /**
+     * Multi-line laconic tooltip, e.g.:
+     *   chip 172 · 80°C
+     *   451 MHz · 280 mV
+     *   nonce: 152k · −4.8k vs avg
+     *   HR: ≈0.32 TH/s · 9.4 nonce/s
+     *   err 2 · crc 0 · xfer 0 · repeat 0
+     */
     function chipmapBuildTip(c, metric, analysis) {
       if (!c) return "";
-      const lines = ["C" + (c.id != null ? c.id : "—")];
-      if (c.temp != null && Number.isFinite(Number(c.temp)))
-        lines.push(Math.round(Number(c.temp)) + "°C");
-      if (c.freq != null) lines.push(Math.round(Number(c.freq)) + " MHz");
-      if (c.vol != null) lines.push("vol " + Math.round(Number(c.vol)));
-      if (c.nonce != null) {
-        let nl = "nonce " + chipmapFmtNonceShort(c.nonce);
+      const id = c.id != null ? c.id : "—";
+      const temp =
+        c.temp != null && Number.isFinite(Number(c.temp))
+          ? Math.round(Number(c.temp)) + "°C"
+          : "—";
+      const lines = ["chip " + id + " · " + temp];
+
+      const freq =
+        c.freq != null && Number.isFinite(Number(c.freq))
+          ? Math.round(Number(c.freq)) + " MHz"
+          : null;
+      const vol =
+        c.vol != null && Number.isFinite(Number(c.vol))
+          ? Math.round(Number(c.vol)) + " mV"
+          : null;
+      if (freq || vol) {
+        lines.push(
+          [freq, vol].filter(Boolean).join(" · ")
+        );
+      }
+
+      if (c.nonce != null && Number.isFinite(Number(c.nonce))) {
+        let nl = "nonce: " + chipmapFmtNonceShort(c.nonce);
         if (analysis && analysis.nonceAvg > 0) {
           const d = analysis.nonceDelta || 0;
           const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
           nl +=
-            "  " +
+            " · " +
             sign +
             chipmapFmtNonceShort(Math.abs(d)) +
             " vs avg";
         }
         lines.push(nl);
       }
+
+      const hrParts = [];
+      if (c.est_th != null && Number.isFinite(Number(c.est_th)))
+        hrParts.push("≈" + Number(c.est_th).toFixed(2) + " TH/s");
+      if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
+        hrParts.push(Number(c.nonce_rate).toFixed(1) + " nonce/s");
+      if (hrParts.length) lines.push("HR: " + hrParts.join(" · "));
+
+      // mode-specific extras (only when relevant)
       if (analysis) {
         if (metric === "nonce_def" && analysis.nonceDef > 0)
           lines.push("deficit −" + Math.round(analysis.nonceDef) + "%");
@@ -11896,17 +11928,22 @@
         if (metric === "outliers" && analysis.z > 0)
           lines.push("z +" + analysis.z.toFixed(2) + "σ");
       }
-      if (c.est_th != null && Number.isFinite(Number(c.est_th)))
-        lines.push("≈" + Number(c.est_th).toFixed(2) + " TH/s");
-      if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
-        lines.push(Number(c.nonce_rate).toFixed(1) + " n/s");
+
       const err = c.err != null ? c.err | 0 : 0;
       const crc = c.crc != null ? c.crc | 0 : 0;
       const x = c.x != null ? c.x | 0 : 0;
       const rep =
         c.repeat != null ? c.repeat | 0 : c.x2 != null ? c.x2 | 0 : 0;
-      if (err || crc || x || rep)
-        lines.push("err " + err + "  crc " + crc + "  x " + x + "  r " + rep);
+      lines.push(
+        "err " +
+          err +
+          " · crc " +
+          crc +
+          " · xfer " +
+          x +
+          " · repeat " +
+          rep
+      );
       return lines.join("\n");
     }
 
