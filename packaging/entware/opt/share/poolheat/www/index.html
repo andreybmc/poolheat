@@ -500,11 +500,37 @@
       font-variant-numeric: tabular-nums;
       letter-spacing: -0.02em;
     }
-    /* temp / gradient / outliers / nonce_def:
-       № top-center faint · temp+°C mid · err/crc/x/r bottom */
+    /* All modes: chip # top-right (faint) */
+    .chip-cell .c-id {
+      position: absolute;
+      top: 1px;
+      right: 2px;
+      left: auto;
+      text-align: right;
+      font-size: 0.4rem;
+      font-weight: 500;
+      opacity: 0.38;
+      letter-spacing: 0;
+      line-height: 1;
+      pointer-events: none;
+      color: inherit;
+    }
+    /* top-left auxiliary (vol / freq) */
+    .chip-cell .c-aux {
+      position: absolute;
+      top: 1px;
+      left: 2px;
+      font-size: 0.4rem;
+      font-weight: 600;
+      opacity: 0.55;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      pointer-events: none;
+    }
+    /* temp / gradient / outliers / nonce_def: main mid · err bottom */
     .chip-cell.chip-simple {
       justify-content: space-between;
-      padding: 1px 1px 1px;
+      padding: 1px;
     }
     .chip-cell.chip-simple .c-top {
       display: none;
@@ -512,26 +538,13 @@
     .chip-cell.chip-simple .c-bot {
       display: flex;
     }
-    .chip-cell.chip-simple .c-id {
-      position: absolute;
-      top: 1px;
-      left: 0;
-      right: 0;
-      text-align: center;
-      font-size: 0.4rem;
-      font-weight: 500;
-      opacity: 0.38;
-      letter-spacing: 0;
-      color: inherit;
-    }
     .chip-cell.chip-simple .c-main {
       font-size: 0.8rem;
       font-weight: 700;
       width: 100%;
-      /* lower + slightly right so digits look centered (°C pulls visual weight) */
       padding-top: 9px;
       padding-left: 3px;
-      align-items: flex-start; /* °C at top of temp digits */
+      align-items: flex-start;
       justify-content: center;
       gap: 0;
       line-height: 1;
@@ -550,37 +563,16 @@
       position: relative;
       top: 0;
     }
-    /* Frequency: vol top-left · chip# top-right · freq center · err bottom */
-    .chip-cell.chip-freq {
+    /* Compact hash modes: aux top-left · # top-right · value center · err bottom
+       freq / nonce_rate → aux=vol; nonce / est_th → aux=freq */
+    .chip-cell.chip-compact {
       justify-content: space-between;
       padding: 1px;
     }
-    .chip-cell.chip-freq .c-top {
+    .chip-cell.chip-compact .c-top {
       display: none;
     }
-    .chip-cell.chip-freq .c-vol {
-      position: absolute;
-      top: 1px;
-      left: 2px;
-      font-size: 0.4rem;
-      font-weight: 600;
-      opacity: 0.55;
-      letter-spacing: -0.02em;
-      line-height: 1;
-      pointer-events: none;
-    }
-    .chip-cell.chip-freq .c-id {
-      position: absolute;
-      top: 1px;
-      right: 2px;
-      left: auto;
-      text-align: right;
-      font-size: 0.4rem;
-      font-weight: 500;
-      opacity: 0.38;
-      letter-spacing: 0;
-    }
-    .chip-cell.chip-freq .c-main {
+    .chip-cell.chip-compact .c-main {
       font-size: 0.78rem;
       font-weight: 700;
       width: 100%;
@@ -590,7 +582,7 @@
       justify-content: center;
       line-height: 1;
     }
-    .chip-cell.chip-freq .c-bot {
+    .chip-cell.chip-compact .c-bot {
       display: flex;
     }
     .chip-cell.chip-light {
@@ -599,9 +591,7 @@
       border-color: rgba(0, 0, 0, 0.12);
     }
     .chip-cell.chip-light .c-id { opacity: 0.4; }
-    .chip-cell.chip-simple.chip-light .c-id { opacity: 0.42; }
-    .chip-cell.chip-freq.chip-light .c-id { opacity: 0.4; }
-    .chip-cell.chip-freq.chip-light .c-vol { opacity: 0.5; }
+    .chip-cell.chip-light .c-aux { opacity: 0.5; }
     .chip-cell.chip-light .c-top,
     .chip-cell.chip-light .c-bot { opacity: 0.8; }
     .chip-legend {
@@ -11862,22 +11852,26 @@
 
     /**
      * Cell layout:
-     * - temp / gradient / outliers → °C center
-     * - nonce_def → deficit % center (−12%)
-     * - freq → vol top-left · # top-right · MHz center · err bottom
-     * - other hash metrics → dense HashSource-style
+     * - temp / gradient / outliers → °C center · # top-right
+     * - nonce_def → deficit % · # top-right
+     * - freq / nonce_rate → vol top-left · # top-right · value center
+     * - nonce / est_th → freq top-left · # top-right · value center
      */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
       cell.className = "chip-cell";
       const simple = chipmapIsTempSimpleMetric(metric);
-      const isFreq = metric === "freq";
+      // aux top-left: vol for freq & nonce_rate; freq for nonce & est_th
+      let auxKind = null; // "vol" | "freq" | null
+      if (metric === "freq" || metric === "nonce_rate") auxKind = "vol";
+      else if (metric === "nonce" || metric === "est_th") auxKind = "freq";
+      const compact = !!auxKind;
       if (simple) cell.classList.add("chip-simple");
-      if (isFreq) cell.classList.add("chip-freq");
+      if (compact) cell.classList.add("chip-compact");
       if (!c) {
         cell.classList.add("empty");
         cell.innerHTML =
-          '<span class="c-vol"></span><span class="c-id">' +
+          '<span class="c-aux"></span><span class="c-id">' +
           id +
           '</span><span class="c-top"></span><span class="c-main">—</span><span class="c-bot"></span>';
         return cell;
@@ -11921,6 +11915,7 @@
             ? String(c.x2 | 0)
             : "0";
       const mainHtml = chipmapMainHtml(c, metric, analysis);
+      const auxVal = auxKind === "vol" ? vol : auxKind === "freq" ? freq : "";
       const bot =
         '<span class="c-bot"><span>' +
         err +
@@ -11931,47 +11926,18 @@
         "</span><span>" +
         rep +
         "</span></span>";
-      if (isFreq) {
-        // vol · # · large freq — no double freq in header
-        cell.innerHTML =
-          '<span class="c-vol">' +
-          vol +
-          "</span>" +
-          '<span class="c-id">' +
-          chipNo +
-          "</span>" +
-          '<span class="c-top"></span>' +
-          '<span class="c-main">' +
-          mainHtml +
-          "</span>" +
-          bot;
-      } else if (simple) {
-        cell.innerHTML =
-          '<span class="c-vol"></span>' +
-          '<span class="c-id">' +
-          chipNo +
-          "</span>" +
-          '<span class="c-top"></span>' +
-          '<span class="c-main">' +
-          mainHtml +
-          "</span>" +
-          bot;
-      } else {
-        cell.innerHTML =
-          '<span class="c-vol"></span>' +
-          '<span class="c-id">C' +
-          chipNo +
-          "</span>" +
-          '<span class="c-top"><span>' +
-          freq +
-          "</span><span>" +
-          vol +
-          "</span></span>" +
-          '<span class="c-main">' +
-          mainHtml +
-          "</span>" +
-          bot;
-      }
+      cell.innerHTML =
+        '<span class="c-aux">' +
+        (auxVal || "") +
+        "</span>" +
+        '<span class="c-id">' +
+        chipNo +
+        "</span>" +
+        '<span class="c-top"></span>' +
+        '<span class="c-main">' +
+        mainHtml +
+        "</span>" +
+        bot;
       cell.dataset.tip = chipmapBuildTip(c, metric, analysis);
       return cell;
     }
