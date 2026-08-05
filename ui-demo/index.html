@@ -174,7 +174,7 @@
       background: var(--bg2);
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
-      max-width: 420px;
+      max-width: 480px;
     }
 
     nav.subtabs button {
@@ -2419,6 +2419,7 @@
     <section class="view" id="view-miner">
       <nav class="subtabs" role="tablist" aria-label="Майнер">
         <button type="button" class="active" data-subtab="miner">Майнер</button>
+        <button type="button" data-subtab="info">Инфо</button>
         <button type="button" data-subtab="chips">Чипы</button>
         <button type="button" data-subtab="pools">Пулы</button>
       </nav>
@@ -2716,6 +2717,94 @@
       </div>
       <div class="chip-tip" id="chipmap-tip"></div>
       </div><!-- /subview-chips -->
+
+      <div class="subview" id="subview-miner-info">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Whatsminer</h2>
+              <div class="sub">модель · fw · serial · PSU</div>
+            </div>
+            <div class="btn-row" style="gap:8px;margin-top:0">
+              <button
+                class="btn danger"
+                type="button"
+                id="btn-factory-reset"
+                title="Whatsminer factory_reset — сброс настроек ASIC к factory"
+              >
+                Factory reset
+              </button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <div class="grid-3">
+              <div class="metric highlight-accent">
+                <label>Модель · Хешрейт</label>
+                <div class="val" style="font-size:1.05rem" id="info-miner-type">—</div>
+                <div class="hint" id="info-miner-platform">—</div>
+              </div>
+              <div class="metric">
+                <label>Firmware</label>
+                <div class="val" style="font-size:1.0rem" id="info-miner-fw">—</div>
+                <div class="hint" id="info-miner-api">api —</div>
+              </div>
+              <div class="metric">
+                <label>Host · MAC</label>
+                <div class="val" style="font-size:0.95rem" id="info-miner-host">—</div>
+                <div class="hint" id="info-miner-mac">mac —</div>
+              </div>
+            </div>
+            <div class="grid-3">
+              <div class="metric">
+                <label>ASIC SN (minersn)</label>
+                <div class="val" style="font-size:0.95rem" id="info-miner-sn">—</div>
+                <div class="hint">get_miner_info</div>
+              </div>
+              <div class="metric">
+                <label>PSU SN</label>
+                <div class="val" style="font-size:0.95rem" id="info-psu-sn">—</div>
+                <div class="hint" id="info-psu-model">model —</div>
+              </div>
+              <div class="metric">
+                <label>Chip</label>
+                <div class="val" style="font-size:0.85rem;line-height:1.3;word-break:break-all" id="info-miner-chip">—</div>
+                <div class="hint">chip data</div>
+              </div>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Hashboards · PCB SN · Tagged</h2>
+              <div class="sub">PCB SN и Tagged Hashrate из EEPROM — доступны и в Suspend</div>
+            </div>
+          </div>
+          <div class="card-b" style="padding-top:8px">
+            <div style="overflow:auto">
+              <table class="err-table" id="info-boards-table">
+                <thead>
+                  <tr>
+                    <th>Slot</th>
+                    <th>PCB SN</th>
+                    <th>Tagged Hashrate</th>
+                    <th>Chip Data</th>
+                    <th>t°C</th>
+                    <th>chips</th>
+                  </tr>
+                </thead>
+                <tbody id="info-boards-body">
+                  <tr><td colspan="6" style="color:var(--muted)">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-miner-info -->
 
       <div class="subview" id="subview-pools">
       <div class="stack">
@@ -3898,90 +3987,6 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Whatsminer</h2>
-              <div class="sub">модель · fw · serial · PSU</div>
-            </div>
-            <div class="btn-row" style="gap:8px;margin-top:0">
-              <button
-                class="btn danger"
-                type="button"
-                id="btn-factory-reset"
-                title="Whatsminer factory_reset — сброс настроек ASIC к factory"
-              >
-                Factory reset
-              </button>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:14px">
-            <div class="grid-3">
-              <div class="metric highlight-accent">
-                <label>Модель · Хешрейт</label>
-                <div class="val" style="font-size:1.05rem" id="info-miner-type">—</div>
-                <div class="hint" id="info-miner-platform">—</div>
-              </div>
-              <div class="metric">
-                <label>Firmware</label>
-                <div class="val" style="font-size:1.0rem" id="info-miner-fw">—</div>
-                <div class="hint" id="info-miner-api">api —</div>
-              </div>
-              <div class="metric">
-                <label>Host · MAC</label>
-                <div class="val" style="font-size:0.95rem" id="info-miner-host">—</div>
-                <div class="hint" id="info-miner-mac">mac —</div>
-              </div>
-            </div>
-            <div class="grid-3">
-              <div class="metric">
-                <label>ASIC SN (minersn)</label>
-                <div class="val" style="font-size:0.95rem" id="info-miner-sn">—</div>
-                <div class="hint">get_miner_info</div>
-              </div>
-              <div class="metric">
-                <label>PSU SN</label>
-                <div class="val" style="font-size:0.95rem" id="info-psu-sn">—</div>
-                <div class="hint" id="info-psu-model">model —</div>
-              </div>
-              <div class="metric">
-                <label>Chip</label>
-                <div class="val" style="font-size:0.85rem;line-height:1.3;word-break:break-all" id="info-miner-chip">—</div>
-                <div class="hint">chip data</div>
-              </div>
-            </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2>Hashboards · PCB SN · Tagged</h2>
-              <div class="sub">PCB SN и Tagged Hashrate из EEPROM — доступны и в Suspend</div>
-            </div>
-          </div>
-          <div class="card-b" style="padding-top:8px">
-            <div style="overflow:auto">
-              <table class="err-table" id="info-boards-table">
-                <thead>
-                  <tr>
-                    <th>Slot</th>
-                    <th>PCB SN</th>
-                    <th>Tagged Hashrate</th>
-                    <th>Chip Data</th>
-                    <th>t°C</th>
-                    <th>chips</th>
-                  </tr>
-                </thead>
-                <tbody id="info-boards-body">
-                  <tr><td colspan="6" style="color:var(--muted)">—</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
               <h2>Ресурсы</h2>
               <div class="sub">диск · RAM · uptime · history.db</div>
             </div>
@@ -4411,12 +4416,13 @@
     }
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
-    /* Virtual tabs (no top-level nav): logs → info, chips/pools → miner */
+    /* Virtual: logs→info, chips/pools/minerinfo→miner */
     const TAB_IDS = [
       "dash",
       "miner",
       "chips",
       "pools",
+      "minerinfo",
       "map",
       "pool",
       "settings",
@@ -4438,6 +4444,10 @@
       miningpools: "pools",
       "miner-pools": "pools",
       stratum: "pools",
+      minerinfo: "minerinfo",
+      "miner-info": "minerinfo",
+      whatsminer: "minerinfo",
+      wm: "minerinfo",
       zones: "map",
       zone: "map",
       weather: "pool",
@@ -4459,13 +4469,16 @@
     }
 
     function setMinerSubtab(subId) {
-      const allowed = { miner: 1, chips: 1, pools: 1 };
+      const allowed = { miner: 1, chips: 1, pools: 1, info: 1 };
       const sub = allowed[subId] ? subId : "miner";
       document.querySelectorAll("#view-miner nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
       });
+      // "info" → #subview-miner-info (avoid clash with #view-info #subview-info)
+      const viewId =
+        sub === "info" ? "subview-miner-info" : "subview-" + sub;
       document.querySelectorAll("#view-miner .subview").forEach((v) => {
-        v.classList.toggle("active", v.id === "subview-" + sub);
+        v.classList.toggle("active", v.id === viewId);
       });
       return sub;
     }
@@ -4576,6 +4589,9 @@
       } else if (tabId === "pools") {
         mainTab = "miner";
         minerSub = "pools";
+      } else if (tabId === "minerinfo") {
+        mainTab = "miner";
+        minerSub = "info";
       } else if (tabId === "info") {
         infoSub = "info";
       } else if (tabId === "miner") {
@@ -4600,7 +4616,12 @@
         if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
         if (typeof loadActionLog === "function") loadActionLog();
       }
+      // system ПО + Keenetic still under top-level Инфо
       if (mainTab === "info" && infoSub === "info" && typeof loadSystemInfo === "function") {
+        loadSystemInfo({ forceLive: true });
+      }
+      // Whatsminer identity under Майнер → Инфо
+      if (mainTab === "miner" && minerSub === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
       }
       if (mainTab === "miner" && minerSub === "pools" && typeof loadMiningPools === "function") {
@@ -4633,6 +4654,7 @@
         const s = btn.dataset.subtab;
         if (s === "chips") activateTab("chips");
         else if (s === "pools") activateTab("pools");
+        else if (s === "info") activateTab("minerinfo");
         else activateTab("miner");
       });
     });
