@@ -10,6 +10,9 @@
 (или он не уверен, что он настроен). Если Entware уже работает —  
 переходите к [§4. Установка poolheat](#4-установка-poolheat-с-github).
 
+**Консоль Peak (SSH / веб-CLI / Entware):** [§3C](#3c-консоль-peak--entware--как-попасть-ssh-и-cli) —  
+как войти, порты **22 vs 222**, `exec sh`, рестарт poolheat.
+
 ---
 
 ## 0. Что получится в итоге
@@ -120,43 +123,187 @@ opkg disk storage:/ https://bin.entware.net/aarch64-k3.10/installer/aarch64-inst
 
 Подробности: документация Keenetic «Installing OPKG Entware in the router's internal memory».
 
-### 3C. SSH в Entware (обязательно для установки poolheat)
+### 3C. Консоль Peak / Entware — как попасть (SSH и CLI)
 
-После установки Entware поднимается **dropbear**:
+На Keenetic есть **два разных** «шелла». Их легко перепутать:
 
-| Параметр | Значение по умолчанию |
-|----------|------------------------|
-| Login | `root` |
-| Password | `keenetic` |
-| Port | **22**, если компонент «SSH-сервер» Keenetic **не** стоит;  
-|  | **222**, если системный SSH Keenetic установлен (Entware часто на 22,  
-|  | системный — на 222 — смотрите журнал / docs) |
+| Среда | Что это | Куда вы попадаете | Типичный доступ |
+|-------|---------|-------------------|-----------------|
+| **CLI KeeneticOS** | командная строка прошивки | `(config)>` ndm, сеть, компоненты | веб «Командная строка» / SSH **учётки admin** |
+| **Shell Entware** | Linux-окружение OPKG | BusyBox, `/opt`, `opkg`, poolheat | SSH **`root`** (dropbear Entware) |
 
-Подключение:
+**poolheat** живёт в Entware (`/opt/...`). Для `git`, `opkg`, рестарта сервиса нужен **shell Entware**  
+(или `exec sh` из CLI — см. ниже).
+
+Официально:
+
+- [SSH remote access (Keenetic CLI)](https://support.keenetic.com/carrier/kn-1713/en/22340-ssh-remote-access-to-the-router-command-line.html)
+- [Entware на USB](https://support.keenetic.com/hero/kn-1012/en/20980-installing-the-entware-repository-on-a-usb-drive.html)  
+  (логин/пароль Entware, порты **22 / 222**)
+
+---
+
+#### 3C.1. Через веб Keenetic (без SSH с Mac)
+
+1. Откройте веб-интерфейс Peak: `http://192.168.1.1/`  
+   (LAN IP может быть другим — смотрите на наклейке / DHCP).
+2. Войдите учёткой **администратора** (та же, что для настроек роутера).
+3. Найдите **командную строку / CLI**:
+   - **Управление** → **Диагностика** → **Командная строка**  
+     (или **Diagnostics → Command line** / «CLI» — зависит от темы KeeneticOS),  
+   - либо иконка терминала в интерфейсе (на новых прошивках).
+4. В CLI вы обычно в режиме прошивки, приглашение вида `(config)>`.
+
+Перейти в **shell Entware / BusyBox** с диска OPKG:
+
+```text
+(config)> exec sh
+```
+
+или (если доступно):
+
+```text
+(config)> system shell
+```
+
+После успеха prompt станет похож на `/ #` или `root@...`.  
+Проверка Entware:
 
 ```sh
-ssh -p 22 root@192.168.1.1
-# или
+ls /opt
+opkg --version
+```
+
+Выход из `exec sh` обратно в CLI: `exit`.
+
+> **Зачем это нужно:** если с Mac SSH не пускает (нет ключа/пароля),  
+> рестарт poolheat и просмотр логов можно сделать **прямо из веб-CLI**  
+> после `exec sh` (см. §6).
+
+---
+
+#### 3C.2. SSH в Entware (рекомендуется для установки и отладки)
+
+После установки Entware поднимается **dropbear** (свой SSH, не путать с «SSH-сервер» KeeneticOS).
+
+| Параметр | Значение по умолчанию (Entware) |
+|----------|----------------------------------|
+| Login | **`root`** |
+| Password | **`keenetic`** (смените сразу!) |
+| Host | LAN IP Peak, часто `192.168.1.1` |
+
+**Порт — важно:**
+
+| Ситуация | Порт SSH **Entware** |
+|----------|----------------------|
+| Компонент **«SSH-сервер»** KeeneticOS **установлен** | обычно **222** |
+| Компонента SSH KeeneticOS **нет** | обычно **22** |
+
+Так указано в документации Keenetic (Entware on USB).  
+На Peak с установленным SSH-сервером прошивки чаще всего:
+
+```sh
 ssh -p 222 root@192.168.1.1
 ```
 
-**Сразу** смените пароль:
+Если не коннектится — попробуйте:
+
+```sh
+ssh -p 22 root@192.168.1.1
+```
+
+Клиенты:
+
+- **macOS / Linux:** Terminal → команда `ssh` выше  
+- **Windows:** [PuTTY](https://www.putty.org/) → Connection type **SSH**, Host `192.168.1.1`, Port **222** (или 22) → Open  
+  Login: `root`, password: `keenetic` (или ваш)
+
+При первом входе примите host key (`yes`).
+
+**Сразу** смените пароль root Entware:
 
 ```sh
 passwd
 ```
 
-Проверка, что Entware жив:
+Пароль **root Entware** ≠ пароль **admin** веб-интерфейса (это разные учётки).
+
+Проверка, что это именно Entware:
 
 ```sh
 opkg update
 which opkg python3 || true
 ls -la /opt
+df -h /opt
 ```
 
-Альтернатива без внешнего SSH: в CLI Keenetic  
-`(config)> exec sh` — получите BusyBox shell на роутере  
-(удобно для диагностики, для git-clone удобнее SSH).
+Типичные команды poolheat (из этого shell):
+
+```sh
+/opt/etc/init.d/S99poolheat-standalone status
+/opt/etc/init.d/S99poolheat-standalone restart
+curl -s http://127.0.0.1:8787/api/version
+tail -50 /opt/var/poolheat/poolheat.log
+```
+
+---
+
+#### 3C.3. SSH в CLI KeeneticOS (admin, не Entware)
+
+Если установлен компонент **SSH-сервер** KeeneticOS:
+
+1. **Общие настройки** → **Параметры компонентов** → включить **SSH-сервер**.
+2. Подключение **учёткой администратора** роутера (как в веб), порт часто **22** или отдельный (см. настройки безопасности / private segment).
+
+```sh
+ssh admin@192.168.1.1
+# затем в CLI:
+exec sh
+```
+
+`exec sh` снова даёт путь к BusyBox/Entware, если OPKG смонтирован.
+
+Без `exec sh` вы **не** увидите `opkg` / `/opt/lib/poolheat` как в Linux-shell.
+
+---
+
+#### 3C.4. Как понять, какой порт открыт
+
+С ПК в LAN:
+
+```sh
+# macOS / Linux
+nc -z -v 192.168.1.1 22
+nc -z -v 192.168.1.1 222
+```
+
+Или в журнале Keenetic после установки Entware ищите строки вида  
+`Log on to start an SSH session using login - root, password - keenetic`  
+и указание порта.
+
+| Симптом | Что проверить |
+|---------|----------------|
+| `Connection refused` на 22 | попробуйте **222** (и наоборот) |
+| `Permission denied (publickey,password)` | неверный пароль **root** Entware; с Mac нет ключа — нужен пароль; не логиньтесь как `admin` на порт Entware |
+| `Connection timed out` | не тот IP / не LAN / firewall |
+| SSH ok, но `opkg: not found` | вы в CLI прошивки, а не в Entware → `exec sh` или SSH root:222 |
+| `/opt` пустой | OPKG/USB не смонтирован — **Менеджер пакетов OPKG** → Access, USB |
+
+---
+
+#### 3C.5. Безопасность
+
+- Смените пароль `root` Entware с `keenetic`.
+- **Не** пробрасывайте SSH (22/222) и **8787** в интернет.
+- Remote: Keenetic Cloud / VPN, не raw port-forward.
+- Для автоматизации с Mac удобнее **SSH-ключ** на Entware:
+
+```sh
+# на Mac
+ssh-copy-id -p 222 root@192.168.1.1
+# или вручную: ~/.ssh/id_ed25519.pub → /opt/etc/dropbear/authorized_keys
+# (путь dropbear зависит от сборки Entware — смотрите docs dropbear)
+```
 
 ---
 
@@ -249,6 +396,8 @@ echo '{"cmd":"summary"}' | nc 192.168.1.10 4028
 
 ## 6. Управление сервисом
 
+Команды ниже — из **shell Entware** (как войти: [§3C](#3c-консоль-peak--entware--как-попасть-ssh-и-cli)).
+
 ```sh
 /opt/etc/init.d/S99poolheat-standalone status
 /opt/etc/init.d/S99poolheat-standalone start
@@ -257,7 +406,12 @@ echo '{"cmd":"summary"}' | nc 192.168.1.10 4028
 
 tail -f /opt/var/poolheat/poolheat.log
 cat /opt/lib/poolheat/VERSION
+curl -s http://127.0.0.1:8787/api/version
 ```
+
+Если UI/бот «мертвы» (`http://192.168.1.1:8787` не открывается),  
+чаще всего упал процесс — зайдите в консоль (§3C) и сделайте `restart`  
+и `tail` лога.
 
 Автозапуск: init-скрипты в `/opt/etc/init.d/` поднимаются  
 при монтировании Entware (`rc.unslung`). Если USB отвалился —  
