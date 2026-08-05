@@ -129,6 +129,7 @@ ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
 POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
+CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
@@ -2552,6 +2553,92 @@ def _save_chipmap_cfg() -> None:
         _save_json(CHIPMAP_CFG_FILE, _chipmap_cfg)
 
 
+def _chipmap_cache_is_persistable(data: dict | None) -> bool:
+    """Only persist successful scrapes with board/chip data."""
+    if not isinstance(data, dict):
+        return False
+    if data.get("reason") in ("suspend", "disabled", "error"):
+        return False
+    if data.get("ok") is False and not data.get("boards"):
+        return False
+    boards = data.get("boards")
+    if not isinstance(boards, list) or not boards:
+        return False
+    try:
+        n = int(data.get("chip_count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        n = sum(len(b.get("chips") or []) for b in boards if isinstance(b, dict))
+    return n > 0
+
+
+def _save_chipmap_cache_disk(data: dict | None = None) -> None:
+    """Write last good chipmap to disk (survives service restart)."""
+    try:
+        with _chipmap_lock:
+            payload = dict(data) if isinstance(data, dict) else dict(_chipmap_cache)
+        if not _chipmap_cache_is_persistable(payload):
+            return
+        # strip volatile / huge noise if any
+        to_save = {
+            k: payload.get(k)
+            for k in (
+                "ok",
+                "ts",
+                "fetch_ms",
+                "error",
+                "reason",
+                "message",
+                "source",
+                "host",
+                "miner_type",
+                "boards",
+                "chip_count",
+                "board_count",
+                "temp_min",
+                "temp_max",
+                "temp_avg",
+                "nonce_total",
+                "hashrate_th",
+                "mining_elapsed",
+            )
+            if k in payload or k in ("ok", "ts", "boards", "chip_count")
+        }
+        to_save["ok"] = True
+        to_save["persisted"] = True
+        to_save["persisted_at"] = datetime.now().isoformat(timespec="seconds")
+        CHIPMAP_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CHIPMAP_CACHE_FILE.write_text(
+            json.dumps(to_save, ensure_ascii=False, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[chipmap] cache save: {e}")
+
+
+def _load_chipmap_cache_disk() -> None:
+    """Restore last chipmap into RAM on boot."""
+    global _chipmap_cache
+    try:
+        if not CHIPMAP_CACHE_FILE.is_file():
+            return
+        raw = json.loads(CHIPMAP_CACHE_FILE.read_text(encoding="utf-8"))
+        if not _chipmap_cache_is_persistable(raw):
+            return
+        raw = dict(raw)
+        raw["stale"] = True
+        raw["source"] = raw.get("source") or "disk"
+        raw["from_disk"] = True
+        with _chipmap_lock:
+            _chipmap_cache.clear()
+            _chipmap_cache.update(raw)
+        n = raw.get("chip_count") or 0
+        print(f"[chipmap] restored cache from disk · chips {n} · ts {raw.get('ts')}")
+    except Exception as e:
+        print(f"[chipmap] cache load: {e}")
+
+
 def get_chipmap_cfg(*, redact: bool = True) -> dict:
     with _chipmap_lock:
         cfg = dict(_chipmap_cfg)
@@ -2817,8 +2904,26 @@ def _chipmap_suspend_payload(*, fetch_ms: int | None = None) -> dict:
         "stale": False,
     }
     with _chipmap_lock:
+        prev = dict(_chipmap_cache)
+        # keep last good boards in RAM (and on disk) for after restart / resume
+        if (
+            prev.get("boards")
+            and prev.get("chip_count")
+            and prev.get("reason") != "suspend"
+        ):
+            out["boards"] = prev["boards"]
+            out["board_count"] = prev.get("board_count") or len(prev["boards"])
+            out["chip_count"] = prev.get("chip_count")
+            out["temp_min"] = prev.get("temp_min")
+            out["temp_max"] = prev.get("temp_max")
+            out["temp_avg"] = prev.get("temp_avg")
+            out["miner_type"] = prev.get("miner_type")
+            out["stale"] = True
+            out["last_good_ts"] = prev.get("ts")
+            out["message"] = msg + " · показан последний кеш"
         _chipmap_cache.clear()
         _chipmap_cache.update(out)
+    # never overwrite disk with empty suspend payload
     return dict(out)
 
 
