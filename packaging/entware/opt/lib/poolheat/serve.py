@@ -131,6 +131,7 @@ FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
+SNIFFER_CFG_FILE = DATA / "sniffer_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
@@ -151,7 +152,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.43"
+_DEFAULT_APP_VERSION = "0.4.3"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -3450,6 +3451,518 @@ def _luci_proxy_sync_runtime(cfg: dict | None = None) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+# ─── Optional module: miner sniffer (download from GitHub on activate) ────────
+
+DEFAULT_SNIFFER_CFG: dict = {
+    "enabled": False,
+    "iface": "br0",
+    "filter": "",  # empty → host <miner>
+    "pcap_dir": "/tmp/poolheat-sniffer",
+    "snaplen": 0,
+    "installed_version": None,
+    "installed_at": None,
+    "source_ref": None,
+}
+
+# Install dir lives under DATA so uninstall frees user space without touching /opt package
+SNIFFER_MODULE_DIR = DATA / "modules" / "miner_sniffer"
+SNIFFER_MODULE_FILE = SNIFFER_MODULE_DIR / "miner_sniffer.py"
+# Also try repo checkout (dev) next to package root
+_SNIFFER_REPO_CANDIDATES = (
+    Path(__file__).resolve().parent.parent / "modules" / "miner_sniffer" / "miner_sniffer.py",
+    Path(__file__).resolve().parent / "modules" / "miner_sniffer" / "miner_sniffer.py",
+    Path("/opt/lib/poolheat/modules/miner_sniffer/miner_sniffer.py"),
+)
+
+_sniffer_cfg: dict = dict(DEFAULT_SNIFFER_CFG)
+_sniffer_cfg_lock = threading.Lock()
+_sniffer_mod = None  # type: ignore
+_sniffer_import_error: str | None = None
+_sniffer_op_lock = threading.Lock()
+
+
+def _sniffer_module_present() -> bool:
+    return SNIFFER_MODULE_FILE.is_file()
+
+
+def _import_miner_sniffer(force_reload: bool = False):
+    """Load installed (or local repo) miner_sniffer module."""
+    global _sniffer_mod, _sniffer_import_error
+    import importlib
+    import importlib.util
+    import sys as _sys
+
+    candidates: list[Path] = []
+    if SNIFFER_MODULE_FILE.is_file():
+        candidates.append(SNIFFER_MODULE_FILE)
+    for p in _SNIFFER_REPO_CANDIDATES:
+        try:
+            if p.is_file() and p not in candidates:
+                candidates.append(p)
+        except Exception:
+            pass
+
+    if not candidates:
+        _sniffer_mod = None
+        _sniffer_import_error = "module not installed (enable in Advanced to download from GitHub)"
+        return None
+
+    last_err: str | None = None
+    for mod_path in candidates:
+        try:
+            key = "poolheat_miner_sniffer"
+            if force_reload and key in _sys.modules:
+                del _sys.modules[key]
+            if key in _sys.modules and not force_reload:
+                mod = _sys.modules[key]
+            else:
+                spec = importlib.util.spec_from_file_location(key, mod_path)
+                if spec is None or spec.loader is None:
+                    raise ImportError(f"cannot load {mod_path}")
+                mod = importlib.util.module_from_spec(spec)
+                _sys.modules[key] = mod
+                spec.loader.exec_module(mod)
+            _sniffer_mod = mod
+            _sniffer_import_error = None
+            try:
+                mod.set_install_dir(str(mod_path.parent))
+            except Exception:
+                pass
+            return mod
+        except Exception as e:
+            last_err = str(e)
+            continue
+    _sniffer_mod = None
+    _sniffer_import_error = last_err or "import failed"
+    return None
+
+
+def _load_sniffer_cfg() -> None:
+    global _sniffer_cfg
+    raw = _load_json(SNIFFER_CFG_FILE, DEFAULT_SNIFFER_CFG)
+    if not isinstance(raw, dict):
+        raw = {}
+    cfg = dict(DEFAULT_SNIFFER_CFG)
+    cfg["enabled"] = bool(raw.get("enabled", False))
+    iface = str(raw.get("iface") or "br0").strip() or "br0"
+    cfg["iface"] = iface
+    cfg["filter"] = str(raw.get("filter") or "").strip()
+    pdir = str(raw.get("pcap_dir") or "/tmp/poolheat-sniffer").strip()
+    cfg["pcap_dir"] = pdir or "/tmp/poolheat-sniffer"
+    try:
+        cfg["snaplen"] = max(0, min(65535, int(raw.get("snaplen", 0) or 0)))
+    except (TypeError, ValueError):
+        cfg["snaplen"] = 0
+    cfg["installed_version"] = raw.get("installed_version")
+    cfg["installed_at"] = raw.get("installed_at")
+    cfg["source_ref"] = raw.get("source_ref")
+    with _sniffer_cfg_lock:
+        _sniffer_cfg = cfg
+
+
+def _save_sniffer_cfg() -> None:
+    with _sniffer_cfg_lock:
+        _save_json(SNIFFER_CFG_FILE, _sniffer_cfg)
+
+
+def install_sniffer_module(*, ref: str | None = None, force: bool = False) -> dict:
+    """
+    Download miner_sniffer.py from GitHub (andreybmc/poolheat modules/ path)
+    into DATA/modules/miner_sniffer/. Local repo copy used as fallback.
+    """
+    global _sniffer_mod
+    if not _sniffer_op_lock.acquire(blocking=False):
+        return {"ok": False, "error": "sniffer install already in progress"}
+    try:
+        if _sniffer_module_present() and not force:
+            mod = _import_miner_sniffer(force_reload=True)
+            ver = getattr(mod, "MODULE_VERSION", None) if mod else None
+            with _sniffer_cfg_lock:
+                if ver:
+                    _sniffer_cfg["installed_version"] = ver
+            _save_sniffer_cfg()
+            return {
+                "ok": True,
+                "already": True,
+                "path": str(SNIFFER_MODULE_FILE),
+                "version": ver,
+            }
+
+        target_ref = (ref or GITHUB_BRANCH or "main").strip() or "main"
+        SNIFFER_MODULE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 1) Prefer local checkout (dev / same repo tree)
+        for src in _SNIFFER_REPO_CANDIDATES:
+            try:
+                if src.is_file() and src.resolve() != SNIFFER_MODULE_FILE.resolve():
+                    shutil.copy2(src, SNIFFER_MODULE_FILE)
+                    # optional README
+                    readme_src = src.parent / "README.md"
+                    if readme_src.is_file():
+                        shutil.copy2(readme_src, SNIFFER_MODULE_DIR / "README.md")
+                    mod = _import_miner_sniffer(force_reload=True)
+                    ver = getattr(mod, "MODULE_VERSION", None) if mod else None
+                    with _sniffer_cfg_lock:
+                        _sniffer_cfg["installed_version"] = ver
+                        _sniffer_cfg["installed_at"] = datetime.now().isoformat(
+                            timespec="seconds"
+                        )
+                        _sniffer_cfg["source_ref"] = f"local:{src}"
+                    _save_sniffer_cfg()
+                    return {
+                        "ok": True,
+                        "path": str(SNIFFER_MODULE_FILE),
+                        "version": ver,
+                        "source": f"local:{src}",
+                    }
+            except Exception:
+                continue
+
+        # 2) GitHub raw single-file download (small, no full archive)
+        rel = "modules/miner_sniffer/miner_sniffer.py"
+        urls = [
+            f"https://raw.githubusercontent.com/{GITHUB_REPO}/{target_ref}/{rel}",
+            f"https://cdn.jsdelivr.net/gh/{GITHUB_REPO}@{target_ref}/{rel}",
+        ]
+        errors: list[str] = []
+        blob: bytes | None = None
+        used = None
+        for u in urls:
+            try:
+                blob = _http_bytes(u, timeout=45)
+                if blob and b"def start" in blob and b"tcpdump" in blob:
+                    used = u
+                    break
+                errors.append(f"{u}: unexpected content")
+                blob = None
+            except Exception as e:
+                errors.append(f"{u}: {e}")
+                blob = None
+        if not blob:
+            # 3) fallback: full archive, extract module path only
+            try:
+                archive_url = (
+                    f"https://github.com/{GITHUB_REPO}/archive/refs/heads/"
+                    f"{target_ref}.tar.gz"
+                )
+                ablob = _http_bytes(archive_url, timeout=90)
+                import tarfile
+                import tempfile
+
+                with tempfile.TemporaryDirectory(prefix="poolheat-sniff-") as td:
+                    tgz = Path(td) / "src.tar.gz"
+                    tgz.write_bytes(ablob)
+                    with tarfile.open(tgz, "r:gz") as tar:
+                        for m in tar.getmembers():
+                            name = m.name.replace("\\", "/")
+                            if name.startswith("/") or ".." in name.split("/"):
+                                continue
+                            parts = name.split("/", 1)
+                            if len(parts) < 2:
+                                continue
+                            rel_path = parts[1]
+                            if rel_path == rel and m.isfile():
+                                f = tar.extractfile(m)
+                                if f:
+                                    blob = f.read()
+                                    used = archive_url + "#" + rel
+                                    break
+            except Exception as e:
+                errors.append(f"archive: {e}")
+
+        if not blob:
+            return {
+                "ok": False,
+                "error": "download failed: " + "; ".join(errors[:4]),
+                "tried": urls,
+            }
+
+        SNIFFER_MODULE_FILE.write_bytes(blob)
+        # try README
+        try:
+            readme_rel = "modules/miner_sniffer/README.md"
+            rurl = (
+                f"https://raw.githubusercontent.com/{GITHUB_REPO}/{target_ref}/{readme_rel}"
+            )
+            rblob = _http_bytes(rurl, timeout=20)
+            if rblob and len(rblob) < 200_000:
+                (SNIFFER_MODULE_DIR / "README.md").write_bytes(rblob)
+        except Exception:
+            pass
+
+        mod = _import_miner_sniffer(force_reload=True)
+        if mod is None:
+            return {
+                "ok": False,
+                "error": f"downloaded but import failed: {_sniffer_import_error}",
+                "path": str(SNIFFER_MODULE_FILE),
+            }
+        ver = getattr(mod, "MODULE_VERSION", None)
+        with _sniffer_cfg_lock:
+            _sniffer_cfg["installed_version"] = ver
+            _sniffer_cfg["installed_at"] = datetime.now().isoformat(timespec="seconds")
+            _sniffer_cfg["source_ref"] = used or target_ref
+        _save_sniffer_cfg()
+        return {
+            "ok": True,
+            "path": str(SNIFFER_MODULE_FILE),
+            "version": ver,
+            "source": used,
+            "ref": target_ref,
+        }
+    finally:
+        _sniffer_op_lock.release()
+
+
+def uninstall_sniffer_module(*, remove_captures: bool = True) -> dict:
+    """Stop capture, delete module files and config enable flag, free space."""
+    global _sniffer_mod
+    with _sniffer_cfg_lock:
+        _sniffer_cfg["enabled"] = False
+    _save_sniffer_cfg()
+
+    stop_res: dict = {}
+    mod = _sniffer_mod or _import_miner_sniffer()
+    if mod is not None:
+        try:
+            stop_res = mod.uninstall_runtime(remove_captures=remove_captures)
+        except Exception as e:
+            stop_res = {"ok": False, "error": str(e)}
+            try:
+                mod.stop()
+            except Exception:
+                pass
+
+    removed_files: list[str] = []
+    # remove install tree under DATA
+    if SNIFFER_MODULE_DIR.is_dir():
+        for p in sorted(SNIFFER_MODULE_DIR.rglob("*"), reverse=True):
+            try:
+                if p.is_file() or p.is_symlink():
+                    p.unlink()
+                    removed_files.append(str(p))
+                elif p.is_dir():
+                    p.rmdir()
+            except Exception:
+                pass
+        try:
+            SNIFFER_MODULE_DIR.rmdir()
+            removed_files.append(str(SNIFFER_MODULE_DIR))
+        except Exception:
+            pass
+    # parent modules/ if empty
+    try:
+        parent = SNIFFER_MODULE_DIR.parent
+        if parent.is_dir() and not any(parent.iterdir()):
+            parent.rmdir()
+    except Exception:
+        pass
+
+    # drop import
+    import sys as _sys
+
+    _sys.modules.pop("poolheat_miner_sniffer", None)
+    _sniffer_mod = None
+
+    with _sniffer_cfg_lock:
+        _sniffer_cfg["installed_version"] = None
+        _sniffer_cfg["installed_at"] = None
+        _sniffer_cfg["source_ref"] = None
+        _sniffer_cfg["enabled"] = False
+    _save_sniffer_cfg()
+
+    # optional: wipe pcap dir contents (usually /tmp/poolheat-sniffer)
+    try:
+        with _sniffer_cfg_lock:
+            pdir = Path(str(_sniffer_cfg.get("pcap_dir") or "/tmp/poolheat-sniffer"))
+        if remove_captures and pdir.is_dir():
+            for p in pdir.iterdir():
+                try:
+                    if p.is_file():
+                        p.unlink()
+                        removed_files.append(str(p))
+                except Exception:
+                    pass
+            try:
+                pdir.rmdir()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "stop": stop_res,
+        "removed": removed_files[:50],
+        "removed_count": len(removed_files),
+        "installed": False,
+        "enabled": False,
+    }
+
+
+def get_sniffer_cfg() -> dict:
+    with _sniffer_cfg_lock:
+        cfg = dict(_sniffer_cfg)
+    installed = _sniffer_module_present()
+    # also count local repo as "available" for status
+    local_available = any(p.is_file() for p in _SNIFFER_REPO_CANDIDATES)
+    mod = _sniffer_mod
+    if mod is None and (installed or local_available):
+        mod = _import_miner_sniffer()
+    st: dict = {}
+    if mod is not None:
+        try:
+            st = mod.status()
+        except Exception as e:
+            st = {"running": False, "error": str(e)}
+    else:
+        st = {
+            "running": False,
+            "enabled": bool(cfg.get("enabled")),
+            "error": _sniffer_import_error
+            or ("not installed" if not installed else "module not loaded"),
+            "tcpdump": None,
+            "tcpdump_ok": False,
+        }
+        # still report tcpdump presence without module
+        for c in (
+            "/opt/bin/tcpdump",
+            "/usr/sbin/tcpdump",
+            "/usr/bin/tcpdump",
+        ):
+            if Path(c).is_file():
+                st["tcpdump"] = c
+                st["tcpdump_ok"] = True
+                break
+
+    cfg["installed"] = installed
+    cfg["local_available"] = local_available
+    cfg["module_loaded"] = mod is not None
+    cfg["module_path"] = str(SNIFFER_MODULE_FILE) if installed else None
+    cfg["miner_host"] = HOST_MINER
+    if cfg.get("enabled") and not st.get("running") and not st.get("error"):
+        st["error"] = st.get("error") or "enabled but capture not running"
+
+    return {
+        "ok": True,
+        "config": cfg,
+        "status": st,
+        "github": {
+            "repo": GITHUB_REPO,
+            "branch": GITHUB_BRANCH,
+            "path": "modules/miner_sniffer/",
+        },
+    }
+
+
+def apply_sniffer_cfg(req: dict) -> dict:
+    """Update config; on enable → install from GitHub if needed + start; on disable → stop."""
+    global _sniffer_mod
+    if not isinstance(req, dict):
+        raise ValueError("expected object")
+
+    with _sniffer_cfg_lock:
+        if "enabled" in req:
+            _sniffer_cfg["enabled"] = bool(req["enabled"])
+        if "iface" in req and str(req.get("iface") or "").strip():
+            _sniffer_cfg["iface"] = str(req["iface"]).strip()
+        if "filter" in req:
+            _sniffer_cfg["filter"] = str(req.get("filter") or "").strip()
+        if "pcap_dir" in req and str(req.get("pcap_dir") or "").strip():
+            _sniffer_cfg["pcap_dir"] = str(req["pcap_dir"]).strip()
+        if "snaplen" in req:
+            try:
+                _sniffer_cfg["snaplen"] = max(
+                    0, min(65535, int(req["snaplen"]))
+                )
+            except (TypeError, ValueError):
+                pass
+        snap = dict(_sniffer_cfg)
+    _save_sniffer_cfg()
+
+    install_res: dict | None = None
+    if snap.get("enabled"):
+        # need module on disk
+        if not _sniffer_module_present():
+            install_res = install_sniffer_module(force=False)
+            if not install_res.get("ok"):
+                body = get_sniffer_cfg()
+                body["ok"] = False
+                body["error"] = install_res.get("error") or "install failed"
+                body["install"] = install_res
+                return body
+        else:
+            _import_miner_sniffer(force_reload=False)
+    else:
+        # deactivate only — keep files
+        pass
+
+    apply_res = _sniffer_sync_runtime(snap)
+    body = get_sniffer_cfg()
+    if install_res:
+        body["install"] = install_res
+    body["apply"] = apply_res
+    if snap.get("enabled"):
+        st = body.get("status") or {}
+        if not st.get("running"):
+            body["ok"] = False
+            body["error"] = (
+                st.get("error")
+                or (apply_res or {}).get("error")
+                or "sniffer failed to start"
+            )
+    elif isinstance(apply_res, dict) and apply_res.get("ok") is False:
+        body["ok"] = False
+        body["error"] = apply_res.get("error") or "sniffer stop failed"
+    return body
+
+
+def _sniffer_sync_runtime(cfg: dict | None = None) -> dict:
+    """Push settings into miner_sniffer and start/stop."""
+    global _sniffer_mod
+    if cfg is None:
+        with _sniffer_cfg_lock:
+            cfg = dict(_sniffer_cfg)
+
+    want_on = bool(cfg.get("enabled"))
+    if not want_on:
+        mod = _sniffer_mod or (
+            _import_miner_sniffer() if _sniffer_module_present() else None
+        )
+        if mod is None:
+            return {"ok": True, "stopped": True, "note": "module not loaded"}
+        try:
+            mod.configure(enabled=False)
+            return mod.stop()
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    mod = _import_miner_sniffer()
+    if mod is None:
+        return {
+            "ok": False,
+            "error": "sniffer module not loaded"
+            + (f": {_sniffer_import_error}" if _sniffer_import_error else ""),
+        }
+    try:
+        mod.set_host_resolver(lambda: HOST_MINER)
+        mod.configure(
+            enabled=True,
+            iface=str(cfg.get("iface") or "br0"),
+            filter=str(cfg.get("filter") or ""),
+            pcap_dir=str(cfg.get("pcap_dir") or "/tmp/poolheat-sniffer"),
+            snaplen=int(cfg.get("snaplen") or 0),
+            miner_host=str(HOST_MINER or ""),
+        )
+        res = mod.apply()
+        if not isinstance(res, dict):
+            res = {"ok": True, "result": res}
+        return res
+    except Exception as e:
+        print(f"[sniffer] apply: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 def _miner_config_path() -> Path:
     """Where to persist miner host/port/password."""
     cfg = _APP.get("cfg_path") or ""
@@ -3781,6 +4294,8 @@ def build_config_backup() -> dict:
     chipmap = get_chipmap_cfg(redact=False)
     with _luci_proxy_cfg_lock:
         luci_proxy_cfg = dict(_luci_proxy_cfg)
+    with _sniffer_cfg_lock:
+        sniffer_cfg = dict(_sniffer_cfg)
     telegram = get_telegram_cfg(redact=False)
     telegram.pop("status", None)
     with _pool_presets_lock:
@@ -3804,12 +4319,14 @@ def build_config_backup() -> dict:
             "filtration": filtration,
             "chipmap": chipmap,
             "luci_proxy": luci_proxy_cfg,
+            "sniffer": sniffer_cfg,
             "telegram": telegram,
         },
         "notes": (
             "Restore via UI Settings → Backup or POST /api/config/restore. "
             "Contains secrets (API password, Telegram token, filtration passwords). "
-            "meta / app_version are host facts — rewritten on each service start."
+            "meta / app_version are host facts — rewritten on each service start. "
+            "sniffer module files are not in the backup — re-download on enable."
         ),
     }
 
@@ -4034,6 +4551,14 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("luci_proxy")
         except Exception as e:
             errors["luci_proxy"] = str(e)
+
+    # 8b) sniffer (settings only; module re-downloaded on enable if missing)
+    if "sniffer" in want and isinstance(cfgs.get("sniffer"), dict):
+        try:
+            apply_sniffer_cfg(cfgs["sniffer"])
+            applied.append("sniffer")
+        except Exception as e:
+            errors["sniffer"] = str(e)
 
     # 9) telegram
     if "telegram" in want and isinstance(cfgs.get("telegram"), dict):
@@ -4551,6 +5076,16 @@ _load_chipmap_cfg()
 _load_chipmap_cache_disk()
 _load_luci_proxy_cfg()
 _luci_proxy_sync_runtime()
+_load_sniffer_cfg()
+try:
+    if _sniffer_cfg.get("enabled") and (
+        _sniffer_module_present()
+        or any(p.is_file() for p in _SNIFFER_REPO_CANDIDATES)
+    ):
+        _import_miner_sniffer()
+        _sniffer_sync_runtime()
+except Exception as _sn_boot_err:
+    print(f"[sniffer] boot: {_sn_boot_err}")
 
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
@@ -15871,6 +16406,24 @@ class Handler(SimpleHTTPRequestHandler):
         ):
             self._json_response(200, get_luci_proxy_cfg())
             return
+        if path in (
+            "/api/sniffer",
+            "/api/sniffer/config",
+            "/api/sniffer/status",
+            "/api/miner_sniffer",
+            "/api/miner_sniffer/config",
+        ):
+            try:
+                self._json_response(200, get_sniffer_cfg())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/sniffer/download", "/api/miner_sniffer/download"):
+            try:
+                self._api_sniffer_download()
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
         if path in ("/api/miner/errors", "/api/errors/log"):
             self._api_miner_error_log()
             return
@@ -16034,6 +16587,77 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json_response(400, {"ok": False, "error": str(e)})
             return
+        if path in (
+            "/api/sniffer",
+            "/api/sniffer/config",
+            "/api/miner_sniffer",
+            "/api/miner_sniffer/config",
+        ):
+            try:
+                req = self._read_json_body() or {}
+                body = apply_sniffer_cfg(req if isinstance(req, dict) else {})
+                code = 200 if body.get("ok", True) else 400
+                self._json_response(code, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/sniffer/install", "/api/miner_sniffer/install"):
+            try:
+                req = self._read_json_body() or {}
+                force = bool(req.get("force", True)) if isinstance(req, dict) else True
+                ref = (req.get("ref") if isinstance(req, dict) else None) or None
+                body = install_sniffer_module(ref=ref, force=force)
+                code = 200 if body.get("ok") else 400
+                self._json_response(code, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/sniffer/uninstall", "/api/miner_sniffer/uninstall"):
+            try:
+                req = self._read_json_body() or {}
+                remove_caps = True
+                if isinstance(req, dict) and "remove_captures" in req:
+                    remove_caps = bool(req.get("remove_captures"))
+                body = uninstall_sniffer_module(remove_captures=remove_caps)
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/sniffer/rotate", "/api/miner_sniffer/rotate"):
+            try:
+                mod = _sniffer_mod or _import_miner_sniffer()
+                if mod is None:
+                    self._json_response(
+                        400,
+                        {
+                            "ok": False,
+                            "error": _sniffer_import_error or "module not installed",
+                        },
+                    )
+                    return
+                mod.stop()
+                res = mod.start()
+                self._json_response(200, {"ok": bool(res.get("ok", True)), **res})
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/sniffer/clear", "/api/miner_sniffer/clear"):
+            try:
+                mod = _sniffer_mod or _import_miner_sniffer()
+                if mod is None:
+                    self._json_response(
+                        400,
+                        {
+                            "ok": False,
+                            "error": _sniffer_import_error or "module not installed",
+                        },
+                    )
+                    return
+                res = mod.clear_captures(keep_current=True)
+                self._json_response(200, res)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
         if path in ("/api/chipmap/refresh", "/api/chipmap/poll"):
             self._json_response(200, get_chipmap(force=True))
             return
@@ -16151,6 +16775,54 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _api_sniffer_download(self) -> None:
+        """GET /api/sniffer/download — current (or named) pcap file."""
+        qs = parse_qs(urlparse(self.path).query)
+        name = str((qs.get("name") or [""])[0]).strip()
+        mod = _sniffer_mod or _import_miner_sniffer()
+        pcap_path: Path | None = None
+        if mod is not None:
+            try:
+                st = mod.status()
+                base = Path(str(st.get("pcap_dir") or "/tmp/poolheat-sniffer"))
+                if name:
+                    # basename only — no path traversal
+                    safe = Path(name).name
+                    cand = base / safe
+                    if cand.is_file() and cand.suffix.lower() == ".pcap":
+                        pcap_path = cand
+                else:
+                    p = Path(str(st.get("pcap") or ""))
+                    if p.is_file():
+                        pcap_path = p
+                    else:
+                        files = st.get("captures") or []
+                        if files:
+                            pcap_path = Path(str(files[0].get("path") or ""))
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+                return
+        if pcap_path is None or not pcap_path.is_file():
+            self._json_response(
+                404, {"ok": False, "error": "no pcap file (start capture first)"}
+            )
+            return
+        try:
+            data = pcap_path.read_bytes()
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        fname = pcap_path.name or "poolheat-sniffer.pcap"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.tcpdump.pcap")
+        self.send_header(
+            "Content-Disposition", f'attachment; filename="{fname}"'
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
@@ -16974,6 +17646,23 @@ def main() -> None:
         )
     except Exception as e:
         print(f"luci proxy:        n/a ({e})")
+    try:
+        sn = get_sniffer_cfg()
+        snc = sn.get("config") or {}
+        sns = sn.get("status") or {}
+        print(
+            f"sniffer:           "
+            f"{'ON' if snc.get('enabled') else 'off'} · "
+            f"{'installed' if snc.get('installed') else 'not installed'} · "
+            f"{'capturing' if sns.get('running') else 'idle'}"
+            + (
+                f" · {sns.get('pcap_size') or 0}B"
+                if sns.get("running")
+                else ""
+            )
+        )
+    except Exception as e:
+        print(f"sniffer:           n/a ({e})")
     print(f"policy:            GET/POST /api/policy · server-side control")
     print(f"system info:       GET  /api/system/info")
     print(f"version/update:    GET  /api/version · /api/update/check · POST /api/update/apply")

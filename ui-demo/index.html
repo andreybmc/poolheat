@@ -4168,6 +4168,44 @@
               </p>
               <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="luci-proxy-status">—</p>
             </div>
+
+            <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
+
+            <!-- Miner sniffer (optional GitHub module) -->
+            <div id="panel-miner-sniffer">
+              <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
+                <div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem" data-i18n="section.sniffer">Miner sniffer</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.sniffer">optional · download from GitHub · tcpdump on router</div>
+                </div>
+                <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                  <a class="btn ghost" id="btn-sniffer-download" href="/api/sniffer/download" style="display:none" data-i18n="btn.pcap">Download pcap</a>
+                  <button class="btn danger ghost" type="button" id="btn-sniffer-uninstall" data-i18n="btn.uninstall">Uninstall</button>
+                  <button class="btn primary" type="button" id="btn-sniffer-save" data-i18n="btn.save">Save</button>
+                </div>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="sniffer-enabled" />
+                <span><span data-i18n="check.sniffer">Enable miner capture</span>
+                  <span class="desc" data-i18n="check.sniffer_desc">install module + start tcpdump (host &lt;miner&gt;)</span>
+                </span>
+              </label>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field">Interface
+                  <input type="text" id="sniffer-iface" value="br0" placeholder="br0" autocomplete="off" />
+                </label>
+                <label class="field">BPF filter <span style="color:var(--dim);font-weight:400">(empty = host miner)</span>
+                  <input type="text" id="sniffer-filter" value="" placeholder="host 192.168.1.10" autocomplete="off" />
+                </label>
+              </div>
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n="hint.sniffer">
+                On enable, poolheat downloads <code>modules/miner_sniffer</code> from GitHub into the data dir,
+                then starts <code>tcpdump</code> on the router. Deactivate stops capture but keeps the module.
+                Uninstall removes module files and pcaps to free space. Needs <code>opkg install tcpdump</code>.
+                Captures go to <code>/tmp/poolheat-sniffer/</code> (tmpfs). Keep sessions short.
+              </p>
+              <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="sniffer-status">—</p>
+            </div>
           </div>
         </div>
       </div>
@@ -4451,10 +4489,12 @@
   "section.chip_cache": "Chip map · cache",
   "section.remote": "Remote · auth",
   "section.luci": "LuCI proxy · :8788",
+  "section.sniffer": "Miner sniffer",
   "sub.desc.history": "retention · sample interval · enable logging",
   "sub.desc.chip_cache": "disk cache · survives service restart",
   "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
   "sub.desc.luci": "miner web UI via the router",
+  "sub.desc.sniffer": "optional · download from GitHub · tcpdump on router",
   "sub.backup": "download / restore all settings (JSON)",
   "sub.connection": "TCP · saved to config.json · applied immediately",
   "sub.filtration": "outlet / webhook · auto ON while mining",
@@ -4469,6 +4509,11 @@
   "check.hist_enabled": "Data collection",
   "check.hist_desc": "write samples to history.db",
   "check.chip_cache": "Save chip map cache",
+  "check.sniffer": "Enable miner capture",
+  "check.sniffer_desc": "install module + start tcpdump (host <miner>)",
+  "btn.pcap": "Download pcap",
+  "btn.uninstall": "Uninstall",
+  "hint.sniffer": "On enable, poolheat downloads modules/miner_sniffer from GitHub, then starts tcpdump. Deactivate stops capture; Uninstall frees space.",
   "check.luci_proxy": "Enable proxy on port 8788",
   "field.store_days": "Keep, days",
   "field.interval_sec": "Sample interval, sec",
@@ -4555,10 +4600,12 @@
   "section.chip_cache": "Карта чипов · кеш",
   "section.remote": "Remote · auth",
   "section.luci": "LuCI proxy · :8788",
+  "section.sniffer": "Сниффер miner",
   "sub.desc.history": "retention · sample interval · enable logging",
   "sub.desc.chip_cache": "disk cache · survives service restart",
   "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
   "sub.desc.luci": "доступ к web-UI miner через роутер",
+  "sub.desc.sniffer": "опционально · скачать с GitHub · tcpdump на роутере",
   "sub.backup": "download / restore all settings (JSON)",
   "sub.connection": "TCP · saved to config.json · applied immediately",
   "sub.filtration": "outlet / webhook · auto ON while mining",
@@ -4569,6 +4616,11 @@
   "sub.access": "Remote · auth · LuCI proxy :8788",
   "sub.software": "version · GitHub update check",
   "sub.dry": "auto zones · Safety always · then Save",
+  "check.sniffer": "Включить захват miner",
+  "check.sniffer_desc": "установить модуль + запустить tcpdump (host <miner>)",
+  "btn.pcap": "Скачать pcap",
+  "btn.uninstall": "Удалить",
+  "hint.sniffer": "При включении poolheat скачивает modules/miner_sniffer с GitHub и запускает tcpdump. Деактивация останавливает захват; Удалить — освобождает место.",
   "sub.chip_poll": "own interval · web admin · separate from live poll",
   "check.hist_enabled": "Сбор данных",
   "check.hist_desc": "писать samples в history.db",
@@ -5324,6 +5376,7 @@
       if (mainTab === "settings" && settingsSub === "advanced") {
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadLuciProxyConfig === "function") loadLuciProxyConfig();
+        if (typeof loadSnifferConfig === "function") loadSnifferConfig();
       }
       if (!opts.skipUrl) {
         // #chips / #pools / #logs / #advanced keep deep-link hashes
@@ -13867,6 +13920,142 @@
       }
     }
 
+    function _fmtBytes(n) {
+      const v = Number(n) || 0;
+      if (v < 1024) return v + " B";
+      if (v < 1024 * 1024) return (v / 1024).toFixed(1) + " KB";
+      return (v / (1024 * 1024)).toFixed(2) + " MB";
+    }
+
+    async function loadSnifferConfig() {
+      try {
+        const res = await fetch("/api/sniffer/config", { cache: "no-store" });
+        const body = await res.json();
+        const c = body.config || body;
+        const st = body.status || {};
+        const en = document.getElementById("sniffer-enabled");
+        const iface = document.getElementById("sniffer-iface");
+        const filt = document.getElementById("sniffer-filter");
+        const dl = document.getElementById("btn-sniffer-download");
+        const un = document.getElementById("btn-sniffer-uninstall");
+        if (en) en.checked = !!c.enabled;
+        if (iface && c.iface) iface.value = c.iface;
+        if (filt) filt.value = c.filter || "";
+        if (dl) {
+          const hasPcap = !!(st.pcap_size > 0 || (st.captures_total || 0) > 0);
+          dl.style.display = hasPcap ? "" : "none";
+          dl.href = "/api/sniffer/download";
+        }
+        if (un) {
+          un.disabled = !(c.installed || c.local_available || c.module_loaded);
+          un.style.opacity = un.disabled ? "0.45" : "1";
+        }
+        const pst = document.getElementById("sniffer-status");
+        if (pst) {
+          const parts = [
+            c.enabled ? "on" : "off",
+            c.installed ? "installed" : c.local_available ? "local src" : "not installed",
+            st.running ? "capturing" : "idle",
+            st.tcpdump_ok === false ? "no tcpdump" : "",
+            st.iface ? "if=" + st.iface : "",
+            st.filter ? "filter=" + st.filter : "",
+            st.pcap_size != null && st.running ? _fmtBytes(st.pcap_size) : "",
+            st.disk_usage ? "disk " + _fmtBytes(st.disk_usage) : "",
+            c.installed_version ? "v" + c.installed_version : "",
+            st.error || body.error ? "err: " + (st.error || body.error) : "",
+          ].filter(Boolean);
+          pst.textContent = parts.join(" · ") || "—";
+          pst.style.color =
+            c.enabled && !st.running
+              ? "var(--warn, #e6a23c)"
+              : st.running
+                ? "var(--ok, #3ecf8e)"
+                : "var(--dim)";
+        }
+        return body;
+      } catch (e) {
+        console.warn("sniffer config", e);
+        const pst = document.getElementById("sniffer-status");
+        if (pst) {
+          pst.textContent = "load error: " + e.message;
+          pst.style.color = "var(--warn, #e6a23c)";
+        }
+        return null;
+      }
+    }
+
+    async function saveSnifferConfig() {
+      try {
+        const payload = {
+          enabled: !!document.getElementById("sniffer-enabled")?.checked,
+          iface: (document.getElementById("sniffer-iface")?.value || "br0").trim(),
+          filter: (document.getElementById("sniffer-filter")?.value || "").trim(),
+        };
+        if (payload.enabled) {
+          toastInfo(
+            payload.enabled
+              ? "Sniffer: install/start…"
+              : "Sniffer: stopping…",
+            2500
+          );
+        }
+        const res = await fetch("/api/sniffer/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        await loadSnifferConfig();
+        const st = body.status || {};
+        const on = !!payload.enabled;
+        if (!res.ok || body.ok === false) {
+          throw new Error(
+            (body && body.error) ||
+              (st && st.error) ||
+              "sniffer apply failed"
+          );
+        }
+        if (on && !st.running) {
+          throw new Error(st.error || "enabled but not capturing");
+        }
+        toastSuccess(
+          on
+            ? "Sniffer · capturing (" + (st.filter || "host miner") + ")"
+            : "Sniffer · disabled"
+        );
+      } catch (e) {
+        toastError("Sniffer: " + e.message);
+        void loadSnifferConfig();
+      }
+    }
+
+    async function uninstallSniffer() {
+      if (
+        !confirm(
+          "Uninstall miner sniffer?\n\nStops capture, deletes module files and pcaps."
+        )
+      ) {
+        return;
+      }
+      try {
+        toastInfo("Sniffer: uninstalling…", 2000);
+        const res = await fetch("/api/sniffer/uninstall", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ remove_captures: true }),
+        });
+        const body = await res.json();
+        await loadSnifferConfig();
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "uninstall failed");
+        }
+        const n = body.removed_count || 0;
+        toastSuccess("Sniffer uninstalled · removed " + n + " path(s)");
+      } catch (e) {
+        toastError("Sniffer uninstall: " + e.message);
+      }
+    }
+
     function scheduleChipmapPoll() {
       if (chipmapTimer) clearInterval(chipmapTimer);
       const iv =
@@ -13937,6 +14126,12 @@
         if (sch === "https" && (cur === 80 || !cur)) tp.value = 443;
       });
     document
+      .getElementById("btn-sniffer-save")
+      ?.addEventListener("click", () => void saveSnifferConfig());
+    document
+      .getElementById("btn-sniffer-uninstall")
+      ?.addEventListener("click", () => void uninstallSniffer());
+    document
       .getElementById("chipmap-metric")
       ?.addEventListener("change", () => {
         updateChipmapModeHint();
@@ -13948,6 +14143,7 @@
     scheduleChipmapPoll();
     // LuCI proxy status → LIVE strip IP link when proxy is listening
     if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
+    if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
     loadHistoryCharts(); // charts on Overview
     loadMinerErrorLog();
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
