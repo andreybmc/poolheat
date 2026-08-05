@@ -2673,6 +2673,33 @@
           </div>
         </div>
 
+        <div class="card" id="panel-chipmap-glossary">
+          <div class="card-h">
+            <div>
+              <h2>Параметры чипа</h2>
+              <div class="sub">кратко · что видно на карте и в tooltip</div>
+            </div>
+          </div>
+          <div class="card-b" style="font-size:0.78rem;color:var(--muted);line-height:1.5">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 18px">
+              <div><strong style="color:var(--text)">#</strong> — номер чипа на плате (C0…)</div>
+              <div><strong style="color:var(--text)">temp / °C</strong> — температура чипа</div>
+              <div><strong style="color:var(--text)">Freq</strong> — частота, MHz</div>
+              <div><strong style="color:var(--text)">Vol</strong> — напряжение домена, mV (как в Miner API Log)</div>
+              <div><strong style="color:var(--text)">Nonce</strong> — счётчик найденных nonce с старта майнинга</div>
+              <div><strong style="color:var(--text)">Nonce/s</strong> — nonce / mining elapsed</div>
+              <div><strong style="color:var(--text)">Hash est</strong> — оценка TH/s: доля nonce × hashrate ASIC</div>
+              <div><strong style="color:var(--text)">Nonce deficit</strong> — % ниже среднего nonce слота (−12% = слабее)</div>
+              <div><strong style="color:var(--text)">Gradient</strong> — °C выше upstream-соседей (локальный hotspot)</div>
+              <div><strong style="color:var(--text)">Outliers</strong> — горячее того же C# на других платах (z-score)</div>
+              <div><strong style="color:var(--text)">err</strong> — ошибки чипа (API log)</div>
+              <div><strong style="color:var(--text)">crc</strong> — CRC-ошибки связи</div>
+              <div><strong style="color:var(--text)">x</strong> — xfer / transfer errors</div>
+              <div><strong style="color:var(--text)">r / repeat</strong> — повторные ошибки / repeats</div>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-h">
             <div>
