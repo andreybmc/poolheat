@@ -528,19 +528,22 @@
       font-size: 0.8rem;
       font-weight: 700;
       width: 100%;
-      padding-top: 7px; /* room for faint chip # */
-      align-items: flex-start; /* °C sits at top of temp digits */
+      /* lower + slightly right so digits look centered (°C pulls visual weight) */
+      padding-top: 9px;
+      padding-left: 3px;
+      align-items: flex-start; /* °C at top of temp digits */
       justify-content: center;
       gap: 0;
       line-height: 1;
+      box-sizing: border-box;
     }
     .chip-cell .c-deg {
       display: inline-block;
       font-size: 0.42em;
       font-weight: 650;
       line-height: 1;
-      margin-left: 0.06em;
-      margin-top: 0.05em; /* flush with top of main digits */
+      margin-left: 0.04em;
+      margin-top: 0.02em;
       opacity: 0.88;
       letter-spacing: -0.05em;
       vertical-align: top;
@@ -9902,14 +9905,21 @@
           6000
         );
         setTxt("info-app-version", body.to_version || "—");
-        // wait for restart then reload page
+        // After OTA: poll until service is alive, then reload (or force at 15s)
         if (body.restart) {
-          setTimeout(() => {
-            window.location.reload();
-          }, 3500);
+          if (btn) btn.textContent = "Перезапуск…";
+          toastInfo("Ждём сервис… перезагрузка страницы при ответе (макс. 15 с)", 8000);
+          void waitForServiceAliveThenReload({
+            timeoutMs: 15000,
+            intervalMs: 500,
+          });
         } else {
           lastUpdateCheck = null;
           void loadSystemInfo();
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = "Установить";
+          }
         }
       } catch (e) {
         toastError("Установка: " + e.message);
@@ -9919,6 +9929,43 @@
         }
       }
     });
+
+    /**
+     * After service restart: light ping until OK, then reload.
+     * Falls back to reload after timeoutMs even if still unreachable.
+     */
+    async function waitForServiceAliveThenReload(opts) {
+      opts = opts || {};
+      const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 15000);
+      const intervalMs = Math.max(200, Number(opts.intervalMs) || 500);
+      const t0 = Date.now();
+      // brief pause so old process can die before we start probing
+      await new Promise((r) => setTimeout(r, 800));
+      while (Date.now() - t0 < timeoutMs) {
+        try {
+          const ctrl = new AbortController();
+          const to = setTimeout(() => ctrl.abort(), Math.min(intervalMs + 200, 2000));
+          const res = await fetch(
+            "/api/version?alive=1&t=" + Date.now(),
+            { cache: "no-store", signal: ctrl.signal }
+          );
+          clearTimeout(to);
+          if (res.ok) {
+            // optional: body has version
+            try {
+              await res.json();
+            } catch (_) { /* ignore */ }
+            window.location.reload();
+            return;
+          }
+        } catch (_) {
+          // service down / connection reset — keep waiting
+        }
+        await new Promise((r) => setTimeout(r, intervalMs));
+      }
+      // timeout — reload anyway (user may need manual refresh if still down)
+      window.location.reload();
+    }
 
     // ─── Weather (Open-Meteo) ───────────────────────────────────────────────
     let weatherCfg = null;
