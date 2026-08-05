@@ -7564,8 +7564,17 @@ def apply_github_update(ref: str | None = None) -> dict:
                             "packaging/entware/opt/bin/poolheatd",
                             "packaging/entware/opt/etc/init.d/S99poolheat",
                             "packaging/entware/opt/etc/init.d/S99poolheat-standalone",
-                        ) or rel.startswith("ui-demo/") and rel.endswith(
+                        ):
+                            yield m
+                        elif rel.startswith("ui-demo/") and rel.endswith(
                             (".py", ".html")
+                        ):
+                            yield m
+                        # Meteocons weather icons (fill SVG) for Outdoor widget
+                        elif rel.startswith("ui-demo/icons/weather/") and (
+                            rel.endswith(".svg")
+                            or rel.endswith("LICENSE")
+                            or rel.endswith("README.md")
                         ):
                             yield m
 
@@ -7587,6 +7596,15 @@ def apply_github_update(ref: str | None = None) -> dict:
                 ),
                 (src_root / "ui-demo" / "index.html", www_dir / "index.html"),
             ]
+            # Outdoor weather icons → www/icons/weather/
+            wx_src_dir = src_root / "ui-demo" / "icons" / "weather"
+            wx_dst_dir = www_dir / "icons" / "weather"
+            if wx_src_dir.is_dir():
+                for p in sorted(wx_src_dir.iterdir()):
+                    if not p.is_file():
+                        continue
+                    if p.suffix.lower() == ".svg" or p.name in ("LICENSE", "README.md"):
+                        mapping.append((p, wx_dst_dir / p.name))
             ver_src = src_root / "VERSION"
             if ver_src.is_file():
                 new_version = _read_version_file(ver_src)

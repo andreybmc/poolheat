@@ -1866,17 +1866,20 @@
     }
     .wx-widget .wx-icon-wrap {
       flex-shrink: 0;
-      width: 84px;
-      height: 84px;
+      width: 88px;
+      height: 88px;
       display: grid;
       place-items: center;
-      filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35));
+      filter: drop-shadow(0 6px 16px rgba(0, 0, 0, 0.32));
     }
+    .wx-widget .wx-icon-wrap img,
     .wx-widget .wx-icon-wrap svg {
-      width: 80px;
-      height: 80px;
+      width: 84px;
+      height: 84px;
       display: block;
-      overflow: visible;
+      object-fit: contain;
+      user-select: none;
+      pointer-events: none;
     }
     .wx-widget .wx-meta {
       display: flex;
@@ -1914,15 +1917,7 @@
     .wx-widget.wx-error .wx-city-row {
       color: var(--muted);
     }
-    .wx-widget .wx-icon-wrap .wx-icon-spin {
-      animation: wx-spin 18s linear infinite;
-    }
-    @keyframes wx-spin {
-      to { transform: rotate(360deg); }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .wx-widget .wx-icon-wrap .wx-icon-spin { animation: none; }
-    }
+
     .temp-card.board-chip::before {
       /* top: PCB aluminum · bottom: chip silicon */
       background: linear-gradient(180deg, var(--alum) 0 50%, var(--silicon) 50% 100%);
@@ -11899,215 +11894,138 @@
       return String(s);
     }
 
-    /** WMO code → icon key + card theme */
+    /**
+     * WMO weather_code → Meteocons (Bas Milius) fill icon + card theme.
+     * Icons: ui-demo/icons/weather/*.svg from @bybas/weather-icons (MIT).
+     * https://github.com/basmilius/weather-icons
+     */
+    const WX_ICON_BASE = "/icons/weather/";
+
     function wxKindFromCode(code, isDay) {
       const c = code == null ? null : Number(code);
       const day = isDay !== false;
-      if (c == null || !Number.isFinite(c)) return { kind: "unknown", theme: "cloud", day };
-      if (c === 0) return { kind: day ? "sun" : "moon", theme: day ? "clear" : "clear-night", day };
-      if (c === 1) return { kind: day ? "sun_cloud" : "moon_cloud", theme: day ? "clear" : "clear-night", day };
-      if (c === 2) return { kind: day ? "sun_cloud" : "moon_cloud", theme: "cloud", day };
-      if (c === 3) return { kind: "cloud", theme: "overcast", day };
-      if (c === 45 || c === 48) return { kind: "fog", theme: "fog", day };
-      if (c >= 51 && c <= 57) return { kind: "drizzle", theme: "rain", day };
-      if (c >= 61 && c <= 67) return { kind: "rain", theme: "rain", day };
-      if (c >= 80 && c <= 82) return { kind: "rain", theme: "rain", day };
-      if (c >= 71 && c <= 77) return { kind: "snow", theme: "snow", day };
-      if (c === 85 || c === 86) return { kind: "snow", theme: "snow", day };
-      if (c >= 95 && c <= 99) return { kind: "thunder", theme: "thunder", day };
-      return { kind: "cloud", theme: "cloud", day };
+      if (c == null || !Number.isFinite(c)) {
+        return { icon: "not-available", theme: "cloud", day };
+      }
+      // Clear
+      if (c === 0) {
+        return {
+          icon: day ? "clear-day" : "clear-night",
+          theme: day ? "clear" : "clear-night",
+          day,
+        };
+      }
+      // Mainly clear
+      if (c === 1) {
+        return {
+          icon: day ? "partly-cloudy-day" : "partly-cloudy-night",
+          theme: day ? "clear" : "clear-night",
+          day,
+        };
+      }
+      // Partly cloudy
+      if (c === 2) {
+        return {
+          icon: day ? "partly-cloudy-day" : "partly-cloudy-night",
+          theme: "cloud",
+          day,
+        };
+      }
+      // Overcast
+      if (c === 3) {
+        return {
+          icon: day ? "overcast-day" : "overcast-night",
+          theme: "overcast",
+          day,
+        };
+      }
+      // Fog / rime
+      if (c === 45 || c === 48) {
+        return {
+          icon: day ? "fog-day" : "fog-night",
+          theme: "fog",
+          day,
+        };
+      }
+      // Drizzle
+      if (c >= 51 && c <= 55) {
+        return { icon: "drizzle", theme: "rain", day };
+      }
+      // Freezing drizzle
+      if (c === 56 || c === 57) {
+        return { icon: "sleet", theme: "snow", day };
+      }
+      // Rain
+      if (c >= 61 && c <= 65) {
+        return { icon: "rain", theme: "rain", day };
+      }
+      // Freezing rain
+      if (c === 66 || c === 67) {
+        return { icon: "sleet", theme: "snow", day };
+      }
+      // Snow
+      if (c >= 71 && c <= 77) {
+        return { icon: "snow", theme: "snow", day };
+      }
+      // Rain showers
+      if (c >= 80 && c <= 82) {
+        return {
+          icon: day ? "partly-cloudy-day-rain" : "partly-cloudy-night-rain",
+          theme: "rain",
+          day,
+        };
+      }
+      // Snow showers
+      if (c === 85 || c === 86) {
+        return {
+          icon: day ? "partly-cloudy-day-snow" : "partly-cloudy-night-snow",
+          theme: "snow",
+          day,
+        };
+      }
+      // Thunderstorm
+      if (c === 95) {
+        return {
+          icon: day ? "thunderstorms-day" : "thunderstorms-night",
+          theme: "thunder",
+          day,
+        };
+      }
+      // Thunder + hail
+      if (c === 96 || c === 99) {
+        return {
+          icon: day ? "thunderstorms-day-rain" : "thunderstorms-night-rain",
+          theme: "thunder",
+          day,
+        };
+      }
+      return { icon: "cloudy", theme: "cloud", day };
     }
 
-    function wxSvgIcon(kind) {
-      // Colorful filled weather icons (iOS / Android widget style).
-      // Self-contained gradients — no CDN, works offline on router.
-      const vb = 'xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"';
-      // fluffy cloud path (centered)
-      const cloud = (fill, x, y, s) =>
-        `<g transform="translate(${x},${y}) scale(${s})">` +
-        `<path d="M22 58c-9.4 0-17-7.2-17-16.1 0-8.2 6.1-15 14.2-16.1C21.8 16.2 31.2 9 42.2 9c12.8 0 23.4 9.3 25.1 21.5 1.1-.2 2.2-.3 3.4-.3 10.5 0 19 8.1 19 18.1S81.2 66.4 70.7 66.4H22z" fill="${fill}"/>` +
-        `</g>`;
-      if (kind === "sun") {
-        return `<svg ${vb} class="wx-icon-spin">
-          <defs>
-            <radialGradient id="wxSunCore" cx="38%" cy="35%" r="65%">
-              <stop offset="0%" stop-color="#FFF6C8"/><stop offset="45%" stop-color="#FFD84A"/><stop offset="100%" stop-color="#FF9A1F"/>
-            </radialGradient>
-            <linearGradient id="wxSunRay" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#FFE27A"/><stop offset="100%" stop-color="#FFB020"/>
-            </linearGradient>
-            <filter id="wxSunGlow" x="-40%" y="-40%" width="180%" height="180%">
-              <feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-          </defs>
-          <g filter="url(#wxSunGlow)" stroke="url(#wxSunRay)" stroke-width="5.5" stroke-linecap="round">
-            <path d="M50 8v12M50 80v12M8 50h12M80 50h12M18 18l8.5 8.5M73.5 73.5 82 82M18 82l8.5-8.5M73.5 26.5 82 18"/>
-          </g>
-          <circle cx="50" cy="50" r="22" fill="url(#wxSunCore)"/>
-          <circle cx="42" cy="42" r="8" fill="#fff" opacity=".28"/>
-        </svg>`;
+    function wxSetIcon(el, iconName, alt) {
+      if (!el) return;
+      const name = iconName || "not-available";
+      const src = WX_ICON_BASE + name + ".svg";
+      let img = el.querySelector("img.wx-icon-img");
+      if (!img) {
+        el.innerHTML = "";
+        img = document.createElement("img");
+        img.className = "wx-icon-img";
+        img.decoding = "async";
+        img.alt = "";
+        el.appendChild(img);
       }
-      if (kind === "moon") {
-        return `<svg ${vb}>
-          <defs>
-            <radialGradient id="wxMoon" cx="35%" cy="30%" r="70%">
-              <stop offset="0%" stop-color="#F7F9FF"/><stop offset="55%" stop-color="#D7DFF5"/><stop offset="100%" stop-color="#9AABC8"/>
-            </radialGradient>
-            <filter id="wxMoonGlow" x="-30%" y="-30%" width="160%" height="160%">
-              <feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-          </defs>
-          <g filter="url(#wxMoonGlow)">
-            <path d="M62 14c-3.2 0-6.3.5-9.2 1.5A28 28 0 1 0 84 55.2 28 28 0 0 1 62 14z" fill="url(#wxMoon)"/>
-          </g>
-          <circle cx="54" cy="38" r="3.2" fill="#B8C4DE" opacity=".55"/>
-          <circle cx="64" cy="52" r="2.2" fill="#B8C4DE" opacity=".45"/>
-          <circle cx="48" cy="58" r="1.6" fill="#B8C4DE" opacity=".4"/>
-          <circle cx="72" cy="30" r="1.2" fill="#fff" opacity=".75"/>
-          <circle cx="30" cy="24" r=".9" fill="#fff" opacity=".55"/>
-          <circle cx="22" cy="40" r=".7" fill="#fff" opacity=".4"/>
-        </svg>`;
+      if (img.getAttribute("data-icon") !== name) {
+        img.setAttribute("data-icon", name);
+        img.src = src;
       }
-      if (kind === "sun_cloud") {
-        return `<svg ${vb}>
-          <defs>
-            <radialGradient id="wxSun2" cx="40%" cy="35%" r="65%">
-              <stop offset="0%" stop-color="#FFF4B8"/><stop offset="50%" stop-color="#FFD040"/><stop offset="100%" stop-color="#FF9A18"/>
-            </radialGradient>
-            <linearGradient id="wxCloudW" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="#D4E2F0"/>
-            </linearGradient>
-            <linearGradient id="wxCloudShade" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#E8F0F8"/><stop offset="100%" stop-color="#A8BCD0"/>
-            </linearGradient>
-          </defs>
-          <g stroke="#FFC84A" stroke-width="3.8" stroke-linecap="round" opacity=".95">
-            <path d="M68 10v7M86 28h7M80 14l5 5"/>
-          </g>
-          <circle cx="68" cy="28" r="15" fill="url(#wxSun2)"/>
-          <circle cx="62" cy="23" r="5" fill="#fff" opacity=".3"/>
-          ${cloud("url(#wxCloudShade)", 2, 18, 1.05)}
-          ${cloud("url(#wxCloudW)", 0, 14, 1.05)}
-          <ellipse cx="42" cy="52" rx="14" ry="5" fill="#fff" opacity=".35"/>
-        </svg>`;
-      }
-      if (kind === "moon_cloud") {
-        return `<svg ${vb}>
-          <defs>
-            <radialGradient id="wxMoon2" cx="35%" cy="30%" r="70%">
-              <stop offset="0%" stop-color="#F4F7FF"/><stop offset="100%" stop-color="#8E9FBE"/>
-            </radialGradient>
-            <linearGradient id="wxCloudN" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#E6ECF6"/><stop offset="100%" stop-color="#8FA0B8"/>
-            </linearGradient>
-          </defs>
-          <path d="M70 12c-2.4 0-4.7.4-6.8 1.1A20 20 0 1 0 86 42a20 20 0 0 1-16-30z" fill="url(#wxMoon2)"/>
-          ${cloud("#6E7F96", 2, 22, 1.05)}
-          ${cloud("url(#wxCloudN)", 0, 18, 1.05)}
-          <ellipse cx="42" cy="56" rx="13" ry="4.5" fill="#fff" opacity=".2"/>
-        </svg>`;
-      }
-      if (kind === "cloud") {
-        return `<svg ${vb}>
-          <defs>
-            <linearGradient id="wxCloudA" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="#C5D4E6"/>
-            </linearGradient>
-            <linearGradient id="wxCloudB" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#DCE6F2"/><stop offset="100%" stop-color="#8FA3BA"/>
-            </linearGradient>
-          </defs>
-          ${cloud("url(#wxCloudB)", 4, 10, 1.12)}
-          ${cloud("url(#wxCloudA)", 0, 4, 1.12)}
-          <ellipse cx="44" cy="48" rx="18" ry="6" fill="#fff" opacity=".4"/>
-        </svg>`;
-      }
-      if (kind === "fog") {
-        return `<svg ${vb}>
-          <defs>
-            <linearGradient id="wxFogC" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#F0F4F8"/><stop offset="100%" stop-color="#A8B4C0"/>
-            </linearGradient>
-            <linearGradient id="wxFogL" x1="0" y1="0" x2="1" y2="0">
-              <stop offset="0%" stop-color="#fff" stop-opacity="0"/><stop offset="30%" stop-color="#E8EEF4" stop-opacity=".95"/>
-              <stop offset="70%" stop-color="#E8EEF4" stop-opacity=".95"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>
-            </linearGradient>
-          </defs>
-          ${cloud("url(#wxFogC)", 4, 0, 1.05)}
-          <g fill="url(#wxFogL)">
-            <rect x="12" y="58" width="76" height="7" rx="3.5"/>
-            <rect x="18" y="70" width="64" height="6" rx="3" opacity=".85"/>
-            <rect x="14" y="81" width="72" height="6" rx="3" opacity=".7"/>
-          </g>
-        </svg>`;
-      }
-      if (kind === "drizzle" || kind === "rain") {
-        const heavy = kind === "rain";
-        return `<svg ${vb}>
-          <defs>
-            <linearGradient id="wxRainC" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#F4F8FC"/><stop offset="100%" stop-color="#8EABC8"/>
-            </linearGradient>
-            <linearGradient id="wxDrop" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#B8E0FF"/><stop offset="50%" stop-color="#4AA8F0"/><stop offset="100%" stop-color="#1E78C8"/>
-            </linearGradient>
-          </defs>
-          ${cloud("url(#wxRainC)", 0, heavy ? -2 : 0, 1.08)}
-          <g fill="url(#wxDrop)">
-            <path d="M30 60c0 0-5.5 9-5.5 13a5.5 5.5 0 1 0 11 0c0-4-5.5-13-5.5-13z" opacity="${heavy ? 1 : 0.9}"/>
-            <path d="M48 64c0 0-6 10-6 14.5a6 6 0 1 0 12 0c0-4.5-6-14.5-6-14.5z" opacity=".95"/>
-            <path d="M66 61c0 0-5.5 9.5-5.5 13.5a5.5 5.5 0 1 0 11 0c0-4-5.5-13.5-5.5-13.5z" opacity=".88"/>
-            ${heavy ? `<path d="M39 70c0 0-5 8.5-5 12a5 5 0 1 0 10 0c0-3.5-5-12-5-12z" opacity=".8"/>` : `<path d="M39 66c0 0-4 7-4 10a4 4 0 1 0 8 0c0-3-4-10-4-10z" opacity=".75"/>`}
-          </g>
-          <ellipse cx="34" cy="74" rx="2" ry="1.2" fill="#fff" opacity=".45"/>
-          <ellipse cx="52" cy="78" rx="2" ry="1.2" fill="#fff" opacity=".4"/>
-        </svg>`;
-      }
-      if (kind === "snow") {
-        return `<svg ${vb}>
-          <defs>
-            <linearGradient id="wxSnowC" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#FFFFFF"/><stop offset="100%" stop-color="#B0C4D8"/>
-            </linearGradient>
-          </defs>
-          ${cloud("url(#wxSnowC)", 0, -2, 1.08)}
-          <g fill="#E8F4FF" stroke="#C5DCF0" stroke-width="1.2" stroke-linecap="round">
-            <g transform="translate(28,68)"><path d="M0-7v14M-6-3.5 6 3.5M-6 3.5 6-3.5"/><circle r="1.6" fill="#fff"/></g>
-            <g transform="translate(48,78)"><path d="M0-6v12M-5.2-3 5.2 3M-5.2 3 5.2-3"/><circle r="1.4" fill="#fff"/></g>
-            <g transform="translate(66,66)"><path d="M0-5.5v11M-4.8-2.8 4.8 2.8M-4.8 2.8 4.8-2.8"/><circle r="1.3" fill="#fff"/></g>
-            <g transform="translate(38,86)" opacity=".85"><path d="M0-4.5v9M-4-2.3 4 2.3M-4 2.3 4-2.3"/><circle r="1.1" fill="#fff"/></g>
-          </g>
-        </svg>`;
-      }
-      if (kind === "thunder") {
-        return `<svg ${vb}>
-          <defs>
-            <linearGradient id="wxStormC" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#C8C0E0"/><stop offset="100%" stop-color="#4A3E6E"/>
-            </linearGradient>
-            <linearGradient id="wxBolt" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#FFF6A0"/><stop offset="45%" stop-color="#FFD43A"/><stop offset="100%" stop-color="#FF9A00"/>
-            </linearGradient>
-            <filter id="wxBoltGlow" x="-50%" y="-50%" width="200%" height="200%">
-              <feGaussianBlur stdDeviation="1.8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-            </filter>
-          </defs>
-          ${cloud("url(#wxStormC)", 0, -6, 1.1)}
-          <path filter="url(#wxBoltGlow)" d="M54 48 36 70h12l-6 22 28-30H54l8-14z" fill="url(#wxBolt)"/>
-          <path d="M48 62h6l-2 6h-5z" fill="#fff" opacity=".35"/>
-        </svg>`;
-      }
-      // unknown / off
-      return `<svg ${vb}>
-        <defs>
-          <linearGradient id="wxUnk" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stop-color="#E8EEF4"/><stop offset="100%" stop-color="#8A96A8"/>
-          </linearGradient>
-        </defs>
-        ${cloud("url(#wxUnk)", 2, 8, 1.05)}
-        <circle cx="50" cy="78" r="8" fill="none" stroke="rgba(255,255,255,.55)" stroke-width="2.5" stroke-dasharray="3 3"/>
-        <text x="50" y="82" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="12" font-family="system-ui,sans-serif" font-weight="600">?</text>
-      </svg>`;
+      img.alt = alt || name;
+      img.onerror = () => {
+        if (img.getAttribute("data-icon") !== "not-available") {
+          img.setAttribute("data-icon", "not-available");
+          img.src = WX_ICON_BASE + "not-available.svg";
+        }
+      };
     }
 
     function wxConditionText(w) {
@@ -12158,7 +12076,7 @@
         tEl.textContent = "—";
         if (condEl) condEl.textContent = t("wx.off", "weather off · Pool → Weather");
         if (feelsEl) { feelsEl.hidden = true; feelsEl.textContent = ""; }
-        if (iconEl) iconEl.innerHTML = wxSvgIcon("cloud");
+        wxSetIcon(iconEl, "not-available", "off");
         setWxTheme(card, "off");
         showMeta(rhWrap, false);
         showMeta(windWrap, false);
@@ -12171,8 +12089,9 @@
       if (w.ok || w.stale) {
         tEl.textContent = fmtWxTemp(w.temp_c);
         const info = wxKindFromCode(w.weather_code, w.is_day !== false);
-        if (condEl) condEl.textContent = wxConditionText(w);
-        if (iconEl) iconEl.innerHTML = wxSvgIcon(info.kind);
+        const condTxt = wxConditionText(w);
+        if (condEl) condEl.textContent = condTxt;
+        wxSetIcon(iconEl, info.icon, condTxt);
         setWxTheme(card, info.theme);
 
         if (feelsEl) {
@@ -12213,7 +12132,7 @@
         tEl.textContent = "—";
         if (condEl) condEl.textContent = "error: " + (w.error || "no data");
         if (feelsEl) { feelsEl.hidden = true; feelsEl.textContent = ""; }
-        if (iconEl) iconEl.innerHTML = wxSvgIcon("unknown");
+        wxSetIcon(iconEl, "not-available", "error");
         setWxTheme(card, "error");
         showMeta(rhWrap, false);
         showMeta(windWrap, false);
