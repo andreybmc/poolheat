@@ -9495,8 +9495,13 @@
         }
       }
       if (!Number.isFinite(Tliq) && waterSens === "liquid") {
-        const el = document.getElementById("t-liquid");
-        if (el) Tliq = parseFloat(String(el.textContent).replace(",", "."));
+        const el = document.getElementById("t-ctrl");
+        // only if T_ctrl sensor is also liquid
+        try {
+          if (typeof getTctrlSensor === "function" && getTctrlSensor() === "liquid" && el) {
+            Tliq = parseFloat(String(el.textContent).replace(",", "."));
+          }
+        } catch (_) { /* ignore */ }
       }
       if (!Number.isFinite(Tliq) && simLiquid && waterSens === "liquid") {
         Tliq = parseFloat(simLiquid.value);
