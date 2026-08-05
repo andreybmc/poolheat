@@ -8811,6 +8811,33 @@ def _tg_notify_filtration(on: bool, *, source: str = "") -> None:
     )
 
 
+def _tg_filtration_status_lines(lang: str = "ru") -> list[str]:
+    """
+    Status card lines when filtration control is enabled.
+    Uses last known pump state from config (no device/miner poll).
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    try:
+        cfg = get_filtration_cfg(redact=True)
+    except Exception:
+        return []
+    if not cfg.get("enabled"):
+        return []
+    on = cfg.get("last_on")
+    if on is True:
+        if en:
+            return ["💦 Filtration:  <b>on</b>"]
+        return ["💦 Фильтрация:  <b>вкл</b>"]
+    if on is False:
+        if en:
+            return ["🚱 Filtration:  <b>off</b>"]
+        return ["🚱 Фильтрация:  <b>выкл</b>"]
+    # never commanded / unknown
+    if en:
+        return ["💧 Filtration:  <b>—</b>"]
+    return ["💧 Фильтрация:  <b>—</b>"]
+
+
 def _tg_filtration_btn_label(lang: str = "ru") -> str:
     """
     Main-menu filtration toggle label: «Фильтрация [вкл]» / «[выкл]».
@@ -10072,6 +10099,10 @@ def _tg_status_text(lang: str = "ru") -> str:
                 lines.append(f"Street:  <b>{_tg_fmt_num(street, 1)} °C</b>")
             else:
                 lines.append(f"Улица:  <b>{_tg_fmt_num(street, 1)} °C</b>")
+        fl_lines = _tg_filtration_status_lines(lang)
+        if fl_lines:
+            lines.append("")
+            lines.extend(fl_lines)
         lines.append("")
         lines.extend(policy_block)
         return "\n".join(lines)
@@ -10179,6 +10210,12 @@ def _tg_status_text(lang: str = "ru") -> str:
         work_line,
         "",
         power_line,
+    ]
+    fl_lines = _tg_filtration_status_lines(lang)
+    if fl_lines:
+        lines.append("")
+        lines.extend(fl_lines)
+    lines += [
         "",
         temps_h,
         *temp_lines,
