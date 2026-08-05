@@ -1801,16 +1801,18 @@
       box-shadow: none;
     }
     .wx-widget .wx-top {
-      display: block;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
       min-height: 0;
-      position: relative;
     }
     .wx-widget .wx-main {
+      flex: 1;
       min-width: 0;
       display: flex;
       flex-direction: column;
       gap: 2px;
-      padding-right: 0;
     }
     /* same label style as other temp-cards (uppercase · dim) */
     .wx-widget .tc-label.wx-label {
@@ -1893,23 +1895,21 @@
       margin-right: 8px;
       color: rgba(255, 255, 255, 0.4);
     }
-    /* icon pinned top-right — out of document flow so row height matches siblings */
+    /* next to temperature (top of content row), not card header */
     .wx-widget .wx-icon-wrap {
-      position: absolute;
-      top: 6px;
-      right: 4px;
-      width: 68px;
-      height: 68px;
+      flex-shrink: 0;
+      width: 72px;
+      height: 72px;
+      margin-top: -2px; /* slightly above temp baseline */
       display: grid;
       place-items: center;
       filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));
       pointer-events: none;
-      z-index: 1;
     }
     .wx-widget .wx-icon-wrap img,
     .wx-widget .wx-icon-wrap svg {
-      width: 64px;
-      height: 64px;
+      width: 70px;
+      height: 70px;
       display: block;
       object-fit: contain;
       user-select: none;
@@ -2486,6 +2486,7 @@
       <button type="button" data-tab="miner" data-i18n="tab.miner">Miner</button>
       <button type="button" data-tab="map" data-i18n="tab.map">Zone map</button>
       <button type="button" data-tab="pool" data-i18n="tab.pool">Pool</button>
+      <button type="button" data-tab="periph" data-i18n="tab.periph">Peripherals</button>
       <button type="button" data-tab="settings" data-i18n="tab.settings">Settings</button>
       <button type="button" data-tab="info" data-i18n="tab.info">Info</button>
     </nav>
@@ -2525,7 +2526,6 @@
             </div>
           </div>
           <div class="temp-card outdoor wx-widget wx-cloud" id="card-weather" data-wx-theme="cloud">
-            <div class="wx-icon-wrap" id="wx-icon" aria-hidden="true"></div>
             <div class="tc-label wx-label">
               <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
               <span class="wx-label-sep" aria-hidden="true"> · </span>
@@ -2541,6 +2541,7 @@
                   <span class="wx-feels" id="wx-feels" hidden></span>
                 </div>
               </div>
+              <div class="wx-icon-wrap" id="wx-icon" aria-hidden="true"></div>
             </div>
             <div class="wx-meta" id="wx-extra">
               <span class="wx-meta-item" id="wx-meta-rh" hidden>
