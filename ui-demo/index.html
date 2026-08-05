@@ -1812,31 +1812,49 @@
       flex-direction: column;
       gap: 2px;
     }
-    .wx-widget .wx-city-row {
+    /* same label style as other temp-cards (uppercase · dim) */
+    .wx-widget .tc-label.wx-label {
       display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.78rem;
-      font-weight: 600;
-      color: rgba(255, 255, 255, 0.92);
-      letter-spacing: 0.01em;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 0 2px;
+      margin-bottom: 4px;
+      color: rgba(255, 255, 255, 0.55);
+      text-shadow: none;
+      font-weight: 550;
     }
-    .wx-widget .wx-city-row .tip {
+    .wx-widget .tc-label.wx-label .tip {
       color: inherit;
-      border-bottom-color: rgba(255, 255, 255, 0.35);
+      border-bottom-color: rgba(255, 255, 255, 0.28);
+    }
+    .wx-widget .wx-label-sep {
+      color: rgba(255, 255, 255, 0.35);
+      text-transform: none;
+      letter-spacing: 0;
     }
     .wx-widget #wx-city {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      max-width: 100%;
+      max-width: 12em;
+      text-transform: none;
+      letter-spacing: 0.02em;
+      font-size: 0.72rem;
+      color: rgba(255, 255, 255, 0.72);
+    }
+    .wx-widget.wx-off .tc-label.wx-label,
+    .wx-widget.wx-error .tc-label.wx-label {
+      color: var(--dim);
+    }
+    .wx-widget.wx-off #wx-city,
+    .wx-widget.wx-error #wx-city {
+      color: var(--muted);
     }
     .wx-widget .wx-temp-row {
       display: flex;
       align-items: baseline;
       gap: 2px;
-      margin-top: 2px;
+      margin-top: 0;
     }
     .wx-widget .wx-temp-row #t-outdoor {
       font-size: 2.35rem;
@@ -1850,20 +1868,33 @@
       font-size: 1.05rem;
       font-weight: 400;
       color: rgba(255, 255, 255, 0.75);
-      margin-left: 1px;
+      margin-left: 2px;
+    }
+    .wx-widget .wx-cond-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0 8px;
+      margin-top: 2px;
+      line-height: 1.35;
     }
     .wx-widget .wx-cond {
       font-size: 0.82rem;
       font-weight: 500;
       color: rgba(255, 255, 255, 0.88);
       text-transform: capitalize;
-      margin-top: 2px;
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
     .wx-widget .wx-feels {
-      font-size: 0.72rem;
-      color: rgba(255, 255, 255, 0.65);
-      margin-top: 1px;
+      font-size: 0.78rem;
+      font-weight: 400;
+      color: rgba(255, 255, 255, 0.62);
+      white-space: nowrap;
+    }
+    .wx-widget .wx-feels:not([hidden])::before {
+      content: "·";
+      margin-right: 8px;
+      color: rgba(255, 255, 255, 0.4);
     }
     .wx-widget .wx-icon-wrap {
       flex-shrink: 0;
@@ -1913,10 +1944,6 @@
     .wx-widget.wx-error .wx-cond {
       color: var(--muted);
       text-transform: none;
-    }
-    .wx-widget.wx-off .wx-city-row,
-    .wx-widget.wx-error .wx-city-row {
-      color: var(--muted);
     }
 
     .temp-card.board-chip::before {
@@ -2496,13 +2523,13 @@
             </div>
           </div>
           <div class="temp-card outdoor wx-widget wx-cloud" id="card-weather" data-wx-theme="cloud">
+            <div class="tc-label wx-label">
+              <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
+              <span class="wx-label-sep" aria-hidden="true"> · </span>
+              <span id="wx-city">—</span>
+            </div>
             <div class="wx-top">
               <div class="wx-main">
-                <div class="wx-city-row">
-                  <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
-                  <span aria-hidden="true">·</span>
-                  <span id="wx-city">—</span>
-                </div>
                 <div class="wx-temp-row">
                   <span id="t-outdoor">—</span><span class="wx-unit">°C</span>
                 </div>
@@ -2528,7 +2555,7 @@
             </div>
           </div>
           <div class="temp-card heat-loss" id="card-heat-loss">
-            <div class="tc-label"><span class="tip" data-tip-key="heat_loss">Heat loss</span></div>
+            <div class="tc-label"><span class="tip" data-tip-key="heat_loss" data-i18n="dash.heat_loss">Heat loss</span></div>
             <div class="tc-val tc-val-dual">
               <span id="hl-kw">—</span> <small title="power, kW (not kWh)">kW</small>
               <span class="tc-sep" aria-hidden="true">/</span>
@@ -2542,7 +2569,7 @@
         <div class="temp-grid">
           <div class="temp-card power-meas" id="card-power-meas">
             <div class="tc-label">
-              <span class="tip" data-tip-key="power_measured">Power measured</span>
+              <span class="tip" data-tip-key="power_measured" data-i18n="dash.power_measured">Power measured</span>
               <span class="pm-badge" id="pm-work-badge">—</span>
             </div>
             <div class="tc-val tc-val-dual">
@@ -2566,9 +2593,9 @@
           </div>
           <div class="temp-card board-chip">
             <div class="tc-label">
-              <span class="tip" data-tip-key="pcb">Boards (max)</span>
+              <span class="tip" data-tip-key="pcb" data-i18n="dash.boards_max">Boards (max)</span>
               <span style="color:var(--dim)"> / </span>
-              <span class="tip" data-tip-key="chip_max">Chips (max)</span>
+              <span class="tip" data-tip-key="chip_max" data-i18n="dash.chips_max">Chips (max)</span>
             </div>
             <div class="tc-val tc-val-dual">
               <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
@@ -2576,12 +2603,12 @@
               <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
             </div>
             <div class="tc-extra">
-              <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
-              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">Critical</span> <span id="t-chip-crit">—</span></div>
+              <div class="tc-pcb-line"><span data-i18n="dash.pcb_avg">pcb avg</span> <span id="t-pcb-avg">—</span> · <span data-i18n="dash.pcb_min">pcb min</span> <span id="t-pcb-min">—</span></div>
+              <div class="tc-chip-line"><span data-i18n="dash.chip_avg">chip avg</span> <span id="t-chip-avg">—</span> · <span data-i18n="dash.chip_min">chip min</span> <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical" data-i18n="dash.critical">Critical</span> <span id="t-chip-crit">—</span></div>
             </div>
           </div>
           <div class="temp-card heat-balance" id="card-heat-balance">
-            <div class="tc-label"><span class="tip" data-tip-key="heat_balance">Heat / cool-down</span></div>
+            <div class="tc-label"><span class="tip" data-tip-key="heat_balance" data-i18n="dash.heat_balance">Heat / cool-down</span></div>
             <div class="tc-val tc-val-dual">
               <span id="hb-rate">—</span> <small>°C/h</small>
               <span class="tc-sep" aria-hidden="true">|</span>
@@ -4777,11 +4804,21 @@
         "wx.display_off": "display off",
         "wx.not_saved": " · not saved — press Save",
         "wx.outdoor": "Outdoor",
-        "wx.feels_like": "Feels like {t}°",
+        "wx.feels_like": "Feels like {t}°C",
         "wx.off": "weather off · Pool → Weather",
         "wx.stale": "stale",
         "wx.humidity": "RH {v}%",
         "wx.wind": "{v} m/s",
+        "dash.heat_loss": "Heat loss",
+        "dash.heat_balance": "Heat / cool-down",
+        "dash.power_measured": "Power measured",
+        "dash.boards_max": "Boards (max)",
+        "dash.chips_max": "Chips (max)",
+        "dash.pcb_avg": "pcb avg",
+        "dash.pcb_min": "pcb min",
+        "dash.chip_avg": "chip avg",
+        "dash.chip_min": "chip min",
+        "dash.critical": "Critical",
         "h2.backup": "Configuration backup",
         "h2.connection": "Whatsminer connection",
         "h2.filtration": "Filtration · pump",
@@ -5000,11 +5037,21 @@
         "wx.display_off": "показ выкл",
         "wx.not_saved": " · не сохранено — нажмите Сохранить",
         "wx.outdoor": "Улица",
-        "wx.feels_like": "Ощущается как {t}°",
+        "wx.feels_like": "ощущается как {t}°C",
         "wx.off": "погода выкл · Бассейн → Погода",
         "wx.stale": "устарело",
         "wx.humidity": "RH {v}%",
         "wx.wind": "{v} м/с",
+        "dash.heat_loss": "Теплопотери",
+        "dash.heat_balance": "Нагрев / остывание",
+        "dash.power_measured": "Мощность",
+        "dash.boards_max": "Платы (max)",
+        "dash.chips_max": "Чипы (max)",
+        "dash.pcb_avg": "ср. pcb",
+        "dash.pcb_min": "мин. pcb",
+        "dash.chip_avg": "ср. чип",
+        "dash.chip_min": "мин. чип",
+        "dash.critical": "Critical",
         "h2.backup": "Бэкап конфигурации",
         "h2.connection": "Подключение Whatsminer",
         "h2.filtration": "Фильтрация · насос",
@@ -12100,7 +12147,7 @@
           const fl = w.feels_like_c != null ? Number(w.feels_like_c) : NaN;
           if (Number.isFinite(fl)) {
             feelsEl.hidden = false;
-            feelsEl.textContent = tf("wx.feels_like", { t: fl.toFixed(0) }, "Feels like {t}°");
+            feelsEl.textContent = tf("wx.feels_like", { t: fl.toFixed(0) }, "Feels like {t}°C");
           } else {
             feelsEl.hidden = true;
             feelsEl.textContent = "";
