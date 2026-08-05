@@ -10249,6 +10249,136 @@ def _tg_status_text(lang: str = "ru") -> str:
     return "\n".join(lines)
 
 
+def _tg_status_inline(lang: str = "ru") -> dict:
+    """Status card: preset submenu + refresh (no miner I/O)."""
+    en = str(lang or "ru").lower().startswith("en")
+    pname = _tg_active_preset_name()
+    if pname and pname != "—":
+        # keep button ≤ ~40 chars (Telegram UI)
+        short = pname if len(pname) <= 22 else (pname[:20] + "…")
+        preset_l = (
+            f"📋 Preset · {short}" if en else f"📋 Пресет · {short}"
+        )
+    else:
+        preset_l = "📋 Preset" if en else "📋 Пресет"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": preset_l, "callback_data": "st:preset"},
+            ],
+            [
+                {
+                    "text": "🔄 Refresh" if en else "🔄 Обновить",
+                    "callback_data": "st:refresh",
+                },
+            ],
+        ]
+    }
+
+
+def _tg_status_preset_inline(lang: str = "ru") -> dict:
+    """Submenu: pick zone-map preset to apply."""
+    en = str(lang or "ru").lower().startswith("en")
+    rows: list[list[dict]] = []
+    try:
+        data = list_zone_presets()
+        active = data.get("active_id")
+        presets = data.get("presets") or []
+    except Exception:
+        active = None
+        presets = []
+    if not presets:
+        rows.append(
+            [
+                {
+                    "text": (
+                        "No presets — save in UI"
+                        if en
+                        else "Нет пресетов — сохраните в UI"
+                    ),
+                    "callback_data": "st:back",
+                }
+            ]
+        )
+    else:
+        for p in presets:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id") or "").strip()
+            if not pid:
+                continue
+            name = str(p.get("name") or pid).strip() or pid
+            if len(name) > 28:
+                name = name[:26] + "…"
+            mark = "· " if pid == active else ""
+            # callback_data max 64 bytes
+            cb = f"st:preset:{pid}"
+            if len(cb.encode("utf-8")) > 64:
+                continue
+            rows.append([{"text": f"{mark}{name}", "callback_data": cb}])
+    rows.append(
+        [
+            {
+                "text": "◀️ Back" if en else "◀️ Назад",
+                "callback_data": "st:back",
+            }
+        ]
+    )
+    return {"inline_keyboard": rows}
+
+
+def _tg_status_preset_text(lang: str = "ru") -> str:
+    """Header for preset picker submenu."""
+    en = str(lang or "ru").lower().startswith("en")
+    cur = _tg_active_preset_name()
+    if en:
+        return (
+            f"📋 <b>Preset</b>\n"
+            f"Active: <b>{_tg_html_esc(cur)}</b>\n\n"
+            f"Choose a zone-map preset:"
+        )
+    return (
+        f"📋 <b>Пресет</b>\n"
+        f"Активный: <b>{_tg_html_esc(cur)}</b>\n\n"
+        f"Выберите пресет зоны:"
+    )
+
+
+def _tg_send_status(
+    chat_id,
+    lang: str = "ru",
+    *,
+    edit_message_id: int | None = None,
+    view: str = "root",
+) -> None:
+    """
+    Status card with inline controls.
+    view=root → full status + preset/refresh buttons
+    view=preset → submenu to apply zone-map preset
+    """
+    if view == "preset":
+        text = _tg_status_preset_text(lang)
+        markup = _tg_status_preset_inline(lang)
+    else:
+        text = _tg_status_text(lang=lang)
+        markup = _tg_status_inline(lang)
+    if edit_message_id is not None:
+        tg_edit_message(
+            chat_id,
+            edit_message_id,
+            text,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+    else:
+        tg_send_message(
+            chat_id,
+            text,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+
+
 def _tg_fmt_mac(mac) -> str:
     """AA:BB:CC:DD:EE:FF from raw Whatsminer mac string."""
     s = re.sub(r"[^0-9A-Fa-f]", "", str(mac or ""))
@@ -11840,6 +11970,53 @@ def _tg_handle_callback(cq: dict) -> None:
             tg_answer_callback(cq_id)
             return
 
+        # st: — Status card (preset submenu + refresh)
+        # st:refresh | st:preset | st:preset:<id> | st:back
+        if len(parts) >= 2 and parts[0] == "st":
+            action = parts[1]
+            if action == "refresh":
+                tg_answer_callback(cq_id, "OK")
+                # cache-only snapshot (same as /status) — no miner poll
+                _tg_send_status(chat_id, lang, edit_message_id=mid, view="root")
+                return
+            if action == "preset":
+                if len(parts) >= 3:
+                    # apply preset id
+                    pid = parts[2]
+                    try:
+                        out = apply_zone_preset(pid)
+                        name = str((out or {}).get("name") or pid)
+                        toast = (
+                            f"Preset: {name}"
+                            if en
+                            else f"Пресет: {name}"
+                        )
+                        tg_answer_callback(cq_id, toast[:180])
+                    except Exception as e:
+                        tg_answer_callback(
+                            cq_id,
+                            (f"Preset error: {e}" if en else f"Ошибка пресета: {e}")[
+                                :180
+                            ],
+                            alert=True,
+                        )
+                    _tg_send_status(
+                        chat_id, lang, edit_message_id=mid, view="root"
+                    )
+                    return
+                # open submenu
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_status(
+                    chat_id, lang, edit_message_id=mid, view="preset"
+                )
+                return
+            if action == "back":
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_status(chat_id, lang, edit_message_id=mid, view="root")
+                return
+            tg_answer_callback(cq_id)
+            return
+
         # m: — Miner control (UI #miner)
         # m:refresh | m:work:sleep|resume | m:mode:low|normal|high
         # m:limd:±500 | m:pct:N | m:dry:… | m:pools | m:info
@@ -12479,12 +12656,7 @@ def _tg_handle_command(
         return
 
     if cmd == "/status":
-        tg_send_message(
-            chat_id,
-            _tg_status_text(lang=lang),
-            reply_markup=_tg_main_keyboard(lang, chat_id),
-            parse_mode="HTML",
-        )
+        _tg_send_status(chat_id, lang)
         return
 
     if cmd == "/miner":
