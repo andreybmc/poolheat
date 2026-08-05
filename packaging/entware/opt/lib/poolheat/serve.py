@@ -3880,27 +3880,22 @@ def apply_sniffer_cfg(req: dict) -> dict:
         snap = dict(_sniffer_cfg)
     _save_sniffer_cfg()
 
-    install_res: dict | None = None
+    # Enable only if module is already installed (Install button is separate)
+    if snap.get("enabled") and not _sniffer_module_present():
+        with _sniffer_cfg_lock:
+            _sniffer_cfg["enabled"] = False
+        _save_sniffer_cfg()
+        body = get_sniffer_cfg()
+        body["ok"] = False
+        body["error"] = "sniffer not installed — use Install first"
+        return body
+
     if snap.get("enabled"):
-        # need module on disk
-        if not _sniffer_module_present():
-            install_res = install_sniffer_module(force=False)
-            if not install_res.get("ok"):
-                body = get_sniffer_cfg()
-                body["ok"] = False
-                body["error"] = install_res.get("error") or "install failed"
-                body["install"] = install_res
-                return body
-        else:
-            _import_miner_sniffer(force_reload=False)
-    else:
-        # deactivate only — keep files
-        pass
+        _import_miner_sniffer(force_reload=False)
+    # else: deactivate only — keep files
 
     apply_res = _sniffer_sync_runtime(snap)
     body = get_sniffer_cfg()
-    if install_res:
-        body["install"] = install_res
     body["apply"] = apply_res
     if snap.get("enabled"):
         st = body.get("status") or {}
@@ -16604,10 +16599,16 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/sniffer/install", "/api/miner_sniffer/install"):
             try:
                 req = self._read_json_body() or {}
-                force = bool(req.get("force", True)) if isinstance(req, dict) else True
+                # default force=False so re-install is explicit
+                force = bool(req.get("force", False)) if isinstance(req, dict) else False
                 ref = (req.get("ref") if isinstance(req, dict) else None) or None
-                body = install_sniffer_module(ref=ref, force=force)
-                code = 200 if body.get("ok") else 400
+                inst = install_sniffer_module(ref=ref, force=force)
+                body = get_sniffer_cfg()
+                body["install"] = inst
+                body["ok"] = bool(inst.get("ok"))
+                if not body["ok"]:
+                    body["error"] = inst.get("error") or "install failed"
+                code = 200 if body["ok"] else 400
                 self._json_response(code, body)
             except Exception as e:
                 self._json_response(400, {"ok": False, "error": str(e)})

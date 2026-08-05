@@ -4176,30 +4176,33 @@
                 </div>
                 <div class="btn-row" style="gap:8px;flex-wrap:wrap">
                   <a class="btn ghost" id="btn-sniffer-download" href="/api/sniffer/download" style="display:none" data-i18n="btn.pcap">Download pcap</a>
-                  <button class="btn danger ghost" type="button" id="btn-sniffer-uninstall" data-i18n="btn.uninstall">Uninstall</button>
+                  <button class="btn" type="button" id="btn-sniffer-install" data-i18n="btn.sniffer_install">Install</button>
+                  <button class="btn danger ghost" type="button" id="btn-sniffer-uninstall" data-i18n="btn.sniffer_uninstall">Uninstall</button>
                   <button class="btn primary" type="button" id="btn-sniffer-save" data-i18n="btn.save">Save</button>
                 </div>
               </div>
-              <label class="check">
-                <input type="checkbox" id="sniffer-enabled" />
-                <span><span data-i18n="check.sniffer">Enable miner capture</span>
-                  <span class="desc" data-i18n="check.sniffer_desc">install module + start tcpdump (host &lt;miner&gt;)</span>
+              <label class="check" id="sniffer-enable-wrap">
+                <input type="checkbox" id="sniffer-enabled" disabled />
+                <span><span data-i18n="check.sniffer">Activate capture</span>
+                  <span class="desc" data-i18n="check.sniffer_desc">start/stop tcpdump (only when installed)</span>
                 </span>
               </label>
               <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
                 <label class="field">Interface
                   <input type="text" id="sniffer-iface" value="br0" placeholder="br0" autocomplete="off" />
                 </label>
-                <label class="field">BPF filter <span style="color:var(--dim);font-weight:400">(empty = host miner)</span>
+                <label class="field">BPF filter <span style="color:var(--dim);font-weight:400" data-i18n="field.sniffer_bpf_hint">(empty = host miner)</span>
                   <input type="text" id="sniffer-filter" value="" placeholder="host 192.168.1.10" autocomplete="off" />
                 </label>
               </div>
-              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n="hint.sniffer">
-                On enable, poolheat downloads <code>modules/miner_sniffer</code> from GitHub into the data dir,
-                then starts <code>tcpdump</code> on the router. Deactivate stops capture but keeps the module.
-                Uninstall removes module files and pcaps to free space. Needs <code>opkg install tcpdump</code>.
-                Captures go to <code>/tmp/poolheat-sniffer/</code> (tmpfs). Keep sessions short.
-              </p>
+              <div style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.55" data-i18n-html="hint.sniffer">
+                <div>Install downloads <code>modules/miner_sniffer</code> from GitHub into the data directory.</div>
+                <div>Activate starts <code>tcpdump</code> on the router (requires module installed).</div>
+                <div>Deactivate stops capture but keeps the module on disk.</div>
+                <div>Uninstall removes module files and pcaps to free space.</div>
+                <div>Needs <code>opkg install tcpdump</code>.</div>
+                <div>Captures go to <code>/tmp/poolheat-sniffer/</code> (tmpfs). Keep sessions short.</div>
+              </div>
               <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="sniffer-status">—</p>
             </div>
           </div>
@@ -4449,13 +4452,16 @@
         "btn.delete": "Delete",
         "btn.pcap": "Download pcap",
         "btn.uninstall": "Uninstall",
+        "btn.sniffer_install": "Install",
+        "btn.sniffer_uninstall": "Uninstall",
         "check.live": "Live from miner",
         "check.hist_enabled": "Data collection",
         "check.hist_desc": "write samples to history.db",
         "check.chip_cache": "Save chip map cache",
         "check.luci_proxy": "Enable proxy on port 8788",
-        "check.sniffer": "Enable miner capture",
-        "check.sniffer_desc": "install module + run tcpdump (host <miner>)",
+        "check.sniffer": "Activate capture",
+        "check.sniffer_desc": "start/stop tcpdump (only when installed)",
+        "field.sniffer_bpf_hint": "(empty = host miner)",
         "lang.label": "Interface language",
         "lang.label_short": "Lang",
         "lang.sub": "English · Russian",
@@ -4543,7 +4549,7 @@
         "label.quick_pick": "Quick pick",
         "label.preset": "Preset",
         "wx.interval": "Refresh interval, min",
-        "hint.sniffer": "When enabled, poolheat downloads modules/miner_sniffer from GitHub and starts tcpdump. Disable stops capture; Uninstall frees space.",
+        "hint.sniffer": "<div>Install downloads <code>modules/miner_sniffer</code> from GitHub into the data directory.</div><div>Activate starts <code>tcpdump</code> on the router (requires module installed).</div><div>Deactivate stops capture but keeps the module on disk.</div><div>Uninstall removes module files and pcaps to free space.</div><div>Needs <code>opkg install tcpdump</code>.</div><div>Captures go to <code>/tmp/poolheat-sniffer/</code> (tmpfs). Keep sessions short.</div>",
         "info.installed": "Installed",
         "info.on_github": "On GitHub",
         "info.status": "Status",
@@ -4609,13 +4615,16 @@
         "btn.delete": "Удалить",
         "btn.pcap": "Скачать pcap",
         "btn.uninstall": "Удалить",
+        "btn.sniffer_install": "Установить",
+        "btn.sniffer_uninstall": "Удалить",
         "check.live": "Live с майнера",
         "check.hist_enabled": "Сбор данных",
         "check.hist_desc": "писать samples в history.db",
         "check.chip_cache": "Сохранять кеш карты чипов",
         "check.luci_proxy": "Включить прокси на порт 8788",
-        "check.sniffer": "Включить захват майнера",
-        "check.sniffer_desc": "установить модуль + запустить tcpdump (host <miner>)",
+        "check.sniffer": "Активировать захват",
+        "check.sniffer_desc": "старт/стоп tcpdump (только если установлен)",
+        "field.sniffer_bpf_hint": "(пусто = host майнера)",
         "lang.label": "Язык интерфейса",
         "lang.label_short": "Язык",
         "lang.sub": "английский · русский",
@@ -4703,7 +4712,7 @@
         "label.quick_pick": "Быстрый выбор",
         "label.preset": "Пресет",
         "wx.interval": "Интервал обновления, мин",
-        "hint.sniffer": "При включении poolheat скачивает modules/miner_sniffer с GitHub и запускает tcpdump. Выключение останавливает захват; Удалить — освобождает место.",
+        "hint.sniffer": "<div>Установка скачивает <code>modules/miner_sniffer</code> с GitHub в каталог data.</div><div>Активация запускает <code>tcpdump</code> на роутере (нужен установленный модуль).</div><div>Деактивация останавливает захват, модуль остаётся на диске.</div><div>Удаление снимает файлы модуля и pcap, освобождает место.</div><div>Нужен <code>opkg install tcpdump</code>.</div><div>Захваты пишутся в <code>/tmp/poolheat-sniffer/</code> (tmpfs). Держите сессии короткими.</div>",
         "info.installed": "Установлено",
         "info.on_github": "На GitHub",
         "info.status": "Статус",
@@ -14032,18 +14041,37 @@
       return (v / (1024 * 1024)).toFixed(2) + " MB";
     }
 
+    function _snifferIsInstalled(c) {
+      return !!(c && (c.installed || c.module_loaded));
+    }
+
     async function loadSnifferConfig() {
       try {
         const res = await fetch("/api/sniffer/config", { cache: "no-store" });
         const body = await res.json();
         const c = body.config || body;
         const st = body.status || {};
+        const installed = _snifferIsInstalled(c);
         const en = document.getElementById("sniffer-enabled");
         const iface = document.getElementById("sniffer-iface");
         const filt = document.getElementById("sniffer-filter");
         const dl = document.getElementById("btn-sniffer-download");
+        const inst = document.getElementById("btn-sniffer-install");
         const un = document.getElementById("btn-sniffer-uninstall");
-        if (en) en.checked = !!c.enabled;
+        const wrap = document.getElementById("sniffer-enable-wrap");
+        if (en) {
+          en.disabled = !installed;
+          en.checked = installed ? !!c.enabled : false;
+          en.title = installed
+            ? ""
+            : (typeof t === "function"
+                ? t("check.sniffer_desc", "Install first")
+                : "Install first");
+        }
+        if (wrap) {
+          wrap.style.opacity = installed ? "1" : "0.55";
+          wrap.style.pointerEvents = installed ? "" : "none";
+        }
         if (iface && c.iface) iface.value = c.iface;
         if (filt) filt.value = c.filter || "";
         if (dl) {
@@ -14051,23 +14079,45 @@
           dl.style.display = hasPcap ? "" : "none";
           dl.href = "/api/sniffer/download";
         }
+        // Install when not installed; Uninstall when installed
+        if (inst) {
+          inst.style.display = installed ? "none" : "";
+          inst.disabled = false;
+          inst.style.opacity = "1";
+        }
         if (un) {
-          un.disabled = !(c.installed || c.local_available || c.module_loaded);
-          un.style.opacity = un.disabled ? "0.45" : "1";
+          un.style.display = installed ? "" : "none";
+          un.disabled = !installed;
+          un.style.opacity = installed ? "1" : "0.45";
         }
         const pst = document.getElementById("sniffer-status");
         if (pst) {
+          const ru = typeof getUiLang === "function" && getUiLang() === "ru";
           const parts = [
-            c.enabled ? "on" : "off",
-            c.installed ? "installed" : c.local_available ? "local src" : "not installed",
-            st.running ? "capturing" : "idle",
-            st.tcpdump_ok === false ? "no tcpdump" : "",
+            c.enabled
+              ? ru ? "вкл" : "on"
+              : ru ? "выкл" : "off",
+            installed
+              ? ru ? "установлен" : "installed"
+              : c.local_available
+                ? ru ? "есть local src" : "local src"
+                : ru ? "не установлен" : "not installed",
+            st.running
+              ? ru ? "захват" : "capturing"
+              : ru ? "простой" : "idle",
+            st.tcpdump_ok === false
+              ? ru ? "нет tcpdump" : "no tcpdump"
+              : "",
             st.iface ? "if=" + st.iface : "",
             st.filter ? "filter=" + st.filter : "",
             st.pcap_size != null && st.running ? _fmtBytes(st.pcap_size) : "",
-            st.disk_usage ? "disk " + _fmtBytes(st.disk_usage) : "",
+            st.disk_usage
+              ? (ru ? "диск " : "disk ") + _fmtBytes(st.disk_usage)
+              : "",
             c.installed_version ? "v" + c.installed_version : "",
-            st.error || body.error ? "err: " + (st.error || body.error) : "",
+            st.error || body.error
+              ? "err: " + (st.error || body.error)
+              : "",
           ].filter(Boolean);
           pst.textContent = parts.join(" · ") || "—";
           pst.style.color =
@@ -14089,21 +14139,68 @@
       }
     }
 
+    async function installSniffer() {
+      try {
+        toastInfo(
+          typeof getUiLang === "function" && getUiLang() === "ru"
+            ? "Сниффер: установка…"
+            : "Sniffer: installing…",
+          2500
+        );
+        const res = await fetch("/api/sniffer/install", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force: false }),
+        });
+        const body = await res.json();
+        await loadSnifferConfig();
+        if (!res.ok || body.ok === false) {
+          throw new Error(
+            (body && body.error) ||
+              (body.install && body.install.error) ||
+              "install failed"
+          );
+        }
+        const ver =
+          (body.config && body.config.installed_version) ||
+          (body.install && body.install.version) ||
+          "";
+        toastSuccess(
+          (typeof getUiLang === "function" && getUiLang() === "ru"
+            ? "Сниффер установлен"
+            : "Sniffer installed") + (ver ? " · v" + ver : "")
+        );
+      } catch (e) {
+        toastError("Sniffer install: " + e.message);
+        void loadSnifferConfig();
+      }
+    }
+
     async function saveSnifferConfig() {
       try {
+        const enEl = document.getElementById("sniffer-enabled");
+        if (enEl && enEl.disabled && enEl.checked) {
+          throw new Error(
+            typeof getUiLang === "function" && getUiLang() === "ru"
+              ? "сначала установите сниффер"
+              : "install sniffer first"
+          );
+        }
         const payload = {
-          enabled: !!document.getElementById("sniffer-enabled")?.checked,
+          enabled: !!(enEl && !enEl.disabled && enEl.checked),
           iface: (document.getElementById("sniffer-iface")?.value || "br0").trim(),
           filter: (document.getElementById("sniffer-filter")?.value || "").trim(),
         };
-        if (payload.enabled) {
-          toastInfo(
-            payload.enabled
-              ? "Sniffer: install/start…"
+        toastInfo(
+          payload.enabled
+            ? typeof getUiLang === "function" && getUiLang() === "ru"
+              ? "Сниффер: запуск…"
+              : "Sniffer: starting…"
+            : typeof getUiLang === "function" && getUiLang() === "ru"
+              ? "Сниффер: остановка…"
               : "Sniffer: stopping…",
-            2500
-          );
-        }
+          2000
+        );
         const res = await fetch("/api/sniffer/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -14125,8 +14222,14 @@
         }
         toastSuccess(
           on
-            ? "Sniffer · capturing (" + (st.filter || "host miner") + ")"
-            : "Sniffer · disabled"
+            ? (typeof getUiLang === "function" && getUiLang() === "ru"
+                ? "Сниффер · захват ("
+                : "Sniffer · capturing (") +
+              (st.filter || "host miner") +
+              ")"
+            : typeof getUiLang === "function" && getUiLang() === "ru"
+              ? "Сниффер · выкл"
+              : "Sniffer · off"
         );
       } catch (e) {
         toastError("Sniffer: " + e.message);
@@ -14135,15 +14238,21 @@
     }
 
     async function uninstallSniffer() {
+      const ru = typeof getUiLang === "function" && getUiLang() === "ru";
       if (
         !confirm(
-          "Uninstall miner sniffer?\n\nStops capture, deletes module files and pcaps."
+          ru
+            ? "Удалить miner sniffer?\n\nОстановит захват, удалит модуль и pcap."
+            : "Uninstall miner sniffer?\n\nStops capture, deletes module files and pcaps."
         )
       ) {
         return;
       }
       try {
-        toastInfo("Sniffer: uninstalling…", 2000);
+        toastInfo(
+          ru ? "Сниффер: удаление…" : "Sniffer: uninstalling…",
+          2000
+        );
         const res = await fetch("/api/sniffer/uninstall", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -14155,7 +14264,11 @@
           throw new Error((body && body.error) || "uninstall failed");
         }
         const n = body.removed_count || 0;
-        toastSuccess("Sniffer uninstalled · removed " + n + " path(s)");
+        toastSuccess(
+          (ru ? "Сниффер удалён · снято " : "Sniffer uninstalled · removed ") +
+            n +
+            (ru ? " путь(ей)" : " path(s)")
+        );
       } catch (e) {
         toastError("Sniffer uninstall: " + e.message);
       }
@@ -14233,6 +14346,9 @@
     document
       .getElementById("btn-sniffer-save")
       ?.addEventListener("click", () => void saveSnifferConfig());
+    document
+      .getElementById("btn-sniffer-install")
+      ?.addEventListener("click", () => void installSniffer());
     document
       .getElementById("btn-sniffer-uninstall")
       ?.addEventListener("click", () => void uninstallSniffer());
