@@ -2058,7 +2058,7 @@
         <div class="brand-mark">WM</div>
         <div>
           <h1>poolheat_WM</h1>
-          <p id="brand-devices">Keenetic — · Whatsminer —</p>
+          <p id="brand-devices">Keenetic —</p>
           <script>
             /* instant paint from last Info cache (localStorage) */
             (function () {
@@ -2118,8 +2118,8 @@
 
     <div class="live-bar">
       <span class="tag" id="src-tag">LIVE</span>
-      <span class="src" id="src-detail">192.168.1.10:4028 · summary+status+devs</span>
-      <span class="src" id="src-updated">—</span>
+      <span class="src" id="src-detail">— · Whatsminer — · обновлено —</span>
+      <span class="src" id="src-updated" hidden></span>
       <button class="btn ghost" type="button" id="btn-refresh" onclick="fetchLive(true)">Обновить</button>
       <label class="check" style="margin:0 0 0 auto">
         <input type="checkbox" id="use-live" checked />
@@ -2291,7 +2291,6 @@
           <div class="card-h">
             <div>
               <h2>История и графики</h2>
-              <div class="sub">zoom + brush + scroll · ASIC Offline / Suspend / Upfreq</div>
             </div>
             <button class="btn" type="button" id="btn-hist-refresh">Обновить</button>
           </div>
@@ -2314,13 +2313,13 @@
             </div>
 
             <div class="card" style="box-shadow:none;margin-bottom:14px">
-              <div class="card-h"><div><h2>Температуры °C</h2><div class="sub">liquid · env · outdoor · boards · chip max · offline/suspend bands</div></div></div>
+              <div class="card-h"><div><h2>Температуры °C</h2></div></div>
               <div class="card-b" style="height:260px;position:relative">
                 <canvas id="chart-temp"></canvas>
               </div>
             </div>
             <div class="card" style="box-shadow:none;margin-bottom:10px">
-              <div class="card-h"><div><h2>Мощность · Хешрейт · J/T</h2><div class="sub">Power · Limit · HR · Freq · EEF · offline/suspend bands</div></div></div>
+              <div class="card-h"><div><h2>Мощность · Хешрейт · J/T</h2></div></div>
               <div class="card-b" style="height:240px;position:relative">
                 <canvas id="chart-power"></canvas>
               </div>
@@ -5479,19 +5478,56 @@
       return "192.168.1.10:4028";
     }
 
-    /** Update LIVE / OFFLINE / SIM strip (never "запустите serve.py" noise). */
+    /** IP only for LIVE strip (hide :4028 when default API port). */
+    function minerHostDisplay() {
+      let h = minerHostLabel();
+      h = String(h || "").replace(/:4028$/i, "").replace(/:4433$/i, "");
+      return h || "—";
+    }
+
+    let lastLiveStatusTime = "";
+
+    /** LIVE line: IP · Whatsminer model · обновлено HH:MM:SS · Online */
     function updateSrcBar(r) {
       const tag = document.getElementById("src-tag");
       const det = document.getElementById("src-detail");
-      const host = minerHostLabel();
+      const upd = document.getElementById("src-updated");
+      if (upd) {
+        upd.hidden = true;
+        upd.textContent = "";
+      }
+      const tstr = lastLiveStatusTime || new Date().toLocaleTimeString();
       if (!useLive.checked) {
         if (tag) tag.textContent = "SIM";
-        if (det) det.textContent = "симуляция · Live выкл";
+        if (det)
+          det.textContent =
+            "симуляция · Live выкл · обновлено " + tstr;
         return;
       }
       const online = !!(r && r.online);
       if (tag) tag.textContent = online ? "LIVE" : "OFFLINE";
-      if (det) det.textContent = host + " · summary+status+devs";
+      let minerType =
+        (r && r.miner_type) ||
+        (live && live.miner_type) ||
+        (typeof window !== "undefined" && window.__poolheatMinerType) ||
+        "";
+      minerType = String(minerType || "").trim();
+      let minerLabel = "Whatsminer —";
+      if (minerType) {
+        minerLabel = /^whatsminer/i.test(minerType)
+          ? minerType
+          : "Whatsminer " + minerType;
+      }
+      if (det) {
+        det.textContent =
+          minerHostDisplay() +
+          " · " +
+          minerLabel +
+          " · обновлено " +
+          tstr +
+          " · " +
+          (online ? "Online" : "Offline");
+      }
     }
 
     function getReading() {
@@ -5556,6 +5592,7 @@
           source: "live",
           online: true,
           host: live.host || minerHostLabel(),
+          miner_type: live.miner_type || window.__poolheatMinerType || null,
         };
       }
 
@@ -5584,6 +5621,8 @@
         source: "live",
         online: false,
         host: (live && live.host) || minerHostLabel(),
+        miner_type:
+          (live && live.miner_type) || window.__poolheatMinerType || null,
         error: (live && live.error) || liveError || "offline",
       };
     }
@@ -6718,12 +6757,12 @@
 
     async function fetchLive(manual) {
       if (!useLive.checked) {
-        const upd = document.getElementById("src-updated");
-        if (upd) upd.textContent = "обновлено " + new Date().toLocaleTimeString() + " · SIM";
+        lastLiveStatusTime = new Date().toLocaleTimeString();
         recompute();
         return;
       }
       const tstr = new Date().toLocaleTimeString();
+      lastLiveStatusTime = tstr;
       try {
         const res = await fetch("/api/live?t=" + Date.now(), { cache: "no-store" });
         let body = null;
@@ -6737,31 +6776,24 @@
           live = body;
           try {
             window.__lastLive = body;
+            if (body.miner_type) window.__poolheatMinerType = body.miner_type;
           } catch (_) { /* ignore */ }
           if (body.ok === false || !res.ok) {
             liveError = body.error || ("HTTP " + res.status);
-            document.getElementById("src-updated").textContent =
-              "обновлено " + tstr + " · Offline";
             if (manual) toastWarn("Offline · " + minerHostLabel() + (liveError ? " · " + liveError : ""));
           } else {
             liveError = null;
-            document.getElementById("src-updated").textContent =
-              "обновлено " + tstr + " · Online";
             if (manual) toastSuccess("Online · " + (body.host || minerHostLabel()));
           }
         } else {
           live = { ok: false, host: minerHostLabel(), error: "HTTP " + res.status };
           liveError = "HTTP " + res.status;
-          document.getElementById("src-updated").textContent =
-            "обновлено " + tstr + " · Offline";
           if (manual) toastWarn("Offline · HTTP " + res.status);
         }
       } catch (e) {
         // poolheat UI itself unreachable (network) — still Offline, not SIM
         liveError = String(e.message || e);
         live = { ok: false, host: minerHostLabel(), error: liveError };
-        document.getElementById("src-updated").textContent =
-          "обновлено " + tstr + " · Offline";
         if (manual) toastWarn("Offline · " + liveError);
       }
       recompute();
@@ -7798,8 +7830,7 @@
             (c.poll_interval_sec != null ? " · poll " + c.poll_interval_sec + "s" : "") +
             (c.config_path ? " · " + c.config_path : "");
         }
-        const det = document.getElementById("src-detail");
-        if (det && c.host) det.textContent = c.host + " · summary+status+devs";
+        if (typeof updateSrcBar === "function") updateSrcBar(live || {});
         return c;
       } catch (e) {
         if (st) st.textContent = "не удалось загрузить: " + e.message;
@@ -7857,8 +7888,7 @@
             "s" +
             (c.config_path ? " · " + c.config_path : "");
         }
-        const det = document.getElementById("src-detail");
-        if (det) det.textContent = (c.host || host + ":" + port) + " · summary+status+devs";
+        if (typeof updateSrcBar === "function") updateSrcBar(live || {});
         const brandH = document.querySelector(".brand h1");
         if (brandH) brandH.textContent = c.project_name || projectName;
         if (typeof restartLivePollTimer === "function") restartLivePollTimer();
@@ -8991,11 +9021,15 @@
 
     function fmtRouterBrand(r) {
       if (!r) return "Keenetic —";
+      // Header: compact "Keenetic KN-3811"
+      const code = String(r.model_code || "").trim();
+      if (/^KN-/i.test(code)) return "Keenetic " + code.toUpperCase();
       const raw = String(r.model || r.device_tree_model || "").trim();
-      // "Peak (KN-2710)" → "Peak"; "Keenetic KN-2710" → keep short
+      const kn = raw.match(/KN-[0-9A-Za-z]+/i);
+      if (kn) return "Keenetic " + kn[0].toUpperCase();
+      // fallback name without double vendor
       let name = raw.replace(/\s*\((KN-[^)]+)\)\s*/i, "").trim();
       name = name.replace(/^Keenetic\s+/i, "").trim();
-      if (!name && r.model_code) name = r.model_code;
       if (!name) return r.vendor || "Keenetic —";
       const vendor = r.vendor || "Keenetic";
       if (name.toLowerCase().startsWith(String(vendor).toLowerCase())) return name;
@@ -9025,7 +9059,8 @@
         const router = body.router || {};
         const miner = body.miner || {};
         const ph = body.poolheat || {};
-        const brandText = fmtRouterBrand(router) + " · " + fmtMinerBrand(miner);
+        // header shows router only; miner is on LIVE strip
+        const brandText = fmtRouterBrand(router);
         localStorage.setItem(
           INFO_CACHE_KEY,
           JSON.stringify({
@@ -9052,12 +9087,23 @@
     }
     function updateBrandDevices(router, miner, version) {
       const el = document.getElementById("brand-devices");
-      const brandText = fmtRouterBrand(router) + " · " + fmtMinerBrand(miner);
+      // top subtitle: only Keenetic (miner model → LIVE line)
+      const brandText = fmtRouterBrand(router);
       if (el) el.textContent = brandText;
       try {
-        document.title = "poolheat_WM · " + brandText;
+        const minerPart = fmtMinerBrand(miner);
+        document.title = "poolheat_WM · " + brandText + " · " + minerPart;
       } catch (_) { /* ignore */ }
       if (version) setFooterVersion(version);
+      try {
+        if (miner && miner.miner_type)
+          window.__poolheatMinerType = String(miner.miner_type).trim();
+      } catch (_) { /* ignore */ }
+      if (typeof updateSrcBar === "function") {
+        try {
+          updateSrcBar(typeof live !== "undefined" ? live : {});
+        } catch (_) { /* ignore */ }
+      }
     }
     /** Paint Info tab + header/footer from a system/info payload. */
     function applySystemInfoToUI(body, opts) {
