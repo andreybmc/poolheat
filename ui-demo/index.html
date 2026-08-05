@@ -2289,15 +2289,12 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Платы (PCB) · 4 hashboard</h2>
-              <div class="sub">devs[].Temperature · Upfreq Complete</div>
+              <h2 id="boards-pcb-title">Платы (PCB) · hashboard</h2>
+              <div class="sub" id="boards-pcb-sub">devs[].Temperature · Upfreq Complete</div>
             </div>
           </div>
           <div class="card-b board-chip-grid" id="boards-grid">
-            <div class="bc-cell"><div class="bc-id">Board 0</div><div class="bc-t"><span id="b0">—</span> <small>°C</small></div><div class="tc-extra" id="b0u">upfreq —</div></div>
-            <div class="bc-cell"><div class="bc-id">Board 1</div><div class="bc-t"><span id="b1">—</span> <small>°C</small></div><div class="tc-extra" id="b1u">upfreq —</div></div>
-            <div class="bc-cell"><div class="bc-id">Board 2</div><div class="bc-t"><span id="b2">—</span> <small>°C</small></div><div class="tc-extra" id="b2u">upfreq —</div></div>
-            <div class="bc-cell"><div class="bc-id">Board 3</div><div class="bc-t"><span id="b3">—</span> <small>°C</small></div><div class="tc-extra" id="b3u">upfreq —</div></div>
+            <!-- cells rebuilt from live.board_count (M63=4, M60S=3, …) -->
           </div>
         </div>
 
@@ -3800,7 +3797,7 @@
       },
       pcb: {
         title: "PCB / boards",
-        body: "Температура плат hashboard (devs[].Temperature).\n0/1 обычно горячее, 2/3 холоднее.\nНе путать с Chip Temp — чипы обычно выше.",
+        body: "Температура плат hashboard (devs[].Temperature).\nЧисло плат: DEVS / board-num / карта моделей (M63=4, M60S=3).\nM63: 4 слота (2 физ. × 2 вирт., пары t≈t).\nM60S: 3 платы · 3 датчика.\nНе путать с Chip Temp — чипы обычно выше.",
       },
       chip_max: {
         title: "Chip Temp Max",
@@ -5406,8 +5403,70 @@
       }
     }
 
+    function resolveBoardCount(r) {
+      if (!r || typeof r !== "object") return 4;
+      if (r.board_count != null && Number.isFinite(Number(r.board_count))) {
+        return Math.max(1, Math.min(8, Number(r.board_count)));
+      }
+      const arr = Array.isArray(r.boards) ? r.boards : [];
+      if (arr.length) return Math.max(1, Math.min(8, arr.length));
+      return 4;
+    }
+
+    /** Rebuild PCB cards when board_count changes (M63=4, M60S=3, …). */
+    function ensureBoardsGrid(n) {
+      const grid = document.getElementById("boards-grid");
+      if (!grid) return;
+      const nWant = Math.max(1, Math.min(8, Number(n) || 4));
+      const cur = grid.querySelectorAll(".bc-cell").length;
+      if (cur === nWant) return;
+      let html = "";
+      for (let i = 0; i < nWant; i++) {
+        html +=
+          '<div class="bc-cell"><div class="bc-id">Board ' +
+          i +
+          '</div><div class="bc-t"><span id="b' +
+          i +
+          '">—</span> <small>°C</small></div><div class="tc-extra" id="b' +
+          i +
+          'u">upfreq —</div></div>';
+      }
+      grid.innerHTML = html;
+      const title = document.getElementById("boards-pcb-title");
+      if (title) {
+        title.textContent =
+          "Платы (PCB) · " + nWant + " hashboard" + (nWant === 1 ? "" : "");
+      }
+      const sub = document.getElementById("boards-pcb-sub");
+      if (sub && rLastBoardNote) {
+        sub.textContent = rLastBoardNote;
+      }
+    }
+    let rLastBoardNote = "devs[].Temperature · Upfreq Complete";
+
     function updateTempDisplay(r) {
-      const boards = (r.boards || []).map(Number).filter((x) => Number.isFinite(x));
+      const nB = resolveBoardCount(r);
+      if (r && r.board_layout_note) {
+        rLastBoardNote =
+          "devs[].Temperature · Upfreq Complete" +
+          (r.miner_type ? " · " + r.miner_type : "") +
+          (r.board_layout_note ? " · " + r.board_layout_note : "");
+      } else if (r && r.miner_type) {
+        rLastBoardNote =
+          "devs[].Temperature · Upfreq Complete · " + r.miner_type;
+      }
+      ensureBoardsGrid(nB);
+      const title = document.getElementById("boards-pcb-title");
+      if (title) {
+        title.textContent = "Платы (PCB) · " + nB + " hashboard";
+      }
+      const sub = document.getElementById("boards-pcb-sub");
+      if (sub) sub.textContent = rLastBoardNote;
+
+      // Ignore null / 0 placeholder slots for max/min/avg
+      const boards = (r.boards || [])
+        .map(Number)
+        .filter((x) => Number.isFinite(x) && x > 0);
       const boardMax = boards.length ? Math.max(...boards) : NaN;
       const boardMin = boards.length ? Math.min(...boards) : NaN;
       const boardAvg = boards.length
@@ -5442,10 +5501,14 @@
       setId("chip-avg", fmt(r.chip_avg));
       setId("chip-max", fmt(r.chip_max));
 
-      for (let i = 0; i < 4; i++) {
-        setId("b" + i, fmt(r.boards ? r.boards[i] : NaN));
+      for (let i = 0; i < nB; i++) {
+        const tv = r.boards ? r.boards[i] : NaN;
+        setId("b" + i, fmt(tv));
         const u = r.upfreq ? r.upfreq[i] : undefined;
-        setId("b" + i + "u", "upfreq " + (u === 1 ? "ok" : String(u)));
+        setId(
+          "b" + i + "u",
+          "upfreq " + (u === 1 ? "ok" : u == null ? "—" : String(u))
+        );
       }
 
       // T_ctrl = selected sensor, T_safe = chip max
@@ -6179,6 +6242,9 @@
         // 502 + {ok:false, host, error} is normal when miner is unreachable
         if (body && typeof body === "object") {
           live = body;
+          try {
+            window.__lastLive = body;
+          } catch (_) { /* ignore */ }
           if (body.ok === false || !res.ok) {
             liveError = body.error || ("HTTP " + res.status);
             document.getElementById("src-updated").textContent =
@@ -6773,8 +6839,9 @@
               { label: "liquid", data: [], borderColor: "#3d9cf0", backgroundColor: "rgba(61,156,240,0.1)", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
               { label: "env", data: [], borderColor: "#3ecf8e", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
               { label: "outdoor", data: [], borderColor: "#7dd3fc", tension: 0.15, pointRadius: 0, borderWidth: 2, borderDash: [6, 3], fill: false },
+              // PCB chart slots: M63 often [0,2] (paired); M60S [0,1]
               { label: "board0", data: [], borderColor: "#f0b429", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
-              { label: "board2", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
+              { label: "boardA", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
               { label: "chip max", data: [], borderColor: "#f07178", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
             ],
           },
@@ -6839,8 +6906,35 @@
       chartTemp.data.datasets[0].data = xySeries("liquid");
       chartTemp.data.datasets[1].data = xySeries("env");
       chartTemp.data.datasets[2].data = xySeries("outdoor_c", { requireOnline: false });
-      chartTemp.data.datasets[3].data = xySeries("board0");
-      chartTemp.data.datasets[4].data = xySeries("board2");
+      // chart slots from last live snapshot (M63→0+2, M60S→0+1)
+      let slot0 = 0;
+      let slot1 = 2;
+      try {
+        const slots =
+          (window.__lastLive && window.__lastLive.board_chart_slots) ||
+          null;
+        if (Array.isArray(slots) && slots.length >= 1) {
+          slot0 = Number(slots[0]) || 0;
+          slot1 =
+            slots.length >= 2
+              ? Number(slots[1])
+              : slot0 === 0
+                ? 1
+                : 0;
+          if (!Number.isFinite(slot1)) slot1 = slot0 === 0 ? 1 : 0;
+        } else {
+          const nb =
+            (window.__lastLive && window.__lastLive.board_count) || 4;
+          if (Number(nb) < 4) {
+            slot0 = 0;
+            slot1 = 1;
+          }
+        }
+      } catch (_) { /* keep defaults */ }
+      chartTemp.data.datasets[3].label = "board" + slot0;
+      chartTemp.data.datasets[3].data = xySeries("board" + slot0);
+      chartTemp.data.datasets[4].label = "board" + slot1;
+      chartTemp.data.datasets[4].data = xySeries("board" + slot1);
       chartTemp.data.datasets[5].data = xySeries("chip_max");
       chartPower.data.datasets[0].data = xySeries("power");
       chartPower.data.datasets[1].data = xySeries("power_limit");

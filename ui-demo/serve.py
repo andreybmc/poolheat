@@ -4292,6 +4292,77 @@ def _ghs_to_th(ghs: float | None) -> float | None:
     return g / 1000.0
 
 
+# Whatsminer hashboard layout by model family.
+# M63-class: 4 logical slots (2 physical PCBs × 2 virtual halves → paired temps).
+# M60S-class: 3 physical hashboards, 3 sensors.
+HASHBOARD_LAYOUT: dict[str, dict] = {
+    "M66": {"boards": 4, "chart": [0, 2], "note": "4 slots · paired sensors"},
+    "M63": {"boards": 4, "chart": [0, 2], "note": "2 physical × 2 virtual slots"},
+    "M60S": {"boards": 3, "chart": [0, 1], "note": "3 hashboards"},
+    "M60": {"boards": 3, "chart": [0, 1]},
+    "M56": {"boards": 3, "chart": [0, 1]},
+    "M53": {"boards": 3, "chart": [0, 1]},
+    "M50S": {"boards": 3, "chart": [0, 1]},
+    "M50": {"boards": 3, "chart": [0, 1]},
+    "M33S": {"boards": 3, "chart": [0, 1]},
+    "M30S": {"boards": 3, "chart": [0, 1]},
+    "M30": {"boards": 3, "chart": [0, 1]},
+    "M21S": {"boards": 3, "chart": [0, 1]},
+    "M20S": {"boards": 3, "chart": [0, 1]},
+}
+
+
+def resolve_hashboard_layout(
+    miner_type: str | None = None,
+    *,
+    n_devs: int | None = None,
+    board_num: int | None = None,
+) -> dict:
+    """
+    How many PCB/hashboard slots to show and which indices for charts.
+
+    Priority:
+      1) live DEVS count (when > 0) — source of truth on M60S (3) / M63 (4)
+      2) v3 miner.board-num
+      3) model map (M63→4, M60S→3, …)
+      4) default 4
+    """
+    mt = str(miner_type or "").strip().upper().replace(" ", "").replace("-", "")
+    base = mt.split("_")[0] if mt else ""
+    layout: dict | None = None
+    for key in sorted(HASHBOARD_LAYOUT.keys(), key=len, reverse=True):
+        if base.startswith(key) or mt.startswith(key):
+            layout = dict(HASHBOARD_LAYOUT[key])
+            layout["model_key"] = key
+            break
+    if layout is None:
+        n_guess = 4
+        if board_num and int(board_num) > 0:
+            n_guess = int(board_num)
+        elif n_devs and int(n_devs) > 0:
+            n_guess = int(n_devs)
+        n_guess = max(1, min(8, n_guess))
+        chart = [0, 2] if n_guess >= 4 else ([0, 1] if n_guess >= 2 else [0])
+        layout = {
+            "boards": n_guess,
+            "chart": chart,
+            "model_key": "auto",
+            "note": "auto from DEVS/board-num",
+        }
+    # Live DEVS wins when present
+    if n_devs is not None and int(n_devs) > 0:
+        n = max(1, min(8, int(n_devs)))
+        layout["boards"] = n
+        if n < 4 and list(layout.get("chart") or []) == [0, 2]:
+            layout["chart"] = [0, 1] if n >= 2 else [0]
+    elif board_num is not None and int(board_num) > 0:
+        n = max(1, min(8, int(board_num)))
+        layout["boards"] = n
+        if n < 4 and list(layout.get("chart") or []) == [0, 2]:
+            layout["chart"] = [0, 1] if n >= 2 else [0]
+    return layout
+
+
 def _boards_from_v3_device_msg(msg: dict | None) -> list[dict]:
     """
     PCB SN + Tagged Hashrate (detect-hash-rate) + chipdata from API v3 get.device.info.
@@ -6875,13 +6946,45 @@ def fetch_live() -> dict:
         except Exception:
             pass
 
-    boards: list[float] = []
+    # Hashboard count: live DEVS / v3 board-num / model map (M63=4, M60S=3, …)
+    miner_type_s: str | None = None
+    board_num_hint: int | None = None
+    try:
+        ident = get_miner_identity_cached(force=False)
+        if isinstance(ident, dict):
+            miner_type_s = (
+                str(ident.get("miner_type") or "").strip() or None
+            )
+            try:
+                bn = int(ident.get("board_num") or 0)
+                if bn > 0:
+                    board_num_hint = bn
+            except (TypeError, ValueError):
+                pass
+    except Exception:
+        pass
+    hb_layout = resolve_hashboard_layout(
+        miner_type_s,
+        n_devs=len(devs) if isinstance(devs, list) else 0,
+        board_num=board_num_hint,
+    )
+    n_boards = int(hb_layout.get("boards") or 4)
+
+    boards: list[float | None] = []
     upfreq: list[int] = []
     factory_parts: list[float] = []
-    for i in range(4):
-        if i < len(devs):
-            boards.append(float(devs[i].get("Temperature", 0)))
-            upfreq.append(int(devs[i].get("Upfreq Complete", 0)))
+    for i in range(n_boards):
+        if i < len(devs) and isinstance(devs[i], dict):
+            try:
+                t = float(devs[i].get("Temperature", 0) or 0)
+                # 0.0 often means empty/missing slot — keep as 0 for live API
+                boards.append(t)
+            except (TypeError, ValueError):
+                boards.append(None)
+            try:
+                upfreq.append(int(devs[i].get("Upfreq Complete", 0) or 0))
+            except (TypeError, ValueError):
+                upfreq.append(0)
             try:
                 fg = float(devs[i].get("Factory GHS") or 0)
                 if fg > 0:
@@ -6889,7 +6992,8 @@ def fetch_live() -> dict:
             except (TypeError, ValueError):
                 pass
         else:
-            boards.append(0.0)
+            # layout slot without DEVS row (suspend) — null, not fake 0 pad
+            boards.append(None)
             upfreq.append(0)
 
     mode = summary.get("Power Mode") or status.get("power_mode")
@@ -6957,6 +7061,11 @@ def fetch_live() -> dict:
         "chip_max": summary.get("Chip Temp Max"),
         "boards": boards,
         "upfreq": upfreq,
+        "board_count": n_boards,
+        "board_chart_slots": list(hb_layout.get("chart") or [0, 2]),
+        "board_layout_key": hb_layout.get("model_key"),
+        "board_layout_note": hb_layout.get("note"),
+        "miner_type": miner_type_s,
         "power": summary.get("Power"),
         "mode": mode,
         "mode_norm": mode_norm,
