@@ -9867,7 +9867,7 @@ def _tg_heat_balance_lines(
 
 
 def _tg_active_errors_lines(live: dict | None, lang: str = "ru", *, limit: int = 6) -> list[str]:
-    """Active ASIC firmware errors (get_error_code) for TG status/info."""
+    """Active ASIC firmware errors (get_error_code) — shown on Miner card only."""
     en = str(lang or "ru").lower().startswith("en")
     errs = (live or {}).get("miner_errors") or []
     if not errs:
@@ -9877,12 +9877,21 @@ def _tg_active_errors_lines(live: dict | None, lang: str = "ru", *, limit: int =
         if isinstance(e, dict):
             code = e.get("code") or e.get("error_code") or ""
             cause = e.get("cause") or e.get("msg") or e.get("message") or ""
-            line = f"  {code}  {cause}".strip()
-            if not line or line == "—":
+            # Prefer human cause; skip redundant "Error code NNNN"
+            cause_s = str(cause or "").strip()
+            if cause_s.lower().startswith("error code"):
+                cause_s = ""
+            if code and cause_s:
+                line = f"  {code}  {cause_s}"
+            elif code:
+                line = f"  {code}"
+            elif cause_s:
+                line = f"  {cause_s}"
+            else:
                 line = f"  {e}"
-            out.append(line[:100])
+            out.append(line[:120])
         else:
-            out.append(f"  {str(e)[:100]}")
+            out.append(f"  {str(e)[:120]}")
     more = len(errs) - limit
     if more > 0:
         out.append(f"  … +{more}" if en else f"  … ещё {more}")
@@ -10186,10 +10195,7 @@ def _tg_status_text(lang: str = "ru") -> str:
         lines.append("")
         lines.append(f"🎛  {lab_ov} {mm}m {ss:02d}s {lab_left}")
 
-    err_lines = _tg_active_errors_lines(live, lang)
-    if err_lines:
-        lines.append("")
-        lines.extend(err_lines)
+    # ASIC error codes (2000/2010/…) live on Miner card — keep Status clean
 
     # policy summary
     lines.append("")
@@ -10423,10 +10429,7 @@ def _tg_info_text(lang: str = "ru") -> str:
             f"Env {_tg_fmt_num(env, 1)} °C · Чип {_tg_fmt_num(chip_max, 1)} °C"
         )
 
-    err_lines = _tg_active_errors_lines(live, lang)
-    if err_lines:
-        lines.append("")
-        lines.extend(err_lines)
+    # Firmware errors shown on Miner card only
 
     return "\n".join(lines)
 
@@ -10691,6 +10694,12 @@ def _tg_miner_text(lang: str = "ru", live: dict | None = None, online: bool = Tr
         f"Dry Run:                {dry_s}",
         f"Force Stop:           {fs_s}",
     ]
+
+    # Firmware get_error_code (e.g. 2000, 2010 All pools disabled)
+    err_lines = _tg_active_errors_lines(live, lang)
+    if err_lines:
+        lines.append("")
+        lines.extend(err_lines)
 
     lw = live.get("last_write") or {}
     if isinstance(lw, dict) and (lw.get("ts") or lw.get("action") is not None):
