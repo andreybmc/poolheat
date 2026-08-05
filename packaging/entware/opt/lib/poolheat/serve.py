@@ -2622,6 +2622,15 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             "host": base,
             **parsed,
         }
+        # model string for physical layout (snake / chips_per_domain / slot_link)
+        try:
+            ident = get_miner_identity_cached(force=False)
+            if isinstance(ident, dict):
+                mt = (ident.get("miner_type") or ident.get("model") or "").strip()
+                if mt:
+                    out["miner_type"] = mt
+        except Exception:
+            pass
         out = _chipmap_attach_hash_estimates(out)
         with _chipmap_lock:
             _chipmap_cache.clear()
@@ -2664,6 +2673,16 @@ def get_chipmap(*, force: bool = False) -> dict:
     # refresh est_th / nonce_rate from current HR + mining elapsed
     if out.get("reason") != "suspend":
         out = _chipmap_attach_hash_estimates(out)
+    # keep miner_type fresh for layout lookup even on cache hit
+    if not out.get("miner_type"):
+        try:
+            ident = get_miner_identity_cached(force=False)
+            if isinstance(ident, dict):
+                mt = (ident.get("miner_type") or ident.get("model") or "").strip()
+                if mt:
+                    out["miner_type"] = mt
+        except Exception:
+            pass
     return out
 
 

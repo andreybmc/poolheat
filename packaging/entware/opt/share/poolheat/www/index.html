@@ -356,9 +356,11 @@
       font-weight: 650;
     }
 
-    /* Chip map (LuCI scrape) */
+    /* Chip map (LuCI scrape · snake layout · HashSource-style) */
     .chip-board {
-      margin-bottom: 16px;
+      margin-bottom: 18px;
+      overflow-x: auto;
+      padding-bottom: 4px;
     }
     .chip-board-h {
       display: flex;
@@ -376,6 +378,43 @@
       color: var(--muted);
       font-size: 0.78rem;
     }
+    .chip-pair {
+      margin-bottom: 18px;
+      overflow-x: auto;
+      padding: 12px 12px 8px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+    }
+    .chip-pair-h {
+      font-weight: 650;
+      margin-bottom: 10px;
+      font-size: 0.95rem;
+    }
+    .chip-pair .chip-board {
+      margin-bottom: 12px;
+    }
+    .chip-pair .chip-board:last-child {
+      margin-bottom: 0;
+    }
+    .chip-snake {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: max-content;
+      max-width: none;
+    }
+    .chip-section {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .chip-row {
+      display: flex;
+      flex-direction: row;
+      gap: 2px;
+    }
+    /* legacy flat grid (fallback when layout unknown) */
     .chip-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
@@ -383,9 +422,9 @@
       max-width: 100%;
     }
     .chip-cell {
-      aspect-ratio: 1;
-      min-width: 26px;
-      min-height: 26px;
+      width: 28px;
+      height: 28px;
+      flex: 0 0 28px;
       border-radius: 3px;
       background: var(--border2);
       cursor: default;
@@ -393,12 +432,13 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.62rem;
+      font-size: 0.58rem;
       font-weight: 650;
       line-height: 1;
       color: rgba(255, 255, 255, 0.92);
       text-shadow: 0 1px 1px rgba(0, 0, 0, 0.55);
       user-select: none;
+      box-sizing: border-box;
     }
     .chip-cell.empty {
       opacity: 0.22;
@@ -2445,12 +2485,15 @@
           <div class="card-h">
             <div>
               <h2>Карта чипов</h2>
-              <div class="sub">LuCI Miner API Log · temp / hash≈nonce / freq · кеш + poll</div>
+              <div class="sub">LuCI · snake layout · gradient / outliers / nonce · кеш + poll</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <label class="field" style="margin:0;min-width:160px">Цвет по
+              <label class="field" style="margin:0;min-width:180px">Цвет по
                 <select id="chipmap-metric">
                   <option value="temp">Temperature</option>
+                  <option value="gradient">Gradient (hotspots)</option>
+                  <option value="outliers">Outliers (cross-slot)</option>
+                  <option value="nonce_def">Nonce deficit</option>
                   <option value="est_th">Hash est (TH/s)</option>
                   <option value="nonce">Hash (nonce)</option>
                   <option value="nonce_rate">Nonce/s (elapsed)</option>
@@ -8956,6 +8999,9 @@
       // hint: "platform H616 · HB 4 x K2A"
       (function paintModelHashrate() {
         const type = (m.miner_type || "").trim();
+        try {
+          if (type) window.__poolheatMinerType = type;
+        } catch (_) { /* ignore */ }
         const th =
           m.tagged_th != null
             ? Number(m.tagged_th)
@@ -10618,41 +10664,346 @@
     }, 15000);
 
     /* ── Chip map (LuCI scrape) ───────────────────────────────────── */
+
     let chipmapData = null;
     let chipmapTimer = null;
-
-    /** Discrete bands for hash/freq; temp = 10-step mono gradient min→max. */
     const CHIP_COL = {
-      green: "hsl(130 65% 36%)",
-      yellow: "hsl(48 85% 42%)",
-      red: "hsl(4 78% 48%)",
       empty: "var(--border2)",
+      ok: "hsl(145 55% 28%)",
     };
     const CHIP_TEMP_STEPS = 10;
+    // Hazard: green → yellow → orange → red (higher = worse)
+    const CHIP_HAZARD_RANGE = {
+      gradient: [0, 15],   // °C above upstream neighbors
+      outliers: [0, 3],    // z-score vs same C# other slots
+      nonce_def: [0, 50],  // % below slot avg nonce
+    };
 
     /**
-     * Hue family by absolute range (where the chip cloud sits):
-     *   max ≤ 70  → green  (e.g. 43…63 °C)
-     *   max ≤ 99  → yellow
-     *   max ≥ 100 → red
-     * Within that, 10 steps min→max:
-     *   cold (min) = dark, cooler hue (green→blue / deep amber / deep red)
-     *   warm (max) = light, warmer hue (lime→yellow / light yellow / light coral)
+     * Physical layout table (HashSource/whatsminer_chip_map).
+     * Entry: [modelNorm, chips_per_domain, slot_link?]
+     * slot_link e.g. "0:1 2:3" = hydro stacked pairs.
      */
-    function chipTempPalette(tmax) {
-      if (tmax == null || !Number.isFinite(Number(tmax))) {
-        return { h0: 150, h1: 95, s0: 55, s1: 70 }; // green→lime
+    const CHIPMAP_MODELS = [
+["M50S++VK10",3],
+["M50S++VK20",3],
+["M50S++VK30",4],
+["M50S++VK40",3],
+["M50S++VK50",3],
+["M50S++VK60",3],
+["M50S++VL10",2],
+["M50S++VL20",2],
+["M50S++VL30",3],
+["M50S++VL40",3],
+["M50S++VL50",3],
+["M50S++VL60",3],
+["M50S+VH30",4],
+["M50S+VH40",4],
+["M50S+VJ30",4],
+["M50S+VJ40",4],
+["M50S+VJ60",4],
+["M50S+VK10",3],
+["M50S+VK20",3],
+["M50S+VK30",3],
+["M50S+VL10",2],
+["M50S+VL20",2],
+["M50S+VL30",3],
+["M50SVH20",3],
+["M50SVH30",4],
+["M50SVH40",4],
+["M50SVH50",3],
+["M50SVJ10",3],
+["M50SVJ20",3],
+["M50SVJ30",3],
+["M50SVJ40",3],
+["M50SVJ50",3],
+["M50SVK10",2],
+["M50SVK20",3],
+["M50SVK30",3],
+["M50SVK50",3],
+["M50SVK60",3],
+["M50SVK70",3],
+["M50SVK80",2],
+["M50SVL10",2],
+["M50SVL20",2],
+["M50SVL30",2],
+["M50VE30",5],
+["M50VG30",4],
+["M50VH10",2],
+["M50VH20",3],
+["M50VH30",3],
+["M50VH40",2],
+["M50VH50",3],
+["M50VH60",2],
+["M50VH70",3],
+["M50VH80",3],
+["M50VH90",3],
+["M50VJ10",2],
+["M50VJ20",3],
+["M50VJ30",3],
+["M50VJ40",3],
+["M50VJ60",4],
+["M50VK40",3],
+["M50VK50",3],
+["M53HVH10",2,"0:1 2:3"],
+["M53S++VK10",3,"0:1 2:3"],
+["M53S++VK20",3,"0:1 2:3"],
+["M53S++VK30",4,"0:1 2:3"],
+["M53S++VK50",3,"0:1 2:3"],
+["M53S++VL10",2,"0:1 2:3"],
+["M53S++VL30",3,"0:1 2:3"],
+["M53S+VJ30",4,"0:1 2:3"],
+["M53S+VJ40",4,"0:1 2:3"],
+["M53S+VJ50",4,"0:1 2:3"],
+["M53S+VK30",3,"0:1 2:3"],
+["M53SVH20",3,"0:1 2:3"],
+["M53SVH30",3,"0:1 2:3"],
+["M53SVJ30",3,"0:1 2:3"],
+["M53SVJ40",3,"0:1 2:3"],
+["M53SVK30",2,"0:1 2:3"],
+["M53VH30",2,"0:1 2:3"],
+["M53VH40",3,"0:1 2:3"],
+["M53VH50",3,"0:1 2:3"],
+["M53VK30",2,"0:1 2:3"],
+["M53VK60",2,"0:1 2:3"],
+["M56S++VK10",4,"0:1 2:3"],
+["M56S++VK30",4,"0:1 2:3"],
+["M56S++VK40",3,"0:1 2:3"],
+["M56S++VK50",4,"0:1 2:3"],
+["M56S+VJ30",4,"0:1 2:3"],
+["M56S+VK30",3,"0:1 2:3"],
+["M56S+VK40",3,"0:1 2:3"],
+["M56S+VK50",3,"0:1 2:3"],
+["M56SVH30",4,"0:1 2:3"],
+["M56SVJ30",3,"0:1 2:3"],
+["M56SVJ40",4,"0:1 2:3"],
+["M56VH30",3,"0:1 2:3"],
+["M60S++VL10",4],
+["M60S++VL30",5],
+["M60S++VL40",5],
+["M60S++VL50",5],
+["M60S++VL70",6],
+["M60S++VM30",3],
+["M60S++VM40",3],
+["M60S++VM50",3],
+["M60S++VM60",3],
+["M60S++VM70",3],
+["M60S+VK30",5],
+["M60S+VK40",5],
+["M60S+VK50",5],
+["M60S+VK60",6],
+["M60S+VK70",6],
+["M60S+VL100",4],
+["M60S+VL10",4],
+["M60S+VL30",5],
+["M60S+VL40",4],
+["M60S+VL50",4],
+["M60S+VL60",4],
+["M60S+VL70",5],
+["M60S+VL80",4],
+["M60S+VL90",4],
+["M60S+VM20",2],
+["M60S+VM30",2],
+["M60S+VM40",2],
+["M60S+VM50",2],
+["M60SVK10",5],
+["M60SVK20",5],
+["M60SVK30",5],
+["M60SVK40",5],
+["M60SVK60",4],
+["M60SVK70",4],
+["M60SVK80",5],
+["M60SVK90",4],
+["M60SVL10",3],
+["M60SVL20",4],
+["M60SVL30",4],
+["M60SVL40",4],
+["M60SVL50",4],
+["M60SVL60",4],
+["M60SVL70",3],
+["M60SVL80",3],
+["M60SVM20",2],
+["M60SVM40",2],
+["M60VK10",4],
+["M60VK20",4],
+["M60VK30",5],
+["M60VK40",4],
+["M60VK6A",4],
+["M60VL10",3],
+["M60VL20",3],
+["M60VL30",3],
+["M60VL40",3],
+["M60VL50",3],
+["M61S+VL30",5],
+["M61SVK20",5],
+["M61SVK30",5],
+["M61SVL10",4],
+["M61SVL20",4],
+["M61SVL30",4],
+["M61SVL60",4],
+["M61SVL90",5],
+["M61SVM30",3],
+["M61VK10",4],
+["M61VK20",4],
+["M61VK30",4],
+["M61VK40",4],
+["M61VK60",4],
+["M61VL10",3],
+["M61VL30",3],
+["M61VL40",3],
+["M61VL50",3],
+["M61VL60",3],
+["M63S++VL20",5,"0:1 2:3"],
+["M63S++VL40",4,"0:1 2:3"],
+["M63S++VL50",5,"0:1 2:3"],
+["M63S++VL60",5,"0:1 2:3"],
+["M63S++VM20",3,"0:1 2:3"],
+["M63S+VK30",6,"0:1 2:3"],
+["M63S+VL10",4,"0:1 2:3"],
+["M63S+VL20",5,"0:1 2:3"],
+["M63S+VL30",5,"0:1 2:3"],
+["M63S+VL50",4,"0:1 2:3"],
+["M63S+VL60",4,"0:1 2:3"],
+["M63S+VL70",4,"0:1 2:3"],
+["M63S+VL80",4,"0:1 2:3"],
+["M63S+VL90",4,"0:1 2:3"],
+["M63S+VM30",2,"0:1 2:3"],
+["M63S+VM40",2,"0:1 2:3"],
+["M63SVK10",5,"0:1 2:3"],
+["M63SVK20",5,"0:1 2:3"],
+["M63SVK30",5,"0:1 2:3"],
+["M63SVK40",4,"0:1 2:3"],
+["M63SVK50",5,"0:1 2:3"],
+["M63SVK60",5,"0:1 2:3"],
+["M63SVK70",5,"0:1 2:3"],
+["M63SVK80",4,"0:1 2:3"],
+["M63SVK90",4,"0:1 2:3"],
+["M63SVL10",3,"0:1 2:3"],
+["M63SVL20",3,"0:1 2:3"],
+["M63SVL30",4,"0:1 2:3"],
+["M63SVL50",4,"0:1 2:3"],
+["M63SVL60",4,"0:1 2:3"],
+["M63SVL70",3,"0:1 2:3"],
+["M63SVM30",2,"0:1 2:3"],
+["M63VK10",4,"0:1 2:3"],
+["M63VK20",4,"0:1 2:3"],
+["M63VK30",4,"0:1 2:3"],
+["M63VL10",3,"0:1 2:3"],
+["M63VL20",3,"0:1 2:3"],
+["M63VL30",3,"0:1 2:3"],
+["M63VL40",3,"0:1 2:3"],
+["M63VL60",3,"0:1 2:3"],
+["M63VL70",3,"0:1 2:3"],
+["M66S++VL20",4],
+["M66S++VL40",3],
+["M66S++VL50",5,"0:1 2:3"],
+["M66S++VL60",5,"0:1 2:3"],
+["M66S++VM30",3,"0:1 2:3"],
+["M66S+VK30",5],
+["M66S+VL10",5,"0:1 2:3"],
+["M66S+VL20",5,"0:1 2:3"],
+["M66S+VL30",5,"0:1 2:3"],
+["M66S+VL40",5,"0:1 2:3"],
+["M66S+VL50",4,"0:1 2:3"],
+["M66S+VL60",4,"0:1 2:3"],
+["M66S+VL70",5,"0:1 2:3"],
+["M66SVK20",4],
+["M66SVK30",4],
+["M66SVK40",5,"0:1 2:3"],
+["M66SVK50",5,"0:1 2:3"],
+["M66SVK60",5,"0:1 2:3"],
+["M66SVK70",5,"0:1 2:3"],
+["M66SVK80",5,"0:1 2:3"],
+["M66SVL10",4,"0:1 2:3"],
+["M66SVL20",4,"0:1 2:3"],
+["M66SVL30",4,"0:1 2:3"],
+["M66SVL40",4,"0:1 2:3"],
+["M66SVL50",5,"0:1 2:3"],
+["M66SVL80",4,"0:1 2:3"],
+["M66VK20",4,"0:1 2:3"],
+["M66VK30",4,"0:1 2:3"],
+["M66VK60",4,"0:1 2:3"],
+["M66VL20",4,"0:1 2:3"],
+["M66VL30",4,"0:1 2:3"]
+    ];
+
+    function chipmapNormModel(s) {
+      return String(s || "")
+        .toUpperCase()
+        .replace(/WHATSMINER/g, "")
+        .replace(/[^A-Z0-9+]/g, "");
+    }
+
+    function chipmapLookupModel(modelStr) {
+      const n = chipmapNormModel(modelStr);
+      if (!n) return null;
+      // exact contains (longest model first)
+      let best = null;
+      let bestLen = 0;
+      for (const row of CHIPMAP_MODELS) {
+        const m = row[0];
+        if (n.includes(m) && m.length > bestLen) {
+          best = row;
+          bestLen = m.length;
+        }
       }
+      if (best) {
+        return {
+          model: best[0],
+          cpd: best[1] | 0,
+          link: best[2] || null,
+        };
+      }
+      // prefix series fallback M60S / M63 etc.
+      for (let len = Math.min(n.length, 12); len >= 4; len--) {
+        const pref = n.slice(0, len);
+        for (const row of CHIPMAP_MODELS) {
+          if (row[0].startsWith(pref)) {
+            return { model: row[0], cpd: row[1] | 0, link: row[2] || null, fuzzy: true };
+          }
+        }
+      }
+      return null;
+    }
+
+    function chipmapInferCpd(chipCount) {
+      const n = chipCount | 0;
+      if (n <= 0) return 3;
+      for (const cpd of [3, 2, 4, 5, 6]) {
+        if (n % cpd === 0) {
+          const domains = n / cpd;
+          if (domains >= 8 && domains <= 100) return cpd;
+        }
+      }
+      for (const cpd of [2, 3, 4, 5, 6]) {
+        if (n % cpd === 0) return cpd;
+      }
+      return 3;
+    }
+
+    function chipmapParseLinks(linkStr) {
+      if (!linkStr) return [];
+      return String(linkStr)
+        .split(/\s+/)
+        .map((p) => {
+          const parts = p.split(":");
+          if (parts.length !== 2) return null;
+          const a = parseInt(parts[0], 10);
+          const b = parseInt(parts[1], 10);
+          if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+          return [a, b];
+        })
+        .filter(Boolean);
+    }
+
+    function chipTempPalette(tmax) {
       const m = Number(tmax);
-      if (m >= 100) {
-        // red family: deep red → light orange-red
-        return { h0: 0, h1: 18, s0: 72, s1: 85 };
+      if (!Number.isFinite(m) || m < 55) {
+        return { h0: 200, h1: 145, s0: 45, s1: 55 };
       }
       if (m >= 71) {
-        // yellow family: dark amber → light yellow
         return { h0: 38, h1: 52, s0: 75, s1: 88 };
       }
-      // green family: dark blue-green → salad/lime (towards yellow)
       return { h0: 155, h1: 92, s0: 52, s1: 72 };
     }
 
@@ -10666,32 +11017,18 @@
         t = (v - lo) / (hi - lo);
       }
       t = Math.max(0, Math.min(1, t));
-      // quantize to 10 steps (0..9)
       const step = Math.min(
         CHIP_TEMP_STEPS - 1,
         Math.floor(t * CHIP_TEMP_STEPS + 1e-9)
       );
-      const tq = step / (CHIP_TEMP_STEPS - 1); // 0 … 1  (0=cold min, 1=warm max)
+      const tq = step / (CHIP_TEMP_STEPS - 1);
       const pal = chipTempPalette(hi);
       const h = pal.h0 + (pal.h1 - pal.h0) * tq;
       const s = pal.s0 + (pal.s1 - pal.s0) * tq;
-      // dark (cold) → light (warm)
-      const l = 22 + tq * 48; // 22% → 70%
-      return (
-        "hsl(" +
-        h.toFixed(0) +
-        " " +
-        s.toFixed(0) +
-        "% " +
-        l.toFixed(0) +
-        "%)"
-      );
+      const l = 22 + tq * 48;
+      return "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)";
     }
 
-    /**
-     * Hash % / freq: min→max gradient, 10 steps.
-     * slow (min) = dark red · mid = yellow · fast (max) = light lime-green
-     */
     function chipPerfColor(value, vmin, vmax) {
       if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
       const v = Number(value);
@@ -10706,21 +11043,44 @@
         CHIP_TEMP_STEPS - 1,
         Math.floor(t * CHIP_TEMP_STEPS + 1e-9)
       );
-      const tq = step / (CHIP_TEMP_STEPS - 1); // 0 = slow, 1 = fast
-      // hue: red (0) → yellow (55) → green/lime (125)
+      const tq = step / (CHIP_TEMP_STEPS - 1);
       const h = 0 + tq * 125;
-      const s = 78 - tq * 8; // 78 → 70
-      // dark (slow) → lighter (fast)
-      const l = 28 + tq * 36; // 28% → 64%
-      return (
-        "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)"
+      const s = 78 - tq * 8;
+      const l = 28 + tq * 36;
+      return "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)";
+    }
+
+    /** green (ok) → yellow → orange → red (bad) */
+    function chipHazardColor(value, vmin, vmax) {
+      if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
+      const v = Number(value);
+      const lo = Number(vmin);
+      const hi = Number(vmax);
+      let t = 0;
+      if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
+        t = (v - lo) / (hi - lo);
+      }
+      t = Math.max(0, Math.min(1, t));
+      const step = Math.min(
+        CHIP_TEMP_STEPS - 1,
+        Math.floor(t * CHIP_TEMP_STEPS + 1e-9)
       );
+      const tq = step / (CHIP_TEMP_STEPS - 1);
+      // hue 145 green → 0 red
+      const h = 145 - tq * 145;
+      const s = 62 + tq * 18;
+      const l = 28 + tq * 18;
+      return "hsl(" + h.toFixed(0) + " " + s.toFixed(0) + "% " + l.toFixed(0) + "%)";
+    }
+
+    function chipmapIsAnalysisMetric(metric) {
+      return metric === "gradient" || metric === "outliers" || metric === "nonce_def";
     }
 
     function chipColor(metric, value, vmin, vmax) {
       if (value == null || !Number.isFinite(Number(value))) return CHIP_COL.empty;
+      if (chipmapIsAnalysisMetric(metric)) return chipHazardColor(value, vmin, vmax);
       if (metric === "temp") return chipTempColor(value, vmin, vmax);
-      // hash work metrics + freq: red→yellow→green
       if (
         metric === "nonce" ||
         metric === "est_th" ||
@@ -10731,22 +11091,30 @@
       return CHIP_COL.empty;
     }
 
-    /** Metric value for one chip. */
-    function chipmapChipValue(c, metric) {
+    function chipmapChipValue(c, metric, analysis) {
       if (!c) return null;
       if (metric === "temp") return c.temp;
       if (metric === "nonce") return c.nonce;
       if (metric === "est_th") return c.est_th;
       if (metric === "nonce_rate") return c.nonce_rate;
       if (metric === "freq") return c.freq;
+      if (analysis) {
+        if (metric === "gradient") return analysis.gradient;
+        if (metric === "outliers") return analysis.z;
+        if (metric === "nonce_def") return analysis.nonceDef;
+      }
       return null;
     }
 
-    function chipmapMetricRange(boards, metric) {
+    function chipmapMetricRange(boards, metric, analysisBySlot) {
+      if (chipmapIsAnalysisMetric(metric)) {
+        const r = CHIP_HAZARD_RANGE[metric] || [0, 1];
+        return { min: r[0], max: r[1], fixed: true };
+      }
       let vals = [];
       (boards || []).forEach((b) => {
         (b.chips || []).forEach((c) => {
-          const v = chipmapChipValue(c, metric);
+          const v = chipmapChipValue(c, metric, null);
           if (v != null && Number.isFinite(Number(v))) vals.push(Number(v));
         });
       });
@@ -10755,6 +11123,27 @@
     }
 
     function chipmapLegendLabels(metric, range) {
+      if (metric === "gradient") {
+        return {
+          kind: "hazard",
+          low: "0°C ok",
+          high: "≥15°C hotspot",
+        };
+      }
+      if (metric === "outliers") {
+        return {
+          kind: "hazard",
+          low: "0σ ok",
+          high: "≥3σ hot vs boards",
+        };
+      }
+      if (metric === "nonce_def") {
+        return {
+          kind: "hazard",
+          low: "0% ok",
+          high: "≥50% underperform",
+        };
+      }
       if (metric === "temp") {
         const lo =
           range && range.min != null ? Number(range.min).toFixed(0) + "°C" : "min";
@@ -10803,6 +11192,351 @@
       };
     }
 
+    /**
+     * Spatial analysis (HashSource):
+     * - gradient: hotter than upstream airflow neighbors
+     * - outliers: z-score vs same chip index across slots
+     * - nonce_def: % below slot average nonce
+     */
+    function chipmapAnalyze(boards, cpd) {
+      const slots = boards || [];
+      const maxChips = slots.reduce(
+        (m, b) => Math.max(m, (b.chips || []).length),
+        0
+      );
+      // cross-slot temps by position index (chip id / array order)
+      const tempsByPos = [];
+      for (let i = 0; i < maxChips; i++) {
+        const arr = [];
+        slots.forEach((b) => {
+          const chips = b.chips || [];
+          // prefer by id, fallback index
+          let c = chips.find((x) => (x.id | 0) === i);
+          if (!c && chips[i] && (chips[i].id | 0) === i) c = chips[i];
+          if (!c) {
+            // sorted by id: find index match
+            const byId = chips.find((x) => (x.id | 0) === i);
+            c = byId;
+          }
+          if (c && c.temp != null && Number.isFinite(Number(c.temp)))
+            arr.push(Number(c.temp));
+        });
+        tempsByPos.push(arr);
+      }
+      const stats = tempsByPos.map((temps) => {
+        if (!temps.length) return { mean: 0, std: 0 };
+        const n = temps.length;
+        const mean = temps.reduce((a, b) => a + b, 0) / n;
+        if (n === 1) return { mean, std: 0 };
+        const variance =
+          temps.reduce((a, t) => a + (t - mean) * (t - mean), 0) / n;
+        return { mean, std: Math.sqrt(variance) };
+      });
+
+      const bySlot = {};
+      slots.forEach((b) => {
+        const chips = (b.chips || []).slice().sort((a, c) => (a.id | 0) - (c.id | 0));
+        const nChips = chips.length;
+        const cpdUse = cpd > 0 ? cpd : chipmapInferCpd(nChips);
+        const numDomains = cpdUse > 0 ? Math.ceil(nChips / cpdUse) : 1;
+        const remaining = Math.max(0, numDomains - 1);
+        const bottomDomains = 1 + Math.floor(remaining / 2);
+        const avgNonce =
+          nChips > 0
+            ? chips.reduce((s, c) => s + (Number(c.nonce) || 0), 0) / nChips
+            : 0;
+        const byId = {};
+        chips.forEach((c) => {
+          byId[c.id | 0] = c;
+        });
+        const analysis = {};
+        chips.forEach((chip) => {
+          const idx = chip.id | 0;
+          const domain = Math.floor(idx / cpdUse);
+          const row = idx % cpdUse;
+          const isTop = domain >= bottomDomains;
+          // upstream neighbors (airflow-aware snake)
+          const neigh = [];
+          if (isTop) {
+            if (domain + 1 < numDomains) {
+              const n = byId[(domain + 1) * cpdUse + row];
+              if (n && n.temp != null) neigh.push(Number(n.temp));
+            }
+          } else {
+            if (domain > 0) {
+              const n = byId[(domain - 1) * cpdUse + row];
+              if (n && n.temp != null) neigh.push(Number(n.temp));
+            }
+          }
+          if (row > 0) {
+            const n = byId[domain * cpdUse + (row - 1)];
+            if (n && n.temp != null) neigh.push(Number(n.temp));
+          }
+          if (row + 1 < cpdUse) {
+            const n = byId[domain * cpdUse + (row + 1)];
+            if (n && n.temp != null) neigh.push(Number(n.temp));
+          }
+          let gradient = 0;
+          if (neigh.length && chip.temp != null) {
+            const avg = neigh.reduce((a, t) => a + t, 0) / neigh.length;
+            gradient = Math.max(0, Number(chip.temp) - avg);
+          }
+          let z = 0;
+          const st = stats[idx];
+          if (st && chip.temp != null) {
+            const dev = Number(chip.temp) - st.mean;
+            if (dev > 0) {
+              if (st.std < 0.5) z = Math.min(3, dev);
+              else z = dev / st.std;
+            }
+          }
+          let nonceDef = 0;
+          if (avgNonce > 0) {
+            const nn = Number(chip.nonce) || 0;
+            if (nn < avgNonce) nonceDef = ((avgNonce - nn) / avgNonce) * 100;
+          }
+          analysis[idx] = {
+            gradient: Math.round(gradient * 100) / 100,
+            z: Math.round(z * 100) / 100,
+            nonceDef: Math.round(nonceDef * 10) / 10,
+          };
+        });
+        bySlot[b.slot] = analysis;
+      });
+      return bySlot;
+    }
+
+    function chipmapMakeCell(c, id, metric, metricRange, analysis) {
+      const cell = document.createElement("div");
+      cell.className = "chip-cell";
+      cell.textContent = String(id);
+      if (!c) {
+        cell.classList.add("empty");
+        return cell;
+      }
+      const v = chipmapChipValue(c, metric, analysis);
+      cell.style.background = chipColor(
+        metric,
+        v,
+        metricRange.min,
+        metricRange.max
+      );
+      if (v != null && metricRange.max > metricRange.min) {
+        const t =
+          (Number(v) - metricRange.min) /
+          (metricRange.max - metricRange.min);
+        // analysis: higher worse → red/light → dark text when hot
+        // temp/perf: higher → lighter fill
+        if (chipmapIsAnalysisMetric(metric)) {
+          if (t > 0.55) {
+            cell.style.color = "rgba(255,255,255,0.95)";
+          }
+        } else if (t > 0.55) {
+          cell.style.color = "rgba(12, 28, 16, 0.9)";
+          cell.style.textShadow = "none";
+        }
+      }
+      let tip =
+        "C" +
+        c.id +
+        " · " +
+        (c.temp != null ? c.temp + "°C" : "—") +
+        " · " +
+        (c.freq != null ? c.freq + " MHz" : "");
+      if (c.vol != null) tip += " · vol " + c.vol;
+      if (c.est_th != null && Number.isFinite(Number(c.est_th)))
+        tip += " · ≈" + Number(c.est_th).toFixed(3) + " TH/s";
+      if (c.nonce != null) tip += " · nonce " + c.nonce;
+      if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
+        tip += " · " + Number(c.nonce_rate).toFixed(2) + " n/s";
+      if (c.hash_share_asic != null)
+        tip += " · " + Number(c.hash_share_asic).toFixed(2) + "% ASIC";
+      if (c.err) tip += " · err " + c.err;
+      if (analysis) {
+        if (analysis.gradient > 0)
+          tip += " · Δup " + analysis.gradient.toFixed(1) + "°C";
+        if (analysis.z > 0) tip += " · z " + analysis.z.toFixed(2);
+        if (analysis.nonceDef > 0)
+          tip += " · deficit " + analysis.nonceDef.toFixed(0) + "%";
+      }
+      cell.dataset.tip = tip;
+      return cell;
+    }
+
+    /** Render section of domains as rows (HashSource render_section). */
+    function chipmapRenderSection(
+      byId,
+      cpd,
+      startDomain,
+      endDomain,
+      reversed,
+      metric,
+      metricRange,
+      analysisMap,
+      rowOrderRev
+    ) {
+      const section = document.createElement("div");
+      section.className = "chip-section";
+      const domainCount = endDomain - startDomain;
+      if (domainCount <= 0) return section;
+      const rows = [];
+      for (let r = 0; r < cpd; r++) rows.push(r);
+      if (rowOrderRev) rows.reverse();
+      rows.forEach((rowIdx) => {
+        const rowEl = document.createElement("div");
+        rowEl.className = "chip-row";
+        for (let i = 0; i < domainCount; i++) {
+          const domainIdx = reversed
+            ? endDomain - 1 - i
+            : startDomain + i;
+          const chipIdx = domainIdx * cpd + rowIdx;
+          const c = byId[chipIdx];
+          const a = analysisMap ? analysisMap[chipIdx] : null;
+          rowEl.appendChild(
+            chipmapMakeCell(c, chipIdx, metric, metricRange, a)
+          );
+        }
+        section.appendChild(rowEl);
+      });
+      return section;
+    }
+
+    /** Air snake layout (non-hydro). */
+    function chipmapBuildSnakeGrid(
+      chips,
+      cpd,
+      metric,
+      metricRange,
+      analysisMap,
+      hydro
+    ) {
+      const byId = {};
+      (chips || []).forEach((c) => {
+        byId[c.id | 0] = c;
+      });
+      const nChips =
+        chips && chips.length
+          ? Math.max(
+              chips.length,
+              chips.reduce((m, c) => Math.max(m, c.id | 0), 0) + 1
+            )
+          : 0;
+      const cpdUse = cpd > 0 ? cpd : chipmapInferCpd(nChips || chips.length);
+      const numDomains =
+        cpdUse > 0 ? Math.ceil((nChips || chips.length) / cpdUse) : 1;
+
+      const root = document.createElement("div");
+      root.className = "chip-snake";
+
+      if (hydro) {
+        // linked/hydro: half domains right (D0 far right), half left — no snake
+        const rightDomains = Math.ceil(numDomains / 2);
+        const leftDomains = numDomains - rightDomains;
+        root.appendChild(
+          chipmapRenderSection(
+            byId,
+            cpdUse,
+            0,
+            rightDomains,
+            true,
+            metric,
+            metricRange,
+            analysisMap,
+            true // C0 bottom
+          )
+        );
+        if (leftDomains > 0) {
+          root.appendChild(
+            chipmapRenderSection(
+              byId,
+              cpdUse,
+              rightDomains,
+              numDomains,
+              false,
+              metric,
+              metricRange,
+              analysisMap,
+              false
+            )
+          );
+        }
+        root.dataset.layout =
+          numDomains + "d × " + cpdUse + "c/d  [hydro " + rightDomains + "+" + leftDomains + "]";
+        return root;
+      }
+
+      // Snake: first domain sticks out, split remaining
+      const remaining = Math.max(0, numDomains - 1);
+      const bottomDomains = 1 + Math.floor(remaining / 2);
+      const topDomains = remaining - Math.floor(remaining / 2);
+      if (topDomains > 0) {
+        root.appendChild(
+          chipmapRenderSection(
+            byId,
+            cpdUse,
+            bottomDomains,
+            numDomains,
+            false,
+            metric,
+            metricRange,
+            analysisMap,
+            false
+          )
+        );
+      }
+      root.appendChild(
+        chipmapRenderSection(
+          byId,
+          cpdUse,
+          0,
+          bottomDomains,
+          true,
+          metric,
+          metricRange,
+          analysisMap,
+          false
+        )
+      );
+      root.dataset.layout =
+        numDomains +
+        "d × " +
+        cpdUse +
+        "c/d  [" +
+        bottomDomains +
+        "+" +
+        topDomains +
+        " snake]";
+      return root;
+    }
+
+    function chipmapBoardHeader(b, layoutInfo, extraTitle) {
+      const h = document.createElement("div");
+      h.className = "chip-board-h";
+      const title = extraTitle || "Плата / Slot " + b.slot;
+      h.innerHTML =
+        '<span class="title">' +
+        title +
+        "</span>" +
+        '<span class="meta">chips ' +
+        (b.chip_count || (b.chips || []).length) +
+        (b.temp_min != null
+          ? " · " +
+            Number(b.temp_min).toFixed(0) +
+            "…" +
+            Number(b.temp_max).toFixed(0) +
+            " °C"
+          : "") +
+        (b.board_temp != null
+          ? " · PCB " + Number(b.board_temp).toFixed(1) + " °C"
+          : "") +
+        (b.board_freq != null
+          ? " · " + Number(b.board_freq).toFixed(0) + " MHz"
+          : "") +
+        (layoutInfo ? " · " + layoutInfo : "") +
+        "</span>";
+      return h;
+    }
+
     function renderChipmap(data) {
       const host = document.getElementById("chipmap-boards");
       const st = document.getElementById("chipmap-status");
@@ -10811,13 +11545,25 @@
       chipmapData = data;
       const metric = document.getElementById("chipmap-metric")?.value || "temp";
       const boards = (data && data.boards) || [];
-      // Suspend: maps only when mining (board power) — not an access error
       const isSuspend =
         data &&
         (data.reason === "suspend" ||
           data.reason === "mining_off" ||
           (String(data.message || "").toLowerCase().includes("suspend") &&
             !data.error));
+
+      const modelStr =
+        (data && (data.miner_type || data.model)) ||
+        (typeof window !== "undefined" && window.__poolheatMinerType) ||
+        "";
+      const cfg = chipmapLookupModel(modelStr);
+      let cpd =
+        (cfg && cfg.cpd) ||
+        (boards[0] && chipmapInferCpd((boards[0].chips || []).length)) ||
+        3;
+      const links = chipmapParseLinks(cfg && cfg.link);
+      const isHydro = links.length > 0;
+
       if (st) {
         if (!data) {
           st.textContent = "нет данных";
@@ -10840,6 +11586,16 @@
             (data.chip_count || 0) +
             " · boards " +
             (data.board_count || boards.length);
+          if (cfg)
+            t +=
+              " · layout " +
+              (cfg.fuzzy ? "~" : "") +
+              cfg.model +
+              " · " +
+              cpd +
+              " c/d" +
+              (isHydro ? " · hydro" : " · snake");
+          else t += " · layout infer cpd=" + cpd;
           if (data.temp_min != null)
             t +=
               " · temp " +
@@ -10871,12 +11627,14 @@
         if (leg) leg.innerHTML = "";
         host.innerHTML =
           '<div class="chip-board" style="padding:16px 14px;color:var(--muted);font-size:0.85rem;line-height:1.5">' +
-          "<strong style=\"color:var(--text)\">Mining Suspend</strong><br/>" +
+          '<strong style="color:var(--text)">Mining Suspend</strong><br/>' +
           "Карты чипов доступны только при майнинге (когда есть питание на платах)." +
           "</div>";
         return;
       }
-      const metricRange = chipmapMetricRange(boards, metric);
+
+      const analysisBySlot = chipmapAnalyze(boards, cpd);
+      const metricRange = chipmapMetricRange(boards, metric, analysisBySlot);
       const labels = chipmapLegendLabels(metric, metricRange);
       if (leg) {
         let sw = "";
@@ -10888,33 +11646,47 @@
             const s = pal.s0 + (pal.s1 - pal.s0) * tq;
             const l = 22 + tq * 48;
             sw +=
-              "<i style=\"background:hsl(" +
+              '<i style="background:hsl(' +
               h.toFixed(0) +
               " " +
               s.toFixed(0) +
               "% " +
               l.toFixed(0) +
-              "%)\"></i>";
+              '%)"></i>';
+          }
+        } else if (labels.kind === "hazard") {
+          for (let i = 0; i < CHIP_TEMP_STEPS; i++) {
+            const tq = i / (CHIP_TEMP_STEPS - 1);
+            const h = 145 - tq * 145;
+            const s = 62 + tq * 18;
+            const l = 28 + tq * 18;
+            sw +=
+              '<i style="background:hsl(' +
+              h.toFixed(0) +
+              " " +
+              s.toFixed(0) +
+              "% " +
+              l.toFixed(0) +
+              '%)"></i>';
           }
         } else {
-          // perf: red → yellow → green, dark→light
           for (let i = 0; i < CHIP_TEMP_STEPS; i++) {
             const tq = i / (CHIP_TEMP_STEPS - 1);
             const h = 0 + tq * 125;
             const s = 78 - tq * 8;
             const l = 28 + tq * 36;
             sw +=
-              "<i style=\"background:hsl(" +
+              '<i style="background:hsl(' +
               h.toFixed(0) +
               " " +
               s.toFixed(0) +
               "% " +
               l.toFixed(0) +
-              "%)\"></i>";
+              '%)"></i>';
           }
         }
         leg.innerHTML =
-          "<span style=\"display:inline-flex;align-items:center;gap:2px\">" +
+          '<span style="display:inline-flex;align-items:center;gap:2px">' +
           sw +
           "</span>" +
           "<span>" +
@@ -10922,93 +11694,74 @@
           " → " +
           labels.high +
           " (10 steps)</span>" +
-          "<span>номер = C#</span>";
+          "<span>номер = C# · layout " +
+          (isHydro ? "hydro/link" : "snake") +
+          "</span>";
       }
+
       host.innerHTML = "";
+      const boardBySlot = {};
       boards.forEach((b) => {
+        boardBySlot[b.slot] = b;
+      });
+      const used = {};
+
+      function appendBoard(b, hydroMode) {
+        if (!b || used[b.slot]) return;
+        used[b.slot] = true;
         const wrap = document.createElement("div");
         wrap.className = "chip-board";
-        const h = document.createElement("div");
-        h.className = "chip-board-h";
-        h.innerHTML =
-          "<span class=\"title\">Плата / Slot " +
-          b.slot +
-          "</span>" +
-          "<span class=\"meta\">chips " +
-          (b.chip_count || (b.chips || []).length) +
-          (b.temp_min != null
-            ? " · " +
-              Number(b.temp_min).toFixed(0) +
-              "…" +
-              Number(b.temp_max).toFixed(0) +
-              " °C"
-            : "") +
-          (b.board_temp != null
-            ? " · PCB " + Number(b.board_temp).toFixed(1) + " °C"
-            : "") +
-          "</span>";
-        wrap.appendChild(h);
-        const grid = document.createElement("div");
-        grid.className = "chip-grid";
-        const chips = b.chips || [];
-        // ensure grid covers 0..max id for visual map
-        const maxId = chips.reduce((m, c) => Math.max(m, c.id | 0), 0);
-        const byId = {};
-        chips.forEach((c) => {
-          byId[c.id] = c;
-        });
-        for (let i = 0; i <= maxId; i++) {
-          const c = byId[i];
-          const cell = document.createElement("div");
-          cell.className = "chip-cell";
-          cell.textContent = String(i);
-          if (c) {
-            let v = chipmapChipValue(c, metric);
-            cell.style.background = chipColor(
-              metric,
-              v,
-              metricRange.min,
-              metricRange.max
-            );
-            // darker cells → light number; lighter cells → dark number
-            if (
-              v != null &&
-              metricRange.max > metricRange.min
-            ) {
-              const t =
-                (Number(v) - metricRange.min) /
-                (metricRange.max - metricRange.min);
-              // temp/perf: higher t → lighter fill → dark text
-              if (t > 0.55) {
-                cell.style.color = "rgba(12, 28, 16, 0.9)";
-                cell.style.textShadow = "none";
-              }
-            }
-            // tip: est TH/s = ASIC HR × nonce/Σnonce · rate = nonce/mining_elapsed
-            let tip =
-              "C" +
-              c.id +
-              " · " +
-              (c.temp != null ? c.temp + "°C" : "—") +
-              " · " +
-              (c.freq != null ? c.freq + " MHz" : "");
-            if (c.est_th != null && Number.isFinite(Number(c.est_th)))
-              tip += " · ≈" + Number(c.est_th).toFixed(3) + " TH/s";
-            if (c.nonce != null) tip += " · nonce " + c.nonce;
-            if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
-              tip += " · " + Number(c.nonce_rate).toFixed(2) + " n/s";
-            if (c.hash_share_asic != null)
-              tip += " · " + Number(c.hash_share_asic).toFixed(2) + "% ASIC";
-            if (c.err) tip += " · err " + c.err;
-            cell.dataset.tip = tip;
-          } else {
-            cell.classList.add("empty");
-          }
-          grid.appendChild(cell);
-        }
+        const aMap = analysisBySlot[b.slot] || {};
+        const grid = chipmapBuildSnakeGrid(
+          b.chips || [],
+          cpd,
+          metric,
+          metricRange,
+          aMap,
+          !!hydroMode
+        );
+        wrap.appendChild(
+          chipmapBoardHeader(b, grid.dataset.layout || "")
+        );
         wrap.appendChild(grid);
-        host.appendChild(wrap);
-      });
+        return wrap;
+      }
+
+      if (isHydro && links.length) {
+        links.forEach(([a, b]) => {
+          const ba = boardBySlot[a];
+          const bb = boardBySlot[b];
+          if (!ba && !bb) return;
+          const pair = document.createElement("div");
+          pair.className = "chip-pair";
+          const ph = document.createElement("div");
+          ph.className = "chip-pair-h";
+          ph.textContent =
+            "Linked slots " + a + "+" + b + " (hydro/immersion)";
+          pair.appendChild(ph);
+          if (ba) {
+            const el = appendBoard(ba, true);
+            if (el) pair.appendChild(el);
+          }
+          if (bb) {
+            const el = appendBoard(bb, true);
+            if (el) pair.appendChild(el);
+          }
+          host.appendChild(pair);
+        });
+        // leftover boards
+        boards.forEach((b) => {
+          if (!used[b.slot]) {
+            const el = appendBoard(b, false);
+            if (el) host.appendChild(el);
+          }
+        });
+      } else {
+        boards.forEach((b) => {
+          const el = appendBoard(b, false);
+          if (el) host.appendChild(el);
+        });
+      }
     }
 
     // chip tooltip
