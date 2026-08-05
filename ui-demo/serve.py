@@ -133,6 +133,8 @@ CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
 SNIFFER_CFG_FILE = DATA / "sniffer_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
+# Virtual / alias sensors (Peripherals → Sensors)
+SENSORS_CFG_FILE = DATA / "sensors_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
 # Defaults; live limits come from logs_config.json (Advanced settings)
@@ -4291,6 +4293,7 @@ def build_config_backup() -> dict:
     with _hist_cfg_lock:
         history = dict(_hist_cfg)
     logs = get_logs_cfg()
+    sensors = get_sensors_cfg()
     with _weather_cfg_lock:
         weather = dict(_weather_cfg)
     with _pool_cfg_lock:
@@ -4323,6 +4326,7 @@ def build_config_backup() -> dict:
             "app": app_merged,
             "history": history,
             "logs": logs,
+            "sensors": sensors,
             "weather": weather,
             "pool": pool,
             "zone_map": zone,
@@ -4447,6 +4451,16 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("logs")
         except Exception as e:
             errors["logs"] = str(e)
+
+    # 2c) virtual / alias sensors
+    if "sensors" in want and isinstance(cfgs.get("sensors"), dict):
+        try:
+            sl = cfgs["sensors"].get("sensors")
+            if isinstance(sl, list):
+                replace_sensors(sl)
+            applied.append("sensors")
+        except Exception as e:
+            errors["sensors"] = str(e)
 
     # 3) weather
     if "weather" in want and isinstance(cfgs.get("weather"), dict):
@@ -4881,6 +4895,449 @@ def apply_logs_cfg(req: dict | None = None) -> dict:
     }
 
 
+# ─── Virtual / alias sensors (Peripherals) ────────────────────────────────────
+#
+# A sensor has a system ``alias`` (e.g. outdoor, pool_water) and optional
+# priority sources + transform:
+#   sources: [ {type:live|weather|sensor|const, …}, … ]  — first valid wins
+#   transform: none | offset | power_delta_table
+#     offset: value + offset
+#     power_delta_table: value − delta(power) from a W→Δ°C table
+#
+DEFAULT_SENSORS_CFG: dict = {"version": 1, "sensors": []}
+
+# Live fields that can be bound as sources
+SENSOR_LIVE_FIELDS: tuple[str, ...] = (
+    "liquid",
+    "env",
+    "chip_min",
+    "chip_avg",
+    "chip_max",
+    "board_max",
+    "power",  # W — also used by power_delta_table
+    "freq_avg",
+    "hashrate_th",
+)
+SENSOR_WEATHER_FIELDS: tuple[str, ...] = (
+    "temp_c",
+    "feels_like_c",
+    "humidity",
+    "wind_ms",
+)
+
+_sensors_cfg_lock = threading.Lock()
+_sensors_cfg: dict = dict(DEFAULT_SENSORS_CFG)
+
+
+def _sensor_alias_ok(alias: str) -> bool:
+    a = str(alias or "").strip().lower()
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]{0,47}", a))
+
+
+def _new_sensor_id() -> str:
+    return "s_" + uuid.uuid4().hex[:12]
+
+
+def _normalize_sensor_source(raw: dict | None) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    typ = str(raw.get("type") or "").strip().lower()
+    if typ in ("live", "miner", "asic"):
+        field = str(raw.get("field") or "liquid").strip().lower()
+        if field not in SENSOR_LIVE_FIELDS:
+            field = "liquid"
+        return {"type": "live", "field": field}
+    if typ in ("weather", "wx", "outdoor_api"):
+        field = str(raw.get("field") or "temp_c").strip().lower()
+        if field not in SENSOR_WEATHER_FIELDS:
+            field = "temp_c"
+        return {"type": "weather", "field": field}
+    if typ in ("sensor", "alias", "ref"):
+        ref = str(raw.get("alias") or raw.get("ref") or "").strip().lower()
+        if not _sensor_alias_ok(ref):
+            return None
+        return {"type": "sensor", "alias": ref}
+    if typ in ("const", "constant", "fixed"):
+        try:
+            v = float(raw.get("value"))
+        except (TypeError, ValueError):
+            return None
+        return {"type": "const", "value": v}
+    return None
+
+
+def _normalize_sensor_transform(raw: dict | None) -> dict:
+    if not isinstance(raw, dict):
+        return {"type": "none"}
+    typ = str(raw.get("type") or "none").strip().lower()
+    if typ in ("", "none", "identity", "passthrough"):
+        return {"type": "none"}
+    if typ in ("offset", "fixed_offset", "delta_fixed"):
+        try:
+            off = float(raw.get("offset", 0) or 0)
+        except (TypeError, ValueError):
+            off = 0.0
+        return {"type": "offset", "offset": off}
+    if typ in ("power_delta_table", "power_table", "kw_delta", "power_delta"):
+        table_in = raw.get("table") or raw.get("points") or []
+        table: list[dict] = []
+        if isinstance(table_in, list):
+            for p in table_in:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    # accept power_w or power_kw
+                    if p.get("power_w") is not None:
+                        pw = float(p.get("power_w"))
+                    elif p.get("power_kw") is not None:
+                        pw = float(p.get("power_kw")) * 1000.0
+                    elif p.get("power") is not None:
+                        pw = float(p.get("power"))
+                        if pw < 50:  # likely kW
+                            pw *= 1000.0
+                    else:
+                        continue
+                    delta = float(p.get("delta") if p.get("delta") is not None else p.get("offset"))
+                except (TypeError, ValueError):
+                    continue
+                table.append({"power_w": max(0.0, pw), "delta": delta})
+        table.sort(key=lambda x: x["power_w"])
+        return {
+            "type": "power_delta_table",
+            "table": table,
+            "interpolate": bool(raw.get("interpolate", True)),
+            "power_field": "power",
+        }
+    return {"type": "none"}
+
+
+def _normalize_sensor(raw: dict | None) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    alias = str(raw.get("alias") or "").strip().lower()
+    if not _sensor_alias_ok(alias):
+        return None
+    sid = str(raw.get("id") or "").strip() or _new_sensor_id()
+    name = str(raw.get("name") or alias).strip() or alias
+    unit = str(raw.get("unit") or "°C").strip() or "°C"
+    enabled = bool(raw.get("enabled", True))
+    sources_raw = raw.get("sources")
+    if not isinstance(sources_raw, list):
+        sources_raw = []
+    sources: list[dict] = []
+    for s in sources_raw:
+        ns = _normalize_sensor_source(s)
+        if ns:
+            sources.append(ns)
+    # legacy single source
+    if not sources and raw.get("source"):
+        ns = _normalize_sensor_source(raw.get("source"))
+        if ns:
+            sources.append(ns)
+    if not sources:
+        # default: live liquid (harmless placeholder)
+        sources = [{"type": "live", "field": "liquid"}]
+    transform = _normalize_sensor_transform(raw.get("transform"))
+    return {
+        "id": sid,
+        "alias": alias,
+        "name": name,
+        "unit": unit,
+        "enabled": enabled,
+        "sources": sources,
+        "transform": transform,
+        "note": str(raw.get("note") or "")[:500],
+    }
+
+
+def _load_sensors_cfg() -> None:
+    global _sensors_cfg
+    with _sensors_cfg_lock:
+        raw = _load_json(SENSORS_CFG_FILE, DEFAULT_SENSORS_CFG)
+        if not isinstance(raw, dict):
+            raw = {}
+        sensors_in = raw.get("sensors") if isinstance(raw.get("sensors"), list) else []
+        clean: list[dict] = []
+        seen_alias: set[str] = set()
+        for s in sensors_in:
+            ns = _normalize_sensor(s)
+            if not ns:
+                continue
+            if ns["alias"] in seen_alias:
+                continue
+            seen_alias.add(ns["alias"])
+            clean.append(ns)
+        _sensors_cfg = {"version": 1, "sensors": clean}
+
+
+def _save_sensors_cfg() -> None:
+    with _sensors_cfg_lock:
+        _save_json(SENSORS_CFG_FILE, dict(_sensors_cfg))
+
+
+def get_sensors_cfg() -> dict:
+    with _sensors_cfg_lock:
+        return json.loads(json.dumps(_sensors_cfg))
+
+
+def list_sensors() -> list[dict]:
+    with _sensors_cfg_lock:
+        return json.loads(json.dumps(_sensors_cfg.get("sensors") or []))
+
+
+def get_sensor_by_id(sid: str) -> dict | None:
+    sid = str(sid or "").strip()
+    for s in list_sensors():
+        if s.get("id") == sid:
+            return s
+    return None
+
+
+def get_sensor_by_alias(alias: str) -> dict | None:
+    a = str(alias or "").strip().lower()
+    for s in list_sensors():
+        if s.get("alias") == a:
+            return s
+    return None
+
+
+def upsert_sensor(raw: dict) -> dict:
+    """Create or update a sensor. Requires unique alias."""
+    ns = _normalize_sensor(raw)
+    if not ns:
+        raise ValueError("invalid sensor (alias: a-z, a-z0-9_, max 48)")
+    with _sensors_cfg_lock:
+        sensors = list(_sensors_cfg.get("sensors") or [])
+        idx = next((i for i, s in enumerate(sensors) if s.get("id") == ns["id"]), None)
+        # alias uniqueness
+        for s in sensors:
+            if s.get("alias") == ns["alias"] and s.get("id") != ns["id"]:
+                raise ValueError(f"alias already used: {ns['alias']}")
+        if idx is None:
+            sensors.append(ns)
+        else:
+            sensors[idx] = ns
+        _sensors_cfg["sensors"] = sensors
+    _save_sensors_cfg()
+    return ns
+
+
+def delete_sensor(sid: str) -> bool:
+    sid = str(sid or "").strip()
+    with _sensors_cfg_lock:
+        sensors = list(_sensors_cfg.get("sensors") or [])
+        new = [s for s in sensors if s.get("id") != sid]
+        if len(new) == len(sensors):
+            return False
+        _sensors_cfg["sensors"] = new
+    _save_sensors_cfg()
+    return True
+
+
+def replace_sensors(sensors_list: list) -> list[dict]:
+    clean: list[dict] = []
+    seen: set[str] = set()
+    for s in sensors_list or []:
+        ns = _normalize_sensor(s)
+        if not ns or ns["alias"] in seen:
+            continue
+        seen.add(ns["alias"])
+        clean.append(ns)
+    with _sensors_cfg_lock:
+        _sensors_cfg["sensors"] = clean
+    _save_sensors_cfg()
+    return clean
+
+
+def _live_snapshot_for_sensors() -> dict:
+    """Best-effort last live miner snapshot (no new TCP if cached)."""
+    with _cache_lock:
+        live = dict(_cache) if isinstance(_cache, dict) else {}
+    return live
+
+
+def _weather_snapshot_for_sensors() -> dict:
+    try:
+        # use cache / non-force path
+        w = fetch_weather_current(force=False)
+        return w if isinstance(w, dict) else {}
+    except Exception:
+        return {}
+
+
+def _read_live_field(live: dict, field: str) -> float | None:
+    field = str(field or "").strip().lower()
+    if field == "board_max":
+        boards = live.get("boards") or []
+        vals: list[float] = []
+        for b in boards:
+            fb = _f(b)
+            if fb is not None:
+                vals.append(fb)
+        return max(vals) if vals else None
+    if field == "freq_avg":
+        return _f(live.get("freq_avg") if live.get("freq_avg") is not None else live.get("freq"))
+    return _f(live.get(field))
+
+
+def _interpolate_power_delta(table: list[dict], power_w: float, interpolate: bool) -> float | None:
+    if not table:
+        return None
+    if power_w <= table[0]["power_w"]:
+        return float(table[0]["delta"])
+    if power_w >= table[-1]["power_w"]:
+        return float(table[-1]["delta"])
+    for i in range(1, len(table)):
+        a, b = table[i - 1], table[i]
+        if power_w <= b["power_w"]:
+            if not interpolate:
+                # nearest lower
+                return float(a["delta"])
+            span = b["power_w"] - a["power_w"]
+            if span <= 0:
+                return float(b["delta"])
+            t = (power_w - a["power_w"]) / span
+            return float(a["delta"]) + t * (float(b["delta"]) - float(a["delta"]))
+    return float(table[-1]["delta"])
+
+
+def _apply_sensor_transform(
+    value: float, transform: dict, live: dict
+) -> tuple[float | None, str | None]:
+    """Return (transformed value, note)."""
+    typ = (transform or {}).get("type") or "none"
+    if typ == "none":
+        return value, None
+    if typ == "offset":
+        try:
+            off = float(transform.get("offset") or 0)
+        except (TypeError, ValueError):
+            off = 0.0
+        return value + off, f"offset {off:+g}"
+    if typ == "power_delta_table":
+        pw = _read_live_field(live, "power")
+        if pw is None:
+            return None, "no power for table"
+        table = transform.get("table") or []
+        delta = _interpolate_power_delta(
+            table, float(pw), bool(transform.get("interpolate", True))
+        )
+        if delta is None:
+            return None, "empty power table"
+        return value - float(delta), f"Δ={delta:g} @ {pw:.0f}W"
+    return value, None
+
+
+def evaluate_sensor(
+    sensor: dict,
+    *,
+    live: dict | None = None,
+    weather: dict | None = None,
+    _stack: set[str] | None = None,
+) -> dict:
+    """
+    Resolve sensor value via priority sources + transform.
+    Returns {ok, value, unit, alias, source_used, note, error?}.
+    """
+    alias = str(sensor.get("alias") or "")
+    unit = str(sensor.get("unit") or "°C")
+    out: dict = {
+        "ok": False,
+        "value": None,
+        "unit": unit,
+        "alias": alias,
+        "id": sensor.get("id"),
+        "name": sensor.get("name") or alias,
+        "enabled": bool(sensor.get("enabled", True)),
+        "source_used": None,
+        "note": None,
+        "error": None,
+    }
+    if not sensor.get("enabled", True):
+        out["error"] = "disabled"
+        return out
+
+    stack = set(_stack or set())
+    if alias in stack:
+        out["error"] = "cycle"
+        return out
+    stack.add(alias)
+
+    live = live if isinstance(live, dict) else _live_snapshot_for_sensors()
+    weather = weather if isinstance(weather, dict) else None
+
+    raw_val: float | None = None
+    source_used: dict | None = None
+
+    for src in sensor.get("sources") or []:
+        if not isinstance(src, dict):
+            continue
+        typ = src.get("type")
+        v: float | None = None
+        if typ == "live":
+            v = _read_live_field(live, str(src.get("field") or "liquid"))
+        elif typ == "weather":
+            if weather is None:
+                weather = _weather_snapshot_for_sensors()
+            field = str(src.get("field") or "temp_c")
+            if weather.get("enabled") is False:
+                v = None
+            elif weather.get("ok") or weather.get("stale"):
+                v = _f(weather.get(field))
+        elif typ == "const":
+            v = _f(src.get("value"))
+        elif typ == "sensor":
+            ref = str(src.get("alias") or "")
+            other = get_sensor_by_alias(ref)
+            if other:
+                ev = evaluate_sensor(
+                    other, live=live, weather=weather, _stack=stack
+                )
+                if ev.get("ok"):
+                    v = _f(ev.get("value"))
+        if v is not None and math.isfinite(float(v)):
+            raw_val = float(v)
+            source_used = src
+            break
+
+    if raw_val is None:
+        out["error"] = "no source"
+        return out
+
+    transform = sensor.get("transform") or {"type": "none"}
+    final, note = _apply_sensor_transform(raw_val, transform, live)
+    if final is None or not math.isfinite(float(final)):
+        out["error"] = note or "transform failed"
+        out["source_used"] = source_used
+        return out
+
+    out["ok"] = True
+    out["value"] = round(float(final), 3)
+    out["raw"] = round(float(raw_val), 3)
+    out["source_used"] = source_used
+    out["note"] = note
+    return out
+
+
+def evaluate_all_sensors() -> dict[str, dict]:
+    live = _live_snapshot_for_sensors()
+    weather = _weather_snapshot_for_sensors()
+    values: dict[str, dict] = {}
+    for s in list_sensors():
+        alias = s.get("alias") or s.get("id")
+        values[str(alias)] = evaluate_sensor(s, live=live, weather=weather)
+    return values
+
+
+def sensors_catalog() -> dict:
+    return {
+        "live_fields": list(SENSOR_LIVE_FIELDS),
+        "weather_fields": list(SENSOR_WEATHER_FIELDS),
+        "transforms": ["none", "offset", "power_delta_table"],
+        "source_types": ["live", "weather", "sensor", "const"],
+    }
+
+
 def _save_hist_cfg() -> None:
     with _hist_cfg_lock:
         _save_json(CONFIG_FILE, _hist_cfg)
@@ -5272,6 +5729,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
 _load_state()
 _load_hist_cfg()
 _load_logs_cfg()
+_load_sensors_cfg()
 _load_weather_cfg()
 _load_pool_cfg()
 _load_zone_cfg()
@@ -16799,6 +17257,12 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/logs/config", "/api/log/config"):
             self._api_logs_config_get()
             return
+        if path in ("/api/sensors", "/api/sensors/list"):
+            self._api_sensors_get()
+            return
+        if path in ("/api/sensors/catalog", "/api/sensors/meta"):
+            self._json_response(200, {"ok": True, **sensors_catalog()})
+            return
         if path == "/api/weather":
             self._api_weather_get()
             return
@@ -16992,6 +17456,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/logs/config", "/api/log/config"):
             self._api_logs_config_post()
+            return
+        if path in ("/api/sensors", "/api/sensors/save"):
+            self._api_sensors_post()
+            return
+        if path in ("/api/sensors/delete", "/api/sensors/remove"):
+            self._api_sensors_delete()
             return
         if path == "/api/weather/config":
             self._api_weather_config_post()
@@ -17542,6 +18012,77 @@ class Handler(SimpleHTTPRequestHandler):
                         "error_log_count": err_count,
                         "event_log_count": ev_count,
                     },
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_sensors_get(self) -> None:
+        try:
+            sensors = list_sensors()
+            values = evaluate_all_sensors()
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "sensors": sensors,
+                    "values": values,
+                    "catalog": sensors_catalog(),
+                },
+            )
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_sensors_post(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            # bulk replace: { sensors: [...] }
+            if isinstance(req.get("sensors"), list) and "alias" not in req:
+                clean = replace_sensors(req["sensors"])
+                values = evaluate_all_sensors()
+                self._json_response(
+                    200, {"ok": True, "sensors": clean, "values": values}
+                )
+                return
+            # single upsert: full sensor body
+            body = req.get("sensor") if isinstance(req.get("sensor"), dict) else req
+            saved = upsert_sensor(body)
+            values = evaluate_all_sensors()
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "sensor": saved,
+                    "value": values.get(saved.get("alias") or ""),
+                    "values": values,
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_sensors_delete(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            sid = str(
+                (req.get("id") if isinstance(req, dict) else None)
+                or parse_qs(urlparse(self.path).query).get("id", [""])[0]
+                or ""
+            ).strip()
+            if not sid:
+                raise ValueError("id required")
+            ok = delete_sensor(sid)
+            if not ok:
+                self._json_response(404, {"ok": False, "error": "not found"})
+                return
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "deleted": sid,
+                    "sensors": list_sensors(),
+                    "values": evaluate_all_sensors(),
                 },
             )
         except Exception as e:

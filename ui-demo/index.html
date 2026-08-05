@@ -3843,17 +3843,88 @@
             <div class="card-h">
               <div>
                 <h2 data-i18n="h2.sensors">Sensors</h2>
-                <div class="sub" data-i18n="sub.sensors_card">external temperature · humidity · level · bus / GPIO</div>
+                <div class="sub" data-i18n="sub.sensors_card">alias · priority sources · virtual rules</div>
+              </div>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn" type="button" id="btn-sensors-refresh" data-i18n="btn.refresh">Refresh</button>
+                <button class="btn primary" type="button" id="btn-sensor-new" data-i18n="btn.sensor_new">New sensor</button>
               </div>
             </div>
-            <div class="card-b stack" style="gap:12px">
-              <p style="font-size:0.85rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.sensors_empty">
-                No sensors configured yet. Add DS18B20, DHT, 1-Wire, Modbus and other pool/room sensors here.
+            <div class="card-b stack" style="gap:14px">
+              <p style="font-size:0.82rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.sensors_help">
+                Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins.
+                Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).
               </p>
-              <div class="metric" style="margin:0">
-                <label data-i18n="periph.count">Connected</label>
-                <div class="val" style="font-size:1.15rem" id="periph-sensors-count">0</div>
+              <div id="sensors-list" class="stack" style="gap:10px"></div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0" id="sensors-status">—</p>
+            </div>
+          </div>
+
+          <div class="card" id="panel-sensor-editor" hidden>
+            <div class="card-h">
+              <div>
+                <h2 id="sensor-editor-title" data-i18n="h2.sensor_edit">Edit sensor</h2>
+                <div class="sub" data-i18n="sub.sensor_edit">alias · sources · transform</div>
               </div>
+              <div class="btn-row" style="gap:8px">
+                <button class="btn danger ghost" type="button" id="btn-sensor-delete" data-i18n="btn.delete">Delete</button>
+                <button class="btn" type="button" id="btn-sensor-cancel" data-i18n="btn.cancel">Cancel</button>
+                <button class="btn primary" type="button" id="btn-sensor-save" data-i18n="btn.save">Save</button>
+              </div>
+            </div>
+            <div class="card-b stack" style="gap:14px">
+              <input type="hidden" id="sensor-id" value="" />
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.sensor_alias">System alias</span>
+                  <input type="text" id="sensor-alias" placeholder="outdoor" autocomplete="off" pattern="[a-z][a-z0-9_]*" />
+                </label>
+                <label class="field"><span data-i18n="field.sensor_name">Display name</span>
+                  <input type="text" id="sensor-name" placeholder="Outdoor" autocomplete="off" />
+                </label>
+                <label class="field"><span data-i18n="field.sensor_unit">Unit</span>
+                  <input type="text" id="sensor-unit" value="°C" autocomplete="off" />
+                </label>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="sensor-enabled" checked />
+                <span data-i18n="check.sensor_enabled">Enabled</span>
+              </label>
+
+              <div>
+                <div class="btn-row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+                  <div style="font-weight:600;font-size:0.9rem" data-i18n="field.sensor_sources">Sources (priority top → bottom)</div>
+                  <button class="btn" type="button" id="btn-sensor-source-add" data-i18n="btn.add_source">Add source</button>
+                </div>
+                <div id="sensor-sources" class="stack" style="gap:8px"></div>
+              </div>
+
+              <div>
+                <div style="font-weight:600;font-size:0.9rem;margin-bottom:8px" data-i18n="field.sensor_transform">Transform</div>
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+                  <label class="field"><span data-i18n="field.transform_type">Rule</span>
+                    <select id="sensor-xform-type">
+                      <option value="none" data-i18n="opt.xform_none">none (as source)</option>
+                      <option value="offset" data-i18n="opt.xform_offset">offset (source + Δ)</option>
+                      <option value="power_delta_table" data-i18n="opt.xform_power">power table (source − Δ(P))</option>
+                    </select>
+                  </label>
+                  <label class="field" id="sensor-offset-wrap"><span data-i18n="field.offset_c">Offset Δ, °C</span>
+                    <input type="number" id="sensor-offset" value="0" step="0.1" />
+                  </label>
+                </div>
+                <div id="sensor-power-table-wrap" hidden style="margin-top:12px">
+                  <p style="font-size:0.78rem;color:var(--muted);margin:0 0 8px;line-height:1.45" data-i18n="hint.power_table">
+                    Points: power (kW) → delta °C. Result = source − delta. Interpolated between points.
+                  </p>
+                  <div id="sensor-power-table" class="stack" style="gap:6px"></div>
+                  <button class="btn" type="button" id="btn-sensor-pt-add" style="margin-top:8px" data-i18n="btn.add_point">Add point</button>
+                </div>
+              </div>
+
+              <label class="field"><span data-i18n="field.sensor_note">Note</span>
+                <input type="text" id="sensor-note" placeholder="" autocomplete="off" />
+              </label>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0" id="sensor-editor-preview">—</p>
             </div>
           </div>
         </div>
@@ -4743,11 +4814,41 @@
         "sub.devices": "Devices",
         "h2.sensors": "Sensors",
         "h2.devices": "Devices",
-        "sub.sensors_card": "external temperature · humidity · level · bus / GPIO",
+        "sub.sensors_card": "alias · priority sources · virtual rules",
         "sub.devices_card": "relays · pumps · valves · smart sockets · actuators",
-        "periph.sensors_empty": "No sensors configured yet. Add DS18B20, DHT, 1-Wire, Modbus and other pool/room sensors here.",
+        "periph.sensors_empty": "No sensors yet. Create an alias with priority sources and optional virtual rules.",
+        "periph.sensors_help": "Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).",
         "periph.devices_empty": "No devices configured yet. Filtration pump, heaters, valves and smart outlets will appear here.",
         "periph.count": "Connected",
+        "h2.sensor_edit": "Edit sensor",
+        "sub.sensor_edit": "alias · sources · transform",
+        "btn.sensor_new": "New sensor",
+        "btn.edit": "Edit",
+        "btn.cancel": "Cancel",
+        "btn.add_source": "Add source",
+        "btn.add_point": "Add point",
+        "field.sensor_alias": "System alias",
+        "field.sensor_name": "Display name",
+        "field.sensor_unit": "Unit",
+        "field.sensor_sources": "Sources (priority top → bottom)",
+        "field.sensor_transform": "Transform",
+        "field.transform_type": "Rule",
+        "field.offset_c": "Offset Δ, °C",
+        "field.sensor_note": "Note",
+        "field.power_kw": "Power, kW",
+        "field.delta_c": "Δ, °C",
+        "check.sensor_enabled": "Enabled",
+        "opt.xform_none": "none (as source)",
+        "opt.xform_offset": "offset (source + Δ)",
+        "opt.xform_power": "power table (source − Δ(P))",
+        "opt.src_live": "Miner live",
+        "opt.src_weather": "Weather (Open-Meteo)",
+        "opt.src_sensor": "Other sensor",
+        "opt.src_const": "Constant",
+        "sensor.no_data": "no data",
+        "sensor.disabled": "disabled",
+        "toast.sensor_saved": "Sensor saved",
+        "toast.sensor_deleted": "Sensor deleted",
         "btn.refresh": "Refresh",
         "btn.save": "Save",
         "btn.clear_db": "Clear database",
@@ -4987,11 +5088,41 @@
         "sub.devices": "Устройства",
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
-        "sub.sensors_card": "внешняя температура · влажность · уровень · шина / GPIO",
+        "sub.sensors_card": "alias · источники по приоритету · виртуальные правила",
         "sub.devices_card": "реле · насосы · клапаны · умные розетки · приводы",
-        "periph.sensors_empty": "Датчики пока не настроены. Сюда добавятся DS18B20, DHT, 1-Wire, Modbus и другие датчики бассейна/помещения.",
+        "periph.sensors_empty": "Датчиков пока нет. Создайте alias с источниками по приоритету и опциональным правилом.",
+        "periph.sensors_help": "Системный alias (например outdoor, pool_water). Источники по приоритету — берётся первый с данными. Правила: фиксированный offset или Δ из таблицы мощности (напр. chip_max − 10°C при 3.5 kW).",
         "periph.devices_empty": "Устройства пока не настроены. Здесь появятся насос фильтрации, нагреватели, клапаны и умные розетки.",
         "periph.count": "Подключено",
+        "h2.sensor_edit": "Редактор датчика",
+        "sub.sensor_edit": "alias · источники · преобразование",
+        "btn.sensor_new": "Новый датчик",
+        "btn.edit": "Изменить",
+        "btn.cancel": "Отмена",
+        "btn.add_source": "Добавить источник",
+        "btn.add_point": "Добавить точку",
+        "field.sensor_alias": "Системный alias",
+        "field.sensor_name": "Название",
+        "field.sensor_unit": "Единица",
+        "field.sensor_sources": "Источники (приоритет сверху вниз)",
+        "field.sensor_transform": "Преобразование",
+        "field.transform_type": "Правило",
+        "field.offset_c": "Смещение Δ, °C",
+        "field.sensor_note": "Заметка",
+        "field.power_kw": "Мощность, kW",
+        "field.delta_c": "Δ, °C",
+        "check.sensor_enabled": "Включён",
+        "opt.xform_none": "нет (как источник)",
+        "opt.xform_offset": "offset (источник + Δ)",
+        "opt.xform_power": "таблица мощности (источник − Δ(P))",
+        "opt.src_live": "Miner live",
+        "opt.src_weather": "Погода (Open-Meteo)",
+        "opt.src_sensor": "Другой датчик",
+        "opt.src_const": "Константа",
+        "sensor.no_data": "нет данных",
+        "sensor.disabled": "выкл",
+        "toast.sensor_saved": "Датчик сохранён",
+        "toast.sensor_deleted": "Датчик удалён",
         "btn.refresh": "Обновить",
         "btn.save": "Сохранить",
         "btn.clear_db": "Очистить базу",
@@ -5335,6 +5466,9 @@
       // heat-balance surplus/in/loss line is language-dependent
       try {
         if (typeof updateHeatLoss === "function") updateHeatLoss();
+      } catch (_) {}
+      try {
+        if (typeof renderSensorsList === "function") renderSensorsList();
       } catch (_) {}
       return lang;
     }
@@ -6020,6 +6154,9 @@
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadLuciProxyConfig === "function") loadLuciProxyConfig();
         if (typeof loadSnifferConfig === "function") loadSnifferConfig();
+      }
+      if (mainTab === "periph" && periphSub === "sensors") {
+        if (typeof loadSensors === "function") loadSensors();
       }
       if (!opts.skipUrl) {
         // #chips / #pools / #logs / #advanced keep deep-link hashes
@@ -15214,6 +15351,452 @@
         if (chipmapData) renderChipmap(chipmapData);
       });
     updateChipmapModeHint();
+
+    // ─── Peripherals → Sensors (virtual / alias) ───────────────────────────
+    let sensorsCache = [];
+    let sensorsValues = {};
+    let sensorsCatalog = { live_fields: [], weather_fields: [] };
+    let sensorEditorOpen = false;
+
+    function fmtSensorVal(v) {
+      if (v == null || v === "" || !Number.isFinite(Number(v))) return "—";
+      const n = Number(v);
+      return Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
+    }
+
+    function describeSource(src) {
+      if (!src || typeof src !== "object") return "—";
+      if (src.type === "live") return "live." + (src.field || "?");
+      if (src.type === "weather") return "wx." + (src.field || "temp_c");
+      if (src.type === "sensor") return "sensor:" + (src.alias || "?");
+      if (src.type === "const") return "const " + src.value;
+      return src.type || "?";
+    }
+
+    function renderSensorsList() {
+      const box = document.getElementById("sensors-list");
+      const st = document.getElementById("sensors-status");
+      if (!box) return;
+      const list = sensorsCache || [];
+      if (!list.length) {
+        box.innerHTML =
+          '<p style="font-size:0.85rem;color:var(--muted);margin:0">' +
+          t("periph.sensors_empty", "No sensors yet.") +
+          "</p>";
+        if (st) st.textContent = "0";
+        return;
+      }
+      box.innerHTML = list
+        .map((s) => {
+          const alias = s.alias || s.id;
+          const ev = (sensorsValues && sensorsValues[alias]) || {};
+          const valTxt = ev.ok
+            ? fmtSensorVal(ev.value) + (ev.unit ? " " + ev.unit : "")
+            : t("sensor.no_data", "no data");
+          const srcTxt = ev.source_used
+            ? describeSource(ev.source_used)
+            : ev.error || "—";
+          const note = ev.note ? " · " + ev.note : "";
+          const en = s.enabled !== false;
+          return (
+            '<div class="card" style="margin:0;background:var(--panel2)">' +
+            '<div class="card-b" style="padding:12px 14px">' +
+            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">' +
+            "<div>" +
+            '<div style="font-weight:650;font-size:0.95rem">' +
+            (s.name || alias) +
+            ' <span style="color:var(--dim);font-weight:500;font-size:0.8rem">· ' +
+            alias +
+            "</span></div>" +
+            '<div style="font-size:1.35rem;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums">' +
+            (en ? valTxt : t("sensor.disabled", "disabled")) +
+            "</div>" +
+            '<div style="font-size:0.72rem;color:var(--dim);margin-top:4px">' +
+            srcTxt +
+            note +
+            "</div>" +
+            "</div>" +
+            '<button class="btn" type="button" data-sensor-edit="' +
+            String(s.id).replace(/"/g, "") +
+            '">' +
+            t("btn.edit", "Edit") +
+            "</button>" +
+            "</div></div></div>"
+          );
+        })
+        .join("");
+      box.querySelectorAll("[data-sensor-edit]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-sensor-edit");
+          const s = sensorsCache.find((x) => x.id === id);
+          if (s) openSensorEditor(s);
+        });
+      });
+      if (st) {
+        const okN = list.filter((s) => {
+          const a = s.alias || s.id;
+          return sensorsValues[a] && sensorsValues[a].ok;
+        }).length;
+        st.textContent = okN + " / " + list.length + " ok";
+      }
+    }
+
+    function sourceRowHtml(src, idx) {
+      src = src || { type: "live", field: "liquid" };
+      const liveOpts = (sensorsCatalog.live_fields || ["liquid", "env", "chip_max", "power"])
+        .map(
+          (f) =>
+            '<option value="' +
+            f +
+            '"' +
+            (src.type === "live" && src.field === f ? " selected" : "") +
+            ">" +
+            f +
+            "</option>"
+        )
+        .join("");
+      const wxOpts = (sensorsCatalog.weather_fields || ["temp_c", "feels_like_c"])
+        .map(
+          (f) =>
+            '<option value="' +
+            f +
+            '"' +
+            (src.type === "weather" && src.field === f ? " selected" : "") +
+            ">" +
+            f +
+            "</option>"
+        )
+        .join("");
+      const otherAliases = (sensorsCache || [])
+        .map((s) => s.alias)
+        .filter(Boolean)
+        .map(
+          (a) =>
+            '<option value="' +
+            a +
+            '"' +
+            (src.type === "sensor" && src.alias === a ? " selected" : "") +
+            ">" +
+            a +
+            "</option>"
+        )
+        .join("");
+      return (
+        '<div class="sensor-source-row row" data-src-idx="' +
+        idx +
+        '" style="grid-template-columns:140px 1fr auto;gap:8px;align-items:end">' +
+        '<label class="field" style="margin:0"><span>#' +
+        (idx + 1) +
+        '</span><select class="src-type">' +
+        '<option value="live"' +
+        (src.type === "live" ? " selected" : "") +
+        ">" +
+        t("opt.src_live", "Miner live") +
+        "</option>" +
+        '<option value="weather"' +
+        (src.type === "weather" ? " selected" : "") +
+        ">" +
+        t("opt.src_weather", "Weather") +
+        "</option>" +
+        '<option value="sensor"' +
+        (src.type === "sensor" ? " selected" : "") +
+        ">" +
+        t("opt.src_sensor", "Other sensor") +
+        "</option>" +
+        '<option value="const"' +
+        (src.type === "const" ? " selected" : "") +
+        ">" +
+        t("opt.src_const", "Constant") +
+        "</option>" +
+        "</select></label>" +
+        '<div class="src-params">' +
+        (src.type === "weather"
+          ? '<label class="field" style="margin:0"><span>field</span><select class="src-field">' +
+            wxOpts +
+            "</select></label>"
+          : src.type === "sensor"
+            ? '<label class="field" style="margin:0"><span>alias</span><select class="src-alias">' +
+              otherAliases +
+              "</select></label>"
+            : src.type === "const"
+              ? '<label class="field" style="margin:0"><span>value</span><input type="number" class="src-const" step="0.1" value="' +
+                (src.value != null ? src.value : 20) +
+                '" /></label>'
+              : '<label class="field" style="margin:0"><span>field</span><select class="src-field">' +
+                liveOpts +
+                "</select></label>") +
+        "</div>" +
+        '<button class="btn danger ghost src-remove" type="button" title="Remove">×</button>' +
+        "</div>"
+      );
+    }
+
+    function bindSourceRows() {
+      const box = document.getElementById("sensor-sources");
+      if (!box) return;
+      box.querySelectorAll(".src-type").forEach((sel) => {
+        sel.onchange = () => {
+          const sources = collectSourcesFromDom();
+          // re-render keeping types
+          box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
+          bindSourceRows();
+        };
+      });
+      box.querySelectorAll(".src-remove").forEach((btn) => {
+        btn.onclick = () => {
+          const row = btn.closest(".sensor-source-row");
+          if (row) row.remove();
+          // reindex
+          const sources = collectSourcesFromDom();
+          if (!sources.length) sources.push({ type: "live", field: "liquid" });
+          box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
+          bindSourceRows();
+        };
+      });
+    }
+
+    function collectSourcesFromDom() {
+      const box = document.getElementById("sensor-sources");
+      if (!box) return [];
+      const out = [];
+      box.querySelectorAll(".sensor-source-row").forEach((row) => {
+        const typ = row.querySelector(".src-type")?.value || "live";
+        if (typ === "weather") {
+          out.push({
+            type: "weather",
+            field: row.querySelector(".src-field")?.value || "temp_c",
+          });
+        } else if (typ === "sensor") {
+          out.push({
+            type: "sensor",
+            alias: row.querySelector(".src-alias")?.value || "",
+          });
+        } else if (typ === "const") {
+          out.push({
+            type: "const",
+            value: Number(row.querySelector(".src-const")?.value),
+          });
+        } else {
+          out.push({
+            type: "live",
+            field: row.querySelector(".src-field")?.value || "liquid",
+          });
+        }
+      });
+      return out;
+    }
+
+    function powerTableRowHtml(pt) {
+      pt = pt || { power_w: 3500, delta: 10 };
+      const kw = Number(pt.power_w) / 1000;
+      return (
+        '<div class="pt-row row" style="grid-template-columns:1fr 1fr auto;gap:8px;align-items:end">' +
+        '<label class="field" style="margin:0"><span>' +
+        t("field.power_kw", "Power, kW") +
+        '</span><input type="number" class="pt-kw" step="0.1" min="0" value="' +
+        (Number.isFinite(kw) ? kw : 3.5) +
+        '" /></label>' +
+        '<label class="field" style="margin:0"><span>' +
+        t("field.delta_c", "Δ, °C") +
+        '</span><input type="number" class="pt-delta" step="0.1" value="' +
+        (pt.delta != null ? pt.delta : 10) +
+        '" /></label>' +
+        '<button class="btn danger ghost pt-remove" type="button">×</button>' +
+        "</div>"
+      );
+    }
+
+    function bindPowerTable() {
+      const box = document.getElementById("sensor-power-table");
+      if (!box) return;
+      box.querySelectorAll(".pt-remove").forEach((btn) => {
+        btn.onclick = () => {
+          btn.closest(".pt-row")?.remove();
+        };
+      });
+    }
+
+    function collectPowerTable() {
+      const box = document.getElementById("sensor-power-table");
+      if (!box) return [];
+      const out = [];
+      box.querySelectorAll(".pt-row").forEach((row) => {
+        const kw = Number(row.querySelector(".pt-kw")?.value);
+        const delta = Number(row.querySelector(".pt-delta")?.value);
+        if (!Number.isFinite(kw) || !Number.isFinite(delta)) return;
+        out.push({ power_w: kw * 1000, delta });
+      });
+      return out;
+    }
+
+    function syncXformUi() {
+      const typ = document.getElementById("sensor-xform-type")?.value || "none";
+      const off = document.getElementById("sensor-offset-wrap");
+      const pt = document.getElementById("sensor-power-table-wrap");
+      if (off) off.style.display = typ === "offset" ? "" : "none";
+      if (pt) pt.hidden = typ !== "power_delta_table";
+    }
+
+    function openSensorEditor(sensor) {
+      sensorEditorOpen = true;
+      const panel = document.getElementById("panel-sensor-editor");
+      if (panel) panel.hidden = false;
+      const s = sensor || {
+        id: "",
+        alias: "",
+        name: "",
+        unit: "°C",
+        enabled: true,
+        sources: [{ type: "live", field: "liquid" }],
+        transform: { type: "none" },
+      };
+      document.getElementById("sensor-id").value = s.id || "";
+      document.getElementById("sensor-alias").value = s.alias || "";
+      document.getElementById("sensor-name").value = s.name || "";
+      document.getElementById("sensor-unit").value = s.unit || "°C";
+      document.getElementById("sensor-enabled").checked = s.enabled !== false;
+      document.getElementById("sensor-note").value = s.note || "";
+      const sources = s.sources && s.sources.length ? s.sources : [{ type: "live", field: "liquid" }];
+      const sbox = document.getElementById("sensor-sources");
+      if (sbox) {
+        sbox.innerHTML = sources.map((x, i) => sourceRowHtml(x, i)).join("");
+        bindSourceRows();
+      }
+      const xf = s.transform || { type: "none" };
+      const xt = document.getElementById("sensor-xform-type");
+      if (xt) xt.value = xf.type || "none";
+      const offEl = document.getElementById("sensor-offset");
+      if (offEl) offEl.value = xf.offset != null ? xf.offset : 0;
+      const ptBox = document.getElementById("sensor-power-table");
+      if (ptBox) {
+        const pts =
+          xf.type === "power_delta_table" && xf.table && xf.table.length
+            ? xf.table
+            : [
+                { power_w: 3500, delta: 10 },
+                { power_w: 2500, delta: 7 },
+              ];
+        ptBox.innerHTML = pts.map(powerTableRowHtml).join("");
+        bindPowerTable();
+      }
+      syncXformUi();
+      const prev = document.getElementById("sensor-editor-preview");
+      if (prev && s.alias && sensorsValues[s.alias]) {
+        const ev = sensorsValues[s.alias];
+        prev.textContent = ev.ok
+          ? s.alias + " = " + fmtSensorVal(ev.value) + " " + (ev.unit || "")
+          : s.alias + " · " + (ev.error || "—");
+      } else if (prev) prev.textContent = "—";
+      panel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function closeSensorEditor() {
+      sensorEditorOpen = false;
+      const panel = document.getElementById("panel-sensor-editor");
+      if (panel) panel.hidden = true;
+    }
+
+    async function loadSensors() {
+      const st = document.getElementById("sensors-status");
+      try {
+        const res = await fetch("/api/sensors", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "sensors fail");
+        sensorsCache = body.sensors || [];
+        sensorsValues = body.values || {};
+        if (body.catalog) sensorsCatalog = body.catalog;
+        renderSensorsList();
+      } catch (e) {
+        if (st) st.textContent = "error: " + e.message;
+      }
+    }
+
+    async function saveSensorFromEditor() {
+      const payload = {
+        id: document.getElementById("sensor-id")?.value || undefined,
+        alias: (document.getElementById("sensor-alias")?.value || "").trim().toLowerCase(),
+        name: (document.getElementById("sensor-name")?.value || "").trim(),
+        unit: (document.getElementById("sensor-unit")?.value || "°C").trim(),
+        enabled: !!document.getElementById("sensor-enabled")?.checked,
+        note: document.getElementById("sensor-note")?.value || "",
+        sources: collectSourcesFromDom(),
+        transform: { type: document.getElementById("sensor-xform-type")?.value || "none" },
+      };
+      if (!payload.id) delete payload.id;
+      if (payload.transform.type === "offset") {
+        payload.transform.offset = Number(document.getElementById("sensor-offset")?.value) || 0;
+      }
+      if (payload.transform.type === "power_delta_table") {
+        payload.transform.table = collectPowerTable();
+        payload.transform.interpolate = true;
+      }
+      try {
+        const res = await fetch("/api/sensors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        toastSuccess(t("toast.sensor_saved", "Sensor saved"));
+        sensorsCache = body.sensors || (await loadSensors(), sensorsCache);
+        if (body.values) sensorsValues = body.values;
+        else await loadSensors();
+        renderSensorsList();
+        closeSensorEditor();
+      } catch (e) {
+        toastError(e.message);
+      }
+    }
+
+    async function deleteSensorFromEditor() {
+      const id = document.getElementById("sensor-id")?.value;
+      if (!id) {
+        closeSensorEditor();
+        return;
+      }
+      if (!confirm("Delete sensor?")) return;
+      try {
+        const res = await fetch("/api/sensors/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "delete fail");
+        toastSuccess(t("toast.sensor_deleted", "Sensor deleted"));
+        await loadSensors();
+        closeSensorEditor();
+      } catch (e) {
+        toastError(e.message);
+      }
+    }
+
+    document.getElementById("btn-sensors-refresh")?.addEventListener("click", () => {
+      loadSensors().then(() => toastSuccess(t("btn.refresh", "Refresh")));
+    });
+    document.getElementById("btn-sensor-new")?.addEventListener("click", () => {
+      openSensorEditor(null);
+    });
+    document.getElementById("btn-sensor-cancel")?.addEventListener("click", closeSensorEditor);
+    document.getElementById("btn-sensor-save")?.addEventListener("click", saveSensorFromEditor);
+    document.getElementById("btn-sensor-delete")?.addEventListener("click", deleteSensorFromEditor);
+    document.getElementById("btn-sensor-source-add")?.addEventListener("click", () => {
+      const sources = collectSourcesFromDom();
+      sources.push({ type: "live", field: "env" });
+      const box = document.getElementById("sensor-sources");
+      if (box) {
+        box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
+        bindSourceRows();
+      }
+    });
+    document.getElementById("sensor-xform-type")?.addEventListener("change", syncXformUi);
+    document.getElementById("btn-sensor-pt-add")?.addEventListener("click", () => {
+      const box = document.getElementById("sensor-power-table");
+      if (!box) return;
+      box.insertAdjacentHTML("beforeend", powerTableRowHtml({ power_w: 2000, delta: 5 }));
+      bindPowerTable();
+    });
 
     loadChipmapConfig();
     scheduleChipmapPoll();
