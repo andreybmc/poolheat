@@ -729,8 +729,11 @@ def _normalize_pool_preset_pools(pools) -> list[dict]:
     return out
 
 
-def _pool_preset_summary(pools: list) -> str:
+def _pool_preset_summary(pools: list, *, coin_type: str = "") -> str:
     parts = []
+    ct = str(coin_type or "").strip()
+    if ct:
+        parts.append(ct)
     for p in pools or []:
         if not isinstance(p, dict):
             continue
@@ -743,7 +746,15 @@ def _pool_preset_summary(pools: list) -> str:
         user = str(p.get("user") or "").strip()
         worker = user.split(".")[-1] if user else ""
         parts.append(host + (f"/{worker}" if worker else ""))
-    return " · ".join(parts[:3]) if parts else "—"
+    return " · ".join(parts[:4]) if parts else "—"
+
+
+def _normalize_coin_type(v) -> str:
+    s = str(v or "").strip()
+    if not s or s in ("—", "-", "none", "null"):
+        return ""
+    # keep short ticker-like codes
+    return s[:32]
 
 
 def _load_pool_presets() -> None:
@@ -760,14 +771,16 @@ def _load_pool_presets() -> None:
                 pools = _normalize_pool_preset_pools(p.get("pools") or p.get("config"))
             except Exception:
                 continue
+            coin = _normalize_coin_type(p.get("coin_type") or p.get("coin"))
             clean.append(
                 {
                     "id": str(p.get("id") or "").strip() or _new_preset_id(),
-                    "name": str(p.get("name") or "Пресет")[:64],
+                    "name": str(p.get("name") or "Preset")[:64],
                     "updated_ts": p.get("updated_ts")
                     or datetime.now().isoformat(timespec="seconds"),
                     "pools": pools,
-                    "summary": _pool_preset_summary(pools),
+                    "coin_type": coin,
+                    "summary": _pool_preset_summary(pools, coin_type=coin),
                 }
             )
         _pool_presets = {
@@ -790,6 +803,7 @@ def list_pool_presets(*, include_secrets: bool = True) -> dict:
         items = []
         for p in _pool_presets.get("presets") or []:
             pools = p.get("pools") or []
+            coin = _normalize_coin_type(p.get("coin_type") or p.get("coin"))
             if not include_secrets:
                 pools = [
                     {
@@ -806,7 +820,9 @@ def list_pool_presets(*, include_secrets: bool = True) -> dict:
                     "id": p.get("id"),
                     "name": p.get("name"),
                     "updated_ts": p.get("updated_ts"),
-                    "summary": p.get("summary") or _pool_preset_summary(p.get("pools") or []),
+                    "coin_type": coin,
+                    "summary": p.get("summary")
+                    or _pool_preset_summary(p.get("pools") or [], coin_type=coin),
                     "pools": pools,
                 }
             )
@@ -865,6 +881,7 @@ def save_pool_preset(
     *,
     preset_id: str | None = None,
     from_live: bool = False,
+    coin_type: str | None = None,
 ) -> dict:
     """Create/update pool preset. from_live → snapshot miner; pools=list → edit."""
     name = str(name or "").strip()
@@ -872,6 +889,8 @@ def save_pool_preset(
         raise ValueError("name empty")
     if len(name) > 64:
         name = name[:64]
+
+    coin_in = None if coin_type is None else _normalize_coin_type(coin_type)
 
     if from_live:
         pools_norm = snapshot_live_pools_for_preset()
@@ -897,6 +916,15 @@ def save_pool_preset(
                         and p.get("pass") in ("", "x")
                     ):
                         p["pass"] = prev["pass"]
+        # coin from LuCI when snapshotting live
+        if coin_in is None:
+            try:
+                live_body = fetch_mining_pools(force=False)
+                coin_in = _normalize_coin_type(live_body.get("coin_type"))
+            except Exception:
+                coin_in = ""
+            if not coin_in:
+                coin_in = _normalize_coin_type(fetch_miner_coin_type())
     elif pools is not None:
         pools_norm = _normalize_pool_preset_pools(pools)
     elif preset_id:
@@ -904,8 +932,18 @@ def save_pool_preset(
         if not existing:
             raise ValueError(f"preset not found: {preset_id}")
         pools_norm = existing.get("pools") or []
+        if coin_in is None:
+            coin_in = _normalize_coin_type(existing.get("coin_type"))
     else:
         raise ValueError("pools list or from_live=true required")
+
+    # preserve coin when not provided on update
+    if coin_in is None and preset_id:
+        old = get_pool_preset(preset_id)
+        coin_in = _normalize_coin_type((old or {}).get("coin_type"))
+    if coin_in is None:
+        coin_in = ""
+
     now = datetime.now().isoformat(timespec="seconds")
     with _pool_presets_lock:
         presets = list(_pool_presets.get("presets") or [])
@@ -919,7 +957,10 @@ def save_pool_preset(
                         "name": name,
                         "updated_ts": now,
                         "pools": pools_norm,
-                        "summary": _pool_preset_summary(pools_norm),
+                        "coin_type": coin_in,
+                        "summary": _pool_preset_summary(
+                            pools_norm, coin_type=coin_in
+                        ),
                     }
                     found = True
                     break
@@ -934,7 +975,10 @@ def save_pool_preset(
                     "name": name,
                     "updated_ts": now,
                     "pools": pools_norm,
-                    "summary": _pool_preset_summary(pools_norm),
+                    "coin_type": coin_in,
+                    "summary": _pool_preset_summary(
+                        pools_norm, coin_type=coin_in
+                    ),
                 }
             )
         _pool_presets["presets"] = presets
@@ -957,14 +1001,40 @@ def delete_pool_preset(preset_id: str) -> dict:
     return list_pool_presets()
 
 
-def apply_pool_preset(preset_id: str, *, password: str | None = None) -> dict:
+def apply_pool_preset(
+    preset_id: str,
+    *,
+    password: str | None = None,
+    coin_type: str | None = None,
+) -> dict:
     """Write preset pools to ASIC (update_pools) and mark active."""
     p = get_pool_preset(preset_id)
     if not p:
         raise ValueError(f"preset not found: {preset_id}")
     pools = _normalize_pool_preset_pools(p.get("pools") or [])
     pw = password or DEFAULT_API_PASSWORD
-    resp = miner_write_cmd({"cmd": "update_pools", "pools": pools}, pw)
+    # prefer explicit override (UI field), else preset value
+    if coin_type is not None:
+        coin = _normalize_coin_type(coin_type)
+    else:
+        coin = _normalize_coin_type(p.get("coin_type") or p.get("coin"))
+    # persist coin on preset if provided from UI
+    if coin_type is not None and coin != _normalize_coin_type(p.get("coin_type")):
+        try:
+            save_pool_preset(
+                str(p.get("name") or p.get("id")),
+                p.get("pools"),
+                preset_id=str(p.get("id")),
+                from_live=False,
+                coin_type=coin,
+            )
+            p = get_pool_preset(preset_id) or p
+        except Exception as e:
+            print(f"[pools] coin persist: {e}")
+    cmd: dict = {"cmd": "update_pools", "pools": pools}
+    if coin:
+        cmd["coin_type"] = coin
+    resp = miner_write_cmd(cmd, pw)
     out = _record_write(
         "pools",
         pools,
@@ -7073,9 +7143,27 @@ def luci_restart_btminer(password: str) -> dict:
     return get_whatsminer_driver(password).restart_btminer()
 
 
-def luci_set_pools(pools: list, password: str) -> dict:
+def luci_set_pools(
+    pools: list, password: str, *, coin_type: str | None = None
+) -> dict:
     """Set up to 3 pools via LuCI (btccom setMinerConf)."""
-    return get_whatsminer_driver(password).set_pools(pools)
+    return get_whatsminer_driver(password).set_pools(
+        pools, coin_type=coin_type
+    )
+
+
+def fetch_miner_coin_type() -> str:
+    """Best-effort Coin Type from LuCI pools form."""
+    try:
+        d = get_whatsminer_driver(DEFAULT_API_PASSWORD)
+        luci = getattr(d, "luci", None)
+        if luci is None:
+            return ""
+        if hasattr(luci, "get_coin_type"):
+            return str(luci.get_coin_type() or "").strip()
+    except Exception as e:
+        print(f"[pools] coin_type: {e}")
+    return ""
 
 
 def luci_enable_api_switch(password: str, *, enable: bool = True) -> dict:
@@ -7637,7 +7725,13 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
         pools = cmd.get("pools")
         if not isinstance(pools, list):
             raise ValueError("update_pools requires pools=[{url,user,pass},…]")
-        return d.set_pools(pools)
+        ct = cmd.get("coin_type")
+        if ct is None:
+            ct = cmd.get("coin")
+        return d.set_pools(
+            pools,
+            coin_type=str(ct).strip() if ct is not None else None,
+        )
 
     # ── B/C/D) TCP / v3 path via driver.write_cmd ──────────────────────────
     try:
@@ -8564,10 +8658,18 @@ def fetch_mining_pools(*, force: bool = False) -> dict:
     # active first, then pool number
     pools.sort(key=lambda r: (0 if r.get("active") else 1, r.get("pool") or 99))
 
+    coin_type = ""
+    try:
+        # LuCI form field — not available on TCP `pools` status
+        coin_type = fetch_miner_coin_type()
+    except Exception:
+        coin_type = ""
+
     body = {
         "ok": True,
         "pools": pools,
         "count": len(pools),
+        "coin_type": coin_type,
         "host": f"{HOST_MINER}:{PORT_MINER}",
         "ts": datetime.now().isoformat(timespec="seconds"),
         "cached": False,
@@ -16511,11 +16613,15 @@ class Handler(SimpleHTTPRequestHandler):
                 name = req.get("name")
                 from_live = bool(req.get("from_live") or req.get("use_current"))
                 pools = req.get("pools") if isinstance(req.get("pools"), list) else None
+                coin = req.get("coin_type")
+                if coin is None:
+                    coin = req.get("coin")
                 out = save_pool_preset(
                     str(name or ""),
                     pools,
                     preset_id=None,
                     from_live=from_live or pools is None,
+                    coin_type=str(coin) if coin is not None else None,
                 )
                 self._json_response(200, out)
                 return
@@ -16531,11 +16637,23 @@ class Handler(SimpleHTTPRequestHandler):
                     name = existing.get("name")
                 from_live = bool(req.get("from_live") or req.get("use_current"))
                 pools = req.get("pools") if isinstance(req.get("pools"), list) else None
+                coin = req.get("coin_type")
+                if coin is None and "coin" in req:
+                    coin = req.get("coin")
+                # omit coin_type to preserve when only renaming
+                coin_kw = {}
+                if coin is not None or pools is not None or from_live:
+                    if coin is None and not from_live:
+                        coin = existing.get("coin_type")
+                    coin_kw["coin_type"] = (
+                        str(coin) if coin is not None else None
+                    )
                 out = save_pool_preset(
                     str(name),
                     pools,
                     preset_id=pid,
                     from_live=from_live,
+                    **coin_kw,
                 )
                 self._json_response(200, out)
                 return
@@ -16545,9 +16663,13 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if action in ("apply", "load", "select"):
                 pw = req.get("password") or req.get("api_password")
+                coin = req.get("coin_type")
+                if coin is None and "coin" in req:
+                    coin = req.get("coin")
                 out = apply_pool_preset(
                     str(req.get("id") or ""),
                     password=str(pw) if pw is not None else None,
+                    coin_type=str(coin) if coin is not None else None,
                 )
                 self._json_response(200, out)
                 return

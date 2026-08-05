@@ -302,6 +302,45 @@ class LuciClient:
             program=prog,
         )
 
+    def get_coin_type(self) -> str:
+        """Read selected Coin Type from LuCI pools form (if present)."""
+        prog = self.detect_program()
+        path = f"/cgi-bin/luci/admin/network/{prog}"
+        st, html = self.request(path)
+        if st == 404:
+            self._program = None
+            prog = self.detect_program()
+            path = f"/cgi-bin/luci/admin/network/{prog}"
+            st, html = self.request(path)
+        if st != 200 or not html:
+            return ""
+        return self._parse_coin_type_from_html(html)
+
+    @staticmethod
+    def _parse_coin_type_from_html(html: str) -> str:
+        if not html:
+            return ""
+        m = re.search(
+            r'id="cbid\.pools\.default\.coin_type[^"]*"\s*value="([^"]*)"[^>]*selected',
+            html,
+            re.I,
+        )
+        if not m:
+            m = re.search(
+                r'value="([^"]*)"[^>]*selected[^>]*id="cbid\.pools\.default\.coin_type',
+                html,
+                re.I,
+            )
+        if not m:
+            # option selected with coin_type name nearby
+            m = re.search(
+                r'name="cbid\.pools\.default\.coin_type"[^>]*>[\s\S]*?'
+                r'<option[^>]*value="([^"]*)"[^>]*selected',
+                html,
+                re.I,
+            )
+        return (m.group(1) if m else "").strip()
+
     def set_pools(
         self,
         pools: list[dict],
@@ -312,6 +351,7 @@ class LuciClient:
         libbtctools setMinerConf:
         POST /cgi-bin/luci/admin/network/{prog}
         cbid.pools.default.pool{N}url|user|pw
+        cbid.pools.default.coin_type
         """
         prog = self.detect_program()
         path = f"/cgi-bin/luci/admin/network/{prog}"
@@ -324,22 +364,13 @@ class LuciClient:
         if st != 200:
             raise RuntimeError(f"LuCI pools page HTTP {st}")
         token = self.extract_token(html)
-        if coin_type is None:
-            m = re.search(
-                r'id="cbid\.pools\.default\.coin_type[^"]*"\s*value="([^"]*)"[^>]*selected',
-                html,
-            )
-            if not m:
-                m = re.search(
-                    r'value="([^"]*)"[^>]*selected[^>]*id="cbid\.pools\.default\.coin_type',
-                    html,
-                )
-            coin_type = m.group(1) if m else ""
+        if coin_type is None or str(coin_type).strip() == "":
+            coin_type = self._parse_coin_type_from_html(html)
         data: dict[str, str] = {
             "token": token,
             "cbi.submit": "1",
             "cbi.apply": "1",
-            "cbid.pools.default.coin_type": coin_type or "",
+            "cbid.pools.default.coin_type": str(coin_type or "").strip(),
         }
         for i in range(1, 4):
             p = pools[i - 1] if i - 1 < len(pools) else {}
@@ -1252,8 +1283,13 @@ class WhatsminerDriver:
     def set_mining(self, suspend: bool) -> dict:
         return self.write_cmd({"cmd": "power_off" if suspend else "power_on"})
 
-    def set_pools(self, pools: list[dict]) -> dict:
-        return self.write_cmd({"cmd": "update_pools", "pools": pools})
+    def set_pools(
+        self, pools: list[dict], *, coin_type: str | None = None
+    ) -> dict:
+        cmd: dict = {"cmd": "update_pools", "pools": pools}
+        if coin_type is not None and str(coin_type).strip() != "":
+            cmd["coin_type"] = str(coin_type).strip()
+        return self.write_cmd(cmd)
 
     def reboot(self) -> dict:
         return self.write_cmd({"cmd": "reboot"})
@@ -1489,7 +1525,13 @@ class WhatsminerDriver:
                 pools = cmd.get("pools")
                 if not isinstance(pools, list):
                     raise ValueError("update_pools requires pools=[{url,user,pass},…]")
-                return self.luci.set_pools(pools)
+                ct = cmd.get("coin_type")
+                if ct is None:
+                    ct = cmd.get("coin")
+                return self.luci.set_pools(
+                    pools,
+                    coin_type=str(ct).strip() if ct is not None else None,
+                )
             return None
 
         def _tcp_path() -> dict | None:

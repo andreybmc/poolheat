@@ -2202,18 +2202,18 @@
         </div>
       </div>
       <div class="header-meta">
-        <label class="lang-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-right:4px" title="Language / Lang">
+        <span class="pill accent tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
+        <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
+        <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
+        <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> —</span>
+        <span class="pill tip" data-tip-key="lan_token">LAN · token</span>
+        <label class="lang-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-left:2px" title="Language / Lang">
           <span style="font-size:0.72rem;color:var(--dim)" data-i18n="lang.label_short">Lang</span>
           <select id="ui-lang-select" class="lang-select" aria-label="Language">
             <option value="en" selected>EN</option>
             <option value="ru">RU</option>
           </select>
         </label>
-        <span class="pill accent tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
-        <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
-        <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
-        <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> —</span>
-        <span class="pill tip" data-tip-key="lan_token">LAN · token</span>
       </div>
     </header>
 
@@ -2931,11 +2931,25 @@
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
-            <div class="row" style="grid-template-columns:1fr auto;gap:10px;align-items:end">
+            <div class="row" style="grid-template-columns:1fr minmax(7rem,9rem) auto;gap:10px;align-items:end">
               <label class="field" style="margin:0">Preset
                 <select id="pool-preset-select">
                   <option value="">— select —</option>
                 </select>
+              </label>
+              <label class="field" style="margin:0">Coin Type
+                <input type="text" id="pool-preset-coin" list="pool-coin-types" placeholder="BTC" maxlength="32" autocomplete="off" />
+                <datalist id="pool-coin-types">
+                  <option value="BTC"></option>
+                  <option value="BCH"></option>
+                  <option value="BSV"></option>
+                  <option value="FB"></option>
+                  <option value="LTC"></option>
+                  <option value="DOGE"></option>
+                  <option value="BEL"></option>
+                  <option value="KAS"></option>
+                  <option value="ALPH"></option>
+                </datalist>
               </label>
               <button class="btn primary" type="button" id="btn-pool-preset-apply" title="Write preset pools to the miner">
                 Apply to ASIC
@@ -2952,7 +2966,7 @@
               <button class="btn ghost" type="button" id="btn-pool-preset-rename" title="Rename">
                 Rename
               </button>
-              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Save url/user/pass edits">
+              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Save url/user/pass + Coin Type edits">
                 Save edits
               </button>
               <button class="btn danger" type="button" id="btn-pool-preset-delete" title="Delete preset">
@@ -2975,7 +2989,9 @@
               </table>
             </div>
             <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.4">
-              Pool password in ASIC status <strong>not provided</strong> — set when using “Save current” <code>x</code>,
+              <strong>Coin Type</strong> is saved with the preset and written to LuCI on Apply
+              (Whatsminer pools form). Pool password in ASIC status is
+              <strong>not provided</strong> — set when using “Save current” as <code>x</code>
               if it was not saved earlier for the same url+user.
             </p>
           </div>
@@ -7305,13 +7321,21 @@
         .join("");
       if (st) {
         const act = pools.filter((x) => x.active).length;
+        const coin = (body.coin_type || "").trim();
         st.textContent =
           pools.length +
           " pool(s) · active " +
           act +
+          (coin ? " · Coin " + coin : "") +
           (body.host ? " · " + body.host : "") +
           (body.cached ? " · cache" : "") +
           (body.ts ? " · " + body.ts.replace("T", " ") : "");
+      }
+      // mirror live coin into empty preset coin field for convenience
+      const coinEl = document.getElementById("pool-preset-coin");
+      if (coinEl && !coinEl.value && body && body.coin_type) {
+        const p = selectedPoolPresetMeta && selectedPoolPresetMeta();
+        if (!p) coinEl.placeholder = String(body.coin_type);
       }
     }
 
@@ -7380,18 +7404,25 @@
       const meta = document.getElementById("pool-preset-meta");
       if (!meta) return;
       const p = selectedPoolPresetMeta();
+      const coinEl = document.getElementById("pool-preset-coin");
       if (!p) {
         meta.textContent = (poolPresetsCache.presets || []).length
-          ? "Select a preset · “Save current” — snapshot from ASIC"
+          ? "Select a preset · “Save current” — snapshot from ASIC (+ Coin Type)"
           : "Presets empty — “Save current…”";
+        if (coinEl && document.activeElement !== coinEl) coinEl.value = "";
         return;
       }
       const act = p.id === poolPresetsCache.active_id ? " · active" : "";
+      const coin = (p.coin_type || "").trim();
       meta.textContent =
         (p.name || p.id) +
+        (coin ? " · Coin " + coin : "") +
         (p.summary ? " · " + p.summary : "") +
         (p.updated_ts ? " · " + String(p.updated_ts).replace("T", " ") : "") +
         act;
+      if (coinEl && document.activeElement !== coinEl) {
+        coinEl.value = coin;
+      }
     }
 
     function renderPoolPresetEditor() {
@@ -7432,6 +7463,15 @@
           );
         })
         .join("");
+      const coinEl = document.getElementById("pool-preset-coin");
+      if (coinEl && document.activeElement !== coinEl) {
+        coinEl.value = (p.coin_type || "").trim();
+      }
+    }
+
+    function readPoolPresetCoinType() {
+      const el = document.getElementById("pool-preset-coin");
+      return ((el && el.value) || "").trim();
     }
 
     function readPoolPresetEditorPools() {
@@ -7493,11 +7533,15 @@
         return;
       }
       try {
-        const body = await poolPresetApi({
+        const coin = readPoolPresetCoinType();
+        const payload = {
           action: "save",
           name: String(name).trim(),
           from_live: true,
-        });
+        };
+        // optional override if user already typed Coin Type
+        if (coin) payload.coin_type = coin;
+        const body = await poolPresetApi(payload);
         poolPresetsCache = {
           presets: body.presets || [],
           active_id: body.active_id || null,
@@ -7509,7 +7553,12 @@
           updatePoolPresetMetaLine();
           renderPoolPresetEditor();
         }
-        toastSuccess("Preset saved (check password — ASIC does not return it)");
+        toastSuccess(
+          "Preset saved" +
+            (readPoolPresetCoinType()
+              ? " · Coin " + readPoolPresetCoinType()
+              : " (Coin Type from LuCI if available)")
+        );
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -7526,16 +7575,19 @@
         !window.confirm(
           "Overwrite “" +
             (p && p.name ? p.name : id) +
-            "” with current ASIC pools?"
+            "” with current ASIC pools (+ Coin Type)?"
         )
       )
         return;
       try {
-        const body = await poolPresetApi({
+        const coin = readPoolPresetCoinType();
+        const payload = {
           action: "update",
           id: id,
           from_live: true,
-        });
+        };
+        if (coin) payload.coin_type = coin;
+        const body = await poolPresetApi(payload);
         poolPresetsCache = {
           presets: body.presets || [],
           active_id: body.active_id || null,
@@ -7565,13 +7617,19 @@
           id: id,
           name: (p && p.name) || id,
           pools: pools,
+          coin_type: readPoolPresetCoinType(),
         });
         poolPresetsCache = {
           presets: body.presets || [],
           active_id: body.active_id || null,
         };
         renderPoolPresetSelect();
-        toastSuccess("Preset edits saved");
+        toastSuccess(
+          "Preset edits saved" +
+            (readPoolPresetCoinType()
+              ? " · Coin " + readPoolPresetCoinType()
+              : "")
+        );
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -7640,17 +7698,22 @@
         return;
       }
       const p = selectedPoolPresetMeta();
+      const coin = (p && p.coin_type) || readPoolPresetCoinType() || "";
       if (
         !window.confirm(
           "Apply “" +
             (p && p.name ? p.name : id) +
-            "” to ASIC?\nPools will be overwritten (write API)."
+            "” to ASIC?\nPools will be overwritten (write API)." +
+            (coin ? "\nCoin Type: " + coin : "")
         )
       )
         return;
       try {
         toastInfo("Writing pools…", 2000);
-        const body = await poolPresetApi({ action: "apply", id: id });
+        const formCoin = readPoolPresetCoinType();
+        const payload = { action: "apply", id: id };
+        if (formCoin) payload.coin_type = formCoin;
+        const body = await poolPresetApi(payload);
         poolPresetsCache = {
           presets: body.presets || poolPresetsCache.presets || [],
           active_id: body.active_id || body.id || id,
@@ -7661,6 +7724,9 @@
         toastSuccess(
           "Pools applied" +
             (body.name ? ": " + body.name : "") +
+            (formCoin || (p && p.coin_type)
+              ? " · Coin " + (formCoin || p.coin_type)
+              : "") +
             (body.warning ? " · " + body.warning : "")
         );
         void loadMiningPools(true);
