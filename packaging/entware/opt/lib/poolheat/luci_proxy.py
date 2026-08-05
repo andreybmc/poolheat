@@ -455,36 +455,86 @@ class _ReusableThreadingHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 
+def _cleanup_server_locked() -> None:
+    """Close leftover server socket (caller holds _lock). Thread must be dead/stopped."""
+    global _server, _thread, _started_at
+    srv = _server
+    _server = None
+    _thread = None
+    _started_at = None
+    if srv is None:
+        return
+    try:
+        srv.server_close()
+    except Exception:
+        pass
+
+
 def start() -> dict[str, Any]:
     """Start proxy listener if not already running."""
     global _server, _thread, _last_error, _started_at
     with _lock:
         if _server is not None and _thread is not None and _thread.is_alive():
-            return status()
-        bind = str(_cfg.get("bind") or DEFAULT_BIND)
+            return {**status(), "ok": True, "note": "already running"}
+        # Stale server (thread died / previous failed stop) still holds the port
+        if _server is not None:
+            print("[luci-proxy] cleaning stale server before start")
+            _cleanup_server_locked()
+
+        bind = str(_cfg.get("bind") or DEFAULT_BIND).strip() or DEFAULT_BIND
         port = int(_cfg.get("listen_port") or DEFAULT_LISTEN_PORT)
-        try:
-            srv = _ReusableThreadingHTTPServer((bind, port), _LuciProxyHandler)
-        except OSError as e:
-            _last_error = f"bind {bind}:{port}: {e}"
+        # Prefer IPv4 dual-stack style bind; fall back if host unusable
+        bind_candidates = [bind]
+        if bind in ("0.0.0.0", "::"):
+            bind_candidates = [bind, ""]
+        elif bind not in ("", "0.0.0.0"):
+            bind_candidates = [bind, "0.0.0.0"]
+
+        srv = None
+        last_err: Exception | None = None
+        used_bind = bind
+        for b in bind_candidates:
+            try:
+                srv = _ReusableThreadingHTTPServer((b, port), _LuciProxyHandler)
+                used_bind = b if b != "" else "0.0.0.0"
+                break
+            except OSError as e:
+                last_err = e
+                srv = None
+                continue
+        if srv is None:
+            _last_error = f"bind {bind}:{port}: {last_err}"
             print(f"[luci-proxy] start failed: {_last_error}")
             return {**status(), "ok": False, "error": _last_error}
 
-        def _run() -> None:
+        def _run(server: ThreadingHTTPServer = srv) -> None:
+            global _last_error
             try:
-                srv.serve_forever(poll_interval=0.5)
+                server.serve_forever(poll_interval=0.5)
             except Exception as e:
                 print(f"[luci-proxy] serve_forever: {e}")
+                with _lock:
+                    _last_error = f"serve: {e}"
 
         th = threading.Thread(target=_run, name="luci-proxy", daemon=True)
         _server = srv
         _thread = th
         _last_error = None
         _started_at = time.time()
+        # keep configured bind in sync with what actually worked
+        _cfg["bind"] = used_bind if used_bind else bind
         th.start()
+        # brief yield so is_alive() is reliable
+        time.sleep(0.05)
+        if not th.is_alive():
+            _last_error = "thread exited immediately after start"
+            print(f"[luci-proxy] start failed: {_last_error}")
+            _cleanup_server_locked()
+            return {**status(), "ok": False, "error": _last_error}
+
         scheme, host, tport = _upstream_base()
         print(
-            f"[luci-proxy] listening http://{bind}:{port}/ → "
+            f"[luci-proxy] listening http://{used_bind}:{port}/ → "
             f"{scheme}://{host or '?'}:{tport}/"
         )
         return {**status(), "ok": True}
@@ -492,7 +542,7 @@ def start() -> dict[str, Any]:
 
 def stop() -> dict[str, Any]:
     """Stop proxy listener."""
-    global _server, _thread, _started_at
+    global _server, _thread, _started_at, _last_error
     with _lock:
         srv = _server
         th = _thread
@@ -544,6 +594,9 @@ def apply() -> dict[str, Any]:
         return start()
     if running:
         return {**status(), "ok": True, "note": "already running"}
+    # not running (or dead thread) — start cleanly
+    if not running and (_server is not None or _thread is not None):
+        stop()
     return start()
 
 

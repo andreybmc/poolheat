@@ -13144,16 +13144,26 @@
           const parts = [
             c.enabled ? "вкл" : "выкл",
             st.running ? "listening" : "stopped",
+            c.module_loaded === false ? "no module" : "",
             st.target ? "→ " + st.target : "",
-            st.error ? "err: " + st.error : "",
+            st.error || body.error ? "err: " + (st.error || body.error) : "",
           ].filter(Boolean);
           pst.textContent = parts.join(" · ") || "—";
+          pst.style.color =
+            c.enabled && !st.running
+              ? "var(--warn, #e6a23c)"
+              : st.running
+                ? "var(--ok, #3ecf8e)"
+                : "var(--dim)";
         }
         return body;
       } catch (e) {
         console.warn("luci proxy config", e);
         const pst = document.getElementById("luci-proxy-status");
-        if (pst) pst.textContent = "load error: " + e.message;
+        if (pst) {
+          pst.textContent = "load error: " + e.message;
+          pst.style.color = "var(--warn, #e6a23c)";
+        }
         return null;
       }
     }
@@ -13180,13 +13190,22 @@
           body: JSON.stringify(payload),
         });
         const body = await res.json();
-        if (!res.ok || body.ok === false)
-          throw new Error((body && body.error) || "save fail");
         await loadLuciProxyConfig();
+        const st = body.status || {};
         const on = !!payload.enabled;
+        if (!res.ok || body.ok === false) {
+          throw new Error(
+            (body && body.error) ||
+              (st && st.error) ||
+              "proxy start failed"
+          );
+        }
+        if (on && !st.running) {
+          throw new Error(st.error || "enabled but not listening");
+        }
         toastSuccess(
           on
-            ? "LuCI proxy · включён :" + payload.listen_port
+            ? "LuCI proxy · listening :" + payload.listen_port
             : "LuCI proxy · выключен"
         );
       } catch (e) {

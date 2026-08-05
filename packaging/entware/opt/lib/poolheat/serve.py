@@ -3156,27 +3156,56 @@ def chipmap_loop() -> None:
 
 # ── LuCI reverse proxy (:8788 → miner web UI) ────────────────────────────────
 
+_luci_proxy_import_error: str | None = None
+
+
 def _import_luci_proxy():
     """Load luci_proxy module from same dir as serve.py (Entware or local)."""
+    global _luci_proxy_import_error
+    import importlib
+    import sys as _sys
+
+    _lib = Path(__file__).resolve().parent
+    if str(_lib) not in _sys.path:
+        _sys.path.insert(0, str(_lib))
+
+    # Prefer fresh load from file (handles OTA without full process restart edge cases)
+    mod_path = _lib / "luci_proxy.py"
     try:
-        import luci_proxy  # type: ignore
+        if "luci_proxy" in _sys.modules:
+            mod = importlib.reload(_sys.modules["luci_proxy"])
+        elif mod_path.is_file():
+            import importlib.util
 
-        return luci_proxy
-    except ImportError:
-        import sys as _sys
+            spec = importlib.util.spec_from_file_location("luci_proxy", mod_path)
+            if spec is None or spec.loader is None:
+                raise ImportError(f"no spec for {mod_path}")
+            mod = importlib.util.module_from_spec(spec)
+            _sys.modules["luci_proxy"] = mod
+            spec.loader.exec_module(mod)
+        else:
+            import luci_proxy as mod  # type: ignore
+        _luci_proxy_import_error = None
+        return mod
+    except Exception as e:
+        _luci_proxy_import_error = str(e)
+        print(f"[luci-proxy] module unavailable: {e}")
+        # last chance: plain import
+        try:
+            import luci_proxy as mod  # type: ignore
 
-        _lib = Path(__file__).resolve().parent
-        if str(_lib) not in _sys.path:
-            _sys.path.insert(0, str(_lib))
-        import luci_proxy  # type: ignore
-
-        return luci_proxy
+            _luci_proxy_import_error = None
+            return mod
+        except Exception as e2:
+            _luci_proxy_import_error = str(e2)
+            raise
 
 
 try:
     luci_proxy = _import_luci_proxy()
 except Exception as _lp_err:
     luci_proxy = None  # type: ignore
+    _luci_proxy_import_error = str(_lp_err)
     print(f"[luci-proxy] module unavailable: {_lp_err}")
 
 DEFAULT_LUCI_PROXY_CFG: dict = {
@@ -3227,13 +3256,27 @@ def _save_luci_proxy_cfg() -> None:
 def get_luci_proxy_cfg() -> dict:
     with _luci_proxy_cfg_lock:
         cfg = dict(_luci_proxy_cfg)
-    st = {}
+    st: dict = {}
     if luci_proxy is not None:
         try:
             st = luci_proxy.status()
         except Exception as e:
             st = {"error": str(e), "running": False}
+    else:
+        st = {
+            "running": False,
+            "enabled": bool(cfg.get("enabled")),
+            "error": (
+                "luci_proxy module not loaded"
+                + (f": {_luci_proxy_import_error}" if _luci_proxy_import_error else "")
+                + " — check /opt/lib/poolheat/luci_proxy.py and restart service"
+            ),
+        }
+    # if config says on but process not listening — surface clearly
+    if cfg.get("enabled") and not st.get("running") and not st.get("error"):
+        st["error"] = st.get("error") or "enabled but not listening (start failed?)"
     cfg["target_host"] = HOST_MINER
+    cfg["module_loaded"] = luci_proxy is not None
     return {
         "ok": True,
         "config": cfg,
@@ -3244,6 +3287,7 @@ def get_luci_proxy_cfg() -> dict:
 
 def apply_luci_proxy_cfg(req: dict) -> dict:
     """Update config, persist, start/stop proxy module."""
+    global luci_proxy
     if not isinstance(req, dict):
         raise ValueError("expected object")
     with _luci_proxy_cfg_lock:
@@ -3272,14 +3316,40 @@ def apply_luci_proxy_cfg(req: dict) -> dict:
             _luci_proxy_cfg["verify_tls"] = bool(req["verify_tls"])
         snap = dict(_luci_proxy_cfg)
     _save_luci_proxy_cfg()
-    _luci_proxy_sync_runtime(snap)
-    return get_luci_proxy_cfg()
 
-
-def _luci_proxy_sync_runtime(cfg: dict | None = None) -> None:
-    """Push settings into luci_proxy module and start/stop."""
+    # re-try import if module was missing at boot (e.g. OTA added file, no restart)
     if luci_proxy is None:
-        return
+        try:
+            luci_proxy = _import_luci_proxy()
+            print("[luci-proxy] module loaded on demand")
+        except Exception as e:
+            body = get_luci_proxy_cfg()
+            body["ok"] = False
+            body["error"] = f"luci_proxy module missing: {e}"
+            return body
+
+    apply_res = _luci_proxy_sync_runtime(snap)
+    body = get_luci_proxy_cfg()
+    if snap.get("enabled") and not (body.get("status") or {}).get("running"):
+        body["ok"] = False
+        err = (body.get("status") or {}).get("error") or (
+            (apply_res or {}).get("error") if isinstance(apply_res, dict) else None
+        )
+        body["error"] = err or "proxy failed to start"
+    elif isinstance(apply_res, dict) and apply_res.get("ok") is False:
+        body["ok"] = False
+        body["error"] = apply_res.get("error") or "proxy apply failed"
+    return body
+
+
+def _luci_proxy_sync_runtime(cfg: dict | None = None) -> dict:
+    """Push settings into luci_proxy module and start/stop. Returns apply() result."""
+    if luci_proxy is None:
+        return {
+            "ok": False,
+            "error": "luci_proxy module not loaded"
+            + (f": {_luci_proxy_import_error}" if _luci_proxy_import_error else ""),
+        }
     if cfg is None:
         with _luci_proxy_cfg_lock:
             cfg = dict(_luci_proxy_cfg)
@@ -3297,9 +3367,13 @@ def _luci_proxy_sync_runtime(cfg: dict | None = None) -> None:
             verify_tls=bool(cfg.get("verify_tls", False)),
             target_host=str(HOST_MINER or ""),
         )
-        luci_proxy.apply()
+        res = luci_proxy.apply()
+        if not isinstance(res, dict):
+            res = {"ok": True, "result": res}
+        return res
     except Exception as e:
         print(f"[luci-proxy] apply: {e}")
+        return {"ok": False, "error": str(e)}
 
 
 def _miner_config_path() -> Path:
