@@ -2660,7 +2660,7 @@
               </div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <label class="field" style="margin:0;min-width:180px">Цвет по
+              <label class="field" style="margin:0;min-width:180px">Режим карты
                 <select id="chipmap-metric">
                   <option value="temp">Temperature</option>
                   <option value="gradient">Gradient (hotspots)</option>
@@ -3386,7 +3386,9 @@
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
               В файл попадают: подключение майнера, dry_run, карта зон и пресеты,
               бассейн, погода, история, фильтрация, chipmap, Telegram
-              <strong>(включая пароли и bot token)</strong>.
+              <strong>(включая пароли и bot token)</strong>,
+              а также <strong>meta</strong> — версия ПО, Keenetic, hostname, пути
+              (meta перезаписывается при каждом запуске сервиса на этом роутере).
               Не входит: history.db, кэши, журнал событий.
             </p>
             <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="config-backup-status">—</p>

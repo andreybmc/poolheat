@@ -2851,6 +2851,8 @@ def apply_miner_settings(
 # ── Config backup / restore (settings JSON bundle) ───────────────────────────
 CONFIG_BACKUP_FORMAT = "poolheat_config_backup"
 CONFIG_BACKUP_VERSION = 1
+# Keys in config.json that are host/runtime facts — rewritten on every boot
+_CONFIG_META_KEY = "meta"
 
 
 def _read_json_file(path: Path) -> dict | None:
@@ -2863,12 +2865,129 @@ def _read_json_file(path: Path) -> dict | None:
         return None
 
 
+def build_runtime_meta() -> dict:
+    """
+    Host + software facts for config.json meta (and backups).
+    Safe to call often; does not touch miner network unless identity already cached.
+    """
+    router_brief: dict = {}
+    try:
+        r = _collect_router_info()
+        router_brief = {
+            "vendor": r.get("vendor"),
+            "model": r.get("model"),
+            "model_code": r.get("model_code"),
+            "hostname": r.get("hostname"),
+            "os_title": r.get("os_title"),
+            "os_release": r.get("os_release"),
+            "arch": r.get("arch"),
+            "hw_version": r.get("hw_version"),
+            "source": r.get("source"),
+        }
+    except Exception as e:
+        router_brief = {"error": str(e)}
+
+    miner_type = None
+    miner_sn = None
+    try:
+        # disk / RAM identity cache only — no live fetch
+        mem = None
+        try:
+            mem = _IDENT_CACHE.get("data") if isinstance(_IDENT_CACHE, dict) else None
+        except NameError:
+            mem = None
+        disk = None
+        try:
+            disk = _load_miner_id_disk()
+        except Exception:
+            disk = None
+        src = mem if isinstance(mem, dict) and (mem.get("miner_type") or mem.get("minersn")) else disk
+        if isinstance(src, dict):
+            miner_type = src.get("miner_type") or src.get("model")
+            miner_sn = src.get("minersn") or src.get("miner_sn")
+    except Exception:
+        pass
+
+    try:
+        uname = os.uname()
+        host_os = {
+            "sysname": uname.sysname,
+            "release": uname.release,
+            "machine": uname.machine,
+            "nodename": uname.nodename,
+        }
+    except Exception:
+        host_os = {}
+
+    return {
+        "app_version": get_app_version(),
+        "github_repo": GITHUB_REPO,
+        "github_branch": GITHUB_BRANCH,
+        "project_name": get_project_name(),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "router": router_brief,
+        "miner": {
+            "host": HOST_MINER,
+            "port": int(PORT_MINER),
+            "type": miner_type,
+            "sn": miner_sn,
+        },
+        "paths": {
+            "config": str(_miner_config_path()),
+            "data": str(DATA),
+            "www": str(ROOT),
+            "db": str(DB_FILE),
+        },
+        "bind": f"{HTTP_BIND}:{HTTP_PORT}",
+        "dry_run": bool(DRY_RUN),
+        "host_os": host_os,
+    }
+
+
+def refresh_config_meta(*, include_router: bool = True) -> dict:
+    """
+    Overwrite config.json → meta with current host/software facts.
+    Called on service start and before backup download. User settings untouched.
+    """
+    meta = build_runtime_meta() if include_router else {
+        "app_version": get_app_version(),
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "project_name": get_project_name(),
+        "miner": {"host": HOST_MINER, "port": int(PORT_MINER)},
+        "paths": {
+            "config": str(_miner_config_path()),
+            "data": str(DATA),
+            "www": str(ROOT),
+        },
+        "bind": f"{HTTP_BIND}:{HTTP_PORT}",
+        "dry_run": bool(DRY_RUN),
+    }
+    path = _miner_config_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = _read_json_file(path) or {}
+        existing[_CONFIG_META_KEY] = meta
+        # also mirror version at top-level for quick glance
+        existing["app_version"] = meta.get("app_version")
+        path.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"[config] meta refresh: {e}")
+        meta["_write_error"] = str(e)
+    return meta
+
+
 def build_config_backup() -> dict:
     """
     Full settings snapshot for download.
     Includes secrets (API password, TG token, filtration passwords) so restore works.
     Does not include history.db / runtime caches / policy events.
+    Refreshes host meta into config.json first.
     """
+    meta = refresh_config_meta(include_router=True)
+
     app_path = _miner_config_path()
     app_file = _read_json_file(app_path) or {}
     # ensure runtime miner keys present even if file is sparse
@@ -2888,6 +3007,8 @@ def build_config_backup() -> dict:
             app_merged[k] = ms[k]
         if k in ("miner_host", "miner_port", "api_password", "poll_interval_sec", "dry_run", "project_name"):
             app_merged[k] = ms.get(k, app_merged.get(k))
+    app_merged[_CONFIG_META_KEY] = meta
+    app_merged["app_version"] = meta.get("app_version")
 
     with _hist_cfg_lock:
         history = dict(_hist_cfg)
@@ -2909,9 +3030,10 @@ def build_config_backup() -> dict:
     return {
         "format": CONFIG_BACKUP_FORMAT,
         "version": CONFIG_BACKUP_VERSION,
-        "app_version": get_app_version(),
+        "app_version": meta.get("app_version") or get_app_version(),
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "project_name": get_project_name(),
+        "meta": meta,
         "configs": {
             "app": app_merged,
             "history": history,
@@ -2925,7 +3047,8 @@ def build_config_backup() -> dict:
         },
         "notes": (
             "Restore via UI Settings → Backup or POST /api/config/restore. "
-            "Contains secrets (API password, Telegram token, filtration passwords)."
+            "Contains secrets (API password, Telegram token, filtration passwords). "
+            "meta / app_version are host facts — rewritten on each service start."
         ),
     }
 
@@ -2958,7 +3081,10 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
     # 1) app / miner config
     if "app" in want and isinstance(cfgs.get("app"), dict):
         try:
-            app = cfgs["app"]
+            app = dict(cfgs["app"])
+            # never restore stale host meta from another machine
+            app.pop(_CONFIG_META_KEY, None)
+            app.pop("app_version", None)
             apply_miner_settings(
                 host=app.get("miner_host"),
                 port=app.get("miner_port"),
@@ -2980,8 +3106,10 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
                     "poll_interval_sec",
                     "dry_run",
                     "project_name",
+                    _CONFIG_META_KEY,
+                    "app_version",
                 ):
-                    continue  # already applied
+                    continue  # already applied / host facts
                 existing[k] = v
             # re-apply runtime keys on top
             ms = get_miner_settings()
@@ -3147,11 +3275,18 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
     if not applied:
         raise ValueError("nothing to restore (empty sections)")
 
+    # always rewrite host meta after restore (this machine, current version)
+    try:
+        meta = refresh_config_meta(include_router=True)
+    except Exception as e:
+        meta = {"error": str(e)}
+
     return {
         "ok": True,
         "applied": applied,
         "errors": errors or None,
         "app_version": get_app_version(),
+        "meta": meta,
     }
 
 
@@ -15808,7 +15943,22 @@ def main() -> None:
             collect_system_info()
         except Exception as e:
             print(f"info cache warm: {e}")
+        # rewrite config.json meta (version, router, paths) after identity warm
+        try:
+            m = refresh_config_meta(include_router=True)
+            print(
+                f"config meta: v{m.get('app_version')} · "
+                f"{(m.get('router') or {}).get('model_code') or (m.get('router') or {}).get('model') or 'router?'} · "
+                f"{(m.get('miner') or {}).get('host')}"
+            )
+        except Exception as e:
+            print(f"config meta: {e}")
 
+    # quick meta write first (no miner wait), then full refresh after info warm
+    try:
+        refresh_config_meta(include_router=True)
+    except Exception as e:
+        print(f"config meta (boot): {e}")
     threading.Thread(target=_warm_info, name="info-warm", daemon=True).start()
     t = threading.Thread(target=collector_loop, name="history-collector", daemon=True)
     t.start()
