@@ -3317,16 +3317,20 @@ def apply_luci_proxy_cfg(req: dict) -> dict:
         snap = dict(_luci_proxy_cfg)
     _save_luci_proxy_cfg()
 
-    # re-try import if module was missing at boot (e.g. OTA added file, no restart)
-    if luci_proxy is None:
-        try:
-            luci_proxy = _import_luci_proxy()
-            print("[luci-proxy] module loaded on demand")
-        except Exception as e:
-            body = get_luci_proxy_cfg()
-            body["ok"] = False
-            body["error"] = f"luci_proxy module missing: {e}"
-            return body
+    # (re)load module so OTA fixes apply without full process edge cases;
+    # stop old listener first if we are replacing a live module instance
+    try:
+        if luci_proxy is not None:
+            try:
+                luci_proxy.stop()
+            except Exception:
+                pass
+        luci_proxy = _import_luci_proxy()
+    except Exception as e:
+        body = get_luci_proxy_cfg()
+        body["ok"] = False
+        body["error"] = f"luci_proxy module missing: {e}"
+        return body
 
     apply_res = _luci_proxy_sync_runtime(snap)
     body = get_luci_proxy_cfg()

@@ -17,12 +17,12 @@ Control lifecycle from serve.py:
 
 from __future__ import annotations
 
+import http.client
+import re
 import socket
 import ssl
 import threading
 import time
-import urllib.error
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -247,31 +247,62 @@ class _LuciProxyHandler(BaseHTTPRequestHandler):
             raise ValueError(f"body too large: {n}")
         return self.rfile.read(n)
 
-    def _build_upstream_headers(self, host: str, port: int) -> dict[str, str]:
+    def _upstream_host_header(self, host: str, port: int) -> str:
+        if port in (80, 443):
+            return host
+        return f"{host}:{port}"
+
+    def _rewrite_client_url_to_upstream(
+        self, val: str, scheme: str, host: str, port: int
+    ) -> str:
+        """
+        Rewrite Referer/Origin from http://router:8788/... → https://miner/...
+        so LuCI CSRF / form checks see the real upstream origin.
+        """
+        if not val:
+            return val
+        try:
+            parts = urlsplit(val)
+        except Exception:
+            return val
+        # only rewrite if this looks like it hit our proxy (any host, our listen path)
+        # or relative Origin without host — leave alone
+        if not parts.scheme and not parts.netloc:
+            return val
+        path = parts.path or "/"
+        q = parts.query
+        frag = parts.fragment
+        up_netloc = self._upstream_host_header(host, port)
+        return urlunsplit((scheme, up_netloc, path, q, frag))
+
+    def _build_upstream_headers(self, host: str, port: int, scheme: str) -> dict[str, str]:
         out: dict[str, str] = {}
         for key, val in self.headers.items():
             lk = key.lower()
             if lk in _HOP_BY_HOP:
                 continue
+            if lk in ("referer", "origin"):
+                out[key] = self._rewrite_client_url_to_upstream(val, scheme, host, port)
+                continue
             out[key] = val
         # Host as miner expects
-        if port in (80, 443):
-            out["Host"] = host
-        else:
-            out["Host"] = f"{host}:{port}"
-        # Prefer identity encoding for simpler proxying
+        out["Host"] = self._upstream_host_header(host, port)
+        # Prefer identity encoding for simpler proxying / body rewrite
         out["Accept-Encoding"] = "identity"
-        # X-Forwarded-* for diagnostics
+        # Tell upstream the external client used HTTP to the proxy.
+        # Do NOT claim https — that makes some firmwares emit Secure-only cookies
+        # that the browser then refuses to store on http://router:8788.
         client = self.client_address[0] if self.client_address else ""
         if client:
             prior = self.headers.get("X-Forwarded-For")
             out["X-Forwarded-For"] = f"{prior}, {client}" if prior else client
         out["X-Forwarded-Proto"] = "http"
+        out["X-Forwarded-Host"] = self.headers.get("Host") or f"localhost:{DEFAULT_LISTEN_PORT}"
         out["X-Real-IP"] = client or ""
         return out
 
     def _rewrite_location(self, loc: str, scheme: str, host: str, port: int) -> str:
-        """Rewrite absolute Location pointing at miner → relative (same proxy host)."""
+        """Rewrite absolute Location (any scheme) pointing at miner → path on proxy."""
         if not loc:
             return loc
         try:
@@ -282,13 +313,21 @@ class _LuciProxyHandler(BaseHTTPRequestHandler):
         if not parts.scheme and not parts.netloc:
             return loc
         loc_host = (parts.hostname or "").lower()
-        if loc_host and loc_host != host.lower():
+        miner = host.lower()
+        up = self._upstream_host_header(host, port).lower()
+        net = (parts.netloc or "").lower()
+        if loc_host and loc_host != miner and net != up and net.split(":")[0] != miner:
             return loc
-        # strip scheme/host → keep path?query#frag
+        # strip scheme/host → keep path?query#frag (browser stays on :8788)
         return urlunsplit(("", "", parts.path or "/", parts.query, parts.fragment))
 
     def _rewrite_set_cookie(self, cookie: str) -> str:
-        """Drop Domain= so cookie sticks to proxy host (:8788)."""
+        """
+        Make session cookies work on plain HTTP proxy:
+        - drop Domain= (bind to router host :8788)
+        - drop Secure (browser would ignore cookie on http://)
+        - soften SameSite=None (requires Secure) → Lax
+        """
         if not cookie:
             return cookie
         parts = []
@@ -299,42 +338,90 @@ class _LuciProxyHandler(BaseHTTPRequestHandler):
             low = s.lower()
             if low.startswith("domain="):
                 continue
-            # Secure cookies over plain HTTP proxy would be dropped by browser
             if low == "secure":
+                continue
+            if low.startswith("samesite="):
+                # SameSite=None without Secure is rejected by modern browsers
+                if "none" in low:
+                    parts.append("SameSite=Lax")
+                else:
+                    parts.append(s)
                 continue
             parts.append(s)
         return "; ".join(parts)
 
-    def _forward_response_headers(self, raw_headers, scheme: str, host: str, port: int) -> None:
-        """Copy upstream headers; multi-value Set-Cookie preserved."""
-        # Collect all headers; special-case Set-Cookie (may be multi)
-        cookies: list[str] = []
-        if raw_headers is not None and hasattr(raw_headers, "get_all"):
+    def _rewrite_html_body(self, payload: bytes, scheme: str, host: str, port: int) -> bytes:
+        """
+        Soft-rewrite absolute miner URLs in HTML so forms/links stay on the proxy.
+        Keeps login POSTs from jumping to https://miner/ directly.
+        """
+        if not payload or len(payload) > 4 * 1024 * 1024:
+            return payload
+        try:
+            text = payload.decode("utf-8")
+        except UnicodeDecodeError:
             try:
-                cookies = list(raw_headers.get_all("Set-Cookie") or [])
+                text = payload.decode("latin-1")
             except Exception:
-                cookies = []
-        seen_cookie = False
-        for key, val in (raw_headers.items() if raw_headers is not None else []):
+                return payload
+        # only touch likely HTML
+        head = text[:200].lower()
+        if "<html" not in head and "<!doctype" not in head and "<form" not in text[:2000].lower():
+            return payload
+
+        up_host = re.escape(host)
+        up_netloc = re.escape(self._upstream_host_header(host, port))
+        # https://miner/  https://miner:443/  http://miner/
+        patterns = [
+            rf"https?://{up_netloc}",
+            rf"https?://{up_host}(?::(?:80|443))?",
+            rf"https?://{up_host}",
+        ]
+        out = text
+        for pat in patterns:
+            out = re.sub(pat, "", out, flags=re.IGNORECASE)
+        if out is text:
+            return payload
+        try:
+            return out.encode("utf-8")
+        except Exception:
+            return payload
+
+    def _forward_response_headers(
+        self,
+        headers_list: list[tuple[str, str]],
+        scheme: str,
+        host: str,
+        port: int,
+    ) -> None:
+        """Copy upstream headers; multi-value Set-Cookie preserved."""
+        cookies: list[str] = []
+        for key, val in headers_list:
             lk = key.lower()
             if lk in _HOP_BY_HOP or lk == "content-length":
                 continue
             if lk == "set-cookie":
-                # handled below via get_all to avoid collapsing
-                if not cookies:
-                    self.send_header("Set-Cookie", self._rewrite_set_cookie(val))
-                seen_cookie = True
+                cookies.append(val)
                 continue
             if lk == "location":
                 val = self._rewrite_location(val, scheme, host, port)
+            # drop HSTS — would force browser onto https://router:8788 (broken)
+            if lk == "strict-transport-security":
+                continue
+            # avoid forcing upgrade
+            if lk == "content-security-policy" and "upgrade-insecure-requests" in (val or "").lower():
+                continue
             self.send_header(key, val)
-        if cookies:
-            for c in cookies:
-                self.send_header("Set-Cookie", self._rewrite_set_cookie(c))
-        elif not seen_cookie:
-            pass
+        for c in cookies:
+            self.send_header("Set-Cookie", self._rewrite_set_cookie(c))
 
     def _proxy(self) -> None:
+        """
+        Reverse-proxy one request to miner LuCI.
+
+        Critical: do NOT auto-follow redirects. Login returns 302 + Set-Cookie;
+        if the proxy follows it, the browser never receives the session cookie.
+        """
         global _last_error
         scheme, host, port = _upstream_base()
         if not host:
@@ -349,72 +436,56 @@ class _LuciProxyHandler(BaseHTTPRequestHandler):
         path = self.path  # includes query
         if not path.startswith("/"):
             path = "/" + path
-        url = f"{scheme}://{host}:{port}{path}"
-        headers = self._build_upstream_headers(host, port)
         method = self.command.upper()
+        headers = self._build_upstream_headers(host, port, scheme)
 
         with _lock:
             verify = bool(_cfg.get("verify_tls"))
 
+        conn: http.client.HTTPConnection | None = None
         try:
-            req = urllib.request.Request(
-                url,
-                data=body if body else None,
-                headers=headers,
-                method=method,
-            )
-            handlers: list[Any] = []
+            timeout = 90.0
             if scheme == "https":
                 ctx = _ssl_context(verify)
-                handlers.append(urllib.request.HTTPSHandler(context=ctx))
-            opener = urllib.request.build_opener(*handlers)
-            # timeout: long enough for LuCI login / status pages
-            resp = opener.open(req, timeout=90)
-            try:
-                status = getattr(resp, "status", None) or resp.getcode() or 200
-                reason = getattr(resp, "reason", None) or "OK"
-                raw_headers = resp.headers
-                # stream body
-                chunks: list[bytes] = []
-                while True:
-                    block = resp.read(64 * 1024)
-                    if not block:
-                        break
-                    chunks.append(block)
-                payload = b"".join(chunks)
-            finally:
-                try:
-                    resp.close()
-                except Exception:
-                    pass
+                conn = http.client.HTTPSConnection(
+                    host, port, timeout=timeout, context=ctx
+                )
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=timeout)
 
-            self.send_response(int(status), str(reason))
+            # http.client wants a plain dict / sequence of headers
+            conn.request(
+                method,
+                path,
+                body=body if body else None,
+                headers=headers,
+            )
+            resp = conn.getresponse()
+            status = int(resp.status)
+            reason = str(resp.reason or "OK")
+            # Preserve multi Set-Cookie via getheaders()
+            raw_headers = list(resp.getheaders() or [])
+            payload = resp.read() if method != "HEAD" else b""
+
+            # rewrite HTML absolute links (login form action=https://miner/...)
+            ctype = ""
+            for k, v in raw_headers:
+                if k.lower() == "content-type":
+                    ctype = (v or "").lower()
+                    break
+            if payload and ("text/html" in ctype or "application/xhtml" in ctype):
+                payload = self._rewrite_html_body(payload, scheme, host, port)
+
+            self.send_response(status, reason)
             self._forward_response_headers(raw_headers, scheme, host, port)
-            self.send_header("Content-Length", str(len(payload)))
+            if method != "HEAD":
+                self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
             self.end_headers()
             if method != "HEAD" and payload:
                 self.wfile.write(payload)
             with _lock:
                 _last_error = None
-        except urllib.error.HTTPError as e:
-            # HTTPError is also a response — forward status + body
-            try:
-                err_body = e.read() or b""
-            except Exception:
-                err_body = b""
-            try:
-                self.send_response(int(e.code), str(e.reason or "Error"))
-                if e.headers:
-                    self._forward_response_headers(e.headers, scheme, host, port)
-                self.send_header("Content-Length", str(len(err_body)))
-                self.send_header("Connection", "close")
-                self.end_headers()
-                if method != "HEAD" and err_body:
-                    self.wfile.write(err_body)
-            except Exception as e2:
-                with _lock:
-                    _last_error = str(e2)
         except Exception as e:
             msg = str(e) or type(e).__name__
             with _lock:
@@ -423,7 +494,8 @@ class _LuciProxyHandler(BaseHTTPRequestHandler):
                 body_err = (
                     f"<html><body><h1>LuCI proxy error</h1>"
                     f"<p>{_html_escape(msg)}</p>"
-                    f"<p>upstream: {scheme}://{host}:{port}/</p>"
+                    f"<p>upstream: {scheme}://{host}:{port}{path}</p>"
+                    f"<p>proxy is plain HTTP on :8788; cookies Secure/HSTS stripped.</p>"
                     f"</body></html>"
                 ).encode("utf-8")
                 self.send_response(502, "Bad Gateway")
@@ -435,6 +507,12 @@ class _LuciProxyHandler(BaseHTTPRequestHandler):
                     self.wfile.write(body_err)
             except Exception:
                 pass
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 def _html_escape(s: str) -> str:

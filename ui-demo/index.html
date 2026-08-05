@@ -4079,8 +4079,10 @@
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
               Отдельный модуль <code>luci_proxy</code>: reverse-proxy на порт майнера
-              (host из «Подключение Whatsminer»). По умолчанию выкл.
-              Не пробрасывайте :8788 в WAN — только LAN / VPN / Cloud.
+              (host из «Подключение Whatsminer»). Снаружи — plain HTTP :8788,
+              к майнеру — HTTPS; cookies <code>Secure</code>/HSTS срезаются,
+              редиректы login не «съедаются» (сессия должна сохраняться).
+              По умолчанию выкл. Не пробрасывайте :8788 в WAN — только LAN / VPN / Cloud.
             </p>
             <p style="font-size:0.75rem;color:var(--dim);margin:0" id="luci-proxy-status">—</p>
           </div>
