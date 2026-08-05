@@ -1994,9 +1994,9 @@
           <div class="temp-card liquid-env">
             <div class="tc-label tc-label-stack">
               <div class="tc-label-main">
-                <span class="tip" data-tip-key="t_ctrl">Теплоноситель</span>
+                <span class="tip" data-tip-key="t_ctrl" id="dash-tctrl-label">T_ctrl</span>
                 <span style="color:var(--dim)"> / </span>
-                <span class="tip" data-tip-key="env">Окружение</span>
+                <span class="tip" data-tip-key="env">Env</span>
               </div>
               <span
                 class="zone-badge tip"
@@ -2007,9 +2007,13 @@
               >—</span>
             </div>
             <div class="tc-val tc-val-dual">
-              <span class="tc-pair tip" data-tip-key="t_ctrl"><span id="t-liquid">—</span><small>°C</small></span>
+              <span class="tc-pair tip" data-tip-key="t_ctrl" title="T_ctrl — датчик карты зон">
+                <span id="t-ctrl">—</span><small>°C</small>
+              </span>
               <span class="tc-sep" aria-hidden="true">/</span>
-              <span class="tc-pair tip" data-tip-key="env"><span id="t-env">—</span><small>°C</small></span>
+              <span class="tc-pair tip" data-tip-key="env" title="Env Temp">
+                <span id="t-env">—</span><small>°C</small>
+              </span>
             </div>
             <div class="tc-extra">
               <div data-bind="zoneHint" id="dash-zone-hint">—</div>
@@ -5642,9 +5646,31 @@
         ? boards.reduce((a, b) => a + b, 0) / boards.length
         : NaN;
 
-      // liquid 0 / null = N/A on many FW; env 0 is also rare → dash
-      setId("t-liquid", fmtSensorTemp(r.liquid, 1, { rejectZero: true }));
+      // First value = current T_ctrl (zone map sensor); second = Env
+      let tCtrlShow = NaN;
+      try {
+        tCtrlShow = Number(resolveTctrl(r));
+      } catch (_) {
+        tCtrlShow = NaN;
+      }
+      setId(
+        "t-ctrl",
+        fmtSensorTemp(
+          Number.isFinite(tCtrlShow) ? tCtrlShow : null,
+          1,
+          { rejectZero: true }
+        )
+      );
       setId("t-env", fmtSensorTemp(r.env, 1, { rejectZero: true }));
+      // subtitle: which sensor feeds T_ctrl
+      try {
+        const labEl = document.getElementById("dash-tctrl-label");
+        if (labEl && typeof tctrlSensorLabel === "function") {
+          const sn = typeof getTctrlSensor === "function" ? getTctrlSensor() : "liquid";
+          labEl.textContent = "T_ctrl";
+          labEl.title = "T_ctrl = " + tctrlSensorLabel(sn) + " (пороги карты зон)";
+        }
+      } catch (_) { /* ignore */ }
       setId("t-board-max", fmt(boardMax));
       setId("t-chip-max", fmt(r.chip_max));
       // compact extras with unit glued to number: 38.0°C
