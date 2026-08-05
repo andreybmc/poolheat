@@ -1102,6 +1102,24 @@
       right: 0;
       transform: none;
     }
+    .temp-labels > span.scale-crit-off {
+      /* off-scale chip crit — do not park on axis (was "c100" next to max) */
+      display: none !important;
+    }
+    .temp-labels > span.scale-crit-on {
+      color: var(--danger, #f07178);
+      font-weight: 600;
+    }
+    .src-detail-host {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px dotted rgba(61, 156, 240, 0.55);
+      cursor: pointer;
+    }
+    .src-detail-host:hover {
+      color: var(--text);
+      border-bottom-color: var(--accent);
+    }
 
     .scale-legend {
       display: flex;
@@ -6255,6 +6273,40 @@
       return h || "—";
     }
 
+    /** Cached LuCI proxy status for LIVE strip link. */
+    let _luciProxyLive = { enabled: false, running: false, listen_port: 8788 };
+
+    function luciProxyUrl() {
+      const port = Number(_luciProxyLive.listen_port) || 8788;
+      const host = location.hostname || "127.0.0.1";
+      return "http://" + host + ":" + port + "/";
+    }
+
+    function isLuciProxyActive() {
+      return !!(
+        _luciProxyLive &&
+        _luciProxyLive.enabled &&
+        _luciProxyLive.running
+      );
+    }
+
+    async function refreshLuciProxyLiveCache() {
+      try {
+        const res = await fetch("/api/luci_proxy/config", { cache: "no-store" });
+        const body = await res.json();
+        const c = body.config || {};
+        const st = body.status || {};
+        _luciProxyLive = {
+          enabled: !!(c.enabled || st.enabled),
+          running: !!st.running,
+          listen_port: Number(c.listen_port || st.listen_port || 8788) || 8788,
+        };
+      } catch (_) {
+        /* keep last */
+      }
+      return _luciProxyLive;
+    }
+
     let lastLiveStatusTime = "";
 
     /** LIVE line: IP · Whatsminer model · обновлено HH:MM:SS · Online */
@@ -6269,9 +6321,12 @@
       const tstr = lastLiveStatusTime || new Date().toLocaleTimeString();
       if (!useLive.checked) {
         if (tag) tag.textContent = "SIM";
-        if (det)
+        if (det) {
           det.textContent =
-            (typeof t === "function" ? t("live.sim_off") : "симуляция · Live выкл · обновлено ") + tstr;
+            (typeof t === "function"
+              ? t("live.sim_off")
+              : "симуляция · Live выкл · обновлено ") + tstr;
+        }
         return;
       }
       const online = !!(r && r.online);
@@ -6288,15 +6343,35 @@
           ? minerType
           : "Whatsminer " + minerType;
       }
-      if (det) {
-        det.textContent =
-          minerHostDisplay() +
+      if (!det) return;
+      const hostDisp = minerHostDisplay();
+      const rest =
+        " · " +
+        minerLabel +
+        (typeof t === "function" ? t("live.updated_sep") : " · обновлено ") +
+        tstr +
+        " · " +
+        (online ? "Online" : "Offline");
+      // When LuCI proxy is listening — make miner IP a link to :8788
+      if (isLuciProxyActive() && hostDisp && hostDisp !== "—") {
+        const url = luciProxyUrl();
+        det.innerHTML = "";
+        const a = document.createElement("a");
+        a.className = "src-detail-host";
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = hostDisp;
+        a.title =
+          (typeof t === "function"
+            ? t("live.luci_proxy_title", "Open LuCI via proxy")
+            : "Open LuCI via proxy") +
           " · " +
-          minerLabel +
-          (typeof t === "function" ? t("live.updated_sep") : " · обновлено ") +
-          tstr +
-          " · " +
-          (online ? "Online" : "Offline");
+          url;
+        det.appendChild(a);
+        det.appendChild(document.createTextNode(rest));
+      } else {
+        det.textContent = hostDisp + rest;
       }
     }
 
@@ -6477,6 +6552,8 @@
     /**
      * Dynamic °C range for T_ctrl scale.
      * Liquid thresholds (~24–28) → ~20–40; board/chip (~45–70) expand to fit.
+     * Chip T_crit is included only when close enough to T2 (same map scale).
+     * Far-away chip crit (e.g. liquid T2=28, crit=100) stays off-axis — no "c100".
      */
     function tctrlScaleRange(th, tNow) {
       const t0 = Number(th && th.t0);
@@ -6486,7 +6563,8 @@
       const vals = [t0, t1, t2].filter((v) => Number.isFinite(v));
       if (Number.isFinite(Number(tNow))) vals.push(Number(tNow));
       // Include T_crit on scale only when it is not wildly above T2
-      // (board max map with T2=65, crit=70 → include; liquid T2=28, crit=70 → tip only)
+      // (board max map with T2=65, crit=70 → include; liquid T2=28, crit=100 → off scale)
+      let critOnAxis = false;
       if (
         Number.isFinite(crit) &&
         Number.isFinite(t2) &&
@@ -6494,6 +6572,7 @@
         crit <= t2 + 25
       ) {
         vals.push(crit);
+        critOnAxis = true;
       }
       let lo = vals.length ? Math.min(...vals) : 20;
       let hi = vals.length ? Math.max(...vals) : 40;
@@ -6508,7 +6587,7 @@
       if (hi - lo < 15) hi = lo + 15;
       if (lo < -10) lo = -10;
       if (hi > 120) hi = 120;
-      return { minT: lo, maxT: hi };
+      return { minT: lo, maxT: hi, critOnAxis: critOnAxis };
     }
 
     function tctrlTempToPct(t, range) {
@@ -6534,6 +6613,13 @@
       const minT = range.minT;
       const maxT = range.maxT;
       const pct = (t) => tctrlTempToPct(t, range);
+      const fmtT = (t) => {
+        const v = Number(t);
+        if (!Number.isFinite(v)) return "—";
+        return Math.abs(v - Math.round(v)) < 0.05
+          ? String(Math.round(v))
+          : v.toFixed(1);
+      };
 
       let p0 = pct(th.t0);
       let p1 = pct(th.t1);
@@ -6541,18 +6627,24 @@
       if (p1 < p0) p1 = p0;
       if (p2 < p1) p2 = p1;
 
-      // Safety red: map T_crit if it falls on scale; else small tip after Z3
-      let pSafe = pct(th.crit);
+      const critN = Number(th.crit);
+      // On-axis only when range included crit (close to T2) and value fits
       const critOnScale =
-        Number.isFinite(Number(th.crit)) &&
-        th.crit > minT &&
-        th.crit < maxT &&
-        th.crit > Number(th.t2);
-      if (!critOnScale) {
+        !!range.critOnAxis &&
+        Number.isFinite(critN) &&
+        critN >= minT - 0.05 &&
+        critN <= maxT + 0.05 &&
+        critN > Number(th.t2) - 0.05;
+
+      // Safety red: real °C when on scale; else small tip after Z3 (visual only)
+      let pSafe;
+      if (critOnScale) {
+        pSafe = pct(critN);
+      } else {
         pSafe = Math.min(96, Math.max(p2 + 8, p2 + (100 - p2) * 0.35));
       }
-      if (pSafe > 96) pSafe = 96;
-      if (pSafe < p2 + 4) pSafe = Math.min(96, p2 + 6);
+      if (pSafe > 98) pSafe = 98;
+      if (pSafe < p2 + 3) pSafe = Math.min(98, p2 + 5);
 
       scale.style.background =
         "linear-gradient(90deg," +
@@ -6567,42 +6659,76 @@
         " #f07178 " + pSafe + "%," +
         " #f07178 100%)";
 
-      // Labels: ends = range; mid = T0 T1 T2; optional crit if on scale
+      // Labels: ends = range; mid = T0 T1 T2; crit only when on-axis
       const setLab = (id, text, leftPct, endClass) => {
         const el = document.getElementById(id);
         if (!el) return;
         el.textContent = text;
+        el.classList.remove("scale-crit-off", "scale-crit-on");
         if (endClass) {
           el.style.left = "";
+          el.style.opacity = text ? "1" : "0";
           return;
         }
         el.style.left = leftPct + "%";
-      };
-      const fmtT = (t) => {
-        const v = Number(t);
-        if (!Number.isFinite(v)) return "—";
-        return Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toFixed(1);
+        el.style.opacity = text ? "1" : "0";
       };
       setLab("scale-min", fmtT(minT), 0, true);
-      setLab("scale-max", fmtT(maxT), 100, true);
       setLab("scale-low", fmtT(th.t0), p0);
       setLab("scale-mid", fmtT(th.t1), p1);
       setLab("scale-high", fmtT(th.t2), p2);
-      // crit label: real value if on scale, else show T_crit at red tip (info only)
+
       const critEl = document.getElementById("scale-crit");
+      const maxEl = document.getElementById("scale-max");
+      // max label always range end (no "c100" junk)
+      if (maxEl) {
+        maxEl.textContent = fmtT(maxT);
+        maxEl.style.opacity = "1";
+      }
       if (critEl) {
+        critEl.classList.remove("scale-crit-off", "scale-crit-on");
         if (critOnScale) {
-          critEl.textContent = fmtT(th.crit);
-          critEl.style.left = pSafe + "%";
-          critEl.style.opacity = "1";
-        } else if (Number.isFinite(Number(th.crit))) {
-          // show chip T_crit near red tip without claiming it's on T_ctrl axis
-          critEl.textContent = "c" + fmtT(th.crit);
-          critEl.style.left = Math.min(94, pSafe + 2) + "%";
-          critEl.style.opacity = "0.75";
+          // if crit ≈ max, keep one label only (avoid "70" + "70")
+          const nearMax = Math.abs(critN - maxT) < 0.6;
+          if (nearMax) {
+            critEl.textContent = "";
+            critEl.classList.add("scale-crit-off");
+            critEl.style.opacity = "0";
+            if (maxEl) {
+              maxEl.textContent = fmtT(critN);
+              maxEl.title = "T_crit / scale max · chip Safety";
+            }
+          } else {
+            critEl.textContent = fmtT(critN);
+            critEl.style.left = pSafe + "%";
+            critEl.style.opacity = "1";
+            critEl.classList.add("scale-crit-on");
+            critEl.title = "T_crit · chip Safety";
+            // hide max if too close to crit label
+            if (maxEl && Math.abs(pSafe - 100) < 6) {
+              maxEl.style.opacity = "0";
+            }
+          }
         } else {
+          // Off-scale chip crit: never draw "c100" on axis (was overlapping max)
           critEl.textContent = "";
+          critEl.classList.add("scale-crit-off");
           critEl.style.opacity = "0";
+          critEl.title = "";
+        }
+      }
+
+      // Legend / sub: show off-scale chip crit as text, not axis label
+      const legSafe = document.querySelector(".scale-legend .lg-safe");
+      if (legSafe && legSafe.parentElement) {
+        const span = legSafe.parentElement;
+        if (Number.isFinite(critN)) {
+          span.innerHTML =
+            '<i class="lg-safe"></i> Safety (chip) · T_crit=' +
+            fmtT(critN) +
+            (critOnScale ? "°C" : "°C · off scale");
+        } else {
+          span.innerHTML = '<i class="lg-safe"></i> Safety (chip)';
         }
       }
     }
@@ -13555,6 +13681,11 @@
         const body = await res.json();
         const c = body.config || body;
         const st = body.status || {};
+        _luciProxyLive = {
+          enabled: !!(c.enabled || st.enabled),
+          running: !!st.running,
+          listen_port: Number(c.listen_port || st.listen_port || 8788) || 8788,
+        };
         const en = document.getElementById("luci-proxy-enabled");
         const port = document.getElementById("luci-proxy-port");
         const sch = document.getElementById("luci-proxy-scheme");
@@ -13585,6 +13716,12 @@
               : st.running
                 ? "var(--ok, #3ecf8e)"
                 : "var(--dim)";
+        }
+        // LIVE strip: IP → LuCI proxy link when listening
+        if (typeof updateSrcBar === "function") {
+          try {
+            updateSrcBar(typeof live !== "undefined" ? live : null);
+          } catch (_) { /* ignore */ }
         }
         return body;
       } catch (e) {
@@ -13722,6 +13859,8 @@
 
     loadChipmapConfig();
     scheduleChipmapPoll();
+    // LuCI proxy status → LIVE strip IP link when proxy is listening
+    if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
     loadHistoryCharts(); // charts on Обзор
     loadMinerErrorLog();
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
