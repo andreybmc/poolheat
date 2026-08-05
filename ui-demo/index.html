@@ -1744,17 +1744,21 @@
 
     /* —— Weather widget (iOS / Android style) —— */
     .temp-card.outdoor.wx-widget {
+      position: relative;
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      min-height: 148px;
+      gap: 6px;
+      min-height: 0;
       padding: 14px 16px 12px;
+      /* room for absolute icon top-right */
+      padding-right: 78px;
       border: 1px solid rgba(255, 255, 255, 0.12);
       background:
         radial-gradient(ellipse 90% 80% at 85% 15%, rgba(255, 220, 120, 0.22), transparent 55%),
         linear-gradient(155deg, #1a4a7a 0%, #2a6aa8 42%, #3d8fd4 100%);
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
       transition: background 0.45s ease, box-shadow 0.3s ease;
+      overflow: hidden;
     }
     .temp-card.outdoor.wx-widget.wx-clear {
       background:
