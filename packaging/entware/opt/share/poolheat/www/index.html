@@ -1828,27 +1828,24 @@
       border-bottom-color: rgba(255, 255, 255, 0.28);
     }
     .wx-widget .wx-label-sep {
-      color: rgba(255, 255, 255, 0.35);
-      text-transform: none;
-      letter-spacing: 0;
+      color: inherit;
+      opacity: 0.65;
     }
     .wx-widget #wx-city {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      max-width: 12em;
-      text-transform: none;
-      letter-spacing: 0.02em;
-      font-size: 0.72rem;
-      color: rgba(255, 255, 255, 0.72);
+      max-width: 14em;
+      /* same style as Outdoor label (inherit uppercase · dim · tracking) */
+      color: inherit;
+      font-size: inherit;
+      font-weight: inherit;
+      letter-spacing: inherit;
+      text-transform: inherit;
     }
     .wx-widget.wx-off .tc-label.wx-label,
     .wx-widget.wx-error .tc-label.wx-label {
       color: var(--dim);
-    }
-    .wx-widget.wx-off #wx-city,
-    .wx-widget.wx-error #wx-city {
-      color: var(--muted);
     }
     .wx-widget .wx-temp-row {
       display: flex;
