@@ -2608,7 +2608,9 @@
           <div class="card-h">
             <div>
               <h2>Карта чипов</h2>
-              <div class="sub">LuCI · snake layout · gradient / outliers / nonce · кеш + poll</div>
+              <div class="sub" id="chipmap-mode-hint" style="line-height:1.45;max-width:52rem">
+                —
+              </div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <label class="field" style="margin:0;min-width:180px">Цвет по
@@ -12375,6 +12377,36 @@
       }, Math.max(5000, Math.min(iv, 60000)));
     }
 
+    const CHIPMAP_MODE_HINTS = {
+      temp: "Temperature — цвет по °C чипа (холод → тепло)",
+      gradient:
+        "Gradient — чип горячее upstream-соседей по airflow (локальный hotspot)",
+      outliers:
+        "Outliers — чип горячее того же C# на других платах (z-score)",
+      nonce_def:
+        "Nonce deficit — nonce ниже среднего по слоту (слабый / мёртвый чип)",
+      est_th: "Hash est — оценка TH/s чипа (доля nonce × hashrate ASIC)",
+      nonce: "Hash (nonce) — сырой счётчик nonce чипа",
+      nonce_rate: "Nonce/s — nonce / mining elapsed",
+      freq: "Frequency — частота чипа, MHz",
+    };
+    const CHIPMAP_MODE_GLOSS =
+      "Temperature — °C · Gradient — vs соседи · Outliers — vs другие платы · Nonce deficit — vs средний nonce слота";
+
+    function updateChipmapModeHint() {
+      const el = document.getElementById("chipmap-mode-hint");
+      if (!el) return;
+      const m =
+        document.getElementById("chipmap-metric")?.value || "temp";
+      const active = CHIPMAP_MODE_HINTS[m] || CHIPMAP_MODE_HINTS.temp;
+      el.innerHTML =
+        "<strong style=\"color:var(--text)\">" +
+        active.replace(/^([^—]+)—/, "$1</strong> —") +
+        '<span style="display:block;margin-top:4px;color:var(--dim);font-size:0.9em">' +
+        CHIPMAP_MODE_GLOSS +
+        "</span>";
+    }
+
     document
       .getElementById("btn-chipmap-refresh")
       ?.addEventListener("click", () => {
@@ -12387,8 +12419,10 @@
     document
       .getElementById("chipmap-metric")
       ?.addEventListener("change", () => {
+        updateChipmapModeHint();
         if (chipmapData) renderChipmap(chipmapData);
       });
+    updateChipmapModeHint();
 
     loadChipmapConfig();
     scheduleChipmapPoll();
