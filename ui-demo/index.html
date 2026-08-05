@@ -500,36 +500,55 @@
       font-variant-numeric: tabular-nums;
       letter-spacing: -0.02em;
     }
-    /* temp / gradient / outliers / nonce_def: only °C center + C# top-right */
+    /* temp / gradient / outliers / nonce_def:
+       № top-center faint · temp+°C mid · err/crc/x/r bottom */
     .chip-cell.chip-simple {
-      justify-content: center;
-      padding: 1px;
+      justify-content: space-between;
+      padding: 1px 1px 1px;
     }
-    .chip-cell.chip-simple .c-top,
-    .chip-cell.chip-simple .c-bot {
+    .chip-cell.chip-simple .c-top {
       display: none;
     }
+    .chip-cell.chip-simple .c-bot {
+      display: flex;
+    }
     .chip-cell.chip-simple .c-id {
+      position: absolute;
       top: 1px;
-      right: 2px;
-      font-size: 0.48rem;
-      font-weight: 700;
-      opacity: 0.78;
-      letter-spacing: -0.02em;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: 0.4rem;
+      font-weight: 500;
+      opacity: 0.38;
+      letter-spacing: 0;
+      color: inherit;
     }
     .chip-cell.chip-simple .c-main {
-      font-size: 0.88rem;
-      font-weight: 750;
+      font-size: 0.8rem;
+      font-weight: 700;
       width: 100%;
-      padding-top: 4px; /* clear C# corner */
+      padding-top: 7px; /* room for faint chip # */
+      align-items: baseline;
+      justify-content: center;
+      gap: 0;
+    }
+    .chip-cell .c-deg {
+      font-size: 0.48em;
+      font-weight: 650;
+      vertical-align: super;
+      line-height: 0;
+      margin-left: 0.05em;
+      opacity: 0.9;
+      letter-spacing: -0.04em;
     }
     .chip-cell.chip-light {
       color: rgba(12, 18, 14, 0.92);
       text-shadow: none;
       border-color: rgba(0, 0, 0, 0.12);
     }
-    .chip-cell.chip-light .c-id { opacity: 0.55; }
-    .chip-cell.chip-simple.chip-light .c-id { opacity: 0.7; }
+    .chip-cell.chip-light .c-id { opacity: 0.4; }
+    .chip-cell.chip-simple.chip-light .c-id { opacity: 0.42; }
     .chip-cell.chip-light .c-top,
     .chip-cell.chip-light .c-bot { opacity: 0.8; }
     .chip-legend {
@@ -11455,7 +11474,7 @@
       return bySlot;
     }
 
-    /** Modes where cell = large °C center + C# top-right (freq/err only in tooltip). */
+    /** Modes: faint # top-center · temp + °C mid · err/crc/x/r bottom. */
     function chipmapIsTempSimpleMetric(metric) {
       return (
         metric === "temp" ||
@@ -11466,8 +11485,8 @@
     }
 
     /**
-     * Center value. Temp-simple modes always show °C.
-     * Hash metrics show nonce / TH / freq as main number.
+     * Center value. Temp-simple modes always show temperature number
+     * (caller adds superscript °C). Hash metrics show nonce / TH / freq.
      */
     function chipmapMainLabel(c, metric, analysis) {
       if (!c) return "—";
@@ -11558,16 +11577,28 @@
             : "0";
       const main = chipmapMainLabel(c, metric, analysis);
       if (simple) {
-        // clean: large temp + C# corner (freq/err in tooltip)
+        // # top-center · temp + °C · err/crc/x/r bottom
+        const mainHtml =
+          main === "—"
+            ? "—"
+            : main + '<sup class="c-deg">°C</sup>';
         cell.innerHTML =
           '<span class="c-id">' +
           chipNo +
           "</span>" +
           '<span class="c-top"></span>' +
           '<span class="c-main">' +
-          main +
+          mainHtml +
           "</span>" +
-          '<span class="c-bot"></span>';
+          '<span class="c-bot"><span>' +
+          err +
+          "</span><span>" +
+          crc +
+          "</span><span>" +
+          x +
+          "</span><span>" +
+          rep +
+          "</span></span>";
       } else {
         cell.innerHTML =
           '<span class="c-id">C' +
@@ -11952,7 +11983,7 @@
           " (10 steps)</span>" +
           "<span>" +
           (chipmapIsTempSimpleMetric(metric)
-            ? "ячейка: °C по центру · № чипа справа сверху"
+            ? "ячейка: № сверху · temp°C · err/crc/x/r"
             : "ячейка: C# · freq/vol · value · err/crc/x/r") +
           " · layout " +
           (isHydro ? "hydro/link" : "snake") +
