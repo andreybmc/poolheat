@@ -4064,6 +4064,32 @@
 
             <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
 
+            <!-- Logs depth (error log + event/action log) -->
+            <div id="panel-logs-depth">
+              <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
+                <div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem" data-i18n="section.logs_depth">Logs depth</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.logs_depth">error log · event / action log ring size</div>
+                </div>
+                <button class="btn primary" type="button" id="btn-logs-depth-save" data-i18n="btn.save">Save</button>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:14px;align-items:end">
+                <label class="field"><span data-i18n="field.error_log_max">Error log depth, rows</span>
+                  <input type="number" id="logs-error-max" value="100" min="10" max="2000" step="10" />
+                </label>
+                <label class="field"><span data-i18n="field.event_log_max">Event log depth, rows</span>
+                  <input type="number" id="logs-event-max" value="200" min="20" max="5000" step="10" />
+                </label>
+              </div>
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n="hint.logs_depth">
+                Oldest entries beyond the limit are dropped on save and as new events arrive.
+                Error log — miner_error_log (SQLite). Event log — policy / action log (disk).
+              </p>
+              <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="logs-depth-status">—</p>
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
+
             <!-- Chip map cache -->
             <div id="panel-chipmap-persist">
               <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
@@ -4555,11 +4581,13 @@
         "h2.whatsminer": "Whatsminer",
         "h2.hashboards": "Hashboards · PCB SN · Tagged",
         "section.history": "History & charts",
+        "section.logs_depth": "Logs depth",
         "section.chip_cache": "Chip map · cache",
         "section.remote": "Remote · auth",
         "section.luci": "LuCI proxy · :8788",
         "section.sniffer": "Miner sniffer",
         "sub.desc.history": "retention · sample interval · enable logging",
+        "sub.desc.logs_depth": "error log · event / action log ring size",
         "sub.desc.chip_cache": "disk cache · survives service restart",
         "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
         "sub.desc.luci": "miner web UI via the router",
@@ -4570,7 +4598,7 @@
         "sub.telegram": "policy notifications · /status commands",
         "sub.policy": "dwell · settle · streak · saved with zone map",
         "sub.warmup": "until ready — no point raising the profile",
-        "sub.advanced_card": "history · chip map cache · rare options",
+        "sub.advanced_card": "history · logs depth · chip map cache · rare options",
         "sub.access": "Remote · auth · LuCI proxy :8788",
         "sub.software": "version · GitHub update check",
         "sub.dry": "auto zones · Safety always · then Save",
@@ -4579,6 +4607,11 @@
         "sub.action_log": "policy events · last write · live",
         "sub.pool_presets": "save current · apply to ASIC · edit url/user/pass",
         "field.store_days": "Keep, days",
+        "field.error_log_max": "Error log depth, rows",
+        "field.event_log_max": "Event log depth, rows",
+        "hint.logs_depth": "Oldest entries beyond the limit are dropped on save and as new events arrive. Error log — miner_error_log (SQLite). Event log — policy / action log (disk).",
+        "toast.logs_saved": "Log depth saved",
+        "toast.logs_pruned": "Log depth saved · pruned errors {err}, events {ev}",
         "field.interval_sec": "Sample interval, sec",
         "field.project": "Project name",
         "field.poll": "Poll interval, sec",
@@ -4756,11 +4789,13 @@
         "h2.whatsminer": "Whatsminer",
         "h2.hashboards": "Hashboards · PCB SN · Tagged",
         "section.history": "История и графики",
+        "section.logs_depth": "Глубина логов",
         "section.chip_cache": "Карта чипов · кеш",
         "section.remote": "Remote · auth",
         "section.luci": "LuCI proxy · :8788",
         "section.sniffer": "Сниффер майнера",
         "sub.desc.history": "хранение · интервал сбора · включение записи",
+        "sub.desc.logs_depth": "лог ошибок · event / action log · размер кольца",
         "sub.desc.chip_cache": "сохранение на диск · переживает рестарт сервиса",
         "sub.desc.remote": "доступ к poolheat UI · не пробрасывать :8787 в WAN",
         "sub.desc.luci": "web-UI майнера через роутер",
@@ -4771,7 +4806,7 @@
         "sub.telegram": "уведомления policy · команды /status",
         "sub.policy": "dwell · settle · streak · сохраняется с картой зон",
         "sub.warmup": "пока не ready — нет смысла повышать профиль",
-        "sub.advanced_card": "история · кеш карты чипов · редкие опции",
+        "sub.advanced_card": "история · глубина логов · кеш карты чипов · редкие опции",
         "sub.access": "Remote · auth · LuCI proxy :8788",
         "sub.software": "версия · проверка обновлений GitHub",
         "sub.dry": "авто-зоны · Safety всегда · после галки — Сохранить",
@@ -4780,6 +4815,11 @@
         "sub.action_log": "события policy · last write · live",
         "sub.pool_presets": "сохранить текущие · применить на ASIC · правка url/user/pass",
         "field.store_days": "Хранить, дней",
+        "field.error_log_max": "Глубина лога ошибок, записей",
+        "field.event_log_max": "Глубина Event лога, записей",
+        "hint.logs_depth": "Записи старше лимита удаляются при сохранении и при появлении новых. Лог ошибок — miner_error_log (SQLite). Event log — policy / action log (на диске).",
+        "toast.logs_saved": "Глубина логов сохранена",
+        "toast.logs_pruned": "Глубина логов сохранена · удалено ошибок {err}, событий {ev}",
         "field.interval_sec": "Интервал сбора, сек",
         "field.project": "Название проекта",
         "field.poll": "Интервал опроса, сек",
@@ -5570,6 +5610,8 @@
         if (typeof loadChipmap === "function") loadChipmap(false);
       }
       if (mainTab === "settings" && settingsSub === "advanced") {
+        if (typeof loadHistoryConfig === "function") loadHistoryConfig();
+        if (typeof loadLogsDepthConfig === "function") loadLogsDepthConfig();
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadLuciProxyConfig === "function") loadLuciProxyConfig();
         if (typeof loadSnifferConfig === "function") loadSnifferConfig();
@@ -5908,7 +5950,7 @@
       const esc = (s) => String(s == null ? "" : s)
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
       try {
-        const res = await fetch("/api/miner/errors?limit=100", { cache: "no-store" });
+        const res = await fetch("/api/miner/errors", { cache: "no-store" });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "log fail");
         const rows = body.errors || [];
@@ -9380,6 +9422,68 @@
       applyZoomPreset(e.target.value);
     });
 
+    async function loadLogsDepthConfig() {
+      const st = document.getElementById("logs-depth-status");
+      try {
+        const res = await fetch("/api/logs/config", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "logs config fail");
+        const c = body.config || {};
+        const lim = body.limits || {};
+        const errEl = document.getElementById("logs-error-max");
+        const evEl = document.getElementById("logs-event-max");
+        if (errEl) {
+          errEl.value = c.error_log_max ?? 100;
+          if (lim.error_log_min != null) errEl.min = lim.error_log_min;
+          if (lim.error_log_max != null) errEl.max = lim.error_log_max;
+        }
+        if (evEl) {
+          evEl.value = c.event_log_max ?? 200;
+          if (lim.event_log_min != null) evEl.min = lim.event_log_min;
+          if (lim.event_log_max != null) evEl.max = lim.event_log_max;
+        }
+        const s = body.stats || {};
+        if (st) {
+          st.textContent =
+            "error: " + (s.error_log_count != null ? s.error_log_count : "—") +
+            " / " + (c.error_log_max ?? "—") +
+            " · event: " + (s.event_log_count != null ? s.event_log_count : "—") +
+            " / " + (c.event_log_max ?? "—");
+        }
+      } catch (e) {
+        if (st) st.textContent = "config error: " + e.message;
+      }
+    }
+
+    async function saveLogsDepthConfig() {
+      const payload = {
+        error_log_max: Number(document.getElementById("logs-error-max")?.value),
+        event_log_max: Number(document.getElementById("logs-event-max")?.value),
+      };
+      try {
+        const res = await fetch("/api/logs/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "fail");
+        const pe = body.pruned_errors || 0;
+        const pv = body.pruned_events || 0;
+        if (pe || pv) {
+          toastSuccess(tf("toast.logs_pruned", { err: pe, ev: pv }));
+        } else {
+          toastSuccess(t("toast.logs_saved", "Log depth saved"));
+        }
+        await loadLogsDepthConfig();
+        if (typeof loadMinerErrorLog === "function") void loadMinerErrorLog();
+        if (typeof loadActionLog === "function") void loadActionLog();
+      } catch (e) {
+        toastError("Failed to save log depth: " + e.message);
+      }
+    }
+    document.getElementById("btn-logs-depth-save")?.addEventListener("click", saveLogsDepthConfig);
+
     document.getElementById("btn-save-map")?.addEventListener("click", () => {
       saveZoneMapConfig();
     });
@@ -9582,6 +9686,7 @@
         try {
           if (typeof loadMinerConfig === "function") await loadMinerConfig();
           if (typeof loadHistoryConfig === "function") await loadHistoryConfig();
+          if (typeof loadLogsDepthConfig === "function") await loadLogsDepthConfig();
           if (typeof loadZoneMapConfig === "function") await loadZoneMapConfig();
           if (typeof loadZonePresets === "function") await loadZonePresets();
           if (typeof loadPoolPresets === "function") await loadPoolPresets();
@@ -10607,6 +10712,9 @@
         const have = (pol && pol.measured_work) || "—";
         const dry = pol && pol.dry_run ? "Dry Run ON" : "Dry Run OFF";
         const fs = pol && pol.force_stop ? "Force Stop ON" : "Force Stop OFF";
+        const stored =
+          pol && pol.events_stored != null ? pol.events_stored : events.length;
+        const emax = pol && pol.events_max != null ? pol.events_max : null;
         meta.textContent =
           "zone " +
           z +
@@ -10619,7 +10727,8 @@
           " · " +
           fs +
           " · " +
-          events.length +
+          stored +
+          (emax != null ? " / " + emax : "") +
           " events";
       }
       if (!events.length) {

@@ -135,7 +135,22 @@ SNIFFER_CFG_FILE = DATA / "sniffer_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
-POLICY_EVENTS_MAX = 200  # keep last N on disk + in memory
+# Defaults; live limits come from logs_config.json (Advanced settings)
+POLICY_EVENTS_MAX_DEFAULT = 200
+MINER_ERROR_LOG_MAX_DEFAULT = 100
+LOGS_CFG_FILE = DATA / "logs_config.json"
+DEFAULT_LOGS_CFG: dict = {
+    "error_log_max": MINER_ERROR_LOG_MAX_DEFAULT,  # miner error log rows kept
+    "event_log_max": POLICY_EVENTS_MAX_DEFAULT,  # action / policy events kept
+}
+# Absolute clamps (UI + API)
+ERROR_LOG_MAX_MIN, ERROR_LOG_MAX_CEIL = 10, 2000
+EVENT_LOG_MAX_MIN, EVENT_LOG_MAX_CEIL = 20, 5000
+_logs_cfg_lock = threading.Lock()
+_logs_cfg: dict = dict(DEFAULT_LOGS_CFG)
+# Backward-compat names used in comments / older code paths
+POLICY_EVENTS_MAX = POLICY_EVENTS_MAX_DEFAULT
+MINER_ERROR_LOG_MAX = MINER_ERROR_LOG_MAX_DEFAULT
 # After OTA install + restart: notify the chat that started the update
 UPDATE_NOTIFY_FILE = DATA / "update_notify.json"
 DEFAULT_API_PASSWORD = _APP["api_password"]
@@ -181,7 +196,7 @@ _policy_ctrl: dict = {
     "streak_count": 0,
     "last_apply_ts": 0.0,
     "last_event": None,
-    "events": [],  # last POLICY_EVENTS_MAX — loaded/saved via policy_events.json
+    "events": [],  # last N — loaded/saved via policy_events.json (N = event_log_max)
     "enabled": True,
     # Manual override: until unix ts — zone auto off, Safety still on
     "override_until_ts": 0.0,
@@ -4275,6 +4290,7 @@ def build_config_backup() -> dict:
 
     with _hist_cfg_lock:
         history = dict(_hist_cfg)
+    logs = get_logs_cfg()
     with _weather_cfg_lock:
         weather = dict(_weather_cfg)
     with _pool_cfg_lock:
@@ -4306,6 +4322,7 @@ def build_config_backup() -> dict:
         "configs": {
             "app": app_merged,
             "history": history,
+            "logs": logs,
             "weather": weather,
             "pool": pool,
             "zone_map": zone,
@@ -4422,6 +4439,14 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("history")
         except Exception as e:
             errors["history"] = str(e)
+
+    # 2b) logs depth (error log + event/action log)
+    if "logs" in want and isinstance(cfgs.get("logs"), dict):
+        try:
+            apply_logs_cfg(cfgs["logs"])
+            applied.append("logs")
+        except Exception as e:
+            errors["logs"] = str(e)
 
     # 3) weather
     if "weather" in want and isinstance(cfgs.get("weather"), dict):
@@ -4724,6 +4749,136 @@ def _load_hist_cfg() -> None:
         _hist_cfg["retention_days"] = max(1, min(90, int(_hist_cfg["retention_days"])))
         _hist_cfg["sample_interval_sec"] = max(5, min(3600, int(_hist_cfg["sample_interval_sec"])))
         _hist_cfg["enabled"] = bool(_hist_cfg["enabled"])
+
+
+def _clamp_error_log_max(v) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        n = MINER_ERROR_LOG_MAX_DEFAULT
+    return max(ERROR_LOG_MAX_MIN, min(ERROR_LOG_MAX_CEIL, n))
+
+
+def _clamp_event_log_max(v) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        n = POLICY_EVENTS_MAX_DEFAULT
+    return max(EVENT_LOG_MAX_MIN, min(EVENT_LOG_MAX_CEIL, n))
+
+
+def _load_logs_cfg() -> None:
+    """Load error/event log depth limits from DATA/logs_config.json."""
+    global _logs_cfg, MINER_ERROR_LOG_MAX, POLICY_EVENTS_MAX
+    with _logs_cfg_lock:
+        raw = _load_json(LOGS_CFG_FILE, DEFAULT_LOGS_CFG)
+        if not isinstance(raw, dict):
+            raw = {}
+        cfg = dict(DEFAULT_LOGS_CFG)
+        cfg["error_log_max"] = _clamp_error_log_max(
+            raw.get("error_log_max", DEFAULT_LOGS_CFG["error_log_max"])
+        )
+        cfg["event_log_max"] = _clamp_event_log_max(
+            raw.get("event_log_max", DEFAULT_LOGS_CFG["event_log_max"])
+        )
+        _logs_cfg = cfg
+        MINER_ERROR_LOG_MAX = cfg["error_log_max"]
+        POLICY_EVENTS_MAX = cfg["event_log_max"]
+
+
+def _save_logs_cfg() -> None:
+    with _logs_cfg_lock:
+        _save_json(LOGS_CFG_FILE, dict(_logs_cfg))
+
+
+def get_logs_cfg() -> dict:
+    with _logs_cfg_lock:
+        return dict(_logs_cfg)
+
+
+def get_error_log_max() -> int:
+    with _logs_cfg_lock:
+        return int(_logs_cfg.get("error_log_max") or MINER_ERROR_LOG_MAX_DEFAULT)
+
+
+def get_event_log_max() -> int:
+    with _logs_cfg_lock:
+        return int(_logs_cfg.get("event_log_max") or POLICY_EVENTS_MAX_DEFAULT)
+
+
+def prune_miner_error_log(max_rows: int | None = None) -> int:
+    """Keep only last max_rows in miner_error_log. Returns deleted count."""
+    mx = get_error_log_max() if max_rows is None else _clamp_error_log_max(max_rows)
+    with _db_lock:
+        conn = _db_connect()
+        try:
+            before = conn.execute("SELECT COUNT(*) FROM miner_error_log").fetchone()[0]
+            conn.execute(
+                """
+                DELETE FROM miner_error_log
+                WHERE id NOT IN (
+                    SELECT id FROM miner_error_log
+                    ORDER BY seen_ts DESC, id DESC
+                    LIMIT ?
+                )
+                """,
+                (mx,),
+            )
+            conn.commit()
+            after = conn.execute("SELECT COUNT(*) FROM miner_error_log").fetchone()[0]
+            return max(0, int(before) - int(after))
+        finally:
+            conn.close()
+
+
+def apply_logs_cfg(req: dict | None = None) -> dict:
+    """
+    Update log depth settings, persist, prune both logs to new limits.
+    Returns {config, pruned_errors, pruned_events}.
+    """
+    global MINER_ERROR_LOG_MAX, POLICY_EVENTS_MAX
+    req = req if isinstance(req, dict) else {}
+    with _logs_cfg_lock:
+        if "error_log_max" in req and req["error_log_max"] is not None:
+            _logs_cfg["error_log_max"] = _clamp_error_log_max(req["error_log_max"])
+        if "event_log_max" in req and req["event_log_max"] is not None:
+            _logs_cfg["event_log_max"] = _clamp_event_log_max(req["event_log_max"])
+        cfg = dict(_logs_cfg)
+        MINER_ERROR_LOG_MAX = cfg["error_log_max"]
+        POLICY_EVENTS_MAX = cfg["event_log_max"]
+    _save_logs_cfg()
+
+    pruned_errors = 0
+    try:
+        pruned_errors = prune_miner_error_log(cfg["error_log_max"])
+    except Exception as e:
+        print(f"[logs] prune error log: {e}")
+
+    pruned_events = 0
+    try:
+        mx = int(cfg["event_log_max"])
+        with _policy_lock:
+            evs = list(_policy_ctrl.get("events") or [])
+            if len(evs) > mx:
+                pruned_events = len(evs) - mx
+                _policy_ctrl["events"] = evs[:mx]
+                if _policy_ctrl["events"]:
+                    _policy_ctrl["last_event"] = _policy_ctrl["events"][0]
+                else:
+                    _policy_ctrl["last_event"] = None
+        if pruned_events:
+            _save_policy_events()
+        else:
+            # still rewrite max field on disk
+            _save_policy_events()
+    except Exception as e:
+        print(f"[logs] prune event log: {e}")
+
+    return {
+        "config": cfg,
+        "pruned_errors": pruned_errors,
+        "pruned_events": pruned_events,
+    }
 
 
 def _save_hist_cfg() -> None:
@@ -5061,6 +5216,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
 
 _load_state()
 _load_hist_cfg()
+_load_logs_cfg()
 _load_weather_cfg()
 _load_pool_cfg()
 _load_zone_cfg()
@@ -5186,7 +5342,7 @@ def init_db() -> None:
             conn.close()
 
 
-MINER_ERROR_LOG_MAX = 100
+# MINER_ERROR_LOG_MAX / POLICY_EVENTS_MAX live in logs_config (see get_error_log_max)
 _IDENT_CACHE: dict = {"ts": 0.0, "data": None}
 _IDENT_CACHE_TTL = 45.0
 _BACKFILL_DONE = False
@@ -5370,7 +5526,7 @@ def log_miner_errors(
     """
     Append new miner errors to journal (dedupe by code+miner_ts).
     Stores miner identity + component SN for the miner active at log time.
-    Keep only last MINER_ERROR_LOG_MAX rows. Returns number inserted.
+    Keep only last get_error_log_max() rows. Returns number inserted.
     """
     if not entries:
         return 0
@@ -5384,6 +5540,7 @@ def log_miner_errors(
 
     now = time.time()
     iso = datetime.now().isoformat(timespec="seconds")
+    max_rows = get_error_log_max()
     inserted = 0
     with _db_lock:
         conn = _db_connect()
@@ -5436,7 +5593,7 @@ def log_miner_errors(
                     LIMIT ?
                 )
                 """,
-                (MINER_ERROR_LOG_MAX,),
+                (max_rows,),
             )
             conn.commit()
         finally:
@@ -5513,8 +5670,15 @@ def _display_cause(code: str | None, cause: str | None) -> str:
     return _official_cause(c) or msg or (f"Error code {c}" if c else "—")
 
 
-def query_miner_error_log(limit: int = 100) -> list[dict]:
-    limit = max(1, min(100, int(limit)))
+def query_miner_error_log(limit: int | None = None) -> list[dict]:
+    mx = get_error_log_max()
+    if limit is None:
+        limit = mx
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = mx
+    limit = max(1, min(mx, limit))
     with _db_lock:
         conn = _db_connect()
         try:
@@ -15526,7 +15690,7 @@ def _load_policy_events() -> None:
                 },
             }
         )
-        if len(clean) >= POLICY_EVENTS_MAX:
+        if len(clean) >= get_event_log_max():
             break
     with _policy_lock:
         _policy_ctrl["events"] = clean
@@ -15543,10 +15707,11 @@ def _load_policy_events() -> None:
 
 def _save_policy_events() -> None:
     """Persist ring buffer to DATA/policy_events.json."""
+    mx = get_event_log_max()
     with _policy_lock:
-        evs = list(_policy_ctrl.get("events") or [])[:POLICY_EVENTS_MAX]
+        evs = list(_policy_ctrl.get("events") or [])[:mx]
     try:
-        _save_json(POLICY_EVENTS_FILE, {"events": evs, "max": POLICY_EVENTS_MAX})
+        _save_json(POLICY_EVENTS_FILE, {"events": evs, "max": mx})
     except Exception as e:
         print(f"[policy] save events: {e}")
 
@@ -15558,11 +15723,12 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
         "msg": msg,
         **extra,
     }
+    mx = get_event_log_max()
     with _policy_lock:
         _policy_ctrl["last_event"] = ev
         events = _policy_ctrl.get("events") or []
         events.insert(0, ev)
-        _policy_ctrl["events"] = events[:POLICY_EVENTS_MAX]
+        _policy_ctrl["events"] = events[:mx]
     print(f"[policy] {ev['ts']} {kind}: {msg}")
     # disk so OTA / restart does not wipe the log
     try:
@@ -15576,6 +15742,7 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
         pass
 
 
+_load_logs_cfg()
 _load_policy_events()
 
 
@@ -16016,6 +16183,7 @@ def get_policy_status() -> dict:
         poll = int(POLL_INTERVAL_SEC)
     zc = get_zone_cfg()
     ov_rem = max(0, int(ov_until - now)) if ov_until > now else 0
+    events_max = get_event_log_max()
     return {
         "ok": True,
         "server_side": True,
@@ -16041,7 +16209,10 @@ def get_policy_status() -> dict:
         "force_stop": bool(ctrl.get("force_stop")),
         "last_apply_ts": ctrl.get("last_apply_ts"),
         "last_event": ctrl.get("last_event"),
-        "events": events[:40],
+        # full ring for Action log UI (depth = Advanced → Event log)
+        "events": events[:events_max],
+        "events_max": events_max,
+        "events_stored": len(events),
         "override_active": ov_until > now,
         "override_until_ts": ov_until if ov_until > now else None,
         "override_remaining_sec": ov_rem,
@@ -16552,6 +16723,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/history/stats":
             self._json_response(200, {"ok": True, **history_stats(), "config": dict(_hist_cfg)})
             return
+        if path in ("/api/logs/config", "/api/log/config"):
+            self._api_logs_config_get()
+            return
         if path == "/api/weather":
             self._api_weather_get()
             return
@@ -16737,6 +16911,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/history/config":
             self._api_history_config_post()
+            return
+        if path in ("/api/logs/config", "/api/log/config"):
+            self._api_logs_config_post()
             return
         if path == "/api/weather/config":
             self._api_weather_config_post()
@@ -17218,6 +17395,80 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_logs_config_get(self) -> None:
+        cfg = get_logs_cfg()
+        # live counts for UI
+        err_count = None
+        try:
+            with _db_lock:
+                conn = _db_connect()
+                try:
+                    err_count = int(
+                        conn.execute("SELECT COUNT(*) FROM miner_error_log").fetchone()[0]
+                    )
+                finally:
+                    conn.close()
+        except Exception:
+            err_count = None
+        with _policy_lock:
+            ev_count = len(_policy_ctrl.get("events") or [])
+        self._json_response(
+            200,
+            {
+                "ok": True,
+                "config": cfg,
+                "limits": {
+                    "error_log_min": ERROR_LOG_MAX_MIN,
+                    "error_log_max": ERROR_LOG_MAX_CEIL,
+                    "event_log_min": EVENT_LOG_MAX_MIN,
+                    "event_log_max": EVENT_LOG_MAX_CEIL,
+                },
+                "stats": {
+                    "error_log_count": err_count,
+                    "event_log_count": ev_count,
+                },
+            },
+        )
+
+    def _api_logs_config_post(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            out = apply_logs_cfg(req)
+            # refresh counts
+            err_count = None
+            try:
+                with _db_lock:
+                    conn = _db_connect()
+                    try:
+                        err_count = int(
+                            conn.execute(
+                                "SELECT COUNT(*) FROM miner_error_log"
+                            ).fetchone()[0]
+                        )
+                    finally:
+                        conn.close()
+            except Exception:
+                pass
+            with _policy_lock:
+                ev_count = len(_policy_ctrl.get("events") or [])
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "config": out["config"],
+                    "pruned_errors": out.get("pruned_errors", 0),
+                    "pruned_events": out.get("pruned_events", 0),
+                    "stats": {
+                        "error_log_count": err_count,
+                        "event_log_count": ev_count,
+                    },
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_weather_get(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
         force = (qs.get("force", ["0"])[0] or "0") in ("1", "true", "yes")
@@ -17412,10 +17663,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api_miner_error_log(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
+        mx = get_error_log_max()
         try:
-            limit = int(qs.get("limit", ["100"])[0] or 100)
+            limit = int(qs.get("limit", [str(mx)])[0] or mx)
         except ValueError:
-            limit = 100
+            limit = mx
         try:
             rows = query_miner_error_log(limit=limit)
             self._json_response(
@@ -17423,7 +17675,7 @@ class Handler(SimpleHTTPRequestHandler):
                 {
                     "ok": True,
                     "count": len(rows),
-                    "max": MINER_ERROR_LOG_MAX,
+                    "max": mx,
                     "errors": rows,
                 },
             )
