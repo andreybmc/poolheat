@@ -515,7 +515,7 @@
       pointer-events: none;
       color: inherit;
     }
-    /* top-left auxiliary (vol / freq) */
+    /* top-left auxiliary (vol mV / freq) */
     .chip-cell .c-aux {
       position: absolute;
       top: 1px;
@@ -526,6 +526,17 @@
       letter-spacing: -0.02em;
       line-height: 1;
       pointer-events: none;
+      max-width: 48%;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .chip-cell .c-aux .c-unit {
+      font-size: 0.65em;
+      font-weight: 550;
+      opacity: 0.75;
+      margin-left: 0.08em;
+      vertical-align: super;
+      line-height: 0;
     }
     /* temp / gradient / outliers / nonce_def: main mid · err bottom */
     .chip-cell.chip-simple {
@@ -11901,19 +11912,24 @@
 
     /**
      * Cell layout:
-     * - temp / gradient / outliers → °C center · # top-right
+     * - temp / gradient / outliers → °C · # top-right
      * - nonce_def → deficit % · # top-right
-     * - freq / nonce_rate → vol top-left · # top-right · value center
-     * - nonce / est_th → freq top-left · # top-right · value center
+     * - freq → vol+mV top-left · # top-right · MHz center
+     * - nonce_rate / nonce / est_th → freq top-left · # top-right · value center
      */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
       cell.className = "chip-cell";
       const simple = chipmapIsTempSimpleMetric(metric);
-      // aux top-left: vol for freq & nonce_rate; freq for nonce & est_th
+      // aux top-left: vol only on Frequency; Freq on other hash modes
       let auxKind = null; // "vol" | "freq" | null
-      if (metric === "freq" || metric === "nonce_rate") auxKind = "vol";
-      else if (metric === "nonce" || metric === "est_th") auxKind = "freq";
+      if (metric === "freq") auxKind = "vol";
+      else if (
+        metric === "nonce_rate" ||
+        metric === "nonce" ||
+        metric === "est_th"
+      )
+        auxKind = "freq";
       const compact = !!auxKind;
       if (simple) cell.classList.add("chip-simple");
       if (compact) cell.classList.add("chip-compact");
@@ -11964,7 +11980,13 @@
             ? String(c.x2 | 0)
             : "0";
       const mainHtml = chipmapMainHtml(c, metric, analysis);
-      const auxVal = auxKind === "vol" ? vol : auxKind === "freq" ? freq : "";
+      let auxHtml = "";
+      if (auxKind === "vol" && vol !== "—") {
+        // domain voltage from Miner API Log — millivolts
+        auxHtml = vol + '<span class="c-unit">mV</span>';
+      } else if (auxKind === "freq") {
+        auxHtml = freq;
+      }
       const bot =
         '<span class="c-bot"><span>' +
         err +
@@ -11977,7 +11999,7 @@
         "</span></span>";
       cell.innerHTML =
         '<span class="c-aux">' +
-        (auxVal || "") +
+        auxHtml +
         "</span>" +
         '<span class="c-id">' +
         chipNo +
