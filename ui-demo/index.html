@@ -127,10 +127,11 @@
     .pill.ok { color: var(--ok); border-color: rgba(62, 207, 142, 0.35); background: var(--ok-bg); }
     .pill.ok .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
     .pill.warn { color: var(--warn); border-color: rgba(240, 180, 41, 0.35); background: var(--warn-bg); }
-    .pill.warn .dot { background: var(--warn); }
+    .pill.warn .dot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
     .pill.danger { color: var(--danger); border-color: rgba(240, 113, 120, 0.35); background: var(--danger-bg); }
-    .pill.danger .dot { background: var(--danger); }
+    .pill.danger .dot { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
     .pill.accent { color: var(--accent); border-color: rgba(61, 156, 240, 0.4); background: rgba(61, 156, 240, 0.1); }
+    .pill.accent .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 
     /* —— tabs —— */
     nav.tabs {
@@ -2380,11 +2381,10 @@
         </div>
       </div>
       <div class="header-meta">
-        <span class="pill accent tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
+        <span class="pill warn tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
         <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
         <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
         <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> —</span>
-        <span class="pill tip" data-tip-key="lan_token">LAN · token</span>
         <label class="lang-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-left:2px" title="Language / Lang">
           <span style="font-size:0.72rem;color:var(--dim)" data-i18n="lang.label_short">Lang</span>
           <select id="ui-lang-select" class="lang-select" aria-label="Language">
