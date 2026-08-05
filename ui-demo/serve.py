@@ -7794,12 +7794,13 @@ def _invalidate_cache(*, hard: bool = False) -> None:
 # ─── Telegram bot (getUpdates long-poll) ──────────────────────────────────────
 
 # Default prefs for each chat_id (copied when chat is first seen)
+# Notifications OFF by default — user enables in Profile.
 DEFAULT_CHAT_PREFS = {
     "lang": "ru",  # ru | en
-    "notify_events": True,
-    "notify_offline": True,
-    "notify_safety": True,
-    "notify_zone": True,
+    "notify_events": False,
+    "notify_offline": False,
+    "notify_safety": False,
+    "notify_zone": False,
     "commands_en": True,
     # confirm main-menu Force Stop / Continue (avoid accidental taps)
     "confirm_force_stop": True,
@@ -7845,12 +7846,12 @@ DEFAULT_TELEGRAM_CFG = {
     "chat_ids": [],
     # per-chat prefs: { "123456": { lang, notify_* , commands_en } }
     "chats": {},
-    # global defaults for NEW chats (and fallback)
-    "notify_events": True,  # zone/policy event log · APPLY
-    "notify_offline": True,  # ASIC offline (after N consecutive poll fails)
+    # global defaults for NEW chats (and fallback) — all notify OFF until user opts in
+    "notify_events": False,  # zone/policy event log · APPLY
+    "notify_offline": False,  # ASIC offline (after N consecutive poll fails)
     "notify_offline_streak": 3,  # in a row timeouts before TG (reset on any ok poll)
-    "notify_safety": True,  # Safety Critical
-    "notify_zone": True,  # zone change apply
+    "notify_safety": False,  # Safety Critical
+    "notify_zone": False,  # zone change apply
     "commands_en": True,  # /status /suspend …
     "default_lang": "ru",
     "offset": 0,  # last processed update_id + 1
@@ -7934,7 +7935,8 @@ def _load_telegram_cfg() -> None:
             if k.startswith("show_"):
                 cfg[k] = bool(cfg.get(k, True))
             else:
-                cfg[k] = bool(cfg.get(k, True))
+                # notify_* default OFF; commands_en default ON (DEFAULT_TELEGRAM_CFG)
+                cfg[k] = bool(cfg.get(k, DEFAULT_TELEGRAM_CFG.get(k, False)))
         lang0 = str(cfg.get("default_lang") or "ru").lower()
         cfg["default_lang"] = "en" if lang0.startswith("en") else "ru"
         # per-chat map
@@ -7945,11 +7947,13 @@ def _load_telegram_cfg() -> None:
             base = dict(DEFAULT_CHAT_PREFS)
             base["lang"] = cfg["default_lang"]
             for nk in _TG_BOOL_PREF_KEYS:
-                # global defaults only for notify_*/commands_en; show_* always default True
+                # global defaults for notify_*/commands_en; show_* always default True
                 if nk.startswith("show_"):
                     base[nk] = True
                 else:
-                    base[nk] = bool(cfg.get(nk, True))
+                    base[nk] = bool(
+                        cfg.get(nk, DEFAULT_CHAT_PREFS.get(nk, False))
+                    )
             prev = chats_in.get(key) if isinstance(chats_in.get(key), dict) else {}
             # also try int key as string already
             merged = dict(base)
@@ -7963,6 +7967,28 @@ def _load_telegram_cfg() -> None:
                     merged[pk] = bool(pv)
             merged.pop("notify_policy", None)
             chats_out[key] = merged
+        # One-shot: silence all notifies (user opts in via Profile). Existing
+        # chats had True from old defaults — reset once then set flag.
+        notify_migrated = False
+        if not cfg.get("notify_opt_in_v1"):
+            for k in (
+                "notify_events",
+                "notify_offline",
+                "notify_safety",
+                "notify_zone",
+            ):
+                cfg[k] = False
+            for ch in chats_out.values():
+                if isinstance(ch, dict):
+                    for k in (
+                        "notify_events",
+                        "notify_offline",
+                        "notify_safety",
+                        "notify_zone",
+                    ):
+                        ch[k] = False
+            cfg["notify_opt_in_v1"] = True
+            notify_migrated = True
         # keep orphan prefs? drop — only allowlisted chats
         cfg["chats"] = chats_out
         try:
@@ -8038,6 +8064,12 @@ def _load_telegram_cfg() -> None:
             )
         cfg["chat_history"] = hist_out[:_TG_HISTORY_MAX]
         _tg_cfg = cfg
+        if notify_migrated:
+            # hold lock; write directly (avoid re-entrant _save_telegram_cfg)
+            try:
+                _save_json(TELEGRAM_CFG_FILE, _tg_cfg)
+            except Exception as e:
+                print(f"[tg] notify_opt_in_v1 save: {e}")
 
 
 def _save_telegram_cfg(*, force: bool = False) -> None:
@@ -9521,6 +9553,11 @@ def _tg_pretty_last_event(msg: str | None) -> str | None:
         return None
     if m.upper().startswith("FORCE_STOP"):
         return None
+    # TG action log: "chat 123 · @user · Filtration ON" — Action log only
+    if low.startswith("chat ") or " · chat " in low:
+        return None
+    if "filtration" in low or "фильтрац" in low or "насос" in low:
+        return None
     # FAIL action=value: err — multi-line block via _tg_status_fail_lines
     if m.upper().startswith("FAIL "):
         return m
@@ -10258,11 +10295,20 @@ def _tg_status_text(lang: str = "ru") -> str:
         or raw_l.startswith("force_stop")
         or "force stop" in raw_l
     )
+    # TG control log / filtration — not for Status (clutter); Action log keeps them
+    is_tg_action_log = raw_l.startswith("chat ") or " · chat " in raw_l
+    is_filtration_ev = (
+        "filtration" in raw_l
+        or "фильтрац" in raw_l
+        or "насос" in raw_l
+    )
     skip_ev = (
         not raw_ev
         or "dry_run" in raw_l
         or raw_l.startswith("dry run")
         or is_apply_noise
+        or is_tg_action_log
+        or is_filtration_ev
         or (is_offline_ev and online)  # was offline blip; status already 🟢 online
     )
     if not skip_ev:
