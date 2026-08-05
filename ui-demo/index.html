@@ -3830,6 +3830,58 @@
       </div>
     </section>
 
+    <!-- ========== PERIPHERALS ========== -->
+    <section class="view" id="view-periph">
+      <nav class="subtabs" role="tablist" aria-label="Peripherals">
+        <button type="button" class="active" data-subtab="sensors" data-i18n="sub.sensors">Sensors</button>
+        <button type="button" data-subtab="devices" data-i18n="sub.devices">Devices</button>
+      </nav>
+
+      <div class="subview active" id="subview-periph-sensors">
+        <div class="stack">
+          <div class="card" id="panel-periph-sensors">
+            <div class="card-h">
+              <div>
+                <h2 data-i18n="h2.sensors">Sensors</h2>
+                <div class="sub" data-i18n="sub.sensors_card">external temperature · humidity · level · bus / GPIO</div>
+              </div>
+            </div>
+            <div class="card-b stack" style="gap:12px">
+              <p style="font-size:0.85rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.sensors_empty">
+                No sensors configured yet. Add DS18B20, DHT, 1-Wire, Modbus and other pool/room sensors here.
+              </p>
+              <div class="metric" style="margin:0">
+                <label data-i18n="periph.count">Connected</label>
+                <div class="val" style="font-size:1.15rem" id="periph-sensors-count">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /subview-periph-sensors -->
+
+      <div class="subview" id="subview-periph-devices">
+        <div class="stack">
+          <div class="card" id="panel-periph-devices">
+            <div class="card-h">
+              <div>
+                <h2 data-i18n="h2.devices">Devices</h2>
+                <div class="sub" data-i18n="sub.devices_card">relays · pumps · valves · smart sockets · actuators</div>
+              </div>
+            </div>
+            <div class="card-b stack" style="gap:12px">
+              <p style="font-size:0.85rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.devices_empty">
+                No devices configured yet. Filtration pump, heaters, valves and smart outlets will appear here.
+              </p>
+              <div class="metric" style="margin:0">
+                <label data-i18n="periph.count">Connected</label>
+                <div class="val" style="font-size:1.15rem" id="periph-devices-count">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /subview-periph-devices -->
+    </section>
+
     <!-- ========== SETTINGS ========== -->
     <section class="view" id="view-settings">
       <nav class="subtabs" role="tablist" aria-label="Settings">
@@ -4676,6 +4728,7 @@
         "tab.miner": "Miner",
         "tab.map": "Zone map",
         "tab.pool": "Pool",
+        "tab.periph": "Peripherals",
         "tab.settings": "Settings",
         "tab.info": "Info",
         "sub.miner": "Miner",
@@ -4686,6 +4739,15 @@
         "sub.main": "General",
         "sub.advanced": "Advanced",
         "sub.logs": "Logs",
+        "sub.sensors": "Sensors",
+        "sub.devices": "Devices",
+        "h2.sensors": "Sensors",
+        "h2.devices": "Devices",
+        "sub.sensors_card": "external temperature · humidity · level · bus / GPIO",
+        "sub.devices_card": "relays · pumps · valves · smart sockets · actuators",
+        "periph.sensors_empty": "No sensors configured yet. Add DS18B20, DHT, 1-Wire, Modbus and other pool/room sensors here.",
+        "periph.devices_empty": "No devices configured yet. Filtration pump, heaters, valves and smart outlets will appear here.",
+        "periph.count": "Connected",
         "btn.refresh": "Refresh",
         "btn.save": "Save",
         "btn.clear_db": "Clear database",
@@ -4910,6 +4972,7 @@
         "tab.miner": "Майнер",
         "tab.map": "Карта зон",
         "tab.pool": "Бассейн",
+        "tab.periph": "Периферия",
         "tab.settings": "Настройки",
         "tab.info": "Инфо",
         "sub.miner": "Майнер",
@@ -4920,6 +4983,15 @@
         "sub.main": "Основные",
         "sub.advanced": "Расширенные",
         "sub.logs": "Логи",
+        "sub.sensors": "Датчики",
+        "sub.devices": "Устройства",
+        "h2.sensors": "Датчики",
+        "h2.devices": "Устройства",
+        "sub.sensors_card": "внешняя температура · влажность · уровень · шина / GPIO",
+        "sub.devices_card": "реле · насосы · клапаны · умные розетки · приводы",
+        "periph.sensors_empty": "Датчики пока не настроены. Сюда добавятся DS18B20, DHT, 1-Wire, Modbus и другие датчики бассейна/помещения.",
+        "periph.devices_empty": "Устройства пока не настроены. Здесь появятся насос фильтрации, нагреватели, клапаны и умные розетки.",
+        "periph.count": "Подключено",
         "btn.refresh": "Обновить",
         "btn.save": "Сохранить",
         "btn.clear_db": "Очистить базу",
@@ -5665,7 +5737,8 @@
     }
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
-    /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings */
+    /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings,
+       sensors/devices→periph */
     const TAB_IDS = [
       "dash",
       "miner",
@@ -5674,6 +5747,9 @@
       "minerinfo",
       "map",
       "pool",
+      "periph",
+      "sensors",
+      "devices",
       "settings",
       "advanced",
       "info",
@@ -5707,6 +5783,17 @@
       about: "info",
       log: "logs",
       errors: "logs",
+      peripheral: "periph",
+      peripherals: "periph",
+      periph: "periph",
+      sensor: "sensors",
+      sensors: "sensors",
+      device: "devices",
+      devices: "devices",
+      /* RU deep-links */
+      periferiya: "periph",
+      datchiki: "sensors",
+      ustroystva: "devices",
     };
 
     function setInfoSubtab(subId) {
@@ -5745,6 +5832,17 @@
         sub === "info" ? "subview-miner-info" : "subview-" + sub;
       document.querySelectorAll("#view-miner .subview").forEach((v) => {
         v.classList.toggle("active", v.id === viewId);
+      });
+      return sub;
+    }
+
+    function setPeriphSubtab(subId) {
+      const sub = subId === "devices" ? "devices" : "sensors";
+      document.querySelectorAll("#view-periph nav.subtabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.subtab === sub);
+      });
+      document.querySelectorAll("#view-periph .subview").forEach((v) => {
+        v.classList.toggle("active", v.id === "subview-periph-" + sub);
       });
       return sub;
     }
@@ -5847,6 +5945,7 @@
       let infoSub = "info";
       let minerSub = "miner";
       let settingsSub = "main";
+      let periphSub = "sensors";
       if (tabId === "logs") {
         mainTab = "info";
         infoSub = "logs";
@@ -5862,6 +5961,15 @@
       } else if (tabId === "advanced") {
         mainTab = "settings";
         settingsSub = "advanced";
+      } else if (tabId === "sensors") {
+        mainTab = "periph";
+        periphSub = "sensors";
+      } else if (tabId === "devices") {
+        mainTab = "periph";
+        periphSub = "devices";
+      } else if (tabId === "periph") {
+        mainTab = "periph";
+        periphSub = "sensors";
       } else if (tabId === "info") {
         infoSub = "info";
       } else if (tabId === "miner") {
@@ -5878,6 +5986,7 @@
       if (mainTab === "info") setInfoSubtab(infoSub);
       if (mainTab === "miner") setMinerSubtab(minerSub);
       if (mainTab === "settings") setSettingsSubtab(settingsSub);
+      if (mainTab === "periph") setPeriphSubtab(periphSub);
       if (tabId === "dash") {
         try {
           if (typeof loadHistoryCharts === "function") loadHistoryCharts();
@@ -5945,6 +6054,12 @@
         else if (s === "pools") activateTab("pools");
         else if (s === "info") activateTab("minerinfo");
         else activateTab("miner");
+      });
+    });
+    document.querySelectorAll("#view-periph nav.subtabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const s = btn.dataset.subtab;
+        activateTab(s === "devices" ? "devices" : "sensors");
       });
     });
     window.addEventListener("hashchange", () => {
