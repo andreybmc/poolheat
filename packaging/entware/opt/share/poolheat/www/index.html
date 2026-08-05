@@ -529,18 +529,23 @@
       font-weight: 700;
       width: 100%;
       padding-top: 7px; /* room for faint chip # */
-      align-items: baseline;
+      align-items: flex-start; /* °C sits at top of temp digits */
       justify-content: center;
       gap: 0;
+      line-height: 1;
     }
     .chip-cell .c-deg {
-      font-size: 0.48em;
+      display: inline-block;
+      font-size: 0.42em;
       font-weight: 650;
-      vertical-align: super;
-      line-height: 0;
-      margin-left: 0.05em;
-      opacity: 0.9;
-      letter-spacing: -0.04em;
+      line-height: 1;
+      margin-left: 0.06em;
+      margin-top: 0.05em; /* flush with top of main digits */
+      opacity: 0.88;
+      letter-spacing: -0.05em;
+      vertical-align: top;
+      position: relative;
+      top: 0;
     }
     .chip-cell.chip-light {
       color: rgba(12, 18, 14, 0.92);
