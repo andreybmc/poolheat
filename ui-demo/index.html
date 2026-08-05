@@ -3544,6 +3544,11 @@
 
     <!-- ========== SETTINGS ========== -->
     <section class="view" id="view-settings">
+      <nav class="subtabs" role="tablist" aria-label="Настройки">
+        <button type="button" class="active" data-subtab="main">Основные</button>
+        <button type="button" data-subtab="advanced">Расширенные</button>
+      </nav>
+      <div class="subview active" id="subview-settings-main">
       <div class="stack">
         <div class="card" id="panel-config-backup">
           <div class="card-h">
@@ -4001,6 +4006,35 @@
           </div>
         </div>
       </div>
+      </div><!-- /subview-settings-main -->
+
+      <div class="subview" id="subview-settings-advanced">
+      <div class="stack">
+        <div class="card" id="panel-chipmap-persist">
+          <div class="card-h">
+            <div>
+              <h2>Карта чипов · кеш</h2>
+              <div class="sub">сохранение на диск · переживает рестарт сервиса</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-chipmap-persist-save">Сохранить</button>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="chipmap-persist-cache" checked />
+              <span>Сохранять кеш карты чипов
+                <span class="desc">chipmap_cache.json · показ последней карты после рестарта</span>
+              </span>
+            </label>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
+              При включении после успешного опроса LuCI карта пишется на диск
+              и подгружается при старте сервиса (stale, до следующего live-опроса).
+              Выключение — файл кеша удаляется; в RAM остаётся только текущий опрос.
+            </p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="chipmap-persist-status">—</p>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-settings-advanced -->
     </section>
 
     <!-- ========== INFO ========== -->
@@ -4512,7 +4546,7 @@
     }
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
-    /* Virtual: logs→info, chips/pools/minerinfo→miner */
+    /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings */
     const TAB_IDS = [
       "dash",
       "miner",
@@ -4522,6 +4556,7 @@
       "map",
       "pool",
       "settings",
+      "advanced",
       "info",
       "logs",
     ];
@@ -4548,6 +4583,8 @@
       zone: "map",
       weather: "pool",
       config: "settings",
+      "settings-advanced": "advanced",
+      "settings-adv": "advanced",
       about: "info",
       log: "logs",
       errors: "logs",
@@ -4560,6 +4597,20 @@
       });
       document.querySelectorAll("#view-info .subview").forEach((v) => {
         v.classList.toggle("active", v.id === "subview-" + sub);
+      });
+      return sub;
+    }
+
+    function setSettingsSubtab(subId) {
+      const sub = subId === "advanced" ? "advanced" : "main";
+      document.querySelectorAll("#view-settings nav.subtabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.subtab === sub);
+      });
+      document.querySelectorAll("#view-settings .subview").forEach((v) => {
+        v.classList.toggle(
+          "active",
+          v.id === "subview-settings-" + sub
+        );
       });
       return sub;
     }
@@ -4676,6 +4727,7 @@
       let mainTab = tabId;
       let infoSub = "info";
       let minerSub = "miner";
+      let settingsSub = "main";
       if (tabId === "logs") {
         mainTab = "info";
         infoSub = "logs";
@@ -4688,10 +4740,15 @@
       } else if (tabId === "minerinfo") {
         mainTab = "miner";
         minerSub = "info";
+      } else if (tabId === "advanced") {
+        mainTab = "settings";
+        settingsSub = "advanced";
       } else if (tabId === "info") {
         infoSub = "info";
       } else if (tabId === "miner") {
         minerSub = "miner";
+      } else if (tabId === "settings") {
+        settingsSub = "main";
       }
       document.querySelectorAll("nav.tabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.tab === mainTab);
@@ -4701,6 +4758,7 @@
       });
       if (mainTab === "info") setInfoSubtab(infoSub);
       if (mainTab === "miner") setMinerSubtab(minerSub);
+      if (mainTab === "settings") setSettingsSubtab(settingsSub);
       if (tabId === "dash") {
         try {
           if (typeof loadHistoryCharts === "function") loadHistoryCharts();
@@ -4728,8 +4786,11 @@
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadChipmap === "function") loadChipmap(false);
       }
+      if (mainTab === "settings" && settingsSub === "advanced") {
+        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+      }
       if (!opts.skipUrl) {
-        // #chips / #pools / #logs keep deep-link hashes
+        // #chips / #pools / #logs / #advanced keep deep-link hashes
         setTabUrl(tabId, opts.replaceUrl ? "replace" : "push");
       }
       return tabId;
@@ -4744,6 +4805,12 @@
       btn.addEventListener("click", () => {
         const sub = btn.dataset.subtab === "logs" ? "logs" : "info";
         activateTab(sub);
+      });
+    });
+    document.querySelectorAll("#view-settings nav.subtabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const s = btn.dataset.subtab;
+        activateTab(s === "advanced" ? "advanced" : "settings");
       });
     });
     document.querySelectorAll("#view-miner nav.subtabs button").forEach((btn) => {
@@ -12913,10 +12980,19 @@
         const iv = document.getElementById("chipmap-interval");
         const u = document.getElementById("chipmap-user");
         const sch = document.getElementById("chipmap-scheme");
+        const persist = document.getElementById("chipmap-persist-cache");
         if (en) en.checked = c.enabled !== false;
         if (iv && c.poll_interval_sec != null) iv.value = c.poll_interval_sec;
         if (u && c.web_user) u.value = c.web_user;
         if (sch && c.web_scheme) sch.value = c.web_scheme;
+        if (persist) persist.checked = c.persist_cache !== false;
+        const pst = document.getElementById("chipmap-persist-status");
+        if (pst) {
+          pst.textContent =
+            c.persist_cache === false
+              ? "кеш на диск: выкл"
+              : "кеш на диск: вкл";
+        }
         return c;
       } catch (e) {
         console.warn("chipmap config", e);
@@ -12951,6 +13027,35 @@
         await loadChipmap(true);
       } catch (e) {
         toastError("Chipmap: " + e.message);
+      }
+    }
+
+    async function saveChipmapPersistCache() {
+      try {
+        const on = !!document.getElementById("chipmap-persist-cache")?.checked;
+        const res = await fetch("/api/chipmap/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ persist_cache: on }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "save fail");
+        const c = body.config || body;
+        const pst = document.getElementById("chipmap-persist-status");
+        if (pst) {
+          pst.textContent =
+            c.persist_cache === false
+              ? "кеш на диск: выкл · файл удалён"
+              : "кеш на диск: вкл · сохранено";
+        }
+        toastSuccess(
+          on
+            ? "Кеш карты чипов · сохранение на диск вкл"
+            : "Кеш карты чипов · сохранение на диск выкл"
+        );
+      } catch (e) {
+        toastError("Кеш карты: " + e.message);
       }
     }
 
@@ -13007,6 +13112,9 @@
     document
       .getElementById("btn-chipmap-cfg-save")
       ?.addEventListener("click", () => void saveChipmapConfig());
+    document
+      .getElementById("btn-chipmap-persist-save")
+      ?.addEventListener("click", () => void saveChipmapPersistCache());
     document
       .getElementById("chipmap-metric")
       ?.addEventListener("change", () => {

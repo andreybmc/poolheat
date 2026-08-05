@@ -2497,6 +2497,7 @@ DEFAULT_CHIPMAP_CFG: dict = {
     "web_password": "",  # empty → DEFAULT_API_PASSWORD
     "web_scheme": "https",  # https | http
     "verify_tls": False,
+    "persist_cache": True,  # write chipmap_cache.json under DATA
 }
 
 _chipmap_lock = threading.Lock()
@@ -2545,12 +2546,18 @@ def _load_chipmap_cfg() -> None:
         sch = str(raw.get("web_scheme") or "https").strip().lower()
         cfg["web_scheme"] = "http" if sch == "http" else "https"
         cfg["verify_tls"] = bool(raw.get("verify_tls", False))
+        cfg["persist_cache"] = bool(raw.get("persist_cache", True))
         _chipmap_cfg = cfg
 
 
 def _save_chipmap_cfg() -> None:
     with _chipmap_lock:
         _save_json(CHIPMAP_CFG_FILE, _chipmap_cfg)
+
+
+def _chipmap_persist_cache_enabled() -> bool:
+    with _chipmap_lock:
+        return bool(_chipmap_cfg.get("persist_cache", True))
 
 
 def _chipmap_cache_is_persistable(data: dict | None) -> bool:
@@ -2573,9 +2580,21 @@ def _chipmap_cache_is_persistable(data: dict | None) -> bool:
     return n > 0
 
 
+def _clear_chipmap_cache_disk() -> None:
+    """Remove on-disk chipmap cache (when persist is turned off)."""
+    try:
+        if CHIPMAP_CACHE_FILE.is_file():
+            CHIPMAP_CACHE_FILE.unlink()
+            print("[chipmap] disk cache removed (persist_cache off)")
+    except Exception as e:
+        print(f"[chipmap] cache unlink: {e}")
+
+
 def _save_chipmap_cache_disk(data: dict | None = None) -> None:
     """Write last good chipmap to disk (survives service restart)."""
     try:
+        if not _chipmap_persist_cache_enabled():
+            return
         with _chipmap_lock:
             payload = dict(data) if isinstance(data, dict) else dict(_chipmap_cache)
         if not _chipmap_cache_is_persistable(payload):
@@ -2618,9 +2637,11 @@ def _save_chipmap_cache_disk(data: dict | None = None) -> None:
 
 
 def _load_chipmap_cache_disk() -> None:
-    """Restore last chipmap into RAM on boot."""
+    """Restore last chipmap into RAM on boot (if persist_cache enabled)."""
     global _chipmap_cache
     try:
+        if not _chipmap_persist_cache_enabled():
+            return
         if not CHIPMAP_CACHE_FILE.is_file():
             return
         raw = json.loads(CHIPMAP_CACHE_FILE.read_text(encoding="utf-8"))
@@ -2679,7 +2700,16 @@ def apply_chipmap_cfg(req: dict) -> dict:
             _chipmap_cfg["web_scheme"] = "http" if sch == "http" else "https"
         if "verify_tls" in req:
             _chipmap_cfg["verify_tls"] = bool(req["verify_tls"])
+        if "persist_cache" in req:
+            _chipmap_cfg["persist_cache"] = bool(req["persist_cache"])
+    turned_off = (
+        isinstance(req, dict)
+        and "persist_cache" in req
+        and not bool(req.get("persist_cache"))
+    )
     _save_chipmap_cfg()
+    if turned_off:
+        _clear_chipmap_cache_disk()
     return get_chipmap_cfg(redact=True)
 
 
@@ -3049,6 +3079,7 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
         with _chipmap_lock:
             _chipmap_cache.clear()
             _chipmap_cache.update(out)
+        _save_chipmap_cache_disk(out)
         return dict(out)
     except Exception as e:
         ms = int((time.time() - t0) * 1000)
@@ -3066,10 +3097,17 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             _chipmap_cache["ts"] = datetime.now().isoformat(timespec="seconds")
             # keep last good boards if any
             out = dict(_chipmap_cache)
-            if prev.get("boards") and prev.get("reason") != "suspend":
+            if prev.get("boards") and prev.get("reason") not in ("suspend",):
                 out["boards"] = prev["boards"]
                 out["chip_count"] = prev.get("chip_count")
+                out["board_count"] = prev.get("board_count")
+                out["temp_min"] = prev.get("temp_min")
+                out["temp_max"] = prev.get("temp_max")
+                out["temp_avg"] = prev.get("temp_avg")
+                out["miner_type"] = prev.get("miner_type")
                 out["stale"] = True
+                out["last_good_ts"] = prev.get("ts")
+                _chipmap_cache.update(out)
         return out
 
 
@@ -4196,6 +4234,7 @@ _load_zone_presets()
 _load_pool_presets()
 _load_filtration_cfg()
 _load_chipmap_cfg()
+_load_chipmap_cache_disk()
 
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
