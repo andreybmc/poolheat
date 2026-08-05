@@ -3579,39 +3579,6 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>История и графики</h2>
-              <div class="sub">хранение · интервал сбора · включение записи</div>
-            </div>
-            <div class="btn-row" style="gap:8px">
-              <button class="btn danger ghost" type="button" id="btn-hist-clear">Очистить базу</button>
-              <button class="btn primary" type="button" id="btn-hist-save">Сохранить</button>
-            </div>
-          </div>
-          <div class="card-b">
-            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
-              <label class="field">Хранить, дней
-                <input type="number" id="hist-retention" value="7" min="1" max="90" />
-              </label>
-              <label class="field"><span class="tip" data-tip-key="hist_interval">Интервал сбора, сек</span>
-                <input type="number" id="hist-interval" value="30" min="5" max="3600" step="5" />
-              </label>
-              <label class="check" style="padding-bottom:6px">
-                <input type="checkbox" id="hist-enabled" checked />
-                <span>Сбор данных
-                  <span class="desc">писать samples в history.db</span>
-                </span>
-              </label>
-            </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0">
-              После смены «Хранить, дней» старые точки удаляются при сохранении.
-              «Очистить базу» — удалить все samples (графики станут пустыми).
-            </p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
               <h2>Подключение Whatsminer</h2>
               <div class="sub">TCP · сохраняется в config.json · применяется сразу</div>
             </div>
@@ -4011,6 +3978,73 @@
 
       <div class="subview" id="subview-settings-advanced">
       <div class="stack">
+        <div class="card" id="panel-advanced-settings">
+          <div class="card-h">
+            <div>
+              <h2>Расширенные настройки</h2>
+              <div class="sub">история · кеш карты чипов · редкие опции</div>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:18px">
+            <!-- История и графики -->
+            <div>
+              <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
+                <div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem">История и графики</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px">хранение · интервал сбора · включение записи</div>
+                </div>
+                <div class="btn-row" style="gap:8px">
+                  <button class="btn danger ghost" type="button" id="btn-hist-clear">Очистить базу</button>
+                  <button class="btn primary" type="button" id="btn-hist-save">Сохранить</button>
+                </div>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
+                <label class="field">Хранить, дней
+                  <input type="number" id="hist-retention" value="7" min="1" max="90" />
+                </label>
+                <label class="field"><span class="tip" data-tip-key="hist_interval">Интервал сбора, сек</span>
+                  <input type="number" id="hist-interval" value="30" min="5" max="3600" step="5" />
+                </label>
+                <label class="check" style="padding-bottom:6px">
+                  <input type="checkbox" id="hist-enabled" checked />
+                  <span>Сбор данных
+                    <span class="desc">писать samples в history.db</span>
+                  </span>
+                </label>
+              </div>
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0">
+                После смены «Хранить, дней» старые точки удаляются при сохранении.
+                «Очистить базу» — удалить все samples (графики станут пустыми).
+              </p>
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
+
+            <!-- Кеш карты чипов -->
+            <div id="panel-chipmap-persist">
+              <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
+                <div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem">Карта чипов · кеш</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px">сохранение на диск · переживает рестарт сервиса</div>
+                </div>
+                <button class="btn primary" type="button" id="btn-chipmap-persist-save">Сохранить</button>
+              </div>
+              <label class="check">
+                <input type="checkbox" id="chipmap-persist-cache" checked />
+                <span>Сохранять кеш карты чипов
+                  <span class="desc">chipmap_cache.json · показ последней карты после рестарта</span>
+                </span>
+              </label>
+              <p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0;line-height:1.45">
+                При включении после успешного опроса LuCI карта пишется на диск
+                и подгружается при старте сервиса (stale, до следующего live-опроса).
+                Выключение — файл кеша удаляется; в RAM остаётся только текущий опрос.
+              </p>
+              <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="chipmap-persist-status">—</p>
+            </div>
+          </div>
+        </div>
+
         <div class="card" id="panel-luci-proxy">
           <div class="card-h">
             <div>
@@ -4049,30 +4083,6 @@
               Не пробрасывайте :8788 в WAN — только LAN / VPN / Cloud.
             </p>
             <p style="font-size:0.75rem;color:var(--dim);margin:0" id="luci-proxy-status">—</p>
-          </div>
-        </div>
-
-        <div class="card" id="panel-chipmap-persist">
-          <div class="card-h">
-            <div>
-              <h2>Карта чипов · кеш</h2>
-              <div class="sub">сохранение на диск · переживает рестарт сервиса</div>
-            </div>
-            <button class="btn primary" type="button" id="btn-chipmap-persist-save">Сохранить</button>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <label class="check">
-              <input type="checkbox" id="chipmap-persist-cache" checked />
-              <span>Сохранять кеш карты чипов
-                <span class="desc">chipmap_cache.json · показ последней карты после рестарта</span>
-              </span>
-            </label>
-            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
-              При включении после успешного опроса LuCI карта пишется на диск
-              и подгружается при старте сервиса (stale, до следующего live-опроса).
-              Выключение — файл кеша удаляется; в RAM остаётся только текущий опрос.
-            </p>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="chipmap-persist-status">—</p>
           </div>
         </div>
       </div>
