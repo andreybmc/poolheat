@@ -130,6 +130,7 @@ POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
+LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
@@ -3153,6 +3154,154 @@ def chipmap_loop() -> None:
         _chipmap_stop.wait(timeout=interval)
 
 
+# ── LuCI reverse proxy (:8788 → miner web UI) ────────────────────────────────
+
+def _import_luci_proxy():
+    """Load luci_proxy module from same dir as serve.py (Entware or local)."""
+    try:
+        import luci_proxy  # type: ignore
+
+        return luci_proxy
+    except ImportError:
+        import sys as _sys
+
+        _lib = Path(__file__).resolve().parent
+        if str(_lib) not in _sys.path:
+            _sys.path.insert(0, str(_lib))
+        import luci_proxy  # type: ignore
+
+        return luci_proxy
+
+
+try:
+    luci_proxy = _import_luci_proxy()
+except Exception as _lp_err:
+    luci_proxy = None  # type: ignore
+    print(f"[luci-proxy] module unavailable: {_lp_err}")
+
+DEFAULT_LUCI_PROXY_CFG: dict = {
+    "enabled": False,
+    "bind": "0.0.0.0",
+    "listen_port": 8788,
+    "target_scheme": "https",
+    "target_port": 443,
+    "verify_tls": False,
+}
+
+_luci_proxy_cfg: dict = dict(DEFAULT_LUCI_PROXY_CFG)
+_luci_proxy_cfg_lock = threading.Lock()
+
+
+def _load_luci_proxy_cfg() -> None:
+    global _luci_proxy_cfg
+    raw = _load_json(LUCI_PROXY_CFG_FILE, DEFAULT_LUCI_PROXY_CFG)
+    if not isinstance(raw, dict):
+        raw = {}
+    cfg = dict(DEFAULT_LUCI_PROXY_CFG)
+    cfg["enabled"] = bool(raw.get("enabled", False))
+    bind = str(raw.get("bind") or HTTP_BIND or "0.0.0.0").strip() or "0.0.0.0"
+    cfg["bind"] = bind
+    try:
+        lp = int(raw.get("listen_port", 8788) or 8788)
+    except (TypeError, ValueError):
+        lp = 8788
+    cfg["listen_port"] = max(1, min(65535, lp))
+    sch = str(raw.get("target_scheme") or "https").strip().lower()
+    cfg["target_scheme"] = "http" if sch == "http" else "https"
+    try:
+        default_port = 80 if cfg["target_scheme"] == "http" else 443
+        tp = int(raw.get("target_port", default_port) or default_port)
+    except (TypeError, ValueError):
+        tp = 80 if cfg["target_scheme"] == "http" else 443
+    cfg["target_port"] = max(1, min(65535, tp))
+    cfg["verify_tls"] = bool(raw.get("verify_tls", False))
+    with _luci_proxy_cfg_lock:
+        _luci_proxy_cfg = cfg
+
+
+def _save_luci_proxy_cfg() -> None:
+    with _luci_proxy_cfg_lock:
+        _save_json(LUCI_PROXY_CFG_FILE, _luci_proxy_cfg)
+
+
+def get_luci_proxy_cfg() -> dict:
+    with _luci_proxy_cfg_lock:
+        cfg = dict(_luci_proxy_cfg)
+    st = {}
+    if luci_proxy is not None:
+        try:
+            st = luci_proxy.status()
+        except Exception as e:
+            st = {"error": str(e), "running": False}
+    cfg["target_host"] = HOST_MINER
+    return {
+        "ok": True,
+        "config": cfg,
+        "status": st,
+        "url_hint": f"http://<router-ip>:{cfg.get('listen_port') or 8788}/",
+    }
+
+
+def apply_luci_proxy_cfg(req: dict) -> dict:
+    """Update config, persist, start/stop proxy module."""
+    if not isinstance(req, dict):
+        raise ValueError("expected object")
+    with _luci_proxy_cfg_lock:
+        if "enabled" in req:
+            _luci_proxy_cfg["enabled"] = bool(req["enabled"])
+        if "bind" in req and req["bind"] is not None and str(req["bind"]).strip():
+            _luci_proxy_cfg["bind"] = str(req["bind"]).strip()
+        if "listen_port" in req and req["listen_port"] is not None:
+            try:
+                _luci_proxy_cfg["listen_port"] = max(
+                    1, min(65535, int(req["listen_port"]))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "target_scheme" in req and req["target_scheme"] is not None:
+            sch = str(req["target_scheme"]).strip().lower()
+            _luci_proxy_cfg["target_scheme"] = "http" if sch == "http" else "https"
+        if "target_port" in req and req["target_port"] is not None:
+            try:
+                _luci_proxy_cfg["target_port"] = max(
+                    1, min(65535, int(req["target_port"]))
+                )
+            except (TypeError, ValueError):
+                pass
+        if "verify_tls" in req:
+            _luci_proxy_cfg["verify_tls"] = bool(req["verify_tls"])
+        snap = dict(_luci_proxy_cfg)
+    _save_luci_proxy_cfg()
+    _luci_proxy_sync_runtime(snap)
+    return get_luci_proxy_cfg()
+
+
+def _luci_proxy_sync_runtime(cfg: dict | None = None) -> None:
+    """Push settings into luci_proxy module and start/stop."""
+    if luci_proxy is None:
+        return
+    if cfg is None:
+        with _luci_proxy_cfg_lock:
+            cfg = dict(_luci_proxy_cfg)
+    try:
+        luci_proxy.set_host_resolver(lambda: HOST_MINER)
+        luci_proxy.configure(
+            enabled=bool(cfg.get("enabled")),
+            bind=str(cfg.get("bind") or HTTP_BIND or "0.0.0.0"),
+            listen_port=int(cfg.get("listen_port") or 8788),
+            target_scheme=str(cfg.get("target_scheme") or "https"),
+            target_port=int(
+                cfg.get("target_port")
+                or (80 if cfg.get("target_scheme") == "http" else 443)
+            ),
+            verify_tls=bool(cfg.get("verify_tls", False)),
+            target_host=str(HOST_MINER or ""),
+        )
+        luci_proxy.apply()
+    except Exception as e:
+        print(f"[luci-proxy] apply: {e}")
+
+
 def _miner_config_path() -> Path:
     """Where to persist miner host/port/password."""
     cfg = _APP.get("cfg_path") or ""
@@ -3251,6 +3400,12 @@ def apply_miner_settings(
             "project_name": str(PROJECT_NAME or "poolheat_WM"),
             "host": f"{HOST_MINER}:{PORT_MINER}",
         }
+        # keep LuCI proxy target in sync with miner host
+        if host is not None and luci_proxy is not None:
+            try:
+                luci_proxy.configure(target_host=HOST_MINER)
+            except Exception:
+                pass
 
         if persist:
             path = _miner_config_path()
@@ -3476,6 +3631,8 @@ def build_config_backup() -> dict:
     filtration = get_filtration_cfg(redact=False)
     filtration.pop("backends", None)
     chipmap = get_chipmap_cfg(redact=False)
+    with _luci_proxy_cfg_lock:
+        luci_proxy_cfg = dict(_luci_proxy_cfg)
     telegram = get_telegram_cfg(redact=False)
     telegram.pop("status", None)
     with _pool_presets_lock:
@@ -3498,6 +3655,7 @@ def build_config_backup() -> dict:
             "pool_presets": pool_presets,
             "filtration": filtration,
             "chipmap": chipmap,
+            "luci_proxy": luci_proxy_cfg,
             "telegram": telegram,
         },
         "notes": (
@@ -3720,6 +3878,14 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("chipmap")
         except Exception as e:
             errors["chipmap"] = str(e)
+
+    # 8b) luci proxy
+    if "luci_proxy" in want and isinstance(cfgs.get("luci_proxy"), dict):
+        try:
+            apply_luci_proxy_cfg(cfgs["luci_proxy"])
+            applied.append("luci_proxy")
+        except Exception as e:
+            errors["luci_proxy"] = str(e)
 
     # 9) telegram
     if "telegram" in want and isinstance(cfgs.get("telegram"), dict):
@@ -4235,6 +4401,8 @@ _load_pool_presets()
 _load_filtration_cfg()
 _load_chipmap_cfg()
 _load_chipmap_cache_disk()
+_load_luci_proxy_cfg()
+_luci_proxy_sync_runtime()
 
 
 # ─── DB ───────────────────────────────────────────────────────────────────────
@@ -6303,6 +6471,10 @@ def apply_github_update(ref: str | None = None) -> dict:
                 (
                     src_root / "ui-demo" / "whatsminer_driver.py",
                     lib_dir / "whatsminer_driver.py",
+                ),
+                (
+                    src_root / "ui-demo" / "luci_proxy.py",
+                    lib_dir / "luci_proxy.py",
                 ),
                 (src_root / "ui-demo" / "index.html", www_dir / "index.html"),
             ]
@@ -15511,6 +15683,14 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/chipmap/config",):
             self._json_response(200, {"ok": True, "config": get_chipmap_cfg(redact=True)})
             return
+        if path in (
+            "/api/luci_proxy",
+            "/api/luci_proxy/config",
+            "/api/luci-proxy",
+            "/api/luci-proxy/config",
+        ):
+            self._json_response(200, get_luci_proxy_cfg())
+            return
         if path in ("/api/miner/errors", "/api/errors/log"):
             self._api_miner_error_log()
             return
@@ -15658,6 +15838,19 @@ class Handler(SimpleHTTPRequestHandler):
                 req = self._read_json_body() or {}
                 cfg = apply_chipmap_cfg(req if isinstance(req, dict) else {})
                 self._json_response(200, {"ok": True, "config": cfg})
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/luci_proxy",
+            "/api/luci_proxy/config",
+            "/api/luci-proxy",
+            "/api/luci-proxy/config",
+        ):
+            try:
+                req = self._read_json_body() or {}
+                body = apply_luci_proxy_cfg(req if isinstance(req, dict) else {})
+                self._json_response(200, body)
             except Exception as e:
                 self._json_response(400, {"ok": False, "error": str(e)})
             return
@@ -16568,6 +16761,19 @@ def main() -> None:
     print(f"pool presets:      GET/POST /api/miner/pools/presets")
     print(f"filtration:        GET/POST /api/filtration · /set · /test")
     print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
+    try:
+        lp = get_luci_proxy_cfg()
+        lpc = lp.get("config") or {}
+        lps = lp.get("status") or {}
+        print(
+            f"luci proxy:        "
+            f"{'ON' if lpc.get('enabled') else 'off'} · "
+            f":{lpc.get('listen_port') or 8788} → "
+            f"{(lps.get('target') or (HOST_MINER + '/'))} · "
+            f"{'running' if lps.get('running') else 'stopped'}"
+        )
+    except Exception as e:
+        print(f"luci proxy:        n/a ({e})")
     print(f"policy:            GET/POST /api/policy · server-side control")
     print(f"system info:       GET  /api/system/info")
     print(f"version/update:    GET  /api/version · /api/update/check · POST /api/update/apply")

@@ -3565,7 +3565,8 @@
           <div class="card-b">
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
               В файл попадают: подключение майнера, dry_run, карта зон и пресеты,
-              <strong>пресеты пулов</strong>, бассейн, погода, история, фильтрация, chipmap, Telegram
+              <strong>пресеты пулов</strong>, бассейн, погода, история, фильтрация, chipmap,
+              luci_proxy, Telegram
               <strong>(включая пароли и bot token)</strong>,
               а также <strong>meta</strong> — версия ПО, Keenetic, hostname, пути
               (meta перезаписывается при каждом запуске сервиса на этом роутере).
@@ -4010,6 +4011,47 @@
 
       <div class="subview" id="subview-settings-advanced">
       <div class="stack">
+        <div class="card" id="panel-luci-proxy">
+          <div class="card-h">
+            <div>
+              <h2>LuCI proxy · :8788</h2>
+              <div class="sub">доступ к web-UI майнера через роутер</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <a class="btn" id="btn-luci-proxy-open" href="#" target="_blank" rel="noopener">Открыть LuCI</a>
+              <button class="btn primary" type="button" id="btn-luci-proxy-save">Сохранить</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="luci-proxy-enabled" />
+              <span>Включить прокси на порт 8788
+                <span class="desc">http://&lt;router&gt;:8788/ → HTTPS LuCI майнера</span>
+              </span>
+            </label>
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+              <label class="field">Listen port
+                <input type="number" id="luci-proxy-port" value="8788" min="1" max="65535" step="1" />
+              </label>
+              <label class="field">Upstream scheme
+                <select id="luci-proxy-scheme">
+                  <option value="https" selected>https</option>
+                  <option value="http">http</option>
+                </select>
+              </label>
+              <label class="field">Upstream port
+                <input type="number" id="luci-proxy-target-port" value="443" min="1" max="65535" step="1" />
+              </label>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
+              Отдельный модуль <code>luci_proxy</code>: reverse-proxy на порт майнера
+              (host из «Подключение Whatsminer»). По умолчанию выкл.
+              Не пробрасывайте :8788 в WAN — только LAN / VPN / Cloud.
+            </p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="luci-proxy-status">—</p>
+          </div>
+        </div>
+
         <div class="card" id="panel-chipmap-persist">
           <div class="card-h">
             <div>
@@ -4788,6 +4830,7 @@
       }
       if (mainTab === "settings" && settingsSub === "advanced") {
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+        if (typeof loadLuciProxyConfig === "function") loadLuciProxyConfig();
       }
       if (!opts.skipUrl) {
         // #chips / #pools / #logs / #advanced keep deep-link hashes
@@ -13059,6 +13102,88 @@
       }
     }
 
+    function luciProxyOpenUrl(port) {
+      const p = Number(port) || 8788;
+      const host = location.hostname || "127.0.0.1";
+      const proto = "http:";
+      return proto + "//" + host + ":" + p + "/";
+    }
+
+    async function loadLuciProxyConfig() {
+      try {
+        const res = await fetch("/api/luci_proxy/config", { cache: "no-store" });
+        const body = await res.json();
+        const c = body.config || body;
+        const st = body.status || {};
+        const en = document.getElementById("luci-proxy-enabled");
+        const port = document.getElementById("luci-proxy-port");
+        const sch = document.getElementById("luci-proxy-scheme");
+        const tp = document.getElementById("luci-proxy-target-port");
+        const open = document.getElementById("btn-luci-proxy-open");
+        if (en) en.checked = !!c.enabled;
+        if (port && c.listen_port != null) port.value = c.listen_port;
+        if (sch && c.target_scheme) sch.value = c.target_scheme;
+        if (tp && c.target_port != null) tp.value = c.target_port;
+        const listenPort = c.listen_port || 8788;
+        if (open) {
+          open.href = luciProxyOpenUrl(listenPort);
+          open.style.opacity = c.enabled && st.running ? "1" : "0.55";
+        }
+        const pst = document.getElementById("luci-proxy-status");
+        if (pst) {
+          const parts = [
+            c.enabled ? "вкл" : "выкл",
+            st.running ? "listening" : "stopped",
+            st.target ? "→ " + st.target : "",
+            st.error ? "err: " + st.error : "",
+          ].filter(Boolean);
+          pst.textContent = parts.join(" · ") || "—";
+        }
+        return body;
+      } catch (e) {
+        console.warn("luci proxy config", e);
+        const pst = document.getElementById("luci-proxy-status");
+        if (pst) pst.textContent = "load error: " + e.message;
+        return null;
+      }
+    }
+
+    async function saveLuciProxyConfig() {
+      try {
+        const sch =
+          document.getElementById("luci-proxy-scheme")?.value || "https";
+        let tport = Number(
+          document.getElementById("luci-proxy-target-port")?.value || 0
+        );
+        if (!tport) tport = sch === "http" ? 80 : 443;
+        const payload = {
+          enabled: !!document.getElementById("luci-proxy-enabled")?.checked,
+          listen_port: Number(
+            document.getElementById("luci-proxy-port")?.value || 8788
+          ),
+          target_scheme: sch,
+          target_port: tport,
+        };
+        const res = await fetch("/api/luci_proxy/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "save fail");
+        await loadLuciProxyConfig();
+        const on = !!payload.enabled;
+        toastSuccess(
+          on
+            ? "LuCI proxy · включён :" + payload.listen_port
+            : "LuCI proxy · выключен"
+        );
+      } catch (e) {
+        toastError("LuCI proxy: " + e.message);
+      }
+    }
+
     function scheduleChipmapPoll() {
       if (chipmapTimer) clearInterval(chipmapTimer);
       const iv =
@@ -13115,6 +13240,19 @@
     document
       .getElementById("btn-chipmap-persist-save")
       ?.addEventListener("click", () => void saveChipmapPersistCache());
+    document
+      .getElementById("btn-luci-proxy-save")
+      ?.addEventListener("click", () => void saveLuciProxyConfig());
+    document
+      .getElementById("luci-proxy-scheme")
+      ?.addEventListener("change", () => {
+        const sch = document.getElementById("luci-proxy-scheme")?.value;
+        const tp = document.getElementById("luci-proxy-target-port");
+        if (!tp) return;
+        const cur = Number(tp.value);
+        if (sch === "http" && (cur === 443 || !cur)) tp.value = 80;
+        if (sch === "https" && (cur === 80 || !cur)) tp.value = 443;
+      });
     document
       .getElementById("chipmap-metric")
       ?.addEventListener("change", () => {
