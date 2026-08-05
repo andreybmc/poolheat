@@ -2108,12 +2108,33 @@ def filtration_sync_with_mining(measured_work: str | None) -> None:
         print(f"[filtration] sync fail: {e}")
 
 
-def get_filtration_status() -> dict:
+def get_filtration_status(*, probe_live: bool = False) -> dict:
+    """
+    Filtration UI/TG snapshot.
+
+    mining state comes from live cache / policy by default — NEVER hit the miner
+    on every keyboard rebuild (was making Events/Status 5s+).
+    probe_live=True only for rare explicit checks.
+    """
     cfg = get_filtration_cfg(redact=True)
     mining = None
     try:
-        live = fetch_live()
-        mining = _live_work(live) == "resume"
+        live = None
+        if probe_live:
+            live = fetch_live()
+        else:
+            with _cache_lock:
+                if isinstance(_cache, dict) and _cache.get("ok"):
+                    live = dict(_cache)
+        if isinstance(live, dict) and live:
+            mining = _live_work(live) == "resume"
+        if mining is None:
+            with _policy_lock:
+                mw = str(_policy_ctrl.get("measured_work") or "").strip().lower()
+            if mw in ("resume", "mining"):
+                mining = True
+            elif mw in ("suspend", "sleep"):
+                mining = False
     except Exception:
         pass
     return {
@@ -8872,7 +8893,7 @@ def _tg_filtration_btn_label(lang: str = "ru") -> str:
     """
     en = str(lang or "ru").lower().startswith("en")
     try:
-        st = get_filtration_status()
+        st = get_filtration_status(probe_live=False)
     except Exception:
         st = {}
     if not st.get("enabled"):
@@ -8896,6 +8917,7 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     """
     Persistent reply keyboard — main navigation.
     Per-chat show_* prefs hide optional sections (Status + Profile always on).
+    Fast path: no miner I/O (filtration label uses cache only).
     """
     prefs: dict = {}
     if chat_id is not None:
@@ -8914,13 +8936,33 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     # Info + Pools live under Miner (inline), not on the main keyboard.
     fs_btn = _tg_force_stop_btn_label(lang)
 
-    # Filtration button only if feature enabled in settings (and user prefs allow)
-    filt_enabled = False
+    # One status read (cache) — avoid double get_filtration_status → was 2× fetch_live
+    filt_st: dict = {}
     try:
-        filt_enabled = bool(get_filtration_status().get("enabled"))
+        filt_st = get_filtration_status(probe_live=False)
     except Exception:
-        filt_enabled = False
-    fl_btn = _tg_filtration_btn_label(lang) if filt_enabled else None
+        filt_st = {}
+    filt_enabled = bool(filt_st.get("enabled"))
+    fl_btn = None
+    if filt_enabled:
+        # inline label from same snapshot (no second call)
+        on = filt_st.get("on") is True
+        mining = filt_st.get("mining") is True
+        locked = bool(on and mining and not filt_st.get("can_turn_off"))
+        if en:
+            state = "on" if on else "off"
+            fl_btn = (
+                f"🔒 Filtration [{state}]"
+                if locked
+                else f"💧 Filtration [{state}]"
+            )
+        else:
+            state = "вкл" if on else "выкл"
+            fl_btn = (
+                f"🔒 Фильтрация [{state}]"
+                if locked
+                else f"💧 Фильтрация [{state}]"
+            )
 
     # Row 1: Status always · Miner optional
     row1 = [{"text": "📊 Status" if en else "📊 Статус"}]
