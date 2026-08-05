@@ -3944,35 +3944,6 @@
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2>Remote</h2>
-              <div class="sub">доступ · auth · не пробрасывать :8787 в WAN</div>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <div class="row">
-              <label class="field">Auth mode
-                <select>
-                  <option>open (LAN only — not with Cloud)</option>
-                  <option selected>token (Bearer)</option>
-                  <option>basic</option>
-                </select>
-              </label>
-              <label class="field">Remote
-                <select>
-                  <option selected>Keenetic Cloud / Remote Access</option>
-                  <option>WireGuard / VPN only</option>
-                  <option>LAN only</option>
-                </select>
-              </label>
-            </div>
-            <p style="font-size:0.8rem;color:var(--muted);margin:0">
-              :8787 не пробрасывать raw в интернет. Cloud + token; open запрещён при remote.
-            </p>
-          </div>
-        </div>
       </div>
       </div><!-- /subview-settings-main -->
 
@@ -4045,46 +4016,81 @@
           </div>
         </div>
 
-        <div class="card" id="panel-luci-proxy">
+        <div class="card" id="panel-access-settings">
           <div class="card-h">
             <div>
-              <h2>LuCI proxy · :8788</h2>
-              <div class="sub">доступ к web-UI майнера через роутер</div>
+              <h2>Настройки доступа</h2>
+              <div class="sub">Remote · auth · LuCI proxy :8788</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <a class="btn" id="btn-luci-proxy-open" href="#" target="_blank" rel="noopener">Открыть LuCI</a>
               <button class="btn primary" type="button" id="btn-luci-proxy-save">Сохранить</button>
             </div>
           </div>
-          <div class="card-b stack" style="gap:12px">
-            <label class="check">
-              <input type="checkbox" id="luci-proxy-enabled" />
-              <span>Включить прокси на порт 8788
-                <span class="desc">http://&lt;router&gt;:8788/ → HTTPS LuCI майнера</span>
-              </span>
-            </label>
-            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-              <label class="field">Listen port
-                <input type="number" id="luci-proxy-port" value="8788" min="1" max="65535" step="1" />
-              </label>
-              <label class="field">Upstream scheme
-                <select id="luci-proxy-scheme">
-                  <option value="https" selected>https</option>
-                  <option value="http">http</option>
-                </select>
-              </label>
-              <label class="field">Upstream port
-                <input type="number" id="luci-proxy-target-port" value="443" min="1" max="65535" step="1" />
-              </label>
+          <div class="card-b stack" style="gap:18px">
+            <!-- Remote / auth (UI guidance) -->
+            <div id="panel-remote-access">
+              <div style="font-weight:600;color:var(--text);font-size:0.92rem;margin-bottom:2px">Remote · auth</div>
+              <div style="font-size:0.72rem;color:var(--dim);margin-bottom:10px">
+                доступ к poolheat UI · не пробрасывать :8787 в WAN
+              </div>
+              <div class="row">
+                <label class="field">Auth mode
+                  <select id="access-auth-mode">
+                    <option value="open">open (LAN only — not with Cloud)</option>
+                    <option value="token" selected>token (Bearer)</option>
+                    <option value="basic">basic</option>
+                  </select>
+                </label>
+                <label class="field">Remote
+                  <select id="access-remote-mode">
+                    <option value="cloud" selected>Keenetic Cloud / Remote Access</option>
+                    <option value="vpn">WireGuard / VPN only</option>
+                    <option value="lan">LAN only</option>
+                  </select>
+                </label>
+              </div>
+              <p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0;line-height:1.45">
+                :8787 не пробрасывать raw в интернет. Cloud + token; open запрещён при remote.
+              </p>
             </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
-              Отдельный модуль <code>luci_proxy</code>: reverse-proxy на порт майнера
-              (host из «Подключение Whatsminer»). Снаружи — plain HTTP :8788,
-              к майнеру — HTTPS; cookies <code>Secure</code>/HSTS срезаются,
-              редиректы login не «съедаются» (сессия должна сохраняться).
-              По умолчанию выкл. Не пробрасывайте :8788 в WAN — только LAN / VPN / Cloud.
-            </p>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="luci-proxy-status">—</p>
+
+            <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
+
+            <!-- LuCI proxy -->
+            <div id="panel-luci-proxy">
+              <div style="font-weight:600;color:var(--text);font-size:0.92rem;margin-bottom:2px">LuCI proxy · :8788</div>
+              <div style="font-size:0.72rem;color:var(--dim);margin-bottom:10px">
+                доступ к web-UI майнера через роутер
+              </div>
+              <label class="check">
+                <input type="checkbox" id="luci-proxy-enabled" />
+                <span>Включить прокси на порт 8788
+                  <span class="desc">http://&lt;router&gt;:8788/ → HTTPS LuCI майнера</span>
+                </span>
+              </label>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field">Listen port
+                  <input type="number" id="luci-proxy-port" value="8788" min="1" max="65535" step="1" />
+                </label>
+                <label class="field">Upstream scheme
+                  <select id="luci-proxy-scheme">
+                    <option value="https" selected>https</option>
+                    <option value="http">http</option>
+                  </select>
+                </label>
+                <label class="field">Upstream port
+                  <input type="number" id="luci-proxy-target-port" value="443" min="1" max="65535" step="1" />
+                </label>
+              </div>
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45">
+                Модуль <code>luci_proxy</code>: reverse-proxy на майнер
+                (host из «Подключение Whatsminer»). Снаружи — plain HTTP :8788,
+                к майнеру — HTTPS; cookies <code>Secure</code>/HSTS срезаются.
+                По умолчанию выкл. Не пробрасывайте :8788 в WAN — только LAN / VPN / Cloud.
+              </p>
+              <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="luci-proxy-status">—</p>
+            </div>
           </div>
         </div>
       </div>
