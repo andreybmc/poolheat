@@ -2225,18 +2225,14 @@
 
     <div class="banner warmup" id="banner-warmup" style="display:none">
       <strong class="tip" data-tip-key="warmup">WARMUP / upfreq</strong>
-      <span>Miner still warming up —
-        <em class="tip" data-tip-key="upward">upward</em> blocked.
-        <em class="tip" data-tip-key="downward">Downward</em> and
-        <em class="tip" data-tip-key="critical">Critical</em> allowed.
-      </span>
+      <span data-i18n="banner.warmup_span">Miner still warming up — upward blocked. Downward and Critical allowed.</span>
     </div>
 
     <div class="banner override" id="banner-override" style="display:none" hidden>
       <strong class="tip" data-tip-key="override">OVERRIDE</strong>
       <span>
-        Auto zones Z0–Z2 paused · Safety Critical active ·
-        left <span id="override-timer">—:—</span>
+        <span data-i18n="banner.override_span">Auto zones Z0–Z2 paused · Safety Critical active · left</span>
+        <span id="override-timer">—:—</span>
       </span>
       <button class="btn danger" type="button" style="margin-left:auto" id="btn-override-clear" data-i18n="btn.override_off">
         Disable Override
@@ -2891,8 +2887,8 @@
         <div class="card" id="panel-miner-pools">
           <div class="card-h">
             <div>
-              <h2>Pools</h2>
-              <div class="sub">stratum · Active · shares · Whatsminer pools</div>
+              <h2 data-i18n="h2.pools">Pools</h2>
+              <div class="sub" data-i18n="sub.pools_card">stratum · Active · shares · Whatsminer pools</div>
             </div>
             <button class="btn" type="button" id="btn-pools-refresh" data-i18n="btn.refresh">Refresh</button>
           </div>
@@ -2927,7 +2923,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.pool_presets">Pool presets</h2>
-              <div class="sub">save current · apply to ASIC · edit url/user/pass</div>
+              <div class="sub" data-i18n="sub.pool_presets">save current · apply to ASIC · edit url/user/pass</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
@@ -2937,7 +2933,7 @@
                   <option value="">— select —</option>
                 </select>
               </label>
-              <label class="field" style="margin:0">Coin Type
+              <label class="field" style="margin:0" data-i18n="field.coin_type">Coin Type
                 <input type="text" id="pool-preset-coin" list="pool-coin-types" placeholder="BTC" maxlength="32" autocomplete="off" />
                 <datalist id="pool-coin-types">
                   <option value="BTC"></option>
@@ -2951,25 +2947,25 @@
                   <option value="ALPH"></option>
                 </datalist>
               </label>
-              <button class="btn primary" type="button" id="btn-pool-preset-apply" title="Write preset pools to the miner">
+              <button class="btn primary" type="button" id="btn-pool-preset-apply" title="Write preset pools to the miner" data-i18n="btn.apply_asic">
                 Apply to ASIC
               </button>
             </div>
             <p id="pool-preset-meta" style="font-size:0.75rem;color:var(--dim);margin:0">—</p>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-pool-preset-save" title="Save current pools from ASIC as a new preset">
+              <button class="btn" type="button" id="btn-pool-preset-save" title="Save current pools from ASIC as a new preset" data-i18n="btn.save_current">
                 Save current…
               </button>
-              <button class="btn" type="button" id="btn-pool-preset-update" title="Overwrite selected preset with current ASIC pools">
+              <button class="btn" type="button" id="btn-pool-preset-update" title="Overwrite selected preset with current ASIC pools" data-i18n="btn.overwrite_asic">
                 Overwrite from ASIC
               </button>
-              <button class="btn ghost" type="button" id="btn-pool-preset-rename" title="Rename">
+              <button class="btn ghost" type="button" id="btn-pool-preset-rename" title="Rename" data-i18n="btn.rename">
                 Rename
               </button>
-              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Save url/user/pass + Coin Type edits">
+              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Save url/user/pass + Coin Type edits" data-i18n="btn.save_edits">
                 Save edits
               </button>
-              <button class="btn danger" type="button" id="btn-pool-preset-delete" title="Delete preset">
+              <button class="btn danger" type="button" id="btn-pool-preset-delete" title="Delete preset" data-i18n="btn.delete">
                 Delete
               </button>
             </div>
@@ -4228,34 +4224,34 @@
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn ghost" type="button" id="btn-info-refresh" data-i18n="btn.refresh">Refresh</button>
-              <button class="btn" type="button" id="btn-update-check">Check for updates</button>
-              <button class="btn primary" type="button" id="btn-update-apply" hidden>Install</button>
+              <button class="btn" type="button" id="btn-update-check" data-i18n="btn.check_updates">Check for updates</button>
+              <button class="btn primary" type="button" id="btn-update-apply" hidden data-i18n="btn.install">Install</button>
             </div>
           </div>
           <div class="card-b stack" style="gap:14px">
             <div class="grid-3">
               <div class="metric highlight-accent">
-                <label>Installed</label>
+                <label data-i18n="info.installed">Installed</label>
                 <div class="val" style="font-size:1.2rem" id="info-app-version">—</div>
                 <div class="hint" id="info-app-repo">github —</div>
               </div>
               <div class="metric">
-                <label>On GitHub</label>
+                <label data-i18n="info.on_github">On GitHub</label>
                 <div class="val" style="font-size:1.2rem" id="info-app-latest">—</div>
                 <div class="hint" id="info-app-source">source —</div>
               </div>
               <div class="metric">
-                <label>Status</label>
+                <label data-i18n="info.status">Status</label>
                 <div class="val" style="font-size:1.0rem" id="info-app-status">—</div>
                 <div class="hint" id="info-app-commit">commit —</div>
               </div>
             </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45" id="info-update-msg">
+            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45" id="info-update-msg" data-i18n="info.update_hint">
               Click “Check for updates” — we compare version with the repository.
               Update installs UI+serve, does not touch config.json, restarts the service.
             </p>
             <div class="update-notes" id="info-update-notes" hidden>
-              <span class="rn-label">Release notes</span>
+              <span class="rn-label" data-i18n="info.release_notes">Release notes</span>
               <div id="info-update-notes-body"></div>
             </div>
           </div>
@@ -4265,7 +4261,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.keenetic">Keenetic</h2>
-              <div class="sub">model · firmware · hostname</div>
+              <div class="sub" data-i18n="sub.keenetic">model · firmware · hostname</div>
             </div>
           </div>
           <div class="card-b">
@@ -4358,11 +4354,11 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.action_log">Action log</h2>
-              <div class="sub">policy events · last write · live</div>
+              <div class="sub" data-i18n="sub.action_log">policy events · last write · live</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn ghost" type="button" id="btn-refresh-log" data-i18n="btn.refresh">Refresh</button>
-              <button class="btn ghost" type="button" id="btn-export-log">Export JSONL</button>
+              <button class="btn ghost" type="button" id="btn-export-log" data-i18n="btn.export_jsonl">Export JSONL</button>
             </div>
           </div>
           <div class="card-b">
@@ -4377,7 +4373,7 @@
     </section>
 
     <footer class="demo-note" id="app-footer">
-      Powered by poolheat_WM <span class="footer-ver" id="footer-ver">0.3.1</span>.
+      <span data-i18n="footer.powered">Powered by poolheat_WM</span> <span class="footer-ver" id="footer-ver">0.3.1</span>.
       (c) 2025–<span id="footer-year"></span> BMC mining solutions.
     </footer>
     <script>
@@ -4413,227 +4409,325 @@
     const UI_LANG_KEY = "poolheat_ui_lang";
     const I18N = {
       en: {
-  "tab.dash": "Overview",
-  "tab.miner": "Miner",
-  "tab.map": "Zone map",
-  "tab.pool": "Pool",
-  "tab.settings": "Settings",
-  "tab.info": "Info",
-  "sub.miner": "Miner",
-  "sub.pools": "Pools",
-  "sub.chips": "Chips",
-  "sub.info": "Info",
-  "sub.main": "General",
-  "sub.advanced": "Advanced",
-  "sub.logs": "Logs",
-  "btn.refresh": "Refresh",
-  "btn.save": "Save",
-  "btn.clear_db": "Clear database",
-  "btn.download_backup": "Download backup",
-  "btn.restore_backup": "Restore backup…",
-  "btn.test": "Test",
-  "btn.open_luci": "Open LuCI",
-  "btn.override_off": "Disable Override",
-  "btn.dry_goto": "Miner · Dry Run",
-  "btn.hist_clear": "Clear database",
-  "btn.find": "Find",
-  "btn.refresh_status": "Refresh status",
-  "btn.refresh_weather": "Refresh weather",
-  "check.live": "Live from miner",
-  "lang.label": "Interface language",
-  "lang.label_short": "Lang",
-  "lang.sub": "English · Russian",
-  "lang.ru": "Russian",
-  "lang.en": "English",
-  "toast.lang_saved": "Language saved",
-  "banner.dry_span": "Auto zones not written · Safety active · log only",
-  "live.sim_off": "simulation · Live off · updated ",
-  "live.updated_sep": " · updated ",
-  "live.luci_proxy_title": "Open LuCI via proxy",
-  "h2.history": "History & charts",
-  "h2.temps": "Temperatures °C",
-  "h2.power": "Power · Hashrate · J/T",
-  "h2.mode": "Miner mode",
-  "h2.boards": "Boards (PCB) · hashboard",
-  "h2.layers": "Decision layers",
-  "h2.would_apply": "What would apply now",
-  "h2.chipmap": "Chip map",
-  "h2.chip_params": "Chip parameters",
-  "h2.chip_poll": "Chip map polling",
-  "h2.pool_presets": "Pool presets",
-  "h2.zone_map": "Zone map · pool heating",
-  "h2.zone_presets": "Map presets",
-  "h2.thresholds": "Thresholds (°C)",
-  "h2.scale": "T_ctrl scale (zone map)",
-  "h2.if_tcrit": "On T_crit",
-  "h2.if_tcrit_clear": "On T_crit_clear",
-  "h2.pool_geo": "Pool · geometry",
-  "h2.circulation": "Water exchange · circulation",
-  "h2.weather": "Weather · city",
-  "h2.backup": "Configuration backup",
-  "h2.connection": "Whatsminer connection",
-  "h2.filtration": "Filtration · pump",
-  "h2.policy": "Policy · anti-thrash",
-  "h2.advanced": "Advanced settings",
-  "h2.access": "Access settings",
-  "h2.software": "poolheat_WM · software",
-  "h2.resources": "Resources",
-  "h2.error_log": "Miner error log",
-  "h2.errors": "Errors",
-  "h2.action_log": "Action log",
-  "h2.telegram": "Telegram bot",
-  "h2.dry": "Dry Run",
-  "h2.warmup": "Warmup / upfreq gate",
-  "h2.keenetic": "Keenetic",
-  "section.history": "History & charts",
-  "section.chip_cache": "Chip map · cache",
-  "section.remote": "Remote · auth",
-  "section.luci": "LuCI proxy · :8788",
-  "section.sniffer": "Miner sniffer",
-  "sub.desc.history": "retention · sample interval · enable logging",
-  "sub.desc.chip_cache": "disk cache · survives service restart",
-  "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
-  "sub.desc.luci": "miner web UI via the router",
-  "sub.desc.sniffer": "optional · download from GitHub · tcpdump on router",
-  "sub.backup": "download / restore all settings (JSON)",
-  "sub.connection": "TCP · saved to config.json · applied immediately",
-  "sub.filtration": "outlet / webhook · auto ON while mining",
-  "sub.telegram": "policy notifications · /status commands",
-  "sub.policy": "dwell · settle · streak · saved with zone map",
-  "sub.warmup": "until ready — no point raising the profile",
-  "sub.advanced_card": "history · chip map cache · rare options",
-  "sub.access": "Remote · auth · LuCI proxy :8788",
-  "sub.software": "version · GitHub update check",
-  "sub.dry": "auto zones · Safety always · then Save",
-  "sub.chip_poll": "own interval · web admin · separate from live poll",
-  "check.hist_enabled": "Data collection",
-  "check.hist_desc": "write samples to history.db",
-  "check.chip_cache": "Save chip map cache",
-  "check.sniffer": "Enable miner capture",
-  "check.sniffer_desc": "install module + start tcpdump (host <miner>)",
-  "btn.pcap": "Download pcap",
-  "btn.uninstall": "Uninstall",
-  "hint.sniffer": "On enable, poolheat downloads modules/miner_sniffer from GitHub, then starts tcpdump. Deactivate stops capture; Uninstall frees space.",
-  "check.luci_proxy": "Enable proxy on port 8788",
-  "field.store_days": "Keep, days",
-  "field.interval_sec": "Sample interval, sec",
-  "field.project": "Project name",
-  "field.poll": "Poll interval, sec",
-  "field.city_search": "City search",
-  "label.quick_pick": "Quick pick",
-  "wx.interval": "Refresh interval, min"
-},
+        "tab.dash": "Overview",
+        "tab.miner": "Miner",
+        "tab.map": "Zone map",
+        "tab.pool": "Pool",
+        "tab.settings": "Settings",
+        "tab.info": "Info",
+        "sub.miner": "Miner",
+        "sub.pools": "Pools",
+        "sub.pools_card": "stratum · Active · shares · Whatsminer pools",
+        "sub.chips": "Chips",
+        "sub.info": "Info",
+        "sub.main": "General",
+        "sub.advanced": "Advanced",
+        "sub.logs": "Logs",
+        "btn.refresh": "Refresh",
+        "btn.save": "Save",
+        "btn.clear_db": "Clear database",
+        "btn.download_backup": "Download backup",
+        "btn.restore_backup": "Restore backup…",
+        "btn.test": "Test",
+        "btn.open_luci": "Open LuCI",
+        "btn.override_off": "Disable Override",
+        "btn.dry_goto": "Miner · Dry Run",
+        "btn.hist_clear": "Clear database",
+        "btn.find": "Find",
+        "btn.refresh_status": "Refresh status",
+        "btn.refresh_weather": "Refresh weather",
+        "btn.refresh_all": "Refresh",
+        "btn.check_updates": "Check for updates",
+        "btn.install": "Install",
+        "btn.reinstall": "Reinstall",
+        "btn.export_jsonl": "Export JSONL",
+        "btn.apply_asic": "Apply to ASIC",
+        "btn.save_current": "Save current…",
+        "btn.overwrite_asic": "Overwrite from ASIC",
+        "btn.rename": "Rename",
+        "btn.save_edits": "Save edits",
+        "btn.delete": "Delete",
+        "btn.pcap": "Download pcap",
+        "btn.uninstall": "Uninstall",
+        "check.live": "Live from miner",
+        "check.hist_enabled": "Data collection",
+        "check.hist_desc": "write samples to history.db",
+        "check.chip_cache": "Save chip map cache",
+        "check.luci_proxy": "Enable proxy on port 8788",
+        "check.sniffer": "Enable miner capture",
+        "check.sniffer_desc": "install module + run tcpdump (host <miner>)",
+        "lang.label": "Interface language",
+        "lang.label_short": "Lang",
+        "lang.sub": "English · Russian",
+        "lang.ru": "Русский",
+        "lang.en": "English",
+        "lang.primary": "English (primary)",
+        "lang.extension": "Русский (extension)",
+        "toast.lang_saved": "Language saved",
+        "banner.dry_span": "Auto zones not written · Safety active · log only",
+        "banner.warmup_span": "Miner still warming up — upward blocked. Downward and Critical allowed.",
+        "banner.override_span": "Auto zones Z0–Z2 paused · Safety Critical active · left",
+        "live.sim_off": "simulation · Live off · updated ",
+        "live.updated_sep": " · updated ",
+        "live.online": "Online",
+        "live.offline": "Offline",
+        "live.luci_proxy_title": "Open LuCI via proxy",
+        "h2.history": "History & charts",
+        "h2.temps": "Temperatures °C",
+        "h2.power": "Power · Hashrate · J/T",
+        "h2.mode": "Miner mode",
+        "h2.boards": "Boards (PCB) · hashboard",
+        "h2.layers": "Decision layers",
+        "h2.would_apply": "What would apply now",
+        "h2.chipmap": "Chip map",
+        "h2.chip_params": "Chip parameters",
+        "h2.chip_poll": "Chip map polling",
+        "h2.pool_presets": "Pool presets",
+        "h2.pools": "Pools",
+        "h2.zone_map": "Zone map · pool heating",
+        "h2.zone_presets": "Map presets",
+        "h2.thresholds": "Thresholds (°C)",
+        "h2.scale": "T_ctrl scale (zone map)",
+        "h2.if_tcrit": "On T_crit",
+        "h2.if_tcrit_clear": "On T_crit_clear",
+        "h2.pool_geo": "Pool · geometry",
+        "h2.circulation": "Water exchange · circulation",
+        "h2.weather": "Weather · city",
+        "h2.backup": "Configuration backup",
+        "h2.connection": "Whatsminer connection",
+        "h2.filtration": "Filtration · pump",
+        "h2.policy": "Policy · anti-thrash",
+        "h2.advanced": "Advanced settings",
+        "h2.access": "Access settings",
+        "h2.software": "poolheat_WM · software",
+        "h2.resources": "Resources",
+        "h2.error_log": "Miner error log",
+        "h2.errors": "Errors",
+        "h2.action_log": "Action log",
+        "h2.telegram": "Telegram bot",
+        "h2.dry": "Dry Run",
+        "h2.warmup": "Warmup / upfreq gate",
+        "h2.keenetic": "Keenetic",
+        "h2.whatsminer": "Whatsminer",
+        "h2.hashboards": "Hashboards · PCB SN · Tagged",
+        "section.history": "History & charts",
+        "section.chip_cache": "Chip map · cache",
+        "section.remote": "Remote · auth",
+        "section.luci": "LuCI proxy · :8788",
+        "section.sniffer": "Miner sniffer",
+        "sub.desc.history": "retention · sample interval · enable logging",
+        "sub.desc.chip_cache": "disk cache · survives service restart",
+        "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
+        "sub.desc.luci": "miner web UI via the router",
+        "sub.desc.sniffer": "optional · download from GitHub · tcpdump on router",
+        "sub.backup": "download / restore all settings (JSON)",
+        "sub.connection": "TCP · saved to config.json · applied immediately",
+        "sub.filtration": "outlet / webhook · auto ON while mining",
+        "sub.telegram": "policy notifications · /status commands",
+        "sub.policy": "dwell · settle · streak · saved with zone map",
+        "sub.warmup": "until ready — no point raising the profile",
+        "sub.advanced_card": "history · chip map cache · rare options",
+        "sub.access": "Remote · auth · LuCI proxy :8788",
+        "sub.software": "version · GitHub update check",
+        "sub.dry": "auto zones · Safety always · then Save",
+        "sub.chip_poll": "own interval · web admin · separate from live poll",
+        "sub.keenetic": "model · firmware · hostname",
+        "sub.action_log": "policy events · last write · live",
+        "sub.pool_presets": "save current · apply to ASIC · edit url/user/pass",
+        "field.store_days": "Keep, days",
+        "field.interval_sec": "Sample interval, sec",
+        "field.project": "Project name",
+        "field.poll": "Poll interval, sec",
+        "field.city_search": "City search",
+        "field.coin_type": "Coin Type",
+        "label.quick_pick": "Quick pick",
+        "label.preset": "Preset",
+        "wx.interval": "Refresh interval, min",
+        "hint.sniffer": "When enabled, poolheat downloads modules/miner_sniffer from GitHub and starts tcpdump. Disable stops capture; Uninstall frees space.",
+        "info.installed": "Installed",
+        "info.on_github": "On GitHub",
+        "info.status": "Status",
+        "info.commit": "commit —",
+        "info.source": "source —",
+        "info.update_hint": "Click “Check for updates” — we compare version with the repository. Update installs UI+serve, does not touch config.json, restarts the service.",
+        "info.release_notes": "Release notes",
+        "upd.up_to_date": "up to date",
+        "upd.available": "update available",
+        "upd.local_ahead": "locally newer",
+        "upd.branch_only": "branch only",
+        "upd.unknown": "unknown",
+        "upd.error": "check error",
+        "upd.not_checked": "not checked",
+        "upd.press_test": "press Test",
+        "upd.reinstall": "Reinstall",
+        "upd.install": "Install",
+        "upd.install_from": "Install from GitHub",
+        "upd.msg_match": "Version matches GitHub ({ver}, source {src}). You can reinstall from {ref}.",
+        "upd.msg_avail": "Available {latest} (now {cur}). Install downloads the GitHub archive and restarts the service. config.json is kept.",
+        "upd.checking": "Checking for updates…",
+        "upd.uptodate_toast": "poolheat_WM is up to date · {ver}",
+        "footer.powered": "Powered by poolheat_WM"
+      },
       ru: {
-  "tab.dash": "Обзор",
-  "tab.miner": "Майнер",
-  "tab.map": "Карта зон",
-  "tab.pool": "Бассейн",
-  "tab.settings": "Настройки",
-  "tab.info": "Инфо",
-  "sub.miner": "Майнер",
-  "sub.pools": "Пулы",
-  "sub.chips": "Чипы",
-  "sub.info": "Инфо",
-  "sub.main": "Основные",
-  "sub.advanced": "Расширенные",
-  "sub.logs": "Логи",
-  "btn.refresh": "Обновить",
-  "btn.save": "Сохранить",
-  "btn.clear_db": "Очистить базу",
-  "btn.download_backup": "Скачать бэкап",
-  "btn.restore_backup": "Загрузить бэкап…",
-  "btn.test": "Проверить",
-  "btn.open_luci": "Открыть LuCI",
-  "btn.override_off": "Отключить Override",
-  "btn.dry_goto": "Майнер · Dry Run",
-  "btn.hist_clear": "Очистить базу",
-  "btn.find": "Найти",
-  "btn.refresh_status": "Обновить статус",
-  "btn.refresh_weather": "Обновить погоду",
-  "check.live": "Live с miner",
-  "lang.label": "Lang интерфейса",
-  "lang.label_short": "Lang",
-  "lang.sub": "русский · English",
-  "lang.ru": "Russian",
-  "lang.en": "English",
-  "toast.lang_saved": "Lang сохранён",
-  "banner.dry_span": "Auto zones not written · Safety active · log only",
-  "live.sim_off": "симуляция · Live выкл · обновлено ",
-  "live.updated_sep": " · обновлено ",
-  "live.luci_proxy_title": "Открыть LuCI через proxy",
-  "h2.history": "История и графики",
-  "h2.temps": "Температуры °C",
-  "h2.power": "Мощность · Хешрейт · J/T",
-  "h2.mode": "Режим miner",
-  "h2.boards": "Платы (PCB) · hashboard",
-  "h2.layers": "Слои решения",
-  "h2.would_apply": "Что применили бы сейчас",
-  "h2.chipmap": "Карта чипов",
-  "h2.chip_params": "Параметры чипа",
-  "h2.chip_poll": "Опрос карты чипов",
-  "h2.pool_presets": "Пресеты пулов",
-  "h2.zone_map": "Карта зон · heating бассейна",
-  "h2.zone_presets": "Пресеты карты",
-  "h2.thresholds": "Thresholdи (°C)",
-  "h2.scale": "Шкала T_ctrl (карта зон)",
-  "h2.if_tcrit": "Если T_crit",
-  "h2.if_tcrit_clear": "Если T_crit_clear",
-  "h2.pool_geo": "Бассейн · геометрия",
-  "h2.circulation": "Водообмен · циркуляция",
-  "h2.weather": "Погода · город",
-  "h2.backup": "Бэкап конфигурации",
-  "h2.connection": "Подключение Whatsminer",
-  "h2.filtration": "Фильтрация · насос",
-  "h2.policy": "Политика · anti-thrash",
-  "h2.advanced": "Расширенные настройки",
-  "h2.access": "Настройки доступа",
-  "h2.software": "poolheat_WM · ПО",
-  "h2.resources": "Ресурсы",
-  "h2.error_log": "Журнал ошибок miner",
-  "h2.errors": "Errors",
-  "h2.action_log": "Action log",
-  "h2.telegram": "Telegram bot",
-  "h2.dry": "Dry Run",
-  "h2.warmup": "Warmup / upfreq gate",
-  "h2.keenetic": "Keenetic",
-  "section.history": "История и графики",
-  "section.chip_cache": "Карта чипов · кеш",
-  "section.remote": "Remote · auth",
-  "section.luci": "LuCI proxy · :8788",
-  "section.sniffer": "Сниффер miner",
-  "sub.desc.history": "retention · sample interval · enable logging",
-  "sub.desc.chip_cache": "disk cache · survives service restart",
-  "sub.desc.remote": "poolheat UI access · do not port-forward :8787 to WAN",
-  "sub.desc.luci": "доступ к web-UI miner через роутер",
-  "sub.desc.sniffer": "опционально · скачать с GitHub · tcpdump на роутере",
-  "sub.backup": "download / restore all settings (JSON)",
-  "sub.connection": "TCP · saved to config.json · applied immediately",
-  "sub.filtration": "outlet / webhook · auto ON while mining",
-  "sub.telegram": "policy notifications · /status commands",
-  "sub.policy": "dwell · settle · streak · saved with zone map",
-  "sub.warmup": "until ready — no point raising the profile",
-  "sub.advanced_card": "history · chip map cache · rare options",
-  "sub.access": "Remote · auth · LuCI proxy :8788",
-  "sub.software": "version · GitHub update check",
-  "sub.dry": "auto zones · Safety always · then Save",
-  "check.sniffer": "Включить захват miner",
-  "check.sniffer_desc": "установить модуль + запустить tcpdump (host <miner>)",
-  "btn.pcap": "Скачать pcap",
-  "btn.uninstall": "Удалить",
-  "hint.sniffer": "При включении poolheat скачивает modules/miner_sniffer с GitHub и запускает tcpdump. Деактивация останавливает захват; Удалить — освобождает место.",
-  "sub.chip_poll": "own interval · web admin · separate from live poll",
-  "check.hist_enabled": "Сбор данных",
-  "check.hist_desc": "писать samples в history.db",
-  "check.chip_cache": "Сохранять кеш карты чипов",
-  "check.luci_proxy": "Включить прокси на порт 8788",
-  "field.store_days": "Хранить, дней",
-  "field.interval_sec": "Sample interval, sec",
-  "field.project": "Название проекта",
-  "field.poll": "Poll interval, sec",
-  "field.city_search": "Поиск города",
-  "label.quick_pick": "Быстрый выбор",
-  "wx.interval": "Интервал обновления, мин"
-},
+        "tab.dash": "Обзор",
+        "tab.miner": "Майнер",
+        "tab.map": "Карта зон",
+        "tab.pool": "Бассейн",
+        "tab.settings": "Настройки",
+        "tab.info": "Инфо",
+        "sub.miner": "Майнер",
+        "sub.pools": "Пулы",
+        "sub.pools_card": "stratum · Active · shares · пулы Whatsminer",
+        "sub.chips": "Чипы",
+        "sub.info": "Инфо",
+        "sub.main": "Основные",
+        "sub.advanced": "Расширенные",
+        "sub.logs": "Логи",
+        "btn.refresh": "Обновить",
+        "btn.save": "Сохранить",
+        "btn.clear_db": "Очистить базу",
+        "btn.download_backup": "Скачать бэкап",
+        "btn.restore_backup": "Загрузить бэкап…",
+        "btn.test": "Проверить",
+        "btn.open_luci": "Открыть LuCI",
+        "btn.override_off": "Отключить Override",
+        "btn.dry_goto": "Майнер · Dry Run",
+        "btn.hist_clear": "Очистить базу",
+        "btn.find": "Найти",
+        "btn.refresh_status": "Обновить статус",
+        "btn.refresh_weather": "Обновить погоду",
+        "btn.refresh_all": "Обновить",
+        "btn.check_updates": "Проверить обновления",
+        "btn.install": "Установить",
+        "btn.reinstall": "Переустановить",
+        "btn.export_jsonl": "Экспорт JSONL",
+        "btn.apply_asic": "Применить на ASIC",
+        "btn.save_current": "Сохранить текущие…",
+        "btn.overwrite_asic": "Перезаписать с ASIC",
+        "btn.rename": "Переименовать",
+        "btn.save_edits": "Сохранить правки",
+        "btn.delete": "Удалить",
+        "btn.pcap": "Скачать pcap",
+        "btn.uninstall": "Удалить",
+        "check.live": "Live с майнера",
+        "check.hist_enabled": "Сбор данных",
+        "check.hist_desc": "писать samples в history.db",
+        "check.chip_cache": "Сохранять кеш карты чипов",
+        "check.luci_proxy": "Включить прокси на порт 8788",
+        "check.sniffer": "Включить захват майнера",
+        "check.sniffer_desc": "установить модуль + запустить tcpdump (host <miner>)",
+        "lang.label": "Язык интерфейса",
+        "lang.label_short": "Язык",
+        "lang.sub": "английский · русский",
+        "lang.ru": "Русский",
+        "lang.en": "English",
+        "lang.primary": "English (основной)",
+        "lang.extension": "Русский (расширение)",
+        "toast.lang_saved": "Язык сохранён",
+        "banner.dry_span": "Авто-зоны не пишутся · Safety работает · только лог",
+        "banner.warmup_span": "Майнер ещё выходит на режим — upward заблокирован. Downward и Critical разрешены.",
+        "banner.override_span": "Авто-зоны Z0–Z2 на паузе · Safety Critical работает · осталось",
+        "live.sim_off": "симуляция · Live выкл · обновлено ",
+        "live.updated_sep": " · обновлено ",
+        "live.online": "Online",
+        "live.offline": "Offline",
+        "live.luci_proxy_title": "Открыть LuCI через proxy",
+        "h2.history": "История и графики",
+        "h2.temps": "Температуры °C",
+        "h2.power": "Мощность · Хешрейт · J/T",
+        "h2.mode": "Режим майнера",
+        "h2.boards": "Платы (PCB) · hashboard",
+        "h2.layers": "Слои решения",
+        "h2.would_apply": "Что применили бы сейчас",
+        "h2.chipmap": "Карта чипов",
+        "h2.chip_params": "Параметры чипа",
+        "h2.chip_poll": "Опрос карты чипов",
+        "h2.pool_presets": "Пресеты пулов",
+        "h2.pools": "Пулы",
+        "h2.zone_map": "Карта зон · нагрев бассейна",
+        "h2.zone_presets": "Пресеты карты",
+        "h2.thresholds": "Пороги (°C)",
+        "h2.scale": "Шкала T_ctrl (карта зон)",
+        "h2.if_tcrit": "Если T_crit",
+        "h2.if_tcrit_clear": "Если T_crit_clear",
+        "h2.pool_geo": "Бассейн · геометрия",
+        "h2.circulation": "Водообмен · циркуляция",
+        "h2.weather": "Погода · город",
+        "h2.backup": "Бэкап конфигурации",
+        "h2.connection": "Подключение Whatsminer",
+        "h2.filtration": "Фильтрация · насос",
+        "h2.policy": "Политика · anti-thrash",
+        "h2.advanced": "Расширенные настройки",
+        "h2.access": "Настройки доступа",
+        "h2.software": "poolheat_WM · ПО",
+        "h2.resources": "Ресурсы",
+        "h2.error_log": "Журнал ошибок майнера",
+        "h2.errors": "Ошибки",
+        "h2.action_log": "Журнал действий",
+        "h2.telegram": "Telegram bot",
+        "h2.dry": "Dry Run",
+        "h2.warmup": "Warmup / upfreq gate",
+        "h2.keenetic": "Keenetic",
+        "h2.whatsminer": "Whatsminer",
+        "h2.hashboards": "Hashboards · PCB SN · Tagged",
+        "section.history": "История и графики",
+        "section.chip_cache": "Карта чипов · кеш",
+        "section.remote": "Remote · auth",
+        "section.luci": "LuCI proxy · :8788",
+        "section.sniffer": "Сниффер майнера",
+        "sub.desc.history": "хранение · интервал сбора · включение записи",
+        "sub.desc.chip_cache": "сохранение на диск · переживает рестарт сервиса",
+        "sub.desc.remote": "доступ к poolheat UI · не пробрасывать :8787 в WAN",
+        "sub.desc.luci": "web-UI майнера через роутер",
+        "sub.desc.sniffer": "опционально · скачать с GitHub · tcpdump на роутере",
+        "sub.backup": "скачать / восстановить все настройки (JSON)",
+        "sub.connection": "TCP · сохраняется в config.json · применяется сразу",
+        "sub.filtration": "розетка / webhook · auto ON при майнинге",
+        "sub.telegram": "уведомления policy · команды /status",
+        "sub.policy": "dwell · settle · streak · сохраняется с картой зон",
+        "sub.warmup": "пока не ready — нет смысла повышать профиль",
+        "sub.advanced_card": "история · кеш карты чипов · редкие опции",
+        "sub.access": "Remote · auth · LuCI proxy :8788",
+        "sub.software": "версия · проверка обновлений GitHub",
+        "sub.dry": "авто-зоны · Safety всегда · после галки — Сохранить",
+        "sub.chip_poll": "отдельный интервал · web admin · не смешивается с live poll",
+        "sub.keenetic": "модель · прошивка · hostname",
+        "sub.action_log": "события policy · last write · live",
+        "sub.pool_presets": "сохранить текущие · применить на ASIC · правка url/user/pass",
+        "field.store_days": "Хранить, дней",
+        "field.interval_sec": "Интервал сбора, сек",
+        "field.project": "Название проекта",
+        "field.poll": "Интервал опроса, сек",
+        "field.city_search": "Поиск города",
+        "field.coin_type": "Тип монеты",
+        "label.quick_pick": "Быстрый выбор",
+        "label.preset": "Пресет",
+        "wx.interval": "Интервал обновления, мин",
+        "hint.sniffer": "При включении poolheat скачивает modules/miner_sniffer с GitHub и запускает tcpdump. Выключение останавливает захват; Удалить — освобождает место.",
+        "info.installed": "Установлено",
+        "info.on_github": "На GitHub",
+        "info.status": "Статус",
+        "info.commit": "commit —",
+        "info.source": "источник —",
+        "info.update_hint": "Нажмите «Проверить обновления» — сравним версию с репозиторием. Установка обновит UI+serve, config.json не трогает, перезапустит сервис.",
+        "info.release_notes": "Заметки к релизу",
+        "upd.up_to_date": "актуально",
+        "upd.available": "есть обновление",
+        "upd.local_ahead": "локально новее",
+        "upd.branch_only": "только ветка",
+        "upd.unknown": "неизвестно",
+        "upd.error": "ошибка проверки",
+        "upd.not_checked": "не проверено",
+        "upd.press_test": "нажмите Проверить",
+        "upd.reinstall": "Переустановить",
+        "upd.install": "Установить",
+        "upd.install_from": "Установить с GitHub",
+        "upd.msg_match": "Версия совпадает с GitHub ({ver}, источник {src}). Можно переустановить из {ref}.",
+        "upd.msg_avail": "Доступна {latest} (сейчас {cur}). Установка скачает архив с GitHub и перезапустит сервис. config.json сохранится.",
+        "upd.checking": "Проверка обновлений…",
+        "upd.uptodate_toast": "poolheat_WM актуален · {ver}",
+        "footer.powered": "Работает на poolheat_WM"
+      },
     };
 
     let _uiLang = "en"; // English primary; Russian is extension
@@ -4649,10 +4743,22 @@
 
     function t(key, fallback) {
       const lang = getUiLang();
-      const dict = I18N[lang] || I18N.ru;
-      if (key && dict[key] != null) return dict[key];
-      if (key && I18N.ru[key] != null) return I18N.ru[key];
+      const dict = I18N[lang] || I18N.en;
+      if (key != null && dict && dict[key] != null) return dict[key];
+      if (key != null && I18N.en && I18N.en[key] != null) return I18N.en[key];
+      if (key != null && I18N.ru && I18N.ru[key] != null) return I18N.ru[key];
       return fallback != null ? fallback : (key || "");
+    }
+
+    /** Format template with {name} placeholders */
+    function tf(key, vars, fallback) {
+      let s = t(key, fallback || key);
+      if (vars && typeof vars === "object") {
+        Object.keys(vars).forEach((k) => {
+          s = s.split("{" + k + "}").join(String(vars[k] != null ? vars[k] : ""));
+        });
+      }
+      return s;
     }
 
     function applyUiLang(lang, opts) {
@@ -4667,16 +4773,22 @@
         if (!key) return;
         const val = t(key, null);
         if (val == null) return;
-        // preserve child structure if only wrapping text
         if (el.children.length === 0) {
           el.textContent = val;
         } else {
-          // set first text-like: replace whole text if simple
+          // single text child among mixed nodes
+          let set = false;
           el.childNodes.forEach((n) => {
-            if (n.nodeType === 3 && n.textContent.trim()) {
+            if (!set && n.nodeType === 3 && n.textContent.trim()) {
               n.textContent = val;
+              set = true;
             }
           });
+          if (!set) {
+            // e.g. only element children — set first element text if leaf
+            const leaf = el.querySelector("[data-i18n-text]") || null;
+            if (leaf) leaf.textContent = val;
+          }
         }
       });
       document.querySelectorAll("[data-i18n-html]").forEach((el) => {
@@ -4714,34 +4826,29 @@
         try { localStorage.setItem(UI_LANG_KEY, lang); } catch (_) {}
       }
       const stEl = document.getElementById("ui-lang-status");
-      if (stEl) stEl.textContent = lang === "en" ? "English" : "Russian";
+      if (stEl) stEl.textContent = lang === "ru" ? t("lang.extension") : t("lang.primary");
       document.dispatchEvent(new CustomEvent("poolheat:lang", { detail: { lang } }));
+      // refresh dynamic UI that is not data-i18n
+      try {
+        if (typeof updateSrcBar === "function") {
+          updateSrcBar(typeof live !== "undefined" ? live : null);
+        }
+      } catch (_) {}
+      try {
+        if (typeof renderUpdateCheck === "function" && window.__lastUpdateCheck) {
+          renderUpdateCheck(window.__lastUpdateCheck);
+        }
+      } catch (_) {}
       return lang;
     }
 
-    
-    Object.assign(I18N.en, {
-      "live.sim_off": "simulation · Live off · updated ",
-      "live.updated_sep": " · updated ",
-      "btn.refresh_status": "Refresh status",
-      "btn.refresh_weather": "Refresh weather",
-      "btn.refresh_all": "Refresh",
-    });
-    Object.assign(I18N.ru, {
-      "live.sim_off": "simulation · Live off · updated ",
-      "live.updated_sep": " · updated ",
-      "btn.refresh_status": "Refresh status",
-      "btn.refresh_weather": "Refresh weather",
-      "btn.refresh_all": "Refresh",
-    });
-
     function initUiLangControls() {
       const applyFrom = (sel) => {
-        const lang = (sel && sel.value) || "ru";
+        const lang = (sel && sel.value) || getUiLang();
         applyUiLang(lang);
         if (typeof toastSuccess === "function") toastSuccess(t("toast.lang_saved"));
         const st = document.getElementById("ui-lang-status");
-        if (st) st.textContent = lang === "en" ? "English" : "Russian";
+        if (st) st.textContent = lang === "ru" ? t("lang.extension") : t("lang.primary");
       };
       document.getElementById("ui-lang-select")?.addEventListener("change", (e) => {
         applyUiLang(e.target.value);
@@ -6441,7 +6548,7 @@
         (typeof t === "function" ? t("live.updated_sep") : " · updated ") +
         tstr +
         " · " +
-        (online ? "Online" : "Offline");
+        (online ? t("live.online", "Online") : t("live.offline", "Offline"));
       // When LuCI proxy is listening — make miner IP a link to :8788
       if (isLuciProxyActive() && hostDisp && hostDisp !== "—") {
         const url = luciProxyUrl();
@@ -10960,6 +11067,7 @@
 
     function renderUpdateCheck(chk, ph) {
       lastUpdateCheck = chk || null;
+      window.__lastUpdateCheck = chk || null;
       const applyBtn = document.getElementById("btn-update-apply");
       const statusEl = document.getElementById("info-app-status");
       const msgEl = document.getElementById("info-update-msg");
@@ -10977,8 +11085,8 @@
       }
       if (!chk) {
         setTxt("info-app-latest", "—");
-        setTxt("info-app-source", "press Test");
-        setTxt("info-app-status", "not checked");
+        setTxt("info-app-source", t("upd.press_test"));
+        setTxt("info-app-status", t("upd.not_checked"));
         setTxt("info-app-commit", "commit —");
         if (applyBtn) applyBtn.hidden = true;
         return;
@@ -10987,7 +11095,9 @@
       setTxt("info-app-latest", chk.latest_version || "—");
       setTxt(
         "info-app-source",
-        (chk.source ? "source " + chk.source : "source —") +
+        (chk.source
+          ? (getUiLang() === "ru" ? "источник " : "source ") + chk.source
+          : t("info.source")) +
           (chk.tag ? " · " + chk.tag : "")
       );
       setTxt(
@@ -10998,12 +11108,12 @@
       );
 
       const map = {
-        up_to_date: "up to date",
-        update_available: "update available",
-        local_ahead: "locally newer",
-        branch_only: "branch only",
-        unknown: "unknown",
-        error: "check error",
+        up_to_date: t("upd.up_to_date"),
+        update_available: t("upd.available"),
+        local_ahead: t("upd.local_ahead"),
+        branch_only: t("upd.branch_only"),
+        unknown: t("upd.unknown"),
+        error: t("upd.error"),
       };
       const st = map[chk.status] || chk.status || "—";
       setTxt("info-app-status", st);
@@ -11028,11 +11138,11 @@
         applyBtn.hidden = !can;
         applyBtn.disabled = false;
         if (chk.status === "update_available") {
-          applyBtn.textContent = "Install " + (chk.latest_version || "");
+          applyBtn.textContent = t("upd.install") + " " + (chk.latest_version || "");
         } else if (chk.status === "up_to_date") {
-          applyBtn.textContent = "Reinstall " + (chk.latest_version || "");
+          applyBtn.textContent = t("upd.reinstall") + " " + (chk.latest_version || "");
         } else {
-          applyBtn.textContent = "Install from GitHub";
+          applyBtn.textContent = t("upd.install_from");
         }
       }
       if (msgEl) {
@@ -11041,22 +11151,17 @@
           msgEl.textContent = chk.error;
         } else if (chk.status === "update_available") {
           msgEl.style.color = "var(--warn)";
-          msgEl.textContent =
-            "Available " +
-            (chk.latest_version || "?") +
-            " (now " +
-            (chk.current_version || "?") +
-            "). Install downloads the GitHub archive and restarts the service. config.json is kept.";
+          msgEl.textContent = tf("upd.msg_avail", {
+            latest: chk.latest_version || "?",
+            cur: chk.current_version || "?",
+          });
         } else if (chk.status === "up_to_date") {
           msgEl.style.color = "var(--ok)";
-          msgEl.textContent =
-            "Version matches GitHub (" +
-            (chk.latest_version || chk.current_version) +
-            ", source " +
-            (chk.source || "—") +
-            "). You can reinstall from " +
-            (chk.tag || chk.github_branch || "main") +
-            ".";
+          msgEl.textContent = tf("upd.msg_match", {
+            ver: chk.latest_version || chk.current_version || "?",
+            src: chk.source || "—",
+            ref: chk.tag || chk.github_branch || "main",
+          });
         } else if (chk.status === "local_ahead") {
           msgEl.style.color = "var(--muted)";
           msgEl.textContent =
