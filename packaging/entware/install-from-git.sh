@@ -13,6 +13,9 @@ mkdir -p /opt/bin /opt/lib/poolheat /opt/share/poolheat/www \
 
 # app files
 cp -f "$ROOT/ui-demo/serve.py" /opt/lib/poolheat/serve.py
+if [ -f "$ROOT/ui-demo/whatsminer_driver.py" ]; then
+  cp -f "$ROOT/ui-demo/whatsminer_driver.py" /opt/lib/poolheat/whatsminer_driver.py
+fi
 cp -f "$ROOT/ui-demo/index.html" /opt/share/poolheat/www/index.html
 if [ -f "$ROOT/VERSION" ]; then
   cp -f "$ROOT/VERSION" /opt/lib/poolheat/VERSION

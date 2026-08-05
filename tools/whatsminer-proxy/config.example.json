@@ -1,0 +1,73 @@
+{
+  "listen_host": "0.0.0.0",
+  "target_host": "192.168.1.10",
+  "log_dir": "logs",
+  "console_verbose": true,
+  "hex_preview_bytes": 256,
+  "ports": [
+    {
+      "name": "api_v2",
+      "listen": 4028,
+      "target": 4028,
+      "parse": "json_line",
+      "enabled": true,
+      "note": "Classic BTMiner TCP API (JSON line). Privileged cmds AES-encrypted when apiswitch off for plain write."
+    },
+    {
+      "name": "api_v2_alt",
+      "listen": 4029,
+      "target": 4029,
+      "parse": "json_line",
+      "enabled": true,
+      "note": "Some FW expose alternate privileged port."
+    },
+    {
+      "name": "api_v3",
+      "listen": 4433,
+      "target": 4433,
+      "parse": "json_len_le",
+      "enabled": true,
+      "note": "API v3 length-prefixed JSON (LE u32 + body). get.device.info / set.miner.*"
+    },
+    {
+      "name": "tools_remote",
+      "listen": 8889,
+      "target": 8889,
+      "parse": "tools_8889",
+      "enabled": true,
+      "note": "WhatsMinerTools Remote Ctrl — proprietary (often 16B challenge first). Main path when public API off."
+    },
+    {
+      "name": "http",
+      "listen": 8080,
+      "target": 80,
+      "parse": "http",
+      "enabled": true,
+      "note": "LuCI/web over plain HTTP if open."
+    },
+    {
+      "name": "https_tcp",
+      "listen": 8443,
+      "target": 443,
+      "parse": "raw",
+      "enabled": true,
+      "note": "TLS TCP tunnel only (ciphertext). Point Tools/browser at https://LAPTOP:8443 — SNI/Host may break; prefer hosts-file + listen 443 with sudo if needed."
+    },
+    {
+      "name": "https",
+      "listen": 443,
+      "target": 443,
+      "parse": "raw",
+      "enabled": false,
+      "note": "Requires sudo / admin on Mac. Enable to intercept Tools HTTPS without port remap."
+    },
+    {
+      "name": "http80",
+      "listen": 80,
+      "target": 80,
+      "parse": "http",
+      "enabled": false,
+      "note": "Requires sudo on Mac."
+    }
+  ]
+}

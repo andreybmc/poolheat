@@ -2001,6 +2001,8 @@
               <span data-bind="pwMode">—</span>
               · <span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span>
               · <span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span>
+              · <span class="tip" data-tip-key="psu_vin">Vin</span> <span data-bind="psuVin">—</span>
+              · <span class="tip" data-tip-key="psu_iin">Iin</span> <span data-bind="psuIin">—</span>
               · <span class="tip" data-tip-key="psu_temp">PSU</span> <span data-bind="psuTemp">—</span>
               · <span class="tip" data-tip-key="psu_fan" data-bind="psuFan">—</span>
               · <span class="tip" data-tip-key="asic_uptime" title="Uptime ASIC с перезагрузки">uptime</span>
@@ -3073,8 +3075,10 @@
               <h2>Подключение Whatsminer</h2>
               <div class="sub">TCP · сохраняется в config.json · применяется сразу</div>
             </div>
-            <div class="btn-row" style="gap:8px">
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" id="btn-test-conn">Проверить</button>
+              <button class="btn" type="button" id="btn-write-api-check" title="Статус Miner API Switch / write">Write API</button>
+              <button class="btn primary" type="button" id="btn-write-api-enable" title="Попытка enable + password cycle">Enable Write</button>
               <button class="btn primary" type="button" id="btn-save-miner">Сохранить</button>
             </div>
           </div>
@@ -3108,6 +3112,16 @@
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0" id="miner-cfg-status">
               host: —
+            </p>
+            <div id="write-api-status" style="font-size:0.78rem;color:var(--dim);margin:10px 0 0;line-height:1.45;white-space:pre-wrap">
+              Write API: —
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.45">
+              <b>Enable Write</b> открывает write через LuCI (<code>open_by_api</code>) —
+              как Tools → Miner API Switch, без смены пароля.
+              Дальше: Suspend/Resume, Power Mode, Power Limit по :4028/:4433.
+              Mode/reboot также через LuCI, если write ещё закрыт. Auto-enable
+              при первой write-команде, если switch был off.
             </p>
           </div>
         </div>
@@ -3243,7 +3257,7 @@
               </label>
             </div>
 
-            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
               <label class="check">
                 <input type="checkbox" id="filt-auto-mining" checked />
                 <span>Auto ON при майнинге
@@ -3256,21 +3270,21 @@
                   <span class="desc">Suspend → насос ВЫКЛ</span>
                 </span>
               </label>
+              <label class="check">
+                <input type="checkbox" id="filt-allow-off-mining" />
+                <span>Разрешить OFF при mining
+                  <span class="desc">не блокировать остановку насоса при майнинге</span>
+                </span>
+              </label>
             </div>
-            <label class="check" style="margin-top:8px">
-              <input type="checkbox" id="filt-allow-off-mining" />
-              <span>OFF при mining
-                <span class="desc">не блокировать «Выключить» пока mining</span>
-              </span>
-            </label>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
               <button class="btn primary" type="button" id="btn-filt-on">Включить насос</button>
               <button class="btn danger" type="button" id="btn-filt-off">Выключить насос</button>
               <span id="filt-status" style="font-size:0.78rem;color:var(--muted)">статус: —</span>
             </div>
             <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" id="filt-off-hint">
-              Без «OFF при mining» — Выкл. при Resume блокируется.
-              С «OFF при mining» + Auto ON — policy может снова включить насос.
+              Без «Разрешить OFF при mining» — Выкл. при Resume блокируется.
+              С опцией + Auto ON — policy может снова включить насос.
             </p>
           </div>
         </div>
@@ -3547,9 +3561,9 @@
           <div class="card-b stack" style="gap:14px">
             <div class="grid-3">
               <div class="metric highlight-accent">
-                <label>Модель</label>
+                <label>Модель · Хешрейт</label>
                 <div class="val" style="font-size:1.05rem" id="info-miner-type">—</div>
-                <div class="hint" id="info-miner-platform">platform —</div>
+                <div class="hint" id="info-miner-platform">—</div>
               </div>
               <div class="metric">
                 <label>Firmware</label>
@@ -3586,8 +3600,8 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Hashboards · PCB SN</h2>
-              <div class="sub">серийники плат по slot</div>
+              <h2>Hashboards · PCB SN · Tagged</h2>
+              <div class="sub">PCB SN и Tagged Hashrate из EEPROM — доступны и в Suspend</div>
             </div>
           </div>
           <div class="card-b" style="padding-top:8px">
@@ -3597,13 +3611,14 @@
                   <tr>
                     <th>Slot</th>
                     <th>PCB SN</th>
+                    <th>Tagged Hashrate</th>
                     <th>Chip Data</th>
                     <th>t°C</th>
                     <th>chips</th>
                   </tr>
                 </thead>
                 <tbody id="info-boards-body">
-                  <tr><td colspan="5" style="color:var(--muted)">—</td></tr>
+                  <tr><td colspan="6" style="color:var(--muted)">—</td></tr>
                 </tbody>
               </table>
             </div>
@@ -3809,7 +3824,15 @@
       },
       power_measured: {
         title: "Power measured",
-        body: "Фактическая мощность (W) и хешрейт (TH/s) с ASIC.\nMining Control — measured (mineroff + hash), как на вкладке Майнер.\nБейдж: Suspend / Mining.\nНиже: mode · freq · J/T · PSU · uptime.",
+        body: "Фактическая мощность (W) и хешрейт (TH/s) с ASIC.\nMining Control — measured (mineroff + hash), как на вкладке Майнер.\nБейдж: Suspend / Mining.\nНиже: mode · freq · J/T · Vin · Iin · PSU · uptime.",
+      },
+      psu_vin: {
+        title: "PowerVin",
+        body: "Входное напряжение БП (get_psu.vin / API v3 power.vin).\nWhatsMinerTools: PowerVin.\nЕдиницы: V (после нормализации raw ×100 → V).",
+      },
+      psu_iin: {
+        title: "PowerIin",
+        body: "Входной ток БП (get_psu.iin / API v3 power.iin).\nWhatsMinerTools: PowerIin.\nЕдиницы: A (raw mA → A при больших значениях).",
       },
       asic_uptime: {
         title: "Uptime ASIC",
@@ -5131,6 +5154,8 @@
           hashrate_th: 300,
           psu_temp: 42,
           psu_fan: 6000,
+          psu_vin: 380,
+          psu_iin: 15.2,
           uptime: 3600 * 26, // sim: 1д 2ч
           elapsed: 3600 * 5,
           upfreq_block: simUp.checked,
@@ -5161,6 +5186,8 @@
           hashrate_th: Number(live.hashrate_th),
           psu_temp: live.psu_temp != null ? Number(live.psu_temp) : NaN,
           psu_fan: live.psu_fan != null ? Number(live.psu_fan) : NaN,
+          psu_vin: live.psu_vin != null ? Number(live.psu_vin) : NaN,
+          psu_iin: live.psu_iin != null ? Number(live.psu_iin) : NaN,
           // Whatsminer summary.Uptime (sec since reboot) · Elapsed (mining session)
           uptime: live.uptime != null ? Number(live.uptime) : null,
           elapsed: live.elapsed != null ? Number(live.elapsed) : null,
@@ -5188,6 +5215,8 @@
         hashrate_th: NaN,
         psu_temp: NaN,
         psu_fan: NaN,
+        psu_vin: NaN,
+        psu_iin: NaN,
         uptime: null,
         elapsed: null,
         upfreq_block: false,
@@ -5426,7 +5455,19 @@
       setText("[data-bind=pwMode]", r.mode || "—");
       setText("[data-bind=freq]", fmt(r.freq, 0));
       setText("[data-bind=hr]", fmt(r.hashrate_th, 1));
-      // PSU 43°C · 6000 rpm
+      // PowerVin / PowerIin · PSU °C · rpm
+      setText(
+        "[data-bind=psuVin]",
+        Number.isFinite(r.psu_vin)
+          ? (r.psu_vin >= 100 ? Math.round(r.psu_vin) : r.psu_vin.toFixed(1)) + " V"
+          : "—"
+      );
+      setText(
+        "[data-bind=psuIin]",
+        Number.isFinite(r.psu_iin)
+          ? (r.psu_iin >= 10 ? r.psu_iin.toFixed(1) : r.psu_iin.toFixed(2)) + " A"
+          : "—"
+      );
       setText("[data-bind=psuTemp]", Number.isFinite(r.psu_temp) ? fmt(r.psu_temp, 0) + "°C" : "—");
       setText("[data-bind=psuFan]", Number.isFinite(r.psu_fan) ? Math.round(r.psu_fan) + " rpm" : "—");
       // ASIC uptime / elapsed (Whatsminer summary.Uptime / Elapsed, seconds)
@@ -7240,6 +7281,73 @@
       saveMinerConfig();
     });
 
+    function formatWriteApiStatus(body) {
+      if (!body || body.ok === false) {
+        return "Write API: ошибка · " + (body && body.error ? body.error : "—");
+      }
+      const st = body.status || body;
+      const sw = st.apiswitch_on === true ? "ON" : st.apiswitch_on === false ? "OFF" : "?";
+      const lines = [
+        "Write API: " + (st.write_ok ? "✅ доступен" : "🔒 закрыт") +
+          " · apiswitch=" + (st.apiswitch != null ? st.apiswitch : "—") + " (" + sw + ")",
+        "v2 :4028 write: " +
+          (st.v2_write_ok === true ? "ok" : st.v2_write_ok === false ? "fail" : "—") +
+          (st.v2_write_error ? " · " + String(st.v2_write_error).slice(0, 80) : ""),
+        "v3 :4433: " +
+          (st.v3_ok ? "up" : "down") +
+          " · write " +
+          (st.v3_write_ok === true ? "ok" : st.v3_write_ok === false ? "fail" : "—") +
+          (st.api_ver_v3 ? " · api " + st.api_ver_v3 : "") +
+          (st.fw ? " · fw " + st.fw : ""),
+        "LuCI: " + (st.luci_ok === true ? "ok" : st.luci_ok === false ? "fail" : "—"),
+      ];
+      if (body.message) lines.push(String(body.message));
+      else if (st.hint) lines.push(String(st.hint));
+      if (Array.isArray(body.tools_steps) && body.tools_steps.length && !st.write_ok) {
+        lines.push("Tools: " + body.tools_steps.join(" → "));
+      }
+      return lines.join("\n");
+    }
+
+    async function checkWriteApi(enable) {
+      const box = document.getElementById("write-api-status");
+      const pw = document.getElementById("settings-api-password")?.value;
+      if (box) box.textContent = enable ? "Enable Write… " : "Проверка Write API…";
+      try {
+        const res = await fetch(
+          enable ? "/api/miner/enable_write" : "/api/miner/write_api",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: enable ? "enable" : "status",
+              api_password: pw || undefined,
+            }),
+          }
+        );
+        const body = await res.json();
+        if (box) box.textContent = formatWriteApiStatus(body);
+        if (enable) {
+          if (body.enabled) toastSuccess(body.message || "Write API ok");
+          else toastError(body.message || "Write API всё ещё закрыт");
+        } else if (body.write_ok || (body.status && body.status.write_ok)) {
+          toastSuccess("Write API доступен");
+        }
+        return body;
+      } catch (e) {
+        if (box) box.textContent = "Write API: " + e.message;
+        toastError("Write API: " + e.message);
+        return null;
+      }
+    }
+
+    document.getElementById("btn-write-api-check")?.addEventListener("click", () => {
+      checkWriteApi(false);
+    });
+    document.getElementById("btn-write-api-enable")?.addEventListener("click", () => {
+      checkWriteApi(true);
+    });
+
     // ─── Telegram bot settings ─────────────────────────────────────────────
     let tgChatHistory = []; // [{id, nick, username, ...}]
 
@@ -8391,11 +8499,45 @@
         r.hw_version ? "hw " + r.hw_version : r.device_tree_model || "hw —"
       );
 
-      setTxt("info-miner-type", m.miner_type || "—");
-      setTxt(
-        "info-miner-platform",
-        m.platform ? "platform " + m.platform : "platform —"
-      );
+      // Model + Tagged: "M63_VK2A / 370.47 TH/s"
+      // hint: "platform H616 · HB 4 x K2A"
+      (function paintModelHashrate() {
+        const type = (m.miner_type || "").trim();
+        const th =
+          m.tagged_th != null
+            ? Number(m.tagged_th)
+            : m.factory_th != null
+              ? Number(m.factory_th)
+              : NaN;
+        let main = type || "—";
+        if (Number.isFinite(th) && th > 0) {
+          const thStr =
+            th >= 100 ? th.toFixed(1) : th >= 10 ? th.toFixed(2) : th.toFixed(2);
+          main = (type || "—") + " / " + thStr + " TH/s";
+        }
+        setTxt("info-miner-type", main);
+
+        const plat = (m.platform || "").trim();
+        let nBoards =
+          m.board_num != null && Number.isFinite(Number(m.board_num))
+            ? Number(m.board_num)
+            : Array.isArray(m.boards) && m.boards.length
+              ? m.boards.length
+              : null;
+        const hb = (m.hash_board || "").trim();
+        const bits = [];
+        if (plat) bits.push("platform " + plat);
+        if (nBoards != null && nBoards > 0) {
+          bits.push(hb ? "HB " + nBoards + " x " + hb : "HB " + nBoards);
+        } else if (hb) {
+          bits.push("HB " + hb);
+        }
+        if (bits.length) {
+          setTxt("info-miner-platform", bits.join(" · "));
+        } else if (!fromCache) {
+          setTxt("info-miner-platform", "—");
+        }
+      })();
       setTxt("info-miner-fw", m.fw_ver || "—");
       setTxt("info-miner-api", m.api_ver ? "api " + m.api_ver : "api —");
       setTxt("info-miner-host", m.host || "—");
@@ -8434,7 +8576,7 @@
         const boards = Array.isArray(m.boards) ? m.boards : [];
         if (!boards.length) {
           tbody.innerHTML =
-            '<tr><td colspan="5" style="color:var(--muted)">' +
+            '<tr><td colspan="6" style="color:var(--muted)">' +
             (fromCache ? "нет в кэше" : "нет данных") +
             "</td></tr>";
         } else {
@@ -8444,6 +8586,17 @@
                 b.temp_c != null && Number.isFinite(Number(b.temp_c))
                   ? Number(b.temp_c).toFixed(1)
                   : "—";
+              const th =
+                b.tagged_th != null && Number.isFinite(Number(b.tagged_th))
+                  ? Number(b.tagged_th)
+                  : b.tagged_ghs != null && Number.isFinite(Number(b.tagged_ghs))
+                    ? Number(b.tagged_ghs) / 1000
+                    : NaN;
+              const taggedCell =
+                Number.isFinite(th) && th > 0
+                  ? th.toFixed(2) +
+                    ' <small style="color:var(--muted)">TH/s</small>'
+                  : "—";
               return (
                 "<tr>" +
                 '<td style="text-align:center">' +
@@ -8451,6 +8604,9 @@
                 "</td>" +
                 '<td style="text-align:center;font-family:ui-monospace,monospace;font-size:0.82rem">' +
                 (b.pcb_sn || "—") +
+                "</td>" +
+                '<td style="text-align:center">' +
+                taggedCell +
                 "</td>" +
                 '<td style="text-align:center;font-size:0.78rem;word-break:break-all">' +
                 (b.chip_data || "—") +
@@ -9799,7 +9955,7 @@
         offBtn.disabled = body.can_turn_off === false;
         offBtn.title =
           body.can_turn_off === false
-            ? "Нельзя выключить при майнинге (auto ON)"
+            ? "Нельзя выключить при майнинге — включите «Разрешить OFF при mining»"
             : "Выключить насос";
       }
     }

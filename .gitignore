@@ -17,3 +17,10 @@ stage0-snapshot*.json
 # optional local config with secrets
 ui-demo/config.json
 packaging/entware/opt/etc/poolheat/config.local.json
+
+# local packaging artifacts
+dist/
+tools/whatsminer-proxy/pcap/
+tools/whatsminer-proxy/firmware/
+tools/whatsminer-proxy/logs/
+tools/whatsminer-proxy/*.pcap*

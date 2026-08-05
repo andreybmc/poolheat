@@ -145,7 +145,7 @@ _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
 
 # Software version + GitHub updates
-_DEFAULT_APP_VERSION = "0.3.28"
+_DEFAULT_APP_VERSION = "0.3.43"
 GITHUB_REPO = (
     os.environ.get("POOLHEAT_GITHUB_REPO")
     or (_APP.get("file_cfg") or {}).get("github_repo")
@@ -2009,6 +2009,8 @@ def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> 
                 raise
             except Exception:
                 pass
+    with _filtration_lock:
+        prev_on = _filtration_cfg.get("last_on")
     try:
         out = _filtration_dispatch(on)
         got = out.get("on")
@@ -2021,6 +2023,13 @@ def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> 
             _filtration_cfg["last_sync_ts"] = _filtration_cfg["last_ok_ts"]
             _filtration_cfg["last_action"] = f"{source}:{be}:{'on' if on else 'off'}"
         _save_filtration_cfg()
+        # TG push on real state change. Skip source=telegram — handler already
+        # replies with the same text + updated main keyboard.
+        if prev_on is not bool(got) and str(source or "") != "telegram":
+            try:
+                _tg_notify_filtration(bool(got), source=source)
+            except Exception as _tg_e:
+                print(f"[filtration] tg notify: {_tg_e}")
         return {"ok": True, "on": bool(got), "source": source, "backend": be, **out}
     except Exception as e:
         pretty = _filtration_user_error(e, on=on, backend=be, lang="ru")
@@ -3890,28 +3899,145 @@ def history_stats() -> dict:
 
 # ─── miner I/O ────────────────────────────────────────────────────────────────
 
+# Last successful live read — used to skip write when ASIC is offline.
+_last_live_ok_ts: float = 0.0
+_last_live_ok_lock = threading.Lock()
+_MINER_ONLINE_MAX_AGE_SEC = 45.0
+
+
+def _mark_miner_live_ok() -> None:
+    global _last_live_ok_ts
+    with _last_live_ok_lock:
+        _last_live_ok_ts = time.time()
+
+
+def miner_is_online(*, max_age_sec: float | None = None, probe: bool = False) -> bool:
+    """
+    True if we recently read live data successfully.
+    probe=True does a cheap summary ping when cache is stale.
+    """
+    age = float(max_age_sec if max_age_sec is not None else _MINER_ONLINE_MAX_AGE_SEC)
+    with _last_live_ok_lock:
+        last = float(_last_live_ok_ts or 0)
+    if last > 0 and (time.time() - last) <= age:
+        return True
+    if not probe:
+        return False
+    try:
+        miner_cmd({"cmd": "summary"}, timeout=4.0)
+        _mark_miner_live_ok()
+        return True
+    except Exception:
+        return False
+
+
+def _parse_miner_json(text: str) -> dict:
+    """
+    Parse Whatsminer TCP JSON robustly.
+    Handles: trailing junk, multiple objects, partial reads already completed,
+    and common firmware quirks — never surface raw JSONDecodeError as «offline».
+    """
+    s = (text or "").replace("\x00", "").strip()
+    if not s:
+        raise TimeoutError("empty response from miner")
+    dec = json.JSONDecoder()
+    # Prefer first complete object starting at first '{'
+    i = s.find("{")
+    if i < 0:
+        raise RuntimeError(f"miner response not JSON: {s[:80]!r}")
+    try:
+        obj, _end = dec.raw_decode(s, i)
+        if isinstance(obj, dict):
+            return obj
+        raise RuntimeError(f"miner JSON root not object: {type(obj).__name__}")
+    except json.JSONDecodeError:
+        pass
+    # Sanitize common garbage then retry
+    cleaned = s[i:]
+    cleaned = re.sub(r",\s*}", "}", cleaned)
+    cleaned = re.sub(r",\s*]", "]", cleaned)
+    cleaned = cleaned.replace("NaN", "null").replace("Infinity", "null")
+    try:
+        obj, _end = dec.raw_decode(cleaned)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError as e:
+        # Brace-match first object if truncated tail after valid body
+        depth = 0
+        in_str = False
+        esc = False
+        end_idx = -1
+        for idx, ch in enumerate(cleaned):
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end_idx = idx + 1
+                    break
+        if end_idx > 0:
+            try:
+                obj = json.loads(cleaned[:end_idx])
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+        raise RuntimeError(
+            f"bad JSON from miner (len={len(s)}, col={getattr(e, 'colno', '?')})"
+        ) from e
+    raise RuntimeError(f"miner JSON root not object after sanitize")
+
 
 def _recv_json(sock: socket.socket, timeout: float = 5.0) -> dict:
-    sock.settimeout(timeout)
+    """Read one JSON object from miner TCP socket (may span multiple recv)."""
+    deadline = time.time() + max(0.5, float(timeout))
     chunks: list[bytes] = []
-    while True:
+    while time.time() < deadline:
+        remain = max(0.05, deadline - time.time())
+        sock.settimeout(remain)
         try:
             chunk = sock.recv(16384)
             if not chunk:
                 break
             chunks.append(chunk)
-            text = b"".join(chunks).replace(b"\x00", b"").decode("utf-8", errors="replace").strip()
+            text = b"".join(chunks).replace(b"\x00", b"").decode("utf-8", errors="replace")
+            # Need at least one complete object
+            if "{" not in text:
+                continue
             try:
-                if text:
-                    return json.loads(text)
-            except json.JSONDecodeError:
-                pass
+                return _parse_miner_json(text)
+            except RuntimeError as e:
+                # incomplete — keep reading until timeout
+                if "bad JSON" in str(e) or "not JSON" in str(e):
+                    # if looks incomplete (unbalanced braces), continue
+                    if text.count("{") > text.count("}"):
+                        continue
+                    raise
+                raise
         except socket.timeout:
             break
-    raw = b"".join(chunks).replace(b"\x00", b"").decode("utf-8", errors="replace").strip()
-    if not raw:
+    raw = b"".join(chunks).replace(b"\x00", b"").decode("utf-8", errors="replace")
+    if not raw.strip():
         raise TimeoutError("empty response from miner")
-    return json.loads(raw)
+    try:
+        return _parse_miner_json(raw)
+    except RuntimeError:
+        # incomplete buffer after timeout
+        if raw.count("{") > raw.count("}"):
+            raise TimeoutError(
+                f"incomplete JSON from miner (len={len(raw)})"
+            ) from None
+        raise
 
 
 def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
@@ -4103,7 +4229,144 @@ def _collect_router_info() -> dict:
     return router
 
 
+def _parse_detect_hash_rate(raw) -> list[float | None]:
+    """
+    API v3 miner.detect-hash-rate — EEPROM Tagged Hashrate per slot (GHS).
+    Format: \"91153:91153:94080:94080\" (works in Suspend; no board power needed).
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        out: list[float | None] = []
+        for x in raw:
+            v = _f(x)
+            out.append(v if v is not None and v > 0 else None)
+        return out
+    s = str(raw).strip()
+    if not s:
+        return []
+    out = []
+    for part in s.replace(",", ":").split(":"):
+        part = part.strip()
+        if not part:
+            out.append(None)
+            continue
+        v = _f(part)
+        out.append(v if v is not None and v > 0 else None)
+    return out
+
+
+def _ghs_to_th(ghs: float | None) -> float | None:
+    if ghs is None:
+        return None
+    try:
+        g = float(ghs)
+    except (TypeError, ValueError):
+        return None
+    if g <= 0:
+        return None
+    return g / 1000.0
+
+
+def _boards_from_v3_device_msg(msg: dict | None) -> list[dict]:
+    """
+    PCB SN + Tagged Hashrate (detect-hash-rate) + chipdata from API v3 get.device.info.
+    Available in Suspend — data lives in hashboard EEPROM.
+    """
+    if not isinstance(msg, dict):
+        return []
+    miner = msg.get("miner") if isinstance(msg.get("miner"), dict) else {}
+    if not miner:
+        return []
+    rates = _parse_detect_hash_rate(miner.get("detect-hash-rate"))
+    try:
+        n = int(miner.get("board-num") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        # infer from highest present pcbsn / rate
+        n = max(len(rates), 4)
+        for i in range(8):
+            if miner.get(f"pcbsn{i}") or miner.get(f"chipdata{i}"):
+                n = max(n, i + 1)
+    n = max(1, min(8, n))
+    boards: list[dict] = []
+    for i in range(n):
+        pcb = miner.get(f"pcbsn{i}") or miner.get(f"pcb_sn{i}") or miner.get(f"PCB SN{i}")
+        if isinstance(pcb, str):
+            pcb = pcb.strip() or None
+        chip = miner.get(f"chipdata{i}") or miner.get(f"chip_data{i}")
+        if isinstance(chip, str):
+            chip = chip.strip() or None
+        ghs = rates[i] if i < len(rates) else None
+        boards.append(
+            {
+                "slot": i,
+                "pcb_sn": pcb,
+                "chip_data": chip,
+                "tagged_ghs": ghs,
+                "tagged_th": _ghs_to_th(ghs),
+                "temp_c": None,
+                "effective_chips": None,
+                "source": "v3",
+            }
+        )
+    return boards
+
+
+def _merge_board_rows(primary: list[dict], secondary: list[dict]) -> list[dict]:
+    """Merge board identity rows by slot — fill empty fields from secondary."""
+    by_slot: dict[int, dict] = {}
+    order: list[int] = []
+
+    def _slot_of(b: dict, fallback: int) -> int:
+        try:
+            s = b.get("slot")
+            if s is None:
+                return fallback
+            return int(s)
+        except (TypeError, ValueError):
+            return fallback
+
+    # primary first (prefer EEPROM/v3 for SN + tagged)
+    for i, b in enumerate(primary or []):
+        if not isinstance(b, dict):
+            continue
+        sl = _slot_of(b, i)
+        row = dict(b)
+        row["slot"] = sl
+        by_slot[sl] = row
+        if sl not in order:
+            order.append(sl)
+    for i, b in enumerate(secondary or []):
+        if not isinstance(b, dict):
+            continue
+        sl = _slot_of(b, i)
+        if sl not in by_slot:
+            row = dict(b)
+            row["slot"] = sl
+            by_slot[sl] = row
+            order.append(sl)
+            continue
+        cur = by_slot[sl]
+        for k, v in b.items():
+            if k == "slot":
+                continue
+            if v in (None, "", []):
+                continue
+            if cur.get(k) in (None, "", []):
+                cur[k] = v
+    # stable slot order
+    order_sorted = sorted(order)
+    return [by_slot[s] for s in order_sorted if s in by_slot]
+
+
 def _collect_miner_identity() -> dict:
+    """
+    ASIC identity for Info tab.
+    PCB SN + Tagged Hashrate come from hashboard EEPROM — available in Suspend
+    via API v3 get.device.info (devs often fails while mineroff).
+    """
     out: dict = {
         "ok": False,
         "host": f"{HOST_MINER}:{PORT_MINER}",
@@ -4120,6 +4383,13 @@ def _collect_miner_identity() -> dict:
         "psu_sw_version": None,
         "hostname": None,
         "boards": [],
+        # EEPROM factory / tagged hashrate (GHS + TH) — not live mining rate
+        "factory_ghs": None,
+        "factory_th": None,
+        "tagged_ghs": None,  # sum of board tagged (alias factory when present)
+        "tagged_th": None,
+        "board_num": None,
+        "hash_board": None,
         "error": None,
     }
     try:
@@ -4152,25 +4422,144 @@ def _collect_miner_identity() -> dict:
                     out["powersn"] = sn if sn not in (None, "") else None
         except Exception:
             pass
+
+        # summary.Factory GHS — EEPROM total; works in Suspend
         try:
-            devs = miner_cmd({"cmd": "devs"}, timeout=3).get("DEVS") or []
-            boards = []
+            sm = miner_cmd({"cmd": "summary"}, timeout=3).get("Msg") or {}
+            if isinstance(sm, dict):
+                fg = _f(sm.get("Factory GHS") or sm.get("factory_ghs"))
+                if fg is not None and fg > 0:
+                    out["factory_ghs"] = fg
+                    out["factory_th"] = _ghs_to_th(fg)
+        except Exception:
+            pass
+
+        boards_devs: list[dict] = []
+        try:
+            devs_raw = miner_cmd({"cmd": "devs"}, timeout=3)
+            devs = (
+                (devs_raw.get("DEVS") if isinstance(devs_raw, dict) else None) or []
+            )
             for d in devs if isinstance(devs, list) else []:
                 if not isinstance(d, dict):
                     continue
-                boards.append(
+                # per-board Factory GHS = Tagged Hashrate (EEPROM)
+                ghs = _f(d.get("Factory GHS") or d.get("factory_ghs"))
+                if ghs is not None and ghs <= 0:
+                    ghs = None
+                boards_devs.append(
                     {
                         "slot": d.get("Slot"),
                         "pcb_sn": d.get("PCB SN") or d.get("pcb_sn"),
                         "chip_data": d.get("Chip Data") or d.get("chip_data"),
                         "temp_c": _f(d.get("Temperature")),
                         "effective_chips": d.get("Effective Chips"),
+                        "tagged_ghs": ghs,
+                        "tagged_th": _ghs_to_th(ghs),
+                        "source": "devs",
                     }
                 )
-            out["boards"] = boards
         except Exception:
             pass
-        out["ok"] = bool(out.get("miner_type") or out.get("mac") or out.get("boards"))
+
+        # API v3: PCB SN + detect-hash-rate even when Suspend (devs fails)
+        boards_v3: list[dict] = []
+        try:
+            v3_msg = _fetch_v3_device_msg()
+            if isinstance(v3_msg, dict):
+                boards_v3 = _boards_from_v3_device_msg(v3_msg)
+                miner = (
+                    v3_msg.get("miner")
+                    if isinstance(v3_msg.get("miner"), dict)
+                    else {}
+                )
+                if miner:
+                    if not out.get("miner_type") and miner.get("type"):
+                        out["miner_type"] = miner.get("type")
+                    if not out.get("minersn"):
+                        msn = miner.get("miner-sn") or miner.get("minersn")
+                        if isinstance(msn, str) and msn.strip():
+                            out["minersn"] = msn.strip()
+                        elif msn not in (None, ""):
+                            out["minersn"] = str(msn)
+                    try:
+                        bn = int(miner.get("board-num") or 0)
+                        if bn > 0:
+                            out["board_num"] = bn
+                    except (TypeError, ValueError):
+                        pass
+                    hb = miner.get("hash-board") or miner.get("hash_board")
+                    if hb:
+                        out["hash_board"] = hb
+                    if not out.get("chip"):
+                        cd0 = miner.get("chipdata0")
+                        if cd0:
+                            out["chip"] = cd0
+                net = (
+                    v3_msg.get("network")
+                    if isinstance(v3_msg.get("network"), dict)
+                    else {}
+                )
+                if net and not out.get("mac") and net.get("mac"):
+                    out["mac"] = net.get("mac")
+                pwr = (
+                    v3_msg.get("power")
+                    if isinstance(v3_msg.get("power"), dict)
+                    else {}
+                )
+                if isinstance(pwr, dict):
+                    if not out.get("powersn") and pwr.get("sn"):
+                        out["powersn"] = pwr.get("sn")
+                    if not out.get("psu_model"):
+                        out["psu_model"] = pwr.get("model") or pwr.get("type")
+                sys_ = (
+                    v3_msg.get("system")
+                    if isinstance(v3_msg.get("system"), dict)
+                    else {}
+                )
+                if isinstance(sys_, dict):
+                    if not out.get("fw_ver") and sys_.get("fwversion"):
+                        out["fw_ver"] = sys_.get("fwversion")
+                    if not out.get("platform") and sys_.get("platform"):
+                        out["platform"] = sys_.get("platform")
+                    if not out.get("api_ver") and sys_.get("api"):
+                        out["api_ver"] = str(sys_.get("api"))
+        except Exception as e:
+            print(f"[ident] v3 device: {e}")
+
+        # Prefer v3 for EEPROM fields (works in Suspend); merge live temp/chips from devs
+        if boards_v3:
+            out["boards"] = _merge_board_rows(boards_v3, boards_devs)
+        else:
+            out["boards"] = boards_devs
+
+        # Sum tagged from boards if factory total missing
+        sum_ghs = 0.0
+        any_tagged = False
+        for b in out["boards"]:
+            g = _f(b.get("tagged_ghs"))
+            if g is not None and g > 0:
+                sum_ghs += g
+                any_tagged = True
+        if any_tagged:
+            out["tagged_ghs"] = sum_ghs
+            out["tagged_th"] = _ghs_to_th(sum_ghs)
+            if out.get("factory_ghs") is None:
+                out["factory_ghs"] = sum_ghs
+                out["factory_th"] = out["tagged_th"]
+        elif out.get("factory_ghs") is not None:
+            out["tagged_ghs"] = out["factory_ghs"]
+            out["tagged_th"] = out.get("factory_th")
+
+        if out.get("board_num") is None and out["boards"]:
+            out["board_num"] = len(out["boards"])
+
+        out["ok"] = bool(
+            out.get("miner_type")
+            or out.get("mac")
+            or out.get("boards")
+            or out.get("factory_ghs")
+        )
     except Exception as e:
         out["error"] = str(e)
     return out
@@ -4822,6 +5211,10 @@ def apply_github_update(ref: str | None = None) -> dict:
 
             mapping = [
                 (src_root / "ui-demo" / "serve.py", lib_dir / "serve.py"),
+                (
+                    src_root / "ui-demo" / "whatsminer_driver.py",
+                    lib_dir / "whatsminer_driver.py",
+                ),
                 (src_root / "ui-demo" / "index.html", www_dir / "index.html"),
             ]
             ver_src = src_root / "VERSION"
@@ -4917,12 +5310,42 @@ _token_cache_lock = threading.Lock()
 # {host, port, pwd_fp, host_sign, host_passwd_md5, expires_at}
 _token_cache: dict | None = None
 
+# After over-max: freeze TCP privileged writes so policy cannot burn more slots.
+# LuCI-first ops (mode/pools/reboot/restart) stay available.
+_tcp_write_backoff_lock = threading.Lock()
+_tcp_write_backoff_until: float = 0.0
+_TCP_WRITE_BACKOFF_SEC = 1200.0  # 20 min
+
 
 def _msg_is_over_max_connect(msg) -> bool:
     if not isinstance(msg, str):
         return False
     low = msg.strip().lower()
-    return low == "over max connect" or "over max connect" in low
+    return (
+        low == "over max connect"
+        or "over max connect" in low
+        or "лимит токенов api" in low
+    )
+
+
+def _note_tcp_write_exhausted(sec: float | None = None) -> None:
+    global _tcp_write_backoff_until
+    wait = float(sec if sec is not None else _TCP_WRITE_BACKOFF_SEC)
+    with _tcp_write_backoff_lock:
+        _tcp_write_backoff_until = max(
+            _tcp_write_backoff_until, time.time() + max(60.0, wait)
+        )
+
+
+def _tcp_write_blocked() -> bool:
+    with _tcp_write_backoff_lock:
+        return time.time() < _tcp_write_backoff_until
+
+
+def _tcp_write_blocked_msg() -> str:
+    with _tcp_write_backoff_lock:
+        rem = max(0, int(_tcp_write_backoff_until - time.time()))
+    return f"{_OVER_MAX_CONNECT_RU} · backoff {rem}s (LuCI mode/reboot всё ещё работают)"
 
 
 def _password_fingerprint(password: str) -> str:
@@ -4999,11 +5422,17 @@ def get_token_data(
 
     When unlocked=True (caller holds _miner_io_lock): NEVER sleep — only one
     attempt. Sleeping under the I/O lock freezes live poll + Telegram status.
+
+    After over max connect: global TCP-write backoff (no further get_token
+    attempts) so policy cannot burn remaining slots. LuCI control still works.
     """
     if not force_refresh:
         cached = _token_cache_get(password)
         if cached:
             return cached
+    # No cache and already exhausted — fail fast (do not open more sessions)
+    if _tcp_write_blocked() and not force_refresh:
+        raise RuntimeError(_tcp_write_blocked_msg())
 
     last_err: Exception | None = None
     # Under exclusive lock: single shot only (caller retries outside lock).
@@ -5023,6 +5452,7 @@ def get_token_data(
         msg = data.get("Msg") if isinstance(data, dict) else None
         if _msg_is_over_max_connect(msg):
             last_err = RuntimeError("over max connect")
+            _note_tcp_write_exhausted()
             if unlocked:
                 # Do not sleep while holding _miner_io_lock.
                 break
@@ -5053,82 +5483,832 @@ def get_token_data(
     raise RuntimeError(_OVER_MAX_CONNECT_RU)
 
 
-def privileged_cmd(cmd: dict, password: str, *, token_attempts: int = 3) -> dict:
+def _miner_write_ports() -> list[int]:
+    """
+    TCP write ports to try (order matters).
+    4028 = classic BTMiner API (get_version api_ver 2.x).
+    4029 = temporary «API-v2 / IP access mode» seen during restarts on some FW.
+    """
+    ports: list[int] = []
+    for p in (int(PORT_MINER), 4029, 4028):
+        if p not in ports:
+            ports.append(p)
+    return ports
+
+
+def privileged_cmd(
+    cmd: dict,
+    password: str,
+    *,
+    token_attempts: int = 3,
+    ports: list[int] | None = None,
+) -> dict:
     """
     Encrypted privileged write. Reuses cached token.
+    Tries several TCP ports (4028 then 4029) — not a different crypto,
+    just alternate API listeners on newer firmwares.
     Retries over max connect with sleep OUTSIDE _miner_io_lock so TG/live stay responsive.
     """
     last_err: Exception | None = None
     attempts = max(1, int(token_attempts))
-    for attempt in range(attempts):
-        try:
-            with _miner_io_lock:
-                token = get_token_data(
-                    password, max_attempts=1, unlocked=True
-                )
-                out_cmd = dict(cmd)
-                out_cmd["token"] = token["host_sign"]
-                aeskey = binascii.unhexlify(
-                    hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
-                )
-                cipher = AES.new(aeskey, AES.MODE_ECB)
-                api_str = json.dumps(out_cmd, separators=(",", ":"))
-                enc = base64.b64encode(
-                    cipher.encrypt(_add_to_16(api_str))
-                ).decode()
-                payload = (
-                    json.dumps({"enc": 1, "data": enc}, separators=(",", ":"))
-                    + "\n"
-                ).encode()
-                try:
-                    with socket.create_connection(
-                        (HOST_MINER, PORT_MINER), timeout=12
-                    ) as sock:
-                        sock.sendall(payload)
-                        raw = _recv_json(sock, timeout=25)
-                except (OSError, TimeoutError, socket.timeout) as e:
-                    cname = str(out_cmd.get("cmd") or "")
-                    if cname in ("factory_reset", "reboot", "net_config"):
-                        return {
-                            "STATUS": "S",
-                            "Msg": f"{cname} sent (link dropped: {e})",
-                            "Code": 131,
-                        }
-                    raise
-                if isinstance(raw, dict):
-                    dec = _decrypt_privileged_response(cipher, raw)
+    write_ports = list(ports) if ports else _miner_write_ports()
+    for port in write_ports:
+        for attempt in range(attempts):
+            try:
+                with _miner_io_lock:
+                    token = get_token_data(
+                        password, max_attempts=1, unlocked=True
+                    )
+                    out_cmd = dict(cmd)
+                    out_cmd["token"] = token["host_sign"]
+                    aeskey = binascii.unhexlify(
+                        hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
+                    )
+                    cipher = AES.new(aeskey, AES.MODE_ECB)
+                    api_str = json.dumps(out_cmd, separators=(",", ":"))
+                    enc = base64.b64encode(
+                        cipher.encrypt(_add_to_16(api_str))
+                    ).decode()
+                    payload = (
+                        json.dumps({"enc": 1, "data": enc}, separators=(",", ":"))
+                        + "\n"
+                    ).encode()
                     try:
-                        st = str(dec.get("STATUS") or "").upper()
-                        msg = str(dec.get("Msg") or "").lower()
-                        code = dec.get("Code")
-                        if code == 135 or (
-                            "token" in msg
-                            and (
-                                "error" in msg
-                                or "invalid" in msg
-                                or "check" in msg
-                            )
-                        ):
-                            _token_cache_clear()
-                        elif st in ("E", "F") and "token" in msg:
-                            _token_cache_clear()
-                    except Exception:
-                        pass
-                    return dec
-                return raw
-        except RuntimeError as e:
-            last_err = e
-            if "over max" not in str(e).lower():
-                raise
-            # Sleep outside lock — free live poll / Telegram
-            if attempt + 1 < attempts:
-                time.sleep(min(45.0, 10.0 + attempt * 12.0))
-                continue
-            raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
+                        with socket.create_connection(
+                            (HOST_MINER, int(port)), timeout=8
+                        ) as sock:
+                            sock.sendall(payload)
+                            raw = _recv_json(sock, timeout=25)
+                    except (OSError, TimeoutError, socket.timeout) as e:
+                        cname = str(out_cmd.get("cmd") or "")
+                        if cname in ("factory_reset", "reboot", "net_config"):
+                            return {
+                                "STATUS": "S",
+                                "Msg": f"{cname} sent (link dropped: {e})",
+                                "Code": 131,
+                                "port": int(port),
+                            }
+                        # try next port
+                        last_err = e
+                        break
+                    if isinstance(raw, dict):
+                        dec = _decrypt_privileged_response(cipher, raw)
+                        try:
+                            st = str(dec.get("STATUS") or "").upper()
+                            msg = str(dec.get("Msg") or "").lower()
+                            code = dec.get("Code")
+                            if code == 135 or (
+                                "token" in msg
+                                and (
+                                    "error" in msg
+                                    or "invalid" in msg
+                                    or "check" in msg
+                                )
+                            ):
+                                _token_cache_clear()
+                            elif st in ("E", "F") and "token" in msg:
+                                _token_cache_clear()
+                        except Exception:
+                            pass
+                        if isinstance(dec, dict):
+                            dec = dict(dec)
+                            dec["_write_port"] = int(port)
+                            # Code 45: try next TCP port before giving up
+                            msg_l = str(dec.get("Msg") or "").lower()
+                            code_i = dec.get("Code")
+                            if code_i == 45 or "can't access write" in msg_l or (
+                                "cant access write" in msg_l
+                            ):
+                                last_err = RuntimeError(
+                                    str(dec.get("Msg") or "can't access write cmd")
+                                )
+                                break  # next port
+                        return dec
+                    return raw
+            except RuntimeError as e:
+                last_err = e
+                if "over max" not in str(e).lower():
+                    # can't access write / other: try next port then fall through
+                    if "can't access write" in str(e).lower() or "cant access write" in str(
+                        e
+                    ).lower():
+                        break
+                    # non-port-related auth errors should not spam all ports forever
+                    if "get_token" in str(e).lower() and "over max" not in str(e).lower():
+                        raise
+                    break
+                # Sleep outside lock — free live poll / Telegram
+                if attempt + 1 < attempts:
+                    time.sleep(min(45.0, 10.0 + attempt * 12.0))
+                    continue
+                # over max on this port — try next port without long wait
+                break
+    # all ports exhausted — return synthetic Code 45 so miner_write_cmd can LuCI-fallback
+    if last_err and "over max" in str(last_err).lower():
+        raise RuntimeError(_OVER_MAX_CONNECT_RU) from last_err
+    if last_err and (
+        "can't access write" in str(last_err).lower()
+        or "cant access write" in str(last_err).lower()
+    ):
+        return {
+            "STATUS": "E",
+            "Code": 45,
+            "Msg": "can't access write cmd",
+            "Description": str(last_err),
+        }
     if last_err:
-        raise last_err
+        raise last_err if isinstance(last_err, Exception) else RuntimeError(str(last_err))
     raise RuntimeError(_OVER_MAX_CONNECT_RU)
 
+
+# ─── Whatsminer driver (LuCI-first, btccom/libbtctools parity) ───────────────
+# Control with API off: HTTPS LuCI (pools / power mode / restart / reboot).
+# TCP :4028 / :4433 only when needed (limit, suspend, factory) — no get_token spam.
+# See ui-demo/whatsminer_driver.py and github.com/btccom/libbtctools
+#   src/lua/scripts/{configurator,rebooter}/WhatsMinerHttpsLuci.lua
+
+try:
+    from whatsminer_driver import LuciClient, WhatsminerDriver  # type: ignore
+except ImportError:
+    # Entware layout: same dir as serve.py
+    import sys as _sys
+
+    _lib = Path(__file__).resolve().parent
+    if str(_lib) not in _sys.path:
+        _sys.path.insert(0, str(_lib))
+    from whatsminer_driver import LuciClient, WhatsminerDriver  # type: ignore
+
+_wm_driver_lock = threading.Lock()
+_wm_driver: "WhatsminerDriver | None" = None
+_wm_driver_pw_fp: str = ""
+
+
+def get_whatsminer_driver(password: str | None = None) -> "WhatsminerDriver":
+    """
+    Shared WhatsminerDriver for poolheat writes.
+    LuCI first for mode/pools/reboot/restart — never burns get_token slots.
+    """
+    global _wm_driver, _wm_driver_pw_fp
+    pw = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
+    fp = _password_fingerprint(pw)
+
+    def _tcp_write(cmd: dict, p: str) -> dict:
+        # Few token attempts: each get_token burns a 30‑min slot (max ~100).
+        return privileged_cmd(cmd, p, token_attempts=1)
+
+    def _v3_write(cmd: dict, p: str) -> dict:
+        return v3_write_legacy(cmd, p)
+
+    with _wm_driver_lock:
+        if (
+            _wm_driver is not None
+            and _wm_driver_pw_fp == fp
+            and str(_wm_driver.host) == str(HOST_MINER)
+        ):
+            _wm_driver.api_password = pw
+            _wm_driver.luci_password = pw
+            _wm_driver.luci.password = pw
+            return _wm_driver
+        d = WhatsminerDriver(
+            HOST_MINER,
+            api_password=pw,
+            luci_username="admin",
+            luci_password=pw,
+            port_v2=int(PORT_MINER) if PORT_MINER else 4028,
+            port_v3=4433,
+            tcp_write=_tcp_write,
+            v3_write=_v3_write,
+            is_online=lambda: miner_is_online(
+                max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True
+            ),
+        )
+        _wm_driver = d
+        _wm_driver_pw_fp = fp
+        return d
+
+
+def _luci_clear_session() -> None:
+    with _wm_driver_lock:
+        if _wm_driver is not None:
+            try:
+                _wm_driver.luci.clear()
+            except Exception:
+                pass
+
+
+def _luci_request(
+    path: str,
+    password: str,
+    *,
+    data: dict | None = None,
+    timeout: float = 15.0,
+) -> tuple[int, str]:
+    """Compat for chipmap / enable-write helpers — routes through LuciClient."""
+    d = get_whatsminer_driver(password)
+    # LuciClient.request timeout is per-call
+    old_to = d.luci.timeout
+    try:
+        if timeout and timeout != old_to:
+            d.luci.timeout = float(timeout)
+        return d.luci.request(path, data=data, timeout=timeout)
+    finally:
+        d.luci.timeout = old_to
+
+
+def _luci_extract_token(html: str) -> str:
+    return LuciClient.extract_token(html)
+
+
+def luci_set_power_mode(mode: str, password: str) -> dict:
+    """Power Mode via LuCI (btccom path) — no TCP write unlock."""
+    return get_whatsminer_driver(password).set_power_mode(mode)
+
+
+def luci_reboot_asic(password: str) -> dict:
+    """Full reboot via LuCI /system/reboot/call (libbtctools)."""
+    return get_whatsminer_driver(password).reboot()
+
+
+def luci_restart_btminer(password: str) -> dict:
+    """Restart mining process via LuCI status/{prog}status/restart."""
+    return get_whatsminer_driver(password).restart_btminer()
+
+
+def luci_set_pools(pools: list, password: str) -> dict:
+    """Set up to 3 pools via LuCI (btccom setMinerConf)."""
+    return get_whatsminer_driver(password).set_pools(pools)
+
+
+def luci_enable_api_switch(password: str, *, enable: bool = True) -> dict:
+    """
+    Enable Miner API Switch (open_by_api / apiswitch) via LuCI form POST.
+    Used only when TCP privileged write is required (suspend, power_limit, …).
+    """
+    password = password or DEFAULT_API_PASSWORD
+    out = get_whatsminer_driver(password).enable_api_switch(enable)
+    _token_cache_clear()
+    return out
+
+
+def _is_write_access_denied(resp_or_err) -> bool:
+    s = ""
+    if isinstance(resp_or_err, dict):
+        s = str(resp_or_err.get("Msg") or resp_or_err.get("msg") or "")
+        try:
+            if int(resp_or_err.get("Code") or 0) == 45:
+                return True
+        except Exception:
+            pass
+    else:
+        s = str(resp_or_err or "")
+    low = s.lower()
+    return "can't access write" in low or "cant access write" in low
+
+
+# ─── Whatsminer API v3 (TCP :4433, length-prefixed JSON) ─────────────────────
+# Present on M63 fw 2025+ as «API-v2 3.0.2». Field system.apiswitch (0/1) is the
+# same write gate as Tools «Miner API Switch». Write cmds need apiswitch=1.
+PORT_MINER_V3 = 4433
+
+
+def _v3_send(payload: dict | str, *, timeout: float = 8.0) -> dict:
+    """Send one API v3 message: 4-byte LE length + JSON body."""
+    if isinstance(payload, dict):
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    else:
+        raw = str(payload).encode("utf-8")
+    with socket.create_connection((HOST_MINER, PORT_MINER_V3), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        sock.sendall(struct.pack("<I", len(raw)) + raw)
+        hdr = b""
+        while len(hdr) < 4:
+            ch = sock.recv(4 - len(hdr))
+            if not ch:
+                raise TimeoutError("API v3: empty length header")
+            hdr += ch
+        n = struct.unpack("<I", hdr)[0]
+        if n <= 0 or n > 2_000_000:
+            raise RuntimeError(f"API v3: bad length {n}")
+        buf = b""
+        while len(buf) < n:
+            ch = sock.recv(min(65536, n - len(buf)))
+            if not ch:
+                break
+            buf += ch
+    return json.loads(buf.decode("utf-8", "replace"))
+
+
+def _v3_token(cmd: str, password: str, salt: str, ts: int) -> str:
+    src = f"{cmd}{password}{salt}{ts}"
+    digest = hashlib.sha256(src.encode("utf-8")).digest()
+    return base64.b64encode(digest).decode("ascii")[:8]
+
+
+def _v3_encrypt_param(param: str, cmd: str, password: str, salt: str, ts: int) -> str:
+    src = f"{cmd}{password}{salt}{ts}"
+    aes_key = hashlib.sha256(src.encode("utf-8")).digest()
+    pad = 16 - (len(param) % 16)
+    padded = param + (chr(pad) * pad)
+    cipher = AES.new(aes_key, AES.MODE_ECB)
+    return base64.b64encode(cipher.encrypt(padded.encode("utf-8"))).decode("ascii")
+
+
+def v3_get_device_info() -> dict:
+    """Unauthenticated get.device.info (includes salt + system.apiswitch)."""
+    return _v3_send({"cmd": "get.device.info", "param": None})
+
+
+def v3_api_switch_on() -> bool | None:
+    """True if Miner API Switch enabled (write allowed). None if probe fail."""
+    try:
+        info = v3_get_device_info()
+        msg = info.get("msg") if isinstance(info, dict) else None
+        if not isinstance(msg, dict):
+            return None
+        sys_ = msg.get("system") if isinstance(msg.get("system"), dict) else {}
+        sw = str(sys_.get("apiswitch") or "0").strip()
+        return sw in ("1", "true", "on", "enable", "enabled")
+    except Exception:
+        return None
+
+
+def v3_call(
+    cmd: str,
+    param=None,
+    *,
+    password: str | None = None,
+    account: str = "super",
+    encrypt_param: bool = False,
+) -> dict:
+    """Authenticated API v3 call. Tries account super then admin with password."""
+    info = v3_get_device_info()
+    # note: code 0 is success — do not use `or -1` (0 is falsy)
+    try:
+        info_code = int(info.get("code")) if isinstance(info, dict) and info.get("code") is not None else -1
+    except (TypeError, ValueError):
+        info_code = -1
+    if not isinstance(info, dict) or info_code != 0:
+        raise RuntimeError(f"API v3 get.device.info fail: {info}")
+    msg = info.get("msg") or {}
+    salt = str(msg.get("salt") or "")
+    if not salt:
+        raise RuntimeError("API v3: no salt in get.device.info")
+    pw_candidates = []
+    p0 = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
+    for p in (p0, "super", "admin"):
+        if p not in pw_candidates:
+            pw_candidates.append(p)
+    acc_candidates = []
+    for a in (account, "super", "admin"):
+        if a not in acc_candidates:
+            acc_candidates.append(a)
+    last: dict | None = None
+    for acc in acc_candidates:
+        for pw in pw_candidates:
+            ts = int(time.time())
+            tok = _v3_token(cmd, pw, salt, ts)
+            payload: dict = {
+                "cmd": cmd,
+                "ts": ts,
+                "token": tok,
+                "account": acc,
+            }
+            if encrypt_param and param is not None:
+                pstr = param if isinstance(param, str) else json.dumps(param)
+                payload["param"] = _v3_encrypt_param(pstr, cmd, pw, salt, ts)
+            else:
+                payload["param"] = param
+            try:
+                last = _v3_send(payload)
+            except Exception as e:
+                last = {"code": -99, "msg": str(e)}
+                continue
+            code = last.get("code")
+            # 0 = ok; -4 = no write permission (auth may still be ok)
+            # -3 / token errors → try next credential
+            if code == 0:
+                last["_v3_account"] = acc
+                return last
+            msg_s = str(last.get("msg") or "").lower()
+            if code == -4 or "no permission" in msg_s or "write command" in msg_s:
+                last["_v3_account"] = acc
+                return last  # switch off / no write — credentials accepted
+            if "token" in msg_s or "auth" in msg_s or "password" in msg_s:
+                continue
+            # invalid command/param — stop credential churn
+            if code in (-1, -2):
+                return last
+    return last or {"code": -99, "msg": "API v3 call failed"}
+
+
+def _v3_cmd_for_legacy(legacy_cmd: str, cmd: dict) -> tuple[str, object, bool] | None:
+    """
+    Map classic 4028 privileged cmd → API v3 (cmd, param, encrypt).
+    Returns None if no mapping.
+    """
+    c = str(legacy_cmd or "").strip()
+    if c == "set_low_power":
+        return "set.miner.power_mode", "low", False
+    if c == "set_normal_power":
+        return "set.miner.power_mode", "normal", False
+    if c == "set_high_power":
+        return "set.miner.power_mode", "high", False
+    if c == "power_off":
+        # stop hashing / suspend equivalent on v3
+        return "set.miner.service", "stop", False
+    if c == "power_on":
+        return "set.miner.service", "start", False
+    if c == "reboot":
+        return "set.system.reboot", None, False
+    if c == "restart_btminer":
+        return "set.miner.service", "restart", False
+    if c == "adjust_power_limit":
+        lim = cmd.get("power_limit")
+        return "set.miner.power_limit", lim, False
+    if c == "set_power_pct":
+        pct = cmd.get("percent")
+        return (
+            "set.miner.power_percent",
+            json.dumps({"percent": str(pct), "mode": "temp"}),
+            False,
+        )
+    if c == "update_pwd":
+        return (
+            "set.user.change_passwd",
+            {
+                "account": "admin",
+                "old": str(cmd.get("old") or ""),
+                "new": str(cmd.get("new") or ""),
+            },
+            True,
+        )
+    return None
+
+
+def v3_write_legacy(cmd: dict, password: str) -> dict:
+    """Execute legacy privileged cmd via API v3; raise on failure."""
+    cname = str(cmd.get("cmd") or "")
+    mapped = _v3_cmd_for_legacy(cname, cmd)
+    if not mapped:
+        raise RuntimeError(f"API v3: no mapping for «{cname}»")
+    v3cmd, param, enc = mapped
+    # power_off sometimes exposed as service power_off on some firmwares
+    attempts = [(v3cmd, param, enc)]
+    if cname == "power_off":
+        attempts.extend(
+            [
+                ("set.miner.service", "power_off", False),
+                ("set.miner.service", "suspend", False),
+            ]
+        )
+    if cname == "power_on":
+        attempts.extend(
+            [
+                ("set.miner.service", "power_on", False),
+                ("set.miner.service", "resume", False),
+            ]
+        )
+    last_err = "API v3 write fail"
+    for vc, p, e in attempts:
+        r = v3_call(vc, p, password=password, encrypt_param=e)
+        code = r.get("code")
+        if code == 0:
+            return {
+                "STATUS": "S",
+                "Code": 131,
+                "Msg": r.get("msg") if r.get("msg") is not None else "ok",
+                "transport": "api_v3",
+                "v3_cmd": vc,
+                "response": r,
+            }
+        last_err = str(r.get("msg") or f"code={code}")
+        if code == -2:  # invalid command — try next alias
+            continue
+        if code == -4 or "no permission" in last_err.lower():
+            raise RuntimeError(
+                f"can't access write cmd · API v3 apiswitch off ({last_err})"
+            )
+        # other errors: try next alias only for service variants
+        if cname not in ("power_off", "power_on"):
+            break
+    raise RuntimeError(f"API v3: {last_err}")
+
+
+def get_write_api_status(password: str | None = None) -> dict:
+    """
+    Probe write capability: API v3 apiswitch + 4028 privileged test (set_led).
+    Does not change miner state when possible (set_led auto is safe).
+    """
+    password = password or DEFAULT_API_PASSWORD
+    out: dict = {
+        "ok": True,
+        "host": HOST_MINER,
+        "port_v2": int(PORT_MINER),
+        "port_v3": PORT_MINER_V3,
+        "apiswitch": None,
+        "apiswitch_on": None,
+        "v3_ok": False,
+        "v2_write_ok": None,
+        "v3_write_ok": None,
+        "luci_ok": None,
+        "write_ok": False,
+        "hint": "",
+        "fw": None,
+        "api_ver_v3": None,
+    }
+    # v3 info
+    try:
+        info = v3_get_device_info()
+        try:
+            out["v3_ok"] = (
+                isinstance(info, dict)
+                and info.get("code") is not None
+                and int(info.get("code")) == 0
+            )
+        except (TypeError, ValueError):
+            out["v3_ok"] = False
+        msg = info.get("msg") if isinstance(info, dict) else {}
+        if isinstance(msg, dict):
+            sys_ = msg.get("system") if isinstance(msg.get("system"), dict) else {}
+            out["apiswitch"] = str(sys_.get("apiswitch") or "")
+            out["apiswitch_on"] = out["apiswitch"] in ("1", "true", "on")
+            out["api_ver_v3"] = sys_.get("api")
+            out["fw"] = sys_.get("fwversion")
+    except Exception as e:
+        out["v3_error"] = str(e)
+
+    # v2 write probe (set_led auto)
+    try:
+        r = privileged_cmd({"cmd": "set_led", "param": "auto"}, password, token_attempts=1)
+        ok, msg = _miner_cmd_result(r)
+        out["v2_write_ok"] = bool(ok)
+        if not ok:
+            out["v2_write_error"] = msg
+    except Exception as e:
+        out["v2_write_ok"] = False
+        out["v2_write_error"] = str(e)
+
+    # v3 write probe when switch on
+    if out.get("apiswitch_on"):
+        try:
+            r3 = v3_call(
+                "set.miner.power_mode",
+                "normal",
+                password=password,
+            )
+            try:
+                out["v3_write_ok"] = (
+                    r3.get("code") is not None and int(r3.get("code")) == 0
+                )
+            except (TypeError, ValueError):
+                out["v3_write_ok"] = False
+            if not out["v3_write_ok"]:
+                out["v3_write_error"] = r3.get("msg")
+        except Exception as e:
+            out["v3_write_ok"] = False
+            out["v3_write_error"] = str(e)
+    else:
+        out["v3_write_ok"] = False
+
+    # LuCI reachability (mode/pools/reboot work without TCP write unlock)
+    try:
+        get_whatsminer_driver(password).luci.login()
+        out["luci_ok"] = True
+    except Exception as e:
+        out["luci_ok"] = False
+        out["luci_error"] = str(e)
+
+    out["write_ok"] = bool(
+        out.get("v2_write_ok") or out.get("v3_write_ok") or out.get("luci_ok")
+    )
+    if out.get("v2_write_ok") or out.get("v3_write_ok"):
+        out["hint"] = "Write API доступен (TCP)"
+    elif out.get("luci_ok"):
+        out["hint"] = (
+            "LuCI OK · mode/pools/reboot без API Switch; "
+            "suspend/limit/factory — TCP (apiswitch) или Tools :8889"
+        )
+    elif out.get("apiswitch_on") is False:
+        out["hint"] = (
+            "apiswitch=0 · LuCI offline? · Tools Miner API Switch → Enable"
+        )
+    elif out.get("v2_write_error") and "over max" in str(out.get("v2_write_error")).lower():
+        out["hint"] = "Лимит get_token (over max connect) · ждите ~30 мин или reboot ASIC"
+    else:
+        out["hint"] = (
+            "Write закрыт · WhatsMinerTool: Password + Miner API Switch → Enable"
+        )
+    return out
+
+
+def enable_write_api(
+    password: str | None = None,
+    *,
+    new_password: str | None = None,
+) -> dict:
+    """
+    Enable Write API the way Tools does «Miner API Switch», but via LuCI UCI:
+
+      1) Probe
+      2) LuCI POST open_by_api=1 (hidden cbi on Power page) — primary unlock
+      3) Optional password cycle (new_password)
+      4) Verify with set_led / apiswitch
+
+    Live M63: after open_by_api=1, power_off/on, mode, adjust_power_limit work
+    on :4028 without WhatsMinerTool.
+    """
+    password = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
+    new_pw = (new_password or password).strip() or password
+    steps: list[dict] = []
+    before = get_write_api_status(password)
+    steps.append({
+        "step": "probe_before",
+        "ok": True,
+        "detail": {
+            "apiswitch": before.get("apiswitch"),
+            "write_ok": before.get("write_ok"),
+            "v2_write_ok": before.get("v2_write_ok"),
+            "v3_write_ok": before.get("v3_write_ok"),
+        },
+    })
+
+    if before.get("write_ok"):
+        return {
+            "ok": True,
+            "enabled": True,
+            "already": True,
+            "message": "Write API уже доступен (mining control / mode / limit)",
+            "status": before,
+            "steps": steps,
+        }
+
+    # A) Primary unlock — LuCI open_by_api (Tools Remote Ctrl equivalent)
+    try:
+        r = luci_enable_api_switch(password, enable=True)
+        steps.append({
+            "step": "luci_open_by_api",
+            "ok": True,
+            "detail": r.get("Msg"),
+        })
+    except Exception as e:
+        steps.append({"step": "luci_open_by_api", "ok": False, "detail": str(e)})
+
+    # B) Optional password set via LuCI (if caller asked for new password)
+    if new_pw != password:
+        try:
+            path = "/cgi-bin/luci/admin/system/admin"
+            st, html = _luci_request(path, password)
+            tok = _luci_extract_token(html)
+            st2, _ = _luci_request(
+                path,
+                password,
+                data={
+                    "token": tok,
+                    "cbi.submit": "1",
+                    "cbid.system._pass.pw1": new_pw,
+                    "cbid.system._pass.pw2": new_pw,
+                    "cbi.apply": "1",
+                },
+                timeout=20.0,
+            )
+            _luci_clear_session()
+            apply_miner_settings(password=new_pw, persist=True)
+            password = new_pw
+            steps.append({
+                "step": "luci_password",
+                "ok": st2 in (200, 302, 500, 502),
+                "detail": f"HTTP {st2}",
+            })
+        except Exception as e:
+            steps.append({"step": "luci_password", "ok": False, "detail": str(e)})
+
+    # C) Verify write (set_led is harmless)
+    time.sleep(1.0)
+    _token_cache_clear()
+    write_probe_ok = False
+    write_probe_detail = ""
+    try:
+        resp = privileged_cmd(
+            {"cmd": "set_led", "param": "auto"}, password, token_attempts=1
+        )
+        ok, msg = _miner_cmd_result(resp)
+        write_probe_ok = bool(ok)
+        write_probe_detail = msg or str(resp.get("Msg") if isinstance(resp, dict) else resp)
+    except Exception as e:
+        write_probe_detail = str(e)
+    steps.append({
+        "step": "write_probe_set_led",
+        "ok": write_probe_ok,
+        "detail": write_probe_detail,
+    })
+
+    after = get_write_api_status(password)
+    steps.append({
+        "step": "probe_after",
+        "ok": True,
+        "detail": {
+            "apiswitch": after.get("apiswitch"),
+            "write_ok": after.get("write_ok"),
+            "v2_write_ok": after.get("v2_write_ok"),
+            "v3_write_ok": after.get("v3_write_ok"),
+        },
+    })
+
+    enabled = bool(after.get("write_ok") or write_probe_ok)
+    if enabled:
+        msg = "Write API включён · Suspend/Resume, Power Mode, Power Limit доступны"
+    else:
+        msg = (
+            "Не удалось открыть write через LuCI open_by_api. "
+            "Проверьте web-пароль admin и доступ к https://miner/cgi-bin/luci. "
+            "Запасной путь: WhatsMinerTool → Remote Ctrl → Miner API Switch → Enable."
+        )
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "already": False,
+        "message": msg,
+        "status": after,
+        "steps": steps,
+        "tools_steps": [
+            "poolheat → Enable Write (LuCI open_by_api)",
+            "или WhatsMinerTool → Remote Ctrl → Miner API Switch → Enable",
+        ],
+    }
+
+
+def miner_write_cmd(cmd: dict, password: str) -> dict:
+    """
+    Unified write path via WhatsminerDriver (libbtctools-aligned):
+
+      0) Refuse if ASIC offline
+      A) LuCI FIRST for mode / reboot / restart_btminer / pools
+         — no get_token, works with apiswitch=0 (btccom path)
+      B) TCP v2 privileged (limit, suspend, factory, …) — 1 token attempt
+      C) If write locked → auto LuCI open_by_api once, retry TCP
+      D) API v3 :4433 when available
+    Concurrent WMT + poolheat used to exhaust get_token («over max connect»);
+    LuCI-first avoids that for everyday mode/reboot control.
+    """
+    password = password or DEFAULT_API_PASSWORD
+    cname = str(cmd.get("cmd") or "").strip()
+
+    # Offline short-circuit — no write, no auto-enable spam
+    if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True):
+        raise RuntimeError(
+            "ASIC offline · write skipped (нет read — команда не отправлялась)"
+        )
+
+    d = get_whatsminer_driver(password)
+
+    # ── A) LuCI-native ops first (never touch get_token) ───────────────────
+    luci_first = {
+        "set_low_power": lambda: d.set_power_mode("low"),
+        "set_normal_power": lambda: d.set_power_mode("normal"),
+        "set_high_power": lambda: d.set_power_mode("high"),
+        "reboot": lambda: d.reboot(),
+        "restart_btminer": lambda: d.restart_btminer(),
+        "restart_cgminer": lambda: d.restart_btminer(),
+    }
+    if cname in luci_first:
+        errors: list[str] = []
+        try:
+            return luci_first[cname]()
+        except Exception as e:
+            errors.append(f"luci: {e}")
+        # rare TCP fallback if LuCI down but API open
+        try:
+            resp = privileged_cmd(cmd, password, token_attempts=1)
+            ok, msg = _miner_cmd_result(resp)
+            if ok:
+                if isinstance(resp, dict):
+                    resp = dict(resp)
+                    resp.setdefault("transport", "api_v2")
+                return (
+                    resp
+                    if isinstance(resp, dict)
+                    else {"STATUS": "S", "Msg": str(resp), "transport": "api_v2"}
+                )
+            errors.append(f"v2: {msg or resp}")
+        except Exception as e2:
+            errors.append(f"v2: {e2}")
+        raise RuntimeError(" · ".join(errors) if errors else f"write failed: {cname}")
+
+    if cname in ("update_pools", "set_pools"):
+        pools = cmd.get("pools")
+        if not isinstance(pools, list):
+            raise ValueError("update_pools requires pools=[{url,user,pass},…]")
+        return d.set_pools(pools)
+
+    # ── B/C/D) TCP / v3 path via driver.write_cmd ──────────────────────────
+    try:
+        return d.write_cmd(cmd)
+    except Exception as e:
+        # keep previous RU over-max message when applicable
+        err = str(e)
+        if "over max" in err.lower() and "лимит" not in err.lower():
+            raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
+        raise
 
 # Human tooltips (hover) for ErrorCode — not shown as Cause
 _MINER_ERROR_HINTS: dict[str, str] = {
@@ -5496,26 +6676,180 @@ def _resolve_miner_errors(
     return active
 
 
+def _extract_liquid_temp(
+    status: dict | None,
+    summary: dict | None,
+    psu: dict | None = None,
+    *,
+    v3_msg: dict | None = None,
+) -> float | None:
+    """
+    Liquid / coolant temperature across firmware families.
+    Classic air API: often missing. Liquid M63+: API v3 power.liquid-temperature
+    (same field WhatsMinerTool shows as Liquid Temp). Also try status/summary/psu.
+    """
+    status = status if isinstance(status, dict) else {}
+    summary = summary if isinstance(summary, dict) else {}
+    psu = psu if isinstance(psu, dict) else {}
+    candidates = [
+        status.get("liquid_temp"),
+        status.get("Liquid Temp"),
+        status.get("liquid_temperature"),
+        status.get("coolant_temp"),
+        summary.get("Liquid Temp"),
+        summary.get("liquid_temp"),
+        summary.get("Coolant Temp"),
+        psu.get("liquid_temp"),
+        psu.get("liquid-temperature"),
+        psu.get("temp_liquid"),
+    ]
+    if isinstance(v3_msg, dict):
+        power = v3_msg.get("power") if isinstance(v3_msg.get("power"), dict) else {}
+        candidates.extend(
+            [
+                power.get("liquid-temperature"),
+                power.get("liquid_temperature"),
+                power.get("liquid_temp"),
+                power.get("coolant"),
+                v3_msg.get("liquid_temp"),
+                v3_msg.get("liquid-temperature"),
+            ]
+        )
+    for c in candidates:
+        v = _f(c)
+        if v is not None:
+            return v
+    return None
+
+
+_v3_device_msg_cache: dict | None = None
+_v3_device_msg_ts = 0.0
+_V3_DEVICE_MSG_TTL_SEC = 30.0
+
+
+def _fetch_v3_device_msg(*, force: bool = False) -> dict | None:
+    """Best-effort API v3 get.device.info msg (for liquid temp / model). Cached ~30s."""
+    global _v3_device_msg_cache, _v3_device_msg_ts
+    now = time.time()
+    if (
+        not force
+        and isinstance(_v3_device_msg_cache, dict)
+        and (now - float(_v3_device_msg_ts or 0)) < _V3_DEVICE_MSG_TTL_SEC
+    ):
+        return _v3_device_msg_cache
+    try:
+        info = v3_get_device_info()
+        if isinstance(info, dict) and info.get("code") in (0, "0"):
+            msg = info.get("msg")
+            if isinstance(msg, dict):
+                _v3_device_msg_cache = msg
+                _v3_device_msg_ts = now
+                return msg
+    except Exception as e:
+        print(f"[v3] get.device.info: {e}")
+    return _v3_device_msg_cache if isinstance(_v3_device_msg_cache, dict) else None
+
+
+def _normalize_psu_vin(raw) -> float | None:
+    """
+    PowerVin (input voltage, V).
+    get_psu: often ×100 (e.g. 39200 → 392.0 V); API v3: already volts (392).
+    """
+    v = _f(raw)
+    if v is None or v < 0:
+        return None
+    if v > 1000:
+        # centivolts / 0.01 V units
+        return round(v / 100.0, 2)
+    return round(v, 2)
+
+
+def _normalize_psu_iin(raw) -> float | None:
+    """
+    PowerIin (input current, A).
+    get_psu: milliamps as integer string (\"96\", \"12515\") → A.
+    API v3: already amps as float (0.09, 12.48) — keep as-is.
+    """
+    i = _f(raw)
+    if i is None or i < 0:
+        return None
+    s = str(raw).strip().replace(",", ".")
+    # integer / no decimal point → get_psu mA
+    if s and "." not in s and i >= 1:
+        return round(i / 1000.0, 3)
+    return round(i, 3)
+
+
 def fetch_live() -> dict:
     summary = miner_cmd({"cmd": "summary"})["Msg"]
+    if not isinstance(summary, dict):
+        summary = {}
     status = miner_cmd({"cmd": "status"})["Msg"]
-    devs = miner_cmd({"cmd": "devs"}).get("DEVS", [])
+    if not isinstance(status, dict):
+        status = {}
+    # devs may return error object while miner is suspended — non-fatal
+    devs: list = []
+    try:
+        devs_raw = miner_cmd({"cmd": "devs"})
+        if isinstance(devs_raw, dict):
+            d = devs_raw.get("DEVS")
+            if isinstance(d, list):
+                devs = d
+    except Exception as e:
+        print(f"[live] devs: {e}")
     raw_errors = _fetch_miner_errors_raw()
 
-    # PSU: temp0 (°C), fan_speed (rpm), optional electricals — never fail whole live poll
+    # PSU: temp0 (°C), fan_speed (rpm), Vin/Iin/Pin — never fail whole live poll
     psu_temp = None
     psu_fan = None
     psu_pin = None
+    psu_vin = None  # PowerVin (input V) — Tools name
+    psu_iin = None  # PowerIin (input A)
     psu_model = None
+    psu: dict = {}
     try:
-        psu = miner_cmd({"cmd": "get_psu"}, timeout=3).get("Msg") or {}
-        if isinstance(psu, dict):
+        psu_raw = miner_cmd({"cmd": "get_psu"}, timeout=3).get("Msg") or {}
+        if isinstance(psu_raw, dict):
+            psu = psu_raw
             psu_temp = _f(psu.get("temp0"))
             psu_fan = _f(psu.get("fan_speed"))
             psu_pin = _f(psu.get("pin"))  # often watts as string
+            psu_vin = _normalize_psu_vin(psu.get("vin") or psu.get("Vin"))
+            psu_iin = _normalize_psu_iin(psu.get("iin") or psu.get("Iin"))
             psu_model = psu.get("model") or psu.get("name")
     except Exception as e:
         print(f"[psu] get_psu failed: {e}")
+
+    # Liquid temp: status.liquid_temp missing on many liquid FW → API v3
+    v3_msg = None
+    liquid = _extract_liquid_temp(status, summary, psu)
+    if liquid is None:
+        v3_msg = _fetch_v3_device_msg()
+        liquid = _extract_liquid_temp(status, summary, psu, v3_msg=v3_msg)
+
+    # Fill Vin/Iin from v3 power{} if get_psu missing / odd units
+    if psu_vin is None or psu_iin is None:
+        try:
+            if v3_msg is None:
+                v3_msg = _fetch_v3_device_msg()
+            pwr = (
+                v3_msg.get("power")
+                if isinstance(v3_msg, dict) and isinstance(v3_msg.get("power"), dict)
+                else None
+            )
+            if isinstance(pwr, dict):
+                if psu_vin is None:
+                    psu_vin = _normalize_psu_vin(pwr.get("vin") or pwr.get("Vin"))
+                if psu_iin is None:
+                    psu_iin = _normalize_psu_iin(pwr.get("iin") or pwr.get("Iin"))
+                if psu_pin is None:
+                    psu_pin = _f(pwr.get("pin") or pwr.get("Pin"))
+                if psu_temp is None:
+                    psu_temp = _f(pwr.get("temp0"))
+                if psu_fan is None:
+                    psu_fan = _f(pwr.get("fanspeed") or pwr.get("fan_speed"))
+        except Exception:
+            pass
 
     boards: list[float] = []
     upfreq: list[int] = []
@@ -5585,7 +6919,14 @@ def fetch_live() -> dict:
         "ok": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "host": f"{HOST_MINER}:{PORT_MINER}",
-        "liquid": status.get("liquid_temp"),
+        "liquid": liquid,
+        "liquid_source": (
+            "v3"
+            if liquid is not None
+            and status.get("liquid_temp") in (None, "")
+            and summary.get("Liquid Temp") in (None, "")
+            else ("status" if status.get("liquid_temp") not in (None, "") else None)
+        ),
         "env": summary.get("Env Temp"),
         "chip_min": summary.get("Chip Temp Min"),
         "chip_avg": summary.get("Chip Temp Avg"),
@@ -5638,6 +6979,8 @@ def fetch_live() -> dict:
         "psu_temp": psu_temp,
         "psu_fan": psu_fan,
         "psu_pin": psu_pin,
+        "psu_vin": psu_vin,  # PowerVin V (input)
+        "psu_iin": psu_iin,  # PowerIin A (input)
         "psu_model": psu_model,
         "miner_errors": miner_errors,
         "dry_run": bool(DRY_RUN),
@@ -5651,6 +6994,7 @@ def fetch_live() -> dict:
         body["run_status_en"] = rs.get("label_en")
     except Exception:
         body["run_status"] = None
+    _mark_miner_live_ok()
     return body
 
 
@@ -6067,7 +7411,26 @@ def _record_write(action: str, value, resp, *, warning: str | None = None) -> di
         _save_state()
     _invalidate_cache()
     if not ok:
-        raise RuntimeError(entry["error"])
+        # Expand laconic Whatsminer msgs so UI/TG get actionable text
+        err = entry["error"] or "miner rejected command"
+        low = str(err).lower()
+        if "can't access write" in low or "cant access write" in low:
+            err = (
+                "can't access write cmd — API записи закрыт. "
+                "WhatsMinerTool/web могут работать, а TCP :4028 write — нет, "
+                "пока не смените API-пароль в WhatsMinerTool (можно вернуть admin) "
+                "и укажете тот же пароль в poolheat Settings → Miner."
+            )
+        elif "enc json load" in low:
+            err = (
+                "enc json load err — неверный API-пароль "
+                "(майнер не расшифровал privileged-команду)."
+            )
+        entry["error"] = err
+        with _state_lock:
+            _state["last_write"] = entry
+            _save_state()
+        raise RuntimeError(err)
     out = {
         "ok": True,
         "action": action,
@@ -6098,6 +7461,12 @@ def apply_set(action: str, value, password: str) -> dict:
     action = (action or "").strip().lower()
     password = password or DEFAULT_API_PASSWORD
 
+    # No write if ASIC is offline (recent live read failed)
+    if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True):
+        raise RuntimeError(
+            "ASIC offline · write skipped (read недоступен — команда не отправлялась)"
+        )
+
     if action == "mode":
         v = str(value).strip().lower()
         # Power Mode only: low / normal / high
@@ -6122,9 +7491,11 @@ def apply_set(action: str, value, password: str) -> dict:
                 }
         except Exception:
             pass
-        resp = privileged_cmd({"cmd": cmd_map[v]}, password)
+        resp = miner_write_cmd({"cmd": cmd_map[v]}, password)
         out = _record_write("mode", v, resp)
         out["cmd"] = cmd_map[v]
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
         return out
 
     if action in ("working", "working_mode", "work", "mining"):
@@ -6170,9 +7541,11 @@ def apply_set(action: str, value, password: str) -> dict:
                 }
         except Exception:
             pass
-        resp = privileged_cmd({"cmd": miner_cmd_name}, password)
+        resp = miner_write_cmd({"cmd": miner_cmd_name}, password)
         out = _record_write("working", stored, resp)
         out["cmd"] = miner_cmd_name
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
         return out
 
     if action == "power_pct":
@@ -6206,7 +7579,9 @@ def apply_set(action: str, value, password: str) -> dict:
                 }
         except Exception:
             pass
-        resp = privileged_cmd({"cmd": "set_power_pct", "percent": str(pct)}, password)
+        resp = miner_write_cmd(
+            {"cmd": "set_power_pct", "percent": str(pct)}, password
+        )
         return _record_write("power_pct", pct, resp)
 
     if action in ("power_limit", "set_power_limit", "adjust_power_limit"):
@@ -6233,7 +7608,7 @@ def apply_set(action: str, value, password: str) -> dict:
                     }
         except Exception:
             pass
-        resp = privileged_cmd(
+        resp = miner_write_cmd(
             {"cmd": "adjust_power_limit", "power_limit": str(watts)}, password
         )
         return _record_write(
@@ -6243,25 +7618,82 @@ def apply_set(action: str, value, password: str) -> dict:
             warning="adjust_power_limit may reboot / restart mining",
         )
 
-    # Full device reboot (Whatsminer privileged "reboot")
+    # Full device reboot (Whatsminer privileged "reboot" · LuCI fallback)
     if action in ("reboot", "reboot_asic", "system_reboot"):
-        resp = privileged_cmd({"cmd": "reboot"}, password)
-        return _record_write(
+        resp = miner_write_cmd({"cmd": "reboot"}, password)
+        out = _record_write(
             "reboot",
             "asic",
             resp,
             warning="ASIC rebooting — offline for several minutes",
         )
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
+        return out
 
     # Restart mining process only (btminer), not full OS reboot
     if action in ("restart", "restart_miner", "restart_btminer", "btminer_restart"):
-        resp = privileged_cmd({"cmd": "restart_btminer"}, password)
-        return _record_write(
+        resp = miner_write_cmd({"cmd": "restart_btminer"}, password)
+        out = _record_write(
             "restart_miner",
             "btminer",
             resp,
             warning="btminer restarting — hash rate rebuilds after upfreq",
         )
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
+        return out
+
+    # Set mining pools via LuCI (btccom/libbtctools WhatsMinerHttpsLuci path)
+    # value: list of {url,user,pass} or {"pools":[...]} — up to 3
+    if action in ("pools", "set_pools", "update_pools"):
+        pools_in = value
+        if isinstance(pools_in, dict) and "pools" in pools_in:
+            pools_in = pools_in.get("pools")
+        if isinstance(pools_in, str):
+            try:
+                pools_in = json.loads(pools_in)
+            except Exception as e:
+                raise ValueError(f"pools JSON: {e}") from e
+        if not isinstance(pools_in, list) or not pools_in:
+            raise ValueError(
+                "pools requires list [{url,user,pass},…] (1–3 entries)"
+            )
+        norm: list[dict] = []
+        for p in pools_in[:3]:
+            if not isinstance(p, dict):
+                raise ValueError("each pool must be an object")
+            norm.append(
+                {
+                    "url": str(p.get("url") or p.get("URL") or "").strip(),
+                    "user": str(
+                        p.get("user") or p.get("User") or p.get("worker") or ""
+                    ).strip(),
+                    "pass": str(
+                        p.get("pass") or p.get("password") or p.get("Pass") or "x"
+                    ),
+                }
+            )
+        if not any(x.get("url") for x in norm):
+            raise ValueError("at least one pool url required")
+        resp = miner_write_cmd({"cmd": "update_pools", "pools": norm}, password)
+        out = _record_write(
+            "pools",
+            norm,
+            resp,
+            warning="pools updated · btminer restart may follow",
+        )
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
+        # invalidate pools cache
+        try:
+            global _pools_cache, _pools_cache_ts
+            with _pools_cache_lock:
+                _pools_cache = None
+                _pools_cache_ts = 0.0
+        except Exception:
+            pass
+        return out
 
     # Factory reset (Whatsminer privileged "factory_reset")
     # Restores network, admin password, power mode/limit, pools-related settings.
@@ -6403,6 +7835,16 @@ _tg_state: dict = {
 }
 _tg_notify_lock = threading.Lock()
 _tg_last_msg_sig: dict[str, float] = {}  # debounce identical messages
+# Throttle telegram_config.json writes (Entware flash is slow; was on every msg)
+_tg_save_ts = 0.0
+_tg_save_dirty = False
+_TG_SAVE_MIN_INTERVAL_SEC = 3.0
+# Per-command latency: receive → first reply / handler end (ring buffer)
+_TG_TIMING_MAX = 100
+_TG_TIMING_SLOW_MS = 1500.0  # print [tg] slow when first/total exceeds
+_tg_timing_lock = threading.Lock()
+_tg_timing_log: list[dict] = []  # newest last; max _TG_TIMING_MAX
+_tg_req = threading.local()  # active handler timing context
 # ASIC offline streak: only TG after N consecutive fails; reset on success
 _tg_offline_streak = 0
 _tg_offline_notified = False
@@ -6560,9 +8002,25 @@ def _load_telegram_cfg() -> None:
         _tg_cfg = cfg
 
 
-def _save_telegram_cfg() -> None:
+def _save_telegram_cfg(*, force: bool = False) -> None:
+    """
+    Persist telegram_config.json. Throttled by default — every inbound message
+    used to rewrite flash and delay getUpdates handlers on Peak.
+    force=True for explicit API / offset-critical paths when needed.
+    """
+    global _tg_save_ts, _tg_save_dirty
+    now = time.time()
     with _tg_cfg_lock:
+        if (
+            not force
+            and _tg_save_ts
+            and (now - float(_tg_save_ts)) < _TG_SAVE_MIN_INTERVAL_SEC
+        ):
+            _tg_save_dirty = True
+            return
         _save_json(TELEGRAM_CFG_FILE, _tg_cfg)
+        _tg_save_ts = now
+        _tg_save_dirty = False
 
 
 def get_telegram_cfg(*, redact: bool = True) -> dict:
@@ -6906,6 +8364,121 @@ def _tg_attach_miner_host_emoji(text: str) -> tuple[str, list[dict]]:
     return t, entities
 
 
+def _tg_req_begin(
+    *,
+    kind: str,
+    cmd: str,
+    chat_id=None,
+    update_id=None,
+) -> None:
+    """Start timing for one inbound update (command or callback)."""
+    _tg_req.active = True
+    _tg_req.t0 = time.monotonic()
+    _tg_req.kind = str(kind or "msg")[:24]
+    _tg_req.cmd = str(cmd or "")[:100]
+    _tg_req.chat_id = chat_id
+    _tg_req.update_id = update_id
+    _tg_req.n_out = 0
+    _tg_req.first_ms = None  # any outbound (answer/send/edit)
+    _tg_req.reply_ms = None  # first sendMessage / editMessageText
+    _tg_req.answer_ms = None
+    _tg_req.last_via = None
+    _tg_req.outs = []
+
+
+def _tg_req_note_out(via: str) -> None:
+    """Mark one Telegram outbound API call after success."""
+    if not getattr(_tg_req, "active", False):
+        return
+    t0 = getattr(_tg_req, "t0", None)
+    if t0 is None:
+        return
+    ms = round((time.monotonic() - float(t0)) * 1000.0, 1)
+    via_s = str(via or "out")[:24]
+    _tg_req.n_out = int(getattr(_tg_req, "n_out", 0) or 0) + 1
+    if _tg_req.first_ms is None:
+        _tg_req.first_ms = ms
+    if via_s == "answer":
+        if _tg_req.answer_ms is None:
+            _tg_req.answer_ms = ms
+    elif via_s in ("send", "edit", "edit_markup") and _tg_req.reply_ms is None:
+        _tg_req.reply_ms = ms
+    _tg_req.last_via = via_s
+    outs = getattr(_tg_req, "outs", None)
+    if not isinstance(outs, list):
+        outs = []
+        _tg_req.outs = outs
+    outs.append({"via": via_s, "ms": ms})
+    if len(outs) > 8:
+        del outs[:-8]
+
+
+def _tg_req_end(*, error: str | None = None) -> None:
+    """Close timing context and append ring-buffer entry."""
+    if not getattr(_tg_req, "active", False):
+        return
+    t0 = getattr(_tg_req, "t0", None)
+    total_ms = (
+        round((time.monotonic() - float(t0)) * 1000.0, 1) if t0 is not None else None
+    )
+    first_ms = getattr(_tg_req, "first_ms", None)
+    reply_ms = getattr(_tg_req, "reply_ms", None)
+    answer_ms = getattr(_tg_req, "answer_ms", None)
+    entry = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "kind": getattr(_tg_req, "kind", None),
+        "cmd": getattr(_tg_req, "cmd", None),
+        "chat_id": getattr(_tg_req, "chat_id", None),
+        "update_id": getattr(_tg_req, "update_id", None),
+        "first_ms": first_ms,
+        "answer_ms": answer_ms,
+        "reply_ms": reply_ms,
+        "total_ms": total_ms,
+        "n_out": int(getattr(_tg_req, "n_out", 0) or 0),
+        "last_via": getattr(_tg_req, "last_via", None),
+        "outs": list(getattr(_tg_req, "outs", None) or []),
+        "error": (str(error)[:160] if error else None),
+    }
+    with _tg_timing_lock:
+        _tg_timing_log.append(entry)
+        overflow = len(_tg_timing_log) - _TG_TIMING_MAX
+        if overflow > 0:
+            del _tg_timing_log[:overflow]
+    # console hint for slow handlers
+    slow_ref = reply_ms if reply_ms is not None else first_ms
+    try:
+        slow = (
+            (slow_ref is not None and float(slow_ref) >= _TG_TIMING_SLOW_MS)
+            or (total_ms is not None and float(total_ms) >= _TG_TIMING_SLOW_MS)
+        )
+    except (TypeError, ValueError):
+        slow = False
+    if slow or error:
+        print(
+            f"[tg] timing {'SLOW ' if slow else ''}"
+            f"cmd={entry.get('cmd')!r} first={first_ms} "
+            f"reply={reply_ms} total={total_ms} ms n_out={entry.get('n_out')}"
+            + (f" err={error}" if error else "")
+        )
+    _tg_req.active = False
+
+
+def get_tg_timing(*, limit: int = 100, newest_first: bool = True) -> dict:
+    """Ring buffer of recent command→reply latencies (in-memory)."""
+    lim = max(1, min(int(limit or _TG_TIMING_MAX), _TG_TIMING_MAX))
+    with _tg_timing_lock:
+        items = list(_tg_timing_log[-lim:])
+    if newest_first:
+        items.reverse()
+    return {
+        "ok": True,
+        "max": _TG_TIMING_MAX,
+        "count": len(items),
+        "slow_ms": _TG_TIMING_SLOW_MS,
+        "items": items,
+    }
+
+
 def tg_send_message(
     chat_id,
     text: str,
@@ -6937,6 +8510,7 @@ def tg_send_message(
         elif ent:
             payload["entities"] = ent
         _tg_api("sendMessage", payload, timeout=20)
+        _tg_req_note_out("send")
         with _tg_state_lock:
             _tg_state["last_send_ts"] = datetime.now().isoformat(timespec="seconds")
             _tg_state["ok"] = True
@@ -6978,6 +8552,7 @@ def tg_edit_message(
         elif ent:
             payload["entities"] = ent
         _tg_api("editMessageText", payload, timeout=15)
+        _tg_req_note_out("edit")
         return True
     except Exception as e:
         err = str(e).lower()
@@ -6985,6 +8560,7 @@ def tg_edit_message(
         if "not modified" in err and reply_markup is not None:
             return tg_edit_reply_markup(chat_id, message_id, reply_markup)
         if "not modified" in err:
+            _tg_req_note_out("edit")
             return True
         print(f"[tg] edit fail: {e}")
         # last resort: keyboard-only edit
@@ -7007,9 +8583,11 @@ def tg_edit_reply_markup(
         else:
             payload["reply_markup"] = {"inline_keyboard": []}
         _tg_api("editMessageReplyMarkup", payload, timeout=15)
+        _tg_req_note_out("edit_markup")
         return True
     except Exception as e:
         if "not modified" in str(e).lower():
+            _tg_req_note_out("edit_markup")
             return True
         print(f"[tg] edit markup fail: {e}")
         return False
@@ -7026,6 +8604,7 @@ def tg_answer_callback(callback_query_id: str, text: str = "", *, alert: bool = 
             },
             timeout=10,
         )
+        _tg_req_note_out("answer")
     except Exception:
         pass
 
@@ -7173,11 +8752,33 @@ def _tg_force_stop_btn_label(lang: str = "ru") -> str:
     return "▶️ Продолжить майнинг" if on else "⏹ Остановить майнинг"
 
 
+def _tg_notify_filtration(on: bool, *, source: str = "") -> None:
+    """
+    Push on pump state change:
+      💦 Насос фильтрации включен
+      🚱 Насос фильтрации выключен
+    """
+    on = bool(on)
+    text_ru = (
+        "💦 Насос фильтрации включен" if on else "🚱 Насос фильтрации выключен"
+    )
+    text_en = (
+        "💦 Filtration pump is on" if on else "🚱 Filtration pump is off"
+    )
+    tg_broadcast(
+        text_ru,
+        debounce_key=f"filtr:{1 if on else 0}",
+        notify_kind="events",
+        text_by_lang={"ru": text_ru, "en": text_en},
+    )
+
+
 def _tg_filtration_btn_label(lang: str = "ru") -> str:
     """
-    Main-menu filtration toggle label.
-    OFF is locked while mining (🔒) — Telegram cannot disable a reply key,
-    so the lock is shown on the label and the handler refuses OFF.
+    Main-menu filtration toggle label: «Фильтрация [вкл]» / «[выкл]».
+    OFF is locked while mining (🔒) unless allow_off_while_mining / can_turn_off.
+    Telegram cannot disable a reply key, so the lock is on the label and the
+    handler refuses OFF when the option is off.
     """
     en = str(lang or "ru").lower().startswith("en")
     try:
@@ -7185,16 +8786,20 @@ def _tg_filtration_btn_label(lang: str = "ru") -> str:
     except Exception:
         st = {}
     if not st.get("enabled"):
-        return "💧 Filtration · —" if en else "💧 Фильтрация · —"
+        return "💧 Filtration [—]" if en else "💧 Фильтрация [—]"
     on = st.get("on") is True
     mining = st.get("mining") is True
+    # Same gate as UI / filtration_set: can_turn_off (allow_off_while_mining)
+    locked = bool(on and mining and not st.get("can_turn_off"))
     if en:
-        if on and mining:
-            return "🔒 Filtration ON"
-        return "💧 Filtration ON" if on else "💧 Filtration OFF"
-    if on and mining:
-        return "🔒 Фильтрация ВКЛ"
-    return "💧 Фильтрация ВКЛ" if on else "💧 Фильтрация ВЫКЛ"
+        state = "on" if on else "off"
+        if locked:
+            return f"🔒 Filtration [{state}]"
+        return f"💧 Filtration [{state}]"
+    state = "вкл" if on else "выкл"
+    if locked:
+        return f"🔒 Фильтрация [{state}]"
+    return f"💧 Фильтрация [{state}]"
 
 
 def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
@@ -7563,7 +9168,7 @@ def _fmt_asic_offline_msg(err, lang: str = "ru") -> str:
     s = str(err or "").strip()
     low = s.lower()
     en = str(lang or "ru").lower().startswith("en")
-    if "timed out" in low or "timeout" in low:
+    if "timed out" in low or "timeout" in low or "incomplete json" in low:
         return "⚠️ ASIC offline · timeout" if en else "⚠️ ASIC offline · timeout"
     if "refused" in low or "reset" in low:
         return (
@@ -7582,6 +9187,19 @@ def _fmt_asic_offline_msg(err, lang: str = "ru") -> str:
             "⚠️ ASIC offline · host unresolved"
             if en
             else "⚠️ ASIC offline · хост не найден"
+        )
+    # JSON parse bugs / firmware quirks — not a true offline event
+    if (
+        "bad json" in low
+        or "expecting" in low
+        or "delimiter" in low
+        or "json" in low
+        and ("parse" in low or "decode" in low or "column" in low)
+    ):
+        return (
+            "⚠️ ASIC response error · retry"
+            if en
+            else "⚠️ ASIC · ошибка ответа API (повтор)"
         )
     if s:
         brief = s.replace("live poll fail:", "").strip()
@@ -7667,11 +9285,17 @@ def tg_on_policy_event(kind: str, msg: str, extra: dict | None = None) -> None:
         )
         return
 
-    if kind == "err" or "fail" in msg_l:
+    if kind == "err" or "fail" in msg_l or str(msg or "").upper().startswith("FAIL "):
+        # Humanize: FAIL working=suspend: can't access write cmd
+        # → 🚫 Ошибка установки режима Suspend (custom emoji)
+        emoji = _tg_ctrl_err_emoji_html()
+        text_ru = f"{emoji} {_tg_fail_human_text(msg, 'ru')}"
+        text_en = f"{emoji} {_tg_fail_human_text(msg, 'en')}"
         tg_broadcast(
-            f"❌ {msg}",
-            debounce_key="err:" + msg[:50],
+            text_ru,
+            debounce_key="err:" + (msg or "")[:50],
             notify_kind="events",
+            text_by_lang={"ru": text_ru, "en": text_en},
         )
         return
 
@@ -7869,6 +9493,27 @@ def _tg_fail_human_text(
             r = right.strip()
         else:
             c = m
+    # Full blob for reply heuristics (raw API Msg)
+    blob = f"{msg} {r} {c}".lower()
+    # Whatsminer Code 45: write API locked (Tools/web may still work)
+    if "can't access write" in blob or "cant access write" in blob:
+        return (
+            "Write API locked · cycle API password in WhatsMinerTool, set same in poolheat"
+            if en
+            else "API записи закрыт · смените API-пароль в WhatsMinerTool и укажите его в poolheat"
+        )
+    if "enc json load" in blob:
+        return (
+            "Wrong API password (miner cannot decrypt write)"
+            if en
+            else "Неверный API-пароль (майнер не расшифровал write)"
+        )
+    if "over max connect" in blob:
+        return (
+            "API token limit (over max connect) · wait ~30 min or reboot ASIC"
+            if en
+            else "Лимит токенов API (over max connect) · ждите ~30 мин или reboot ASIC"
+        )
     action = ""
     value = ""
     if "=" in c:
@@ -8230,20 +9875,20 @@ def _tg_policy_block_lines(
         fs_s = "on." if fs else "off."
         # EN: keep same space counts as RU labels of similar length
         return [
-            f"Preset:{' ' * 7}{preset}",
-            f"T zone:{' ' * 9}{z_lab}",
-            f"Target:{' ' * 11}{z_mode}",
-            f"Dry Run:{' ' * 6}{dry_s}",
-            f"Force Stop:{' ' * 2}{fs_s}",
+            f"Preset:{' ' * 7}<b>{_tg_html_esc(preset)}</b>",
+            f"T zone:{' ' * 9}<b>{_tg_html_esc(z_lab)}</b>",
+            f"Target:{' ' * 11}<b>{_tg_html_esc(z_mode)}</b>",
+            f"Dry Run:{' ' * 6}<b>{_tg_html_esc(dry_s)}</b>",
+            f"Force Stop:{' ' * 2}<b>{_tg_html_esc(fs_s)}</b>",
         ]
     dry_s = "вкл. ручной режим" if dry else "выкл. авто режим"
     fs_s = "вкл." if fs else "выкл."
     return [
-        f"Пресет:{' ' * 7}{preset}",
-        f"T зона:{' ' * 9}{z_lab}",
-        f"Цель:{' ' * 11}{z_mode}",
-        f"Dry Run:{' ' * 6}{dry_s}",
-        f"Force Stop:{' ' * 2}{fs_s}",
+        f"Пресет:{' ' * 7}<b>{_tg_html_esc(preset)}</b>",
+        f"T зона:{' ' * 9}<b>{_tg_html_esc(z_lab)}</b>",
+        f"Цель:{' ' * 11}<b>{_tg_html_esc(z_mode)}</b>",
+        f"Dry Run:{' ' * 6}<b>{_tg_html_esc(dry_s)}</b>",
+        f"Force Stop:{' ' * 2}<b>{_tg_html_esc(fs_s)}</b>",
     ]
 
 
@@ -8278,19 +9923,28 @@ def _tg_t_ctrl_from_live(live: dict | None = None) -> tuple[float | None, str]:
     return resolve_t_ctrl(live if isinstance(live, dict) else {}, sens)
 
 
-def _tg_live_snapshot(*, max_age_sec: float = 12.0) -> tuple[dict, bool, Exception | None]:
+def _tg_live_snapshot(
+    *,
+    max_age_sec: float = 20.0,
+    hard_stale_sec: float = 180.0,
+) -> tuple[dict, bool, Exception | None]:
     """
-    Live for Telegram: prefer short-lived cache so /status never freezes
-    getUpdates while miner I/O is busy.
-    Returns (live_dict, online, error).
+    Live for Telegram: NEVER block getUpdates on a multi-second miner fetch
+    when any recent cache exists (policy/collector keep it warm every ~5s).
+
+    - age ≤ max_age_sec → fresh cache
+    - max_age < age ≤ hard_stale_sec → still return cache (stale OK for bot)
+    - no cache / older → fetch_live once (may take 3–5s)
     """
     global _cache, _cache_ts
     now = time.time()
     with _cache_lock:
         cached = dict(_cache) if isinstance(_cache, dict) else None
         age = (now - float(_cache_ts or 0)) if _cache_ts else 9999.0
-    if cached and cached.get("ok") and age <= max_age_sec:
-        return cached, True, None
+    if cached and cached.get("ok"):
+        if age <= float(hard_stale_sec):
+            return cached, True, None
+    # No usable cache — must hit miner (or fail)
     try:
         live = fetch_live()
         with _cache_lock:
@@ -8299,7 +9953,7 @@ def _tg_live_snapshot(*, max_age_sec: float = 12.0) -> tuple[dict, bool, Excepti
         return live, True, None
     except Exception as e:
         if cached and cached.get("ok"):
-            # stale but better than offline for bot reply
+            # very stale but better than offline for bot reply
             return cached, True, None
         return {}, False, e
 
@@ -8620,26 +10274,60 @@ def _tg_info_text(lang: str = "ru") -> str:
     boards_t = live.get("boards") or []
     upfreq = live.get("upfreq") or []
     id_boards = ident.get("boards") or []
+    tagged_th = ident.get("tagged_th") or ident.get("factory_th")
+    if tagged_th is not None:
+        lines.append("")
+        lines.append(
+            f"Tagged:  {_tg_fmt_num(tagged_th, 2)} TH/s"
+            + (
+                f"  ({_tg_fmt_num(ident.get('tagged_ghs') or ident.get('factory_ghs'), 0)} GHS)"
+                if (ident.get("tagged_ghs") or ident.get("factory_ghs"))
+                else ""
+            )
+        )
     if boards_t or id_boards:
         lines.append("")
-        lines.append("Hashboards · PCB SN:" if en else "Хешплаты · PCB SN:")
+        lines.append(
+            "Hashboards · PCB SN · Tagged:"
+            if en
+            else "Хешплаты · PCB SN · Tagged:"
+        )
         n = max(len(boards_t), len(id_boards), 3)
         for i in range(min(n, 4)):
             t = boards_t[i] if i < len(boards_t) else None
             uf = upfreq[i] if i < len(upfreq) else None
             pcb = "—"
+            th_s = "—"
             if i < len(id_boards) and isinstance(id_boards[i], dict):
-                pcb = (id_boards[i].get("pcb_sn") or "").strip() or "—"
+                b = id_boards[i]
+                pcb = (b.get("pcb_sn") or "").strip() or "—"
+                thv = b.get("tagged_th")
+                if thv is None and b.get("tagged_ghs") is not None:
+                    try:
+                        thv = float(b["tagged_ghs"]) / 1000.0
+                    except (TypeError, ValueError):
+                        thv = None
+                if thv is not None:
+                    th_s = f"{_tg_fmt_num(thv, 2)} TH"
             uf_s = "upfreq ✓" if uf and int(uf) else "upfreq …"
             lines.append(
-                f"  HB{i}  {_tg_fmt_num(t, 1)} °C · {uf_s} · {pcb}"
+                f"  HB{i}  {_tg_fmt_num(t, 1)} °C · {uf_s} · {pcb} · {th_s}"
             )
 
     psu_t = live.get("psu_temp")
     psu_fan = live.get("psu_fan")
+    psu_vin = live.get("psu_vin")
+    psu_iin = live.get("psu_iin")
     psu_model = live.get("psu_model") or ident.get("psu_model")
     powersn = (ident.get("powersn") or "").strip()
-    if psu_t is not None or psu_fan is not None or psu_model or powersn:
+    if (
+        psu_t is not None
+        or psu_fan is not None
+        or psu_vin is not None
+        or psu_iin is not None
+        or psu_model
+        or powersn
+    ):
         lines.append("")
         lines.append("PSU:")
         if psu_model:
@@ -8647,6 +10335,10 @@ def _tg_info_text(lang: str = "ru") -> str:
         if powersn:
             lines.append(f"  SN  {powersn}")
         bits = []
+        if psu_vin is not None:
+            bits.append(f"Vin {_tg_fmt_num(psu_vin, 0)} V")
+        if psu_iin is not None:
+            bits.append(f"Iin {_tg_fmt_num(psu_iin, 2)} A")
         if psu_t is not None:
             bits.append(f"{_tg_fmt_num(psu_t, 0)} °C")
         if psu_fan is not None:
@@ -9190,7 +10882,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
             "Force Stop (no arg = toggle)\n"
             "/force_stop [on|off] — emergency stop\n"
             "⏹ Stop mining · ▶️ Continue mining\n"
-            "/filtration [on|off] — pump filter (OFF locked while mining)\n"
+            "/filtration [on|off] — pump filter (OFF locked while mining unless allowed)\n"
             "/lang_ru — Russian\n"
             "/lang_en — English\n"
             "\n"
@@ -9221,7 +10913,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
         "Force Stop (без arg = переключить)\n"
         "/force_stop [on|off] — экстренная остановка\n"
         "⏹ Остановить майнинг · ▶️ Продолжить майнинг\n"
-        "/filtration [on|off] — фильтрация (ВЫКЛ недоступно при майнинге)\n"
+        "/filtration [on|off] — фильтрация (ВЫКЛ при майнинге — если не разрешено)\n"
         "/lang_ru — русский\n"
         "/lang_en — English\n"
         "\n"
@@ -9681,7 +11373,8 @@ def _tg_handle_callback(cq: dict) -> None:
     chat = msg.get("chat") or {}
     chat_id = chat.get("id")
     mid = msg.get("message_id")
-    # ALWAYS answer immediately — otherwise Telegram shows a spinning clock
+    # ALWAYS answer soon — otherwise Telegram shows a spinning clock.
+    # Each branch answers (with optional toast); do not answer here first.
     if not cq_id:
         return
     if chat_id is None:
@@ -10988,16 +12681,16 @@ def _tg_handle_command(
         if onoff is None:
             # bare button / no arg → toggle
             onoff = not (st.get("on") is True)
-        # OFF locked while mining
-        if not onoff and st.get("mining") is True:
+        # OFF locked while mining unless allow_off_while_mining (can_turn_off)
+        if not onoff and st.get("mining") is True and not st.get("can_turn_off"):
             tg_send_message(
                 chat_id,
                 (
                     "🔒 Filtration OFF unavailable while mining\n"
-                    "Stop mining first, then turn filtration off"
+                    "Stop mining first, or enable «Allow OFF while mining» in Settings"
                     if en
                     else "🔒 Фильтрация ВЫКЛ недоступна при майнинге\n"
-                    "Сначала остановите майнинг, затем выключите фильтрацию"
+                    "Остановите майнинг или включите «Разрешить OFF при mining» в настройках"
                 ),
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
@@ -11024,20 +12717,27 @@ def _tg_handle_command(
                     reply_markup=_tg_main_keyboard(lang, chat_id),
                 )
                 return
-            be = out.get("backend") or st.get("backend") or "?"
-            if onoff:
+            # Same wording as auto-notify; keyboard rebuilt after last_on update
+            got_on = out.get("on")
+            if got_on is None:
+                got_on = onoff
+            if en:
                 msg = (
-                    f"💧 Filtration ON · {be}"
-                    if en
-                    else f"💧 Фильтрация ВКЛ · {be}"
+                    "💦 Filtration pump is on"
+                    if got_on
+                    else "🚱 Filtration pump is off"
                 )
             else:
                 msg = (
-                    f"💧 Filtration OFF · {be}"
-                    if en
-                    else f"💧 Фильтрация ВЫКЛ · {be}"
+                    "💦 Насос фильтрации включен"
+                    if got_on
+                    else "🚱 Насос фильтрации выключен"
                 )
-            tg_send_message(chat_id, msg, reply_markup=_tg_main_keyboard(lang, chat_id))
+            tg_send_message(
+                chat_id,
+                msg,
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
         except Exception as e:
             tg_send_message(
                 chat_id,
@@ -11089,16 +12789,44 @@ def _tg_handle_command(
     )
 
 
+def _tg_cmd_label_from_text(text: str) -> str:
+    """Short label for timing log: /status, button label, or truncated text."""
+    t = (text or "").strip()
+    if not t:
+        return "(empty)"
+    # slash commands
+    if t.startswith("/"):
+        # /status@bot args → /status
+        head = t.split()[0]
+        head = head.split("@", 1)[0]
+        return head[:60]
+    # reply keyboard / free text — first line, short
+    line = t.split("\n", 1)[0].strip()
+    return line[:60] if line else "(empty)"
+
+
 def _tg_process_update(upd: dict) -> None:
+    uid = upd.get("update_id")
     # inline button callback
     cq = upd.get("callback_query")
     if isinstance(cq, dict):
+        msg = cq.get("message") or {}
+        chat = msg.get("chat") or {}
+        chat_id = chat.get("id")
+        data = str(cq.get("data") or "")
+        _tg_req_begin(
+            kind="callback",
+            cmd=f"cb:{data}"[:100],
+            chat_id=chat_id,
+            update_id=uid,
+        )
         try:
-            msg = cq.get("message") or {}
             _tg_remember_chat(msg.get("chat"), cq.get("from"))
             _tg_handle_callback(cq)
+            _tg_req_end()
         except Exception as e:
             print(f"[tg] callback: {e}")
+            _tg_req_end(error=str(e))
         return
 
     msg = upd.get("message") or upd.get("edited_message")
@@ -11108,14 +12836,28 @@ def _tg_process_update(upd: dict) -> None:
     chat_id = chat.get("id")
     if chat_id is None:
         return
-    try:
-        _tg_remember_chat(chat, msg.get("from"))
-    except Exception:
-        pass
     text = msg.get("text") or msg.get("caption") or ""
-    # always pass full msg (entities / stickers) — needed for /emoji capture
-    if text or msg.get("sticker") or msg.get("entities") or msg.get("caption_entities"):
-        _tg_handle_command(chat_id, text, msg.get("from"), msg=msg)
+    kind = "edited" if upd.get("edited_message") else "message"
+    _tg_req_begin(
+        kind=kind,
+        cmd=_tg_cmd_label_from_text(text)
+        if text
+        else ("(sticker)" if msg.get("sticker") else "(msg)"),
+        chat_id=chat_id,
+        update_id=uid,
+    )
+    try:
+        try:
+            _tg_remember_chat(chat, msg.get("from"))
+        except Exception:
+            pass
+        # always pass full msg (entities / stickers) — needed for /emoji capture
+        if text or msg.get("sticker") or msg.get("entities") or msg.get("caption_entities"):
+            _tg_handle_command(chat_id, text, msg.get("from"), msg=msg)
+        _tg_req_end()
+    except Exception as e:
+        print(f"[tg] message: {e}")
+        _tg_req_end(error=str(e))
 
 
 def telegram_loop() -> None:
@@ -11183,11 +12925,17 @@ def telegram_loop() -> None:
             if max_id != offset:
                 with _tg_cfg_lock:
                     _tg_cfg["offset"] = max_id
-                # persist offset occasionally
+                # persist offset (throttled — flash write on Peak is slow)
                 try:
                     _save_telegram_cfg()
                 except Exception:
                     pass
+            # flush dirty prefs if throttle skipped an earlier write
+            try:
+                if _tg_save_dirty:
+                    _save_telegram_cfg(force=True)
+            except Exception:
+                pass
         except Exception as e:
             with _tg_state_lock:
                 _tg_state["ok"] = False
@@ -11626,11 +13374,36 @@ def _diff_commands_vs_live(
 def _policy_apply_commands(cmds: list[tuple[str, object]], source: str) -> bool:
     ok_all = True
     for action, value in cmds:
+        # TCP-only actions: skip during over-max backoff (LuCI mode still ok)
+        act = str(action or "").lower()
+        needs_tcp = act in (
+            "working",
+            "working_mode",
+            "work",
+            "mining",
+            "power_pct",
+            "power_limit",
+            "set_power_limit",
+            "adjust_power_limit",
+            "factory_reset",
+            "factory",
+        )
+        if needs_tcp and _tcp_write_blocked():
+            ok_all = False
+            _policy_log(
+                "err",
+                f"SKIP {action}={value}: TCP write backoff (over max connect)",
+                source=source,
+            )
+            break
         try:
             apply_set(action, value, DEFAULT_API_PASSWORD)
             _policy_log("ok", f"APPLY {action}={value}", source=source)
         except Exception as e:
             ok_all = False
+            err_s = str(e)
+            if _msg_is_over_max_connect(err_s):
+                _note_tcp_write_exhausted()
             _policy_log("err", f"FAIL {action}={value}: {e}", source=source)
             break
     _invalidate_cache()
@@ -12089,8 +13862,10 @@ def policy_tick() -> None:
     ok = _policy_apply_commands(need_cmds, source=str(desired))
     with _policy_lock:
         _policy_ctrl["last_key"] = None if desired == "safety:on_clear" else desired
+        # Always stamp last_apply_ts: on FAIL (esp. over max) this enforces
+        # settle/min_write so we do not spam get_token every poll cycle.
+        _policy_ctrl["last_apply_ts"] = time.time()
         if ok:
-            _policy_ctrl["last_apply_ts"] = time.time()
             _policy_ctrl["streak_count"] = 0
 
 
@@ -12201,6 +13976,14 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/telegram/status":
             self._json_response(200, {"ok": True, **get_telegram_cfg(redact=True)})
             return
+        if path in ("/api/telegram/timing", "/api/telegram/latency"):
+            qs = parse_qs(urlparse(self.path).query)
+            try:
+                lim = int((qs.get("limit") or ["100"])[0])
+            except (TypeError, ValueError):
+                lim = 100
+            self._json_response(200, get_tg_timing(limit=lim))
+            return
         if path == "/api/pool/config":
             self._api_pool_config_get()
             return
@@ -12226,6 +14009,16 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/miner/config":
             self._api_miner_config_get()
+            return
+        if path in (
+            "/api/miner/write_api",
+            "/api/miner/write-status",
+            "/api/miner/api_switch",
+        ):
+            try:
+                self._json_response(200, get_write_api_status())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
             return
         if path in ("/api/miner/pools", "/api/pools"):
             qs = parse_qs(urlparse(self.path).query)
@@ -12356,6 +14149,42 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/miner/config":
             self._api_miner_config_post()
+            return
+        if path in (
+            "/api/miner/write_api",
+            "/api/miner/write-status",
+            "/api/miner/api_switch",
+            "/api/miner/enable_write",
+            "/api/miner/enable_api",
+        ):
+            try:
+                req: dict = {}
+                try:
+                    raw = self._read_json_body()
+                    if isinstance(raw, dict):
+                        req = raw
+                except Exception:
+                    req = {}
+                action = str(req.get("action") or "status").strip().lower()
+                # path /enable_* defaults to enable
+                if "enable" in path and action in ("", "status"):
+                    action = "enable"
+                pw = req.get("password") or req.get("api_password")
+                pw = str(pw) if pw is not None else None
+                if action in ("enable", "on", "unlock", "switch_on"):
+                    out = enable_write_api(
+                        password=pw,
+                        new_password=(
+                            str(req["new_password"])
+                            if req.get("new_password") is not None
+                            else None
+                        ),
+                    )
+                else:
+                    out = get_write_api_status(pw)
+                self._json_response(200, out)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
             return
         if path == "/api/policy":
             self._api_policy_post()
@@ -13090,6 +14919,7 @@ def main() -> None:
     print(f"miner config:      GET/POST /api/miner/config · {_miner_config_path()}")
     print(f"miner pools:       GET  /api/miner/pools")
     print(f"telegram:          GET/POST /api/telegram/config · getUpdates")
+    print(f"telegram timing:   GET  /api/telegram/timing  (ring {_TG_TIMING_MAX})")
     with _tg_cfg_lock:
         tg_on = bool(_tg_cfg.get("enabled") and _tg_cfg.get("bot_token"))
     print(f"telegram bot:      {'enabled' if tg_on else 'disabled'}")

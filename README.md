@@ -3,7 +3,7 @@
 Thermal / power controller for **Whatsminer** (pool heating) with Web UI.  
 Runs on a PC (dev) or **Keenetic Peak / Entware** router next to the miner.
 
-**Version:** `0.3.14` · **Repo:** https://github.com/andreybmc/poolheat
+**Version:** see [`VERSION`](./VERSION) · **Repo:** https://github.com/andreybmc/poolheat
 
 ## Features
 
@@ -18,15 +18,17 @@ Runs on a PC (dev) or **Keenetic Peak / Entware** router next to the miner.
 
 ## Install on Keenetic router (from GitHub)
 
-Full runbook: **[KEENETIC.md](./KEENETIC.md)**.
+**Full runbook (OPKG / Entware / SSH / firewall / troubleshooting):**  
+**[KEENETIC.md](./KEENETIC.md)** — start there if Entware is not set up yet.
 
 ### Requirements
 
-1. Keenetic with **OPKG / Entware** (Peak aarch64, USB or internal storage)
-2. Router can reach the internet (for `opkg` + `git clone` / updates)
-3. LAN access to miner API (`:4028`, default `192.168.1.10`)
+1. Keenetic with **OPKG + Entware** (`/opt` mounted: USB ext4 or internal storage)
+2. Entware shell over SSH (`root`, usually port **22** or **222**)
+3. Router can reach the internet (`opkg`, `git`, GitHub updates)
+4. LAN access to miner API (`:4028`, default `192.168.1.10`)
 
-### First install
+### First install (Entware already working)
 
 SSH into the router (Entware shell), then:
 
@@ -40,7 +42,7 @@ cd poolheat
 sh packaging/entware/install-from-git.sh
 ```
 
-Open UI:
+Open UI (LAN only — do **not** port-forward `:8787` to the Internet):
 
 ```text
 http://<router-ip>:8787/
