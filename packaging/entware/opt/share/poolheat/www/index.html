@@ -585,9 +585,11 @@
       border-radius: var(--radius-sm);
       padding: 8px 10px;
       font-size: 0.75rem;
-      line-height: 1.35;
+      line-height: 1.4;
+      white-space: pre-line;
+      font-variant-numeric: tabular-nums;
       box-shadow: 0 8px 24px rgba(0,0,0,.35);
-      max-width: 220px;
+      max-width: 200px;
       display: none;
     }
     .chip-tip.show { display: block; }
@@ -11684,14 +11686,18 @@
             }
           }
           let nonceDef = 0;
+          let nonceDelta = 0;
+          const nn = Number(chip.nonce) || 0;
           if (avgNonce > 0) {
-            const nn = Number(chip.nonce) || 0;
+            nonceDelta = nn - avgNonce;
             if (nn < avgNonce) nonceDef = ((avgNonce - nn) / avgNonce) * 100;
           }
           analysis[idx] = {
             gradient: Math.round(gradient * 100) / 100,
             z: Math.round(z * 100) / 100,
             nonceDef: Math.round(nonceDef * 10) / 10,
+            nonceAvg: Math.round(avgNonce),
+            nonceDelta: Math.round(nonceDelta),
           };
         });
         bySlot[b.slot] = analysis;
@@ -11699,7 +11705,7 @@
       return bySlot;
     }
 
-    /** Modes: faint # top-center · temp + °C mid · err/crc/x/r bottom. */
+    /** Compact simple cell: # top · main mid · err bottom. */
     function chipmapIsTempSimpleMetric(metric) {
       return (
         metric === "temp" ||
@@ -11709,27 +11715,46 @@
       );
     }
 
+    function chipmapFmtNonceShort(n) {
+      if (n == null || !Number.isFinite(Number(n))) return "—";
+      n = Number(n);
+      const a = Math.abs(n);
+      if (a >= 1e6) return (n / 1e6).toFixed(1) + "M";
+      if (a >= 10000) return Math.round(n / 1000) + "k";
+      if (a >= 1000) return (n / 1000).toFixed(1) + "k";
+      return String(Math.round(n));
+    }
+
     /**
-     * Center value. Temp-simple modes always show temperature number
-     * (caller adds superscript °C). Hash metrics show nonce / TH / freq.
+     * Center HTML. nonce_def → deficit % (−12%); temp modes → 76°C.
      */
-    function chipmapMainLabel(c, metric, analysis) {
+    function chipmapMainHtml(c, metric, analysis) {
       if (!c) return "—";
-      if (chipmapIsTempSimpleMetric(metric)) {
-        return c.temp != null && Number.isFinite(Number(c.temp))
-          ? String(Math.round(Number(c.temp)))
-          : "—";
+      if (metric === "nonce_def") {
+        // Show how far below slot average (matches color scale)
+        const def =
+          analysis && analysis.nonceDef != null ? Number(analysis.nonceDef) : 0;
+        if (!Number.isFinite(def) || def < 0.5) {
+          return "0" + '<sup class="c-deg">%</sup>';
+        }
+        return "−" + Math.round(def) + '<sup class="c-deg">%</sup>';
+      }
+      if (
+        metric === "temp" ||
+        metric === "gradient" ||
+        metric === "outliers"
+      ) {
+        if (c.temp == null || !Number.isFinite(Number(c.temp))) return "—";
+        return (
+          String(Math.round(Number(c.temp))) + '<sup class="c-deg">°C</sup>'
+        );
       }
       if (metric === "est_th" && c.est_th != null && Number.isFinite(Number(c.est_th))) {
         const t = Number(c.est_th);
         return t >= 10 ? t.toFixed(1) : t.toFixed(2);
       }
       if (metric === "nonce" && c.nonce != null && Number.isFinite(Number(c.nonce))) {
-        const n = Number(c.nonce);
-        if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
-        if (n >= 10000) return Math.round(n / 1000) + "k";
-        if (n >= 1000) return (n / 1000).toFixed(1) + "k";
-        return String(Math.round(n));
+        return chipmapFmtNonceShort(c.nonce);
       }
       if (metric === "nonce_rate" && c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate))) {
         return Number(c.nonce_rate).toFixed(1);
@@ -11737,15 +11762,62 @@
       if (metric === "freq" && c.freq != null) {
         return String(Math.round(Number(c.freq)));
       }
-      return c.temp != null && Number.isFinite(Number(c.temp))
-        ? String(Math.round(Number(c.temp)))
-        : "—";
+      if (c.temp != null && Number.isFinite(Number(c.temp))) {
+        return (
+          String(Math.round(Number(c.temp))) + '<sup class="c-deg">°C</sup>'
+        );
+      }
+      return "—";
+    }
+
+    /** Multi-line laconic tooltip (one param per line). */
+    function chipmapBuildTip(c, metric, analysis) {
+      if (!c) return "";
+      const lines = ["C" + (c.id != null ? c.id : "—")];
+      if (c.temp != null && Number.isFinite(Number(c.temp)))
+        lines.push(Math.round(Number(c.temp)) + "°C");
+      if (c.freq != null) lines.push(Math.round(Number(c.freq)) + " MHz");
+      if (c.vol != null) lines.push("vol " + Math.round(Number(c.vol)));
+      if (c.nonce != null) {
+        let nl = "nonce " + chipmapFmtNonceShort(c.nonce);
+        if (analysis && analysis.nonceAvg > 0) {
+          const d = analysis.nonceDelta || 0;
+          const sign = d > 0 ? "+" : d < 0 ? "−" : "±";
+          nl +=
+            "  " +
+            sign +
+            chipmapFmtNonceShort(Math.abs(d)) +
+            " vs avg";
+        }
+        lines.push(nl);
+      }
+      if (analysis) {
+        if (metric === "nonce_def" && analysis.nonceDef > 0)
+          lines.push("deficit −" + Math.round(analysis.nonceDef) + "%");
+        if (metric === "gradient" && analysis.gradient > 0)
+          lines.push("Δup +" + analysis.gradient.toFixed(1) + "°C");
+        if (metric === "outliers" && analysis.z > 0)
+          lines.push("z +" + analysis.z.toFixed(2) + "σ");
+      }
+      if (c.est_th != null && Number.isFinite(Number(c.est_th)))
+        lines.push("≈" + Number(c.est_th).toFixed(2) + " TH/s");
+      if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
+        lines.push(Number(c.nonce_rate).toFixed(1) + " n/s");
+      const err = c.err != null ? c.err | 0 : 0;
+      const crc = c.crc != null ? c.crc | 0 : 0;
+      const x = c.x != null ? c.x | 0 : 0;
+      const rep =
+        c.repeat != null ? c.repeat | 0 : c.x2 != null ? c.x2 | 0 : 0;
+      if (err || crc || x || rep)
+        lines.push("err " + err + "  crc " + crc + "  x " + x + "  r " + rep);
+      return lines.join("\n");
     }
 
     /**
      * Cell layout:
-     * - temp / gradient / outliers / nonce_def → simple: °C center + C# top-right
-     * - hash metrics → dense: freq/vol · main · err + C#
+     * - temp / gradient / outliers → °C center
+     * - nonce_def → deficit % center (−12%)
+     * - hash metrics → dense HashSource-style
      */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
@@ -11773,9 +11845,7 @@
           (Number(v) - metricRange.min) /
           (metricRange.max - metricRange.min);
         if (simple) {
-          // temp scale: hotter → lighter yellow → dark text
           if (metric === "temp" && t > 0.5) cell.classList.add("chip-light");
-          // hazard mid-band yellows
           else if (metric !== "temp" && t > 0.3 && t < 0.75)
             cell.classList.add("chip-light");
         } else if (t > 0.55) {
@@ -11800,13 +11870,8 @@
           : c.x2 != null
             ? String(c.x2 | 0)
             : "0";
-      const main = chipmapMainLabel(c, metric, analysis);
+      const mainHtml = chipmapMainHtml(c, metric, analysis);
       if (simple) {
-        // # top-center · temp + °C · err/crc/x/r bottom
-        const mainHtml =
-          main === "—"
-            ? "—"
-            : main + '<sup class="c-deg">°C</sup>';
         cell.innerHTML =
           '<span class="c-id">' +
           chipNo +
@@ -11835,7 +11900,7 @@
           vol +
           "</span></span>" +
           '<span class="c-main">' +
-          main +
+          mainHtml +
           "</span>" +
           '<span class="c-bot"><span>' +
           err +
@@ -11847,31 +11912,7 @@
           rep +
           "</span></span>";
       }
-      let tip =
-        "C" +
-        c.id +
-        " · temp " +
-        (c.temp != null ? c.temp + "°C" : "—") +
-        " · freq " +
-        freq +
-        " · vol " +
-        vol;
-      if (c.est_th != null && Number.isFinite(Number(c.est_th)))
-        tip += " · ≈" + Number(c.est_th).toFixed(3) + " TH/s";
-      if (c.nonce != null) tip += " · nonce " + c.nonce;
-      if (c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate)))
-        tip += " · " + Number(c.nonce_rate).toFixed(2) + " n/s";
-      if (c.hash_share_asic != null)
-        tip += " · " + Number(c.hash_share_asic).toFixed(2) + "% ASIC";
-      tip += " · err " + err + " crc " + crc + " x " + x + " r " + rep;
-      if (analysis) {
-        if (analysis.gradient > 0)
-          tip += " · Δup " + analysis.gradient.toFixed(1) + "°C";
-        if (analysis.z > 0) tip += " · z " + analysis.z.toFixed(2);
-        if (analysis.nonceDef > 0)
-          tip += " · deficit " + analysis.nonceDef.toFixed(0) + "%";
-      }
-      cell.dataset.tip = tip;
+      cell.dataset.tip = chipmapBuildTip(c, metric, analysis);
       return cell;
     }
 
