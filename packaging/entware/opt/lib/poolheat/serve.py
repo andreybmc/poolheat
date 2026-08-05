@@ -129,6 +129,9 @@ ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
+# Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
+POLICY_EVENTS_FILE = DATA / "policy_events.json"
+POLICY_EVENTS_MAX = 200  # keep last N on disk + in memory
 # After OTA install + restart: notify the chat that started the update
 UPDATE_NOTIFY_FILE = DATA / "update_notify.json"
 DEFAULT_API_PASSWORD = _APP["api_password"]
@@ -174,7 +177,7 @@ _policy_ctrl: dict = {
     "streak_count": 0,
     "last_apply_ts": 0.0,
     "last_event": None,
-    "events": [],  # last ~40 events for UI
+    "events": [],  # last POLICY_EVENTS_MAX — loaded/saved via policy_events.json
     "enabled": True,
     # Manual override: until unix ts — zone auto off, Safety still on
     "override_until_ts": 0.0,
@@ -12838,10 +12841,12 @@ def _tg_handle_command(
         have = pol.get("measured_work") or "—"
         if en:
             title = "📋 <b>Events</b>"
-            empty = "no events"
+            empty = "no events yet (log is kept on server after restart)"
+            more_fmt = "… +{n} older (on server)"
         else:
             title = "📋 <b>События</b>"
-            empty = "нет событий"
+            empty = "пока пусто (журнал хранится на сервере после рестарта)"
+            more_fmt = "… ещё {n} на сервере"
         # zone: <b>Z3 No heat</b> · want: <b>suspend</b> have: <b>suspend</b>
         # Dry Run: <b>OFF</b> · Force Stop: <b>OFF</b>
         z_show = _tg_html_esc(str(zlab or "—").replace(" · ", " "))
@@ -12859,13 +12864,21 @@ def _tg_handle_command(
         if not evs:
             lines.append(empty)
         else:
-            for e in evs[:12]:
+            show_n = 15
+            for e in evs[:show_n]:
                 if not isinstance(e, dict):
                     continue
                 ts = _tg_fmt_ts_eu(e.get("ts"))
                 kind = str(e.get("kind") or "—").strip() or "—"
                 msg = str(e.get("msg") or "").strip()
-                lines.append(f"{ts} [{kind}] {msg}".rstrip())
+                # Telegram HTML — escape free text
+                lines.append(
+                    f"{_tg_html_esc(ts)} [{_tg_html_esc(kind)}] "
+                    f"{_tg_html_esc(msg)}".rstrip()
+                )
+            rest = len(evs) - show_n
+            if rest > 0:
+                lines.append(more_fmt.format(n=rest))
         tg_send_message(
             chat_id,
             "\n".join(lines),
@@ -13250,6 +13263,51 @@ _load_telegram_cfg()
 # ─── server-side policy control ───────────────────────────────────────────────
 
 
+def _load_policy_events() -> None:
+    """Restore action/policy log from disk after restart."""
+    try:
+        raw = _load_json(POLICY_EVENTS_FILE, {"events": []})
+    except Exception as e:
+        print(f"[policy] load events: {e}")
+        return
+    evs = raw.get("events") if isinstance(raw, dict) else None
+    if not isinstance(evs, list):
+        return
+    clean: list = []
+    for e in evs:
+        if not isinstance(e, dict):
+            continue
+        clean.append(
+            {
+                "ts": str(e.get("ts") or ""),
+                "kind": str(e.get("kind") or "—"),
+                "msg": str(e.get("msg") or ""),
+                **{
+                    k: v
+                    for k, v in e.items()
+                    if k not in ("ts", "kind", "msg") and v is not None
+                },
+            }
+        )
+        if len(clean) >= POLICY_EVENTS_MAX:
+            break
+    with _policy_lock:
+        _policy_ctrl["events"] = clean
+        _policy_ctrl["last_event"] = clean[0] if clean else None
+    if clean:
+        print(f"[policy] loaded {len(clean)} events from {POLICY_EVENTS_FILE.name}")
+
+
+def _save_policy_events() -> None:
+    """Persist ring buffer to DATA/policy_events.json."""
+    with _policy_lock:
+        evs = list(_policy_ctrl.get("events") or [])[:POLICY_EVENTS_MAX]
+    try:
+        _save_json(POLICY_EVENTS_FILE, {"events": evs, "max": POLICY_EVENTS_MAX})
+    except Exception as e:
+        print(f"[policy] save events: {e}")
+
+
 def _policy_log(kind: str, msg: str, **extra) -> None:
     ev = {
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -13261,13 +13319,21 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
         _policy_ctrl["last_event"] = ev
         events = _policy_ctrl.get("events") or []
         events.insert(0, ev)
-        _policy_ctrl["events"] = events[:40]
+        _policy_ctrl["events"] = events[:POLICY_EVENTS_MAX]
     print(f"[policy] {ev['ts']} {kind}: {msg}")
+    # disk so OTA / restart does not wipe the log
+    try:
+        _save_policy_events()
+    except Exception:
+        pass
     # Telegram notify (best-effort, non-blocking)
     try:
         tg_on_policy_event(kind, msg, extra)
     except Exception:
         pass
+
+
+_load_policy_events()
 
 
 def _place_heat_zone(liq: float, t0: float, t1: float, t2: float) -> str:
