@@ -2590,9 +2590,9 @@
           </div>
           <div class="temp-card board-chip">
             <div class="tc-label">
-              <span class="tip" data-tip-key="pcb" data-i18n="dash.boards_max">Boards (max)</span>
+              <span class="tip" data-tip-key="pcb">Boards (max)</span>
               <span style="color:var(--dim)"> / </span>
-              <span class="tip" data-tip-key="chip_max" data-i18n="dash.chips_max">Chips (max)</span>
+              <span class="tip" data-tip-key="chip_max">Chips (max)</span>
             </div>
             <div class="tc-val tc-val-dual">
               <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
@@ -2600,8 +2600,8 @@
               <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
             </div>
             <div class="tc-extra">
-              <div class="tc-pcb-line"><span data-i18n="dash.pcb_avg">pcb avg</span> <span id="t-pcb-avg">—</span> · <span data-i18n="dash.pcb_min">pcb min</span> <span id="t-pcb-min">—</span></div>
-              <div class="tc-chip-line"><span data-i18n="dash.chip_avg">chip avg</span> <span id="t-chip-avg">—</span> · <span data-i18n="dash.chip_min">chip min</span> <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical" data-i18n="dash.critical">Critical</span> <span id="t-chip-crit">—</span></div>
+              <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
+              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">Critical</span> <span id="t-chip-crit">—</span></div>
             </div>
           </div>
           <div class="temp-card heat-balance" id="card-heat-balance">
@@ -4809,13 +4809,14 @@
         "dash.heat_loss": "Heat loss",
         "dash.heat_balance": "Heat / cool-down",
         "dash.power_measured": "Power measured",
-        "dash.boards_max": "Boards (max)",
-        "dash.chips_max": "Chips (max)",
-        "dash.pcb_avg": "pcb avg",
-        "dash.pcb_min": "pcb min",
-        "dash.chip_avg": "chip avg",
-        "dash.chip_min": "chip min",
-        "dash.critical": "Critical",
+        "dash.hb.surplus": "surplus",
+        "dash.hb.deficit": "deficit",
+        "dash.hb.balance": "balance",
+        "dash.hb.line": "{bal} · in {qin} kW{cap} · loss {qloss} kW",
+        "dash.hb.hx_cap": " (HX cap)",
+        "dash.hb.no_data": "no data · Heat loss",
+        "dash.hb.no_power": "no Power measured",
+        "dash.hb.no_geo": "set geometry · Pool",
         "h2.backup": "Configuration backup",
         "h2.connection": "Whatsminer connection",
         "h2.filtration": "Filtration · pump",
@@ -5042,13 +5043,14 @@
         "dash.heat_loss": "Теплопотери",
         "dash.heat_balance": "Нагрев / остывание",
         "dash.power_measured": "Мощность",
-        "dash.boards_max": "Платы (max)",
-        "dash.chips_max": "Чипы (max)",
-        "dash.pcb_avg": "ср. pcb",
-        "dash.pcb_min": "мин. pcb",
-        "dash.chip_avg": "ср. чип",
-        "dash.chip_min": "мин. чип",
-        "dash.critical": "Critical",
+        "dash.hb.surplus": "избыток",
+        "dash.hb.deficit": "дефицит",
+        "dash.hb.balance": "баланс",
+        "dash.hb.line": "{bal} · ввод {qin} kW{cap} · потери {qloss} kW",
+        "dash.hb.hx_cap": " (лимит ТО)",
+        "dash.hb.no_data": "нет данных · Теплопотери",
+        "dash.hb.no_power": "нет Power measured",
+        "dash.hb.no_geo": "задайте геометрию · Бассейн",
         "h2.backup": "Бэкап конфигурации",
         "h2.connection": "Подключение Whatsminer",
         "h2.filtration": "Фильтрация · насос",
@@ -5251,6 +5253,10 @@
         if (typeof renderWeatherDash === "function" && typeof weatherData !== "undefined" && weatherData) {
           renderWeatherDash(weatherData);
         }
+      } catch (_) {}
+      // heat-balance surplus/in/loss line is language-dependent
+      try {
+        if (typeof updateHeatLoss === "function") updateHeatLoss();
       } catch (_) {}
       return lang;
     }
@@ -12376,17 +12382,17 @@
       };
 
       if (!ctx || !Number.isFinite(ctx.Q_loss_W)) {
-        clear("no data · Heat loss");
+        clear(t("dash.hb.no_data", "no data · Heat loss"));
         return;
       }
 
       const { massKg, P_W, hexCap_W, Q_loss_W } = ctx;
       if (!Number.isFinite(P_W) || P_W < 0) {
-        clear("no Power measured");
+        clear(t("dash.hb.no_power", "no Power measured"));
         return;
       }
       if (!Number.isFinite(massKg) || massKg <= 0) {
-        clear("set geometry · Pool");
+        clear(t("dash.hb.no_geo", "set geometry · Pool"));
         return;
       }
 
@@ -12417,15 +12423,22 @@
         else if (rate < -0.01) card.classList.add("hb-down");
       }
 
+      const balKey =
+        Q_net_kW > 0.05 ? "dash.hb.surplus" :
+        Q_net_kW < -0.05 ? "dash.hb.deficit" : "dash.hb.balance";
       const bal =
-        Q_net_kW > 0.05 ? "surplus" :
-        Q_net_kW < -0.05 ? "deficit" : "balance";
+        t(balKey, Q_net_kW > 0.05 ? "surplus" : Q_net_kW < -0.05 ? "deficit" : "balance");
       if (condEl) {
-        condEl.textContent =
-          bal +
-          " · in " + (Q_in_W / 1000).toFixed(2) + " kW" +
-          (limited ? " (HX cap)" : "") +
-          " · loss " + (Q_loss_W / 1000).toFixed(2) + " kW";
+        condEl.textContent = tf(
+          "dash.hb.line",
+          {
+            bal: bal,
+            qin: (Q_in_W / 1000).toFixed(2),
+            qloss: (Q_loss_W / 1000).toFixed(2),
+            cap: limited ? t("dash.hb.hx_cap", " (HX cap)") : "",
+          },
+          "{bal} · in {qin} kW{cap} · loss {qloss} kW"
+        );
       }
     }
 
