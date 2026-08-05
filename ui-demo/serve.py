@@ -2847,6 +2847,314 @@ def apply_miner_settings(
         _cache_ts = 0.0
     return settings
 
+
+# ── Config backup / restore (settings JSON bundle) ───────────────────────────
+CONFIG_BACKUP_FORMAT = "poolheat_config_backup"
+CONFIG_BACKUP_VERSION = 1
+
+
+def _read_json_file(path: Path) -> dict | None:
+    try:
+        if not path.is_file():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else None
+    except Exception:
+        return None
+
+
+def build_config_backup() -> dict:
+    """
+    Full settings snapshot for download.
+    Includes secrets (API password, TG token, filtration passwords) so restore works.
+    Does not include history.db / runtime caches / policy events.
+    """
+    app_path = _miner_config_path()
+    app_file = _read_json_file(app_path) or {}
+    # ensure runtime miner keys present even if file is sparse
+    ms = get_miner_settings()
+    app_merged = dict(app_file)
+    for k in (
+        "miner_host",
+        "miner_port",
+        "api_password",
+        "poll_interval_sec",
+        "dry_run",
+        "project_name",
+        "bind",
+        "http_port",
+    ):
+        if k not in app_merged and k in ms:
+            app_merged[k] = ms[k]
+        if k in ("miner_host", "miner_port", "api_password", "poll_interval_sec", "dry_run", "project_name"):
+            app_merged[k] = ms.get(k, app_merged.get(k))
+
+    with _hist_cfg_lock:
+        history = dict(_hist_cfg)
+    with _weather_cfg_lock:
+        weather = dict(_weather_cfg)
+    with _pool_cfg_lock:
+        pool = dict(_pool_cfg)
+
+    zone = get_zone_cfg()
+    with _zone_presets_lock:
+        zone_presets = json.loads(json.dumps(_zone_presets))
+
+    filtration = get_filtration_cfg(redact=False)
+    filtration.pop("backends", None)
+    chipmap = get_chipmap_cfg(redact=False)
+    telegram = get_telegram_cfg(redact=False)
+    telegram.pop("status", None)
+
+    return {
+        "format": CONFIG_BACKUP_FORMAT,
+        "version": CONFIG_BACKUP_VERSION,
+        "app_version": get_app_version(),
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "project_name": get_project_name(),
+        "configs": {
+            "app": app_merged,
+            "history": history,
+            "weather": weather,
+            "pool": pool,
+            "zone_map": zone,
+            "zone_presets": zone_presets,
+            "filtration": filtration,
+            "chipmap": chipmap,
+            "telegram": telegram,
+        },
+        "notes": (
+            "Restore via UI Settings → Backup or POST /api/config/restore. "
+            "Contains secrets (API password, Telegram token, filtration passwords)."
+        ),
+    }
+
+
+def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -> dict:
+    """
+    Apply backup bundle. `sections` optional filter of configs keys;
+    default = all present sections.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("expected JSON object")
+    # accept raw {configs:{…}} or full backup wrapper or single legacy flat
+    if payload.get("format") == CONFIG_BACKUP_FORMAT or "configs" in payload:
+        cfgs = payload.get("configs")
+        if not isinstance(cfgs, dict):
+            raise ValueError("missing configs object")
+    else:
+        # allow paste of single config.json as app only
+        if any(k in payload for k in ("miner_host", "api_password", "project_name")):
+            cfgs = {"app": payload}
+        else:
+            raise ValueError(
+                "unknown backup format (need format=poolheat_config_backup or configs{})"
+            )
+
+    want = set(sections) if sections else set(cfgs.keys())
+    applied: list[str] = []
+    errors: dict[str, str] = {}
+
+    # 1) app / miner config
+    if "app" in want and isinstance(cfgs.get("app"), dict):
+        try:
+            app = cfgs["app"]
+            apply_miner_settings(
+                host=app.get("miner_host"),
+                port=app.get("miner_port"),
+                password=app.get("api_password"),
+                poll_interval_sec=app.get("poll_interval_sec"),
+                dry_run=app.get("dry_run") if "dry_run" in app else None,
+                project_name=app.get("project_name"),
+                persist=True,
+            )
+            # preserve extra keys (bind, http_port, force_stop, …)
+            path = _miner_config_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = _read_json_file(path) or {}
+            for k, v in app.items():
+                if k in (
+                    "miner_host",
+                    "miner_port",
+                    "api_password",
+                    "poll_interval_sec",
+                    "dry_run",
+                    "project_name",
+                ):
+                    continue  # already applied
+                existing[k] = v
+            # re-apply runtime keys on top
+            ms = get_miner_settings()
+            for k in (
+                "miner_host",
+                "miner_port",
+                "api_password",
+                "poll_interval_sec",
+                "dry_run",
+                "project_name",
+            ):
+                existing[k] = ms.get(k)
+            path.write_text(
+                json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            applied.append("app")
+        except Exception as e:
+            errors["app"] = str(e)
+
+    # 2) history
+    if "history" in want and isinstance(cfgs.get("history"), dict):
+        try:
+            req = cfgs["history"]
+            with _hist_cfg_lock:
+                if "enabled" in req:
+                    _hist_cfg["enabled"] = bool(req["enabled"])
+                if "retention_days" in req:
+                    _hist_cfg["retention_days"] = max(
+                        1, min(90, int(req["retention_days"]))
+                    )
+                if "sample_interval_sec" in req:
+                    _hist_cfg["sample_interval_sec"] = max(
+                        5, min(3600, int(req["sample_interval_sec"]))
+                    )
+            _save_hist_cfg()
+            applied.append("history")
+        except Exception as e:
+            errors["history"] = str(e)
+
+    # 3) weather
+    if "weather" in want and isinstance(cfgs.get("weather"), dict):
+        try:
+            req = cfgs["weather"]
+            with _weather_cfg_lock:
+                for k, v in req.items():
+                    if k in (
+                        "enabled",
+                        "city",
+                        "country",
+                        "admin1",
+                        "timezone",
+                        "latitude",
+                        "longitude",
+                        "refresh_interval_sec",
+                    ):
+                        _weather_cfg[k] = v
+                if "enabled" in req:
+                    _weather_cfg["enabled"] = bool(req["enabled"])
+                if "latitude" in req and req["latitude"] is not None:
+                    _weather_cfg["latitude"] = float(req["latitude"])
+                if "longitude" in req and req["longitude"] is not None:
+                    _weather_cfg["longitude"] = float(req["longitude"])
+            _save_weather_cfg()
+            applied.append("weather")
+        except Exception as e:
+            errors["weather"] = str(e)
+
+    # 4) pool
+    if "pool" in want and isinstance(cfgs.get("pool"), dict):
+        try:
+            req = cfgs["pool"]
+            with _pool_cfg_lock:
+                for key in (
+                    "length_m",
+                    "width_m",
+                    "depth_m",
+                    "flow_m3h",
+                    "hex_delta_c",
+                    "shape",
+                    "comment",
+                    "water_sensor",
+                ):
+                    if key in req and req[key] is not None:
+                        if key == "water_sensor":
+                            _pool_cfg[key] = _normalize_pool_water_sensor(req[key])
+                        elif key in ("shape", "comment"):
+                            _pool_cfg[key] = str(req[key])
+                        else:
+                            _pool_cfg[key] = float(req[key])
+            _save_pool_cfg()
+            applied.append("pool")
+        except Exception as e:
+            errors["pool"] = str(e)
+
+    # 5) zone map
+    if "zone_map" in want and isinstance(cfgs.get("zone_map"), dict):
+        try:
+            cfg = _coerce_zone_config_dict(cfgs["zone_map"])
+            with _zone_cfg_lock:
+                _zone_cfg.clear()
+                _zone_cfg.update(cfg)
+            _save_zone_cfg()
+            applied.append("zone_map")
+        except Exception as e:
+            errors["zone_map"] = str(e)
+
+    # 6) zone presets
+    if "zone_presets" in want and isinstance(cfgs.get("zone_presets"), dict):
+        try:
+            global _zone_presets
+            raw = cfgs["zone_presets"]
+            with _zone_presets_lock:
+                _zone_presets = {
+                    "presets": list(raw.get("presets") or []),
+                    "active_id": raw.get("active_id"),
+                }
+            _save_zone_presets()
+            # re-normalize via loader
+            _load_zone_presets()
+            applied.append("zone_presets")
+        except Exception as e:
+            errors["zone_presets"] = str(e)
+
+    # 7) filtration
+    if "filtration" in want and isinstance(cfgs.get("filtration"), dict):
+        try:
+            apply_filtration_cfg(cfgs["filtration"])
+            applied.append("filtration")
+        except Exception as e:
+            errors["filtration"] = str(e)
+
+    # 8) chipmap
+    if "chipmap" in want and isinstance(cfgs.get("chipmap"), dict):
+        try:
+            apply_chipmap_cfg(cfgs["chipmap"])
+            applied.append("chipmap")
+        except Exception as e:
+            errors["chipmap"] = str(e)
+
+    # 9) telegram
+    if "telegram" in want and isinstance(cfgs.get("telegram"), dict):
+        try:
+            req = cfgs["telegram"]
+            with _tg_cfg_lock:
+                for k, v in req.items():
+                    if k in ("status", "bot_token_set"):
+                        continue
+                    if k == "bot_token" and isinstance(v, str) and (
+                        "…" in v or v.startswith("••••")
+                    ):
+                        continue  # skip redacted
+                    _tg_cfg[k] = v
+                if "enabled" in req:
+                    _tg_cfg["enabled"] = bool(req["enabled"])
+            _save_telegram_cfg(force=True)
+            applied.append("telegram")
+        except Exception as e:
+            errors["telegram"] = str(e)
+
+    if not applied and errors:
+        raise RuntimeError("restore failed: " + "; ".join(f"{k}: {v}" for k, v in errors.items()))
+    if not applied:
+        raise ValueError("nothing to restore (empty sections)")
+
+    return {
+        "ok": True,
+        "applied": applied,
+        "errors": errors or None,
+        "app_version": get_app_version(),
+    }
+
+
 # Rectangular pool geometry + circulation through heat exchanger
 DEFAULT_POOL_CFG = {
     "length_m": 8.0,
@@ -14589,6 +14897,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/miner/config":
             self._api_miner_config_get()
             return
+        if path in ("/api/config/backup", "/api/backup/config", "/api/config/export"):
+            self._api_config_backup_get()
+            return
         if path in (
             "/api/miner/write_api",
             "/api/miner/write-status",
@@ -14729,6 +15040,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/miner/config":
             self._api_miner_config_post()
             return
+        if path in ("/api/config/restore", "/api/backup/restore", "/api/config/import"):
+            self._api_config_restore_post()
+            return
         if path in (
             "/api/miner/write_api",
             "/api/miner/write-status",
@@ -14839,6 +15153,48 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def _api_config_backup_get(self) -> None:
+        """GET /api/config/backup — download full settings JSON."""
+        try:
+            body = build_config_backup()
+            data = json.dumps(body, ensure_ascii=False, indent=2, default=str).encode(
+                "utf-8"
+            )
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            pname = re.sub(
+                r"[^\w.\-]+",
+                "_",
+                str(body.get("project_name") or "poolheat"),
+            )[:40]
+            fname = f"{pname}_config_{stamp}.json"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header(
+                "Content-Disposition", f'attachment; filename="{fname}"'
+            )
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_config_restore_post(self) -> None:
+        """POST /api/config/restore — upload backup JSON and apply."""
+        try:
+            req = self._read_json_body()
+            if not isinstance(req, dict):
+                raise ValueError("JSON object required")
+            # allow { backup: {...}, sections: [...] } or raw backup
+            payload = req.get("backup") if isinstance(req.get("backup"), dict) else req
+            sections = req.get("sections") if isinstance(req.get("sections"), list) else None
+            if sections is not None:
+                sections = [str(s) for s in sections]
+            out = restore_config_backup(payload, sections=sections)
+            self._json_response(200, out)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_live(self) -> None:
         global _cache, _cache_ts
@@ -15500,6 +15856,7 @@ def main() -> None:
     print(f"app version:       {get_app_version()} · repo {GITHUB_REPO}")
     print(f"miner:             {HOST_MINER}:{PORT_MINER}")
     print(f"miner config:      GET/POST /api/miner/config · {_miner_config_path()}")
+    print(f"config backup:     GET  /api/config/backup · POST /api/config/restore")
     print(f"miner pools:       GET  /api/miner/pools")
     print(f"telegram:          GET/POST /api/telegram/config · getUpdates")
     print(f"telegram timing:   GET  /api/telegram/timing  (ring {_TG_TIMING_MAX})")

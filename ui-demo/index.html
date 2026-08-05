@@ -3313,6 +3313,29 @@
     <!-- ========== SETTINGS ========== -->
     <section class="view" id="view-settings">
       <div class="stack">
+        <div class="card" id="panel-config-backup">
+          <div class="card-h">
+            <div>
+              <h2>Бэкап конфигурации</h2>
+              <div class="sub">скачать / восстановить все настройки (JSON)</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn primary" type="button" id="btn-config-backup">Скачать бэкап</button>
+              <button class="btn" type="button" id="btn-config-restore">Загрузить бэкап…</button>
+              <input type="file" id="input-config-restore" accept="application/json,.json" hidden />
+            </div>
+          </div>
+          <div class="card-b">
+            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
+              В файл попадают: подключение майнера, dry_run, карта зон и пресеты,
+              бассейн, погода, история, фильтрация, chipmap, Telegram
+              <strong>(включая пароли и bot token)</strong>.
+              Не входит: history.db, кэши, журнал событий.
+            </p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="config-backup-status">—</p>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-h">
             <div>
@@ -7932,6 +7955,134 @@
         toastError("Не сохранено: " + e.message);
       }
     }
+
+    async function downloadConfigBackup() {
+      const st = document.getElementById("config-backup-status");
+      try {
+        if (st) st.textContent = "скачивание…";
+        const res = await fetch("/api/config/backup?t=" + Date.now(), {
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          let err = "HTTP " + res.status;
+          try {
+            const j = await res.json();
+            if (j && j.error) err = j.error;
+          } catch (_) { /* ignore */ }
+          throw new Error(err);
+        }
+        const blob = await res.blob();
+        let fname = "poolheat_config.json";
+        const cd = res.headers.get("Content-Disposition") || "";
+        const m = cd.match(/filename=\"?([^\";]+)\"?/i);
+        if (m) fname = m[1];
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        if (st) st.textContent = "скачано · " + fname + " · " + new Date().toLocaleTimeString();
+        toastSuccess("Бэкап скачан · " + fname);
+      } catch (e) {
+        if (st) st.textContent = "ошибка: " + e.message;
+        toastError("Бэкап: " + e.message);
+      }
+    }
+
+    async function restoreConfigBackupFile(file) {
+      const st = document.getElementById("config-backup-status");
+      if (!file) return;
+      try {
+        if (st) st.textContent = "чтение " + file.name + "…";
+        const text = await file.text();
+        let payload;
+        try {
+          payload = JSON.parse(text);
+        } catch (e) {
+          throw new Error("невалидный JSON");
+        }
+        if (!payload || typeof payload !== "object")
+          throw new Error("ожидался JSON-объект");
+        const keys = payload.configs
+          ? Object.keys(payload.configs)
+          : payload.miner_host
+            ? ["app"]
+            : [];
+        const ok = window.confirm(
+          "Восстановить конфигурацию из «" +
+            file.name +
+            "»?\n\n" +
+            (keys.length ? "Секции: " + keys.join(", ") + "\n\n" : "") +
+            "Пароли и Telegram token будут перезаписаны. history.db не трогается."
+        );
+        if (!ok) {
+          if (st) st.textContent = "отменено";
+          return;
+        }
+        if (st) st.textContent = "восстановление…";
+        const res = await fetch("/api/config/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "restore fail");
+        const applied = (body.applied || []).join(", ") || "—";
+        const errKeys = body.errors ? Object.keys(body.errors) : [];
+        if (st) {
+          st.textContent =
+            "OK · " +
+            applied +
+            (errKeys.length ? " · ошибки: " + errKeys.join(", ") : "") +
+            " · " +
+            new Date().toLocaleTimeString();
+        }
+        toastSuccess("Конфиг восстановлен · " + applied);
+        // reload UI from server
+        try {
+          if (typeof loadMinerConfig === "function") await loadMinerConfig();
+          if (typeof loadHistoryConfig === "function") await loadHistoryConfig();
+          if (typeof loadZoneMapConfig === "function") await loadZoneMapConfig();
+          if (typeof loadZonePresets === "function") await loadZonePresets();
+          if (typeof loadPoolConfig === "function") await loadPoolConfig();
+          if (typeof loadWeatherConfig === "function") await loadWeatherConfig();
+          if (typeof loadTelegramConfig === "function") await loadTelegramConfig();
+          if (typeof loadChipmapConfig === "function") await loadChipmapConfig();
+          if (typeof loadSystemInfo === "function")
+            void loadSystemInfo({ forceLive: true });
+          if (typeof fetchLive === "function") void fetchLive(true);
+        } catch (_) { /* partial reload ok */ }
+        if (errKeys.length) {
+          toastWarn(
+            "Частично: " +
+              errKeys
+                .map((k) => k + "=" + (body.errors[k] || ""))
+                .join("; ")
+          );
+        }
+      } catch (e) {
+        if (st) st.textContent = "ошибка: " + e.message;
+        toastError("Восстановление: " + e.message);
+      }
+    }
+
+    document
+      .getElementById("btn-config-backup")
+      ?.addEventListener("click", () => void downloadConfigBackup());
+    document.getElementById("btn-config-restore")?.addEventListener("click", () => {
+      document.getElementById("input-config-restore")?.click();
+    });
+    document
+      .getElementById("input-config-restore")
+      ?.addEventListener("change", (ev) => {
+        const f = ev.target && ev.target.files && ev.target.files[0];
+        ev.target.value = "";
+        if (f) void restoreConfigBackupFile(f);
+      });
 
     document.getElementById("btn-save-miner")?.addEventListener("click", () => {
       saveMinerConfig();
