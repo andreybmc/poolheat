@@ -400,39 +400,39 @@
     .chip-snake {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
       width: max-content;
       max-width: none;
     }
     .chip-section {
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      gap: 2px;
     }
     .chip-row {
       display: flex;
       flex-direction: row;
-      gap: 3px;
+      gap: 2px;
     }
     /* legacy flat grid (fallback when layout unknown) */
     .chip-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
-      gap: 3px;
+      grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+      gap: 2px;
       max-width: 100%;
     }
     /*
-     * HashSource-style cell (~55×55):
+     * Compact HashSource-style cell (36×36 — fits 45d / 3-board maps):
      *  top:    freq  vol
      *  mid:    large value (temp / metric)
      *  bot:    err crc x repeat
      *  corner: C#
      */
     .chip-cell {
-      width: 54px;
-      height: 54px;
-      flex: 0 0 54px;
-      border-radius: 4px;
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border-radius: 3px;
       border: 1px solid rgba(255, 255, 255, 0.08);
       background: var(--border2);
       cursor: default;
@@ -441,7 +441,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: space-between;
-      padding: 3px 2px 2px;
+      padding: 2px 1px 1px;
       font-weight: 600;
       line-height: 1;
       color: rgba(255, 255, 255, 0.92);
@@ -458,30 +458,31 @@
     }
     .chip-cell .c-id {
       position: absolute;
-      top: 1px;
-      right: 2px;
-      font-size: 0.52rem;
+      top: 0;
+      right: 1px;
+      font-size: 0.42rem;
       font-weight: 700;
-      opacity: 0.55;
-      letter-spacing: -0.02em;
+      opacity: 0.5;
+      letter-spacing: -0.03em;
       line-height: 1;
       pointer-events: none;
     }
     .chip-cell .c-top {
       display: flex;
       justify-content: center;
-      gap: 5px;
+      gap: 2px;
       width: 100%;
-      font-size: 0.58rem;
+      font-size: 0.42rem;
       font-weight: 600;
       opacity: 0.9;
-      padding-right: 10px; /* room for C# */
+      padding-right: 8px; /* room for C# */
       box-sizing: border-box;
+      letter-spacing: -0.03em;
     }
     .chip-cell .c-main {
-      font-size: 1.05rem;
-      font-weight: 750;
-      letter-spacing: -0.02em;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
       line-height: 1;
       flex: 1;
       display: flex;
@@ -491,12 +492,13 @@
     .chip-cell .c-bot {
       display: flex;
       justify-content: center;
-      gap: 3px;
+      gap: 2px;
       width: 100%;
-      font-size: 0.5rem;
+      font-size: 0.38rem;
       font-weight: 600;
       opacity: 0.78;
       font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
     }
     .chip-cell.chip-light {
       color: rgba(12, 18, 14, 0.92);
