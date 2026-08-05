@@ -500,12 +500,36 @@
       font-variant-numeric: tabular-nums;
       letter-spacing: -0.02em;
     }
+    /* temp / gradient / outliers / nonce_def: only °C center + C# top-right */
+    .chip-cell.chip-simple {
+      justify-content: center;
+      padding: 1px;
+    }
+    .chip-cell.chip-simple .c-top,
+    .chip-cell.chip-simple .c-bot {
+      display: none;
+    }
+    .chip-cell.chip-simple .c-id {
+      top: 1px;
+      right: 2px;
+      font-size: 0.48rem;
+      font-weight: 700;
+      opacity: 0.78;
+      letter-spacing: -0.02em;
+    }
+    .chip-cell.chip-simple .c-main {
+      font-size: 0.88rem;
+      font-weight: 750;
+      width: 100%;
+      padding-top: 4px; /* clear C# corner */
+    }
     .chip-cell.chip-light {
       color: rgba(12, 18, 14, 0.92);
       text-shadow: none;
       border-color: rgba(0, 0, 0, 0.12);
     }
-    .chip-cell.chip-light .c-id { opacity: 0.45; }
+    .chip-cell.chip-light .c-id { opacity: 0.55; }
+    .chip-cell.chip-simple.chip-light .c-id { opacity: 0.7; }
     .chip-cell.chip-light .c-top,
     .chip-cell.chip-light .c-bot { opacity: 0.8; }
     .chip-legend {
@@ -11385,14 +11409,27 @@
       return bySlot;
     }
 
+    /** Modes where cell = large °C center + C# top-right (freq/err only in tooltip). */
+    function chipmapIsTempSimpleMetric(metric) {
+      return (
+        metric === "temp" ||
+        metric === "gradient" ||
+        metric === "outliers" ||
+        metric === "nonce_def"
+      );
+    }
+
     /**
-     * Center value (HashSource always shows temp so the physical map stays readable;
-     * color encodes the selected metric). For hash-only metrics we still show temp
-     * as primary — nonce/TH are in the tooltip.
+     * Center value. Temp-simple modes always show °C.
+     * Hash metrics show nonce / TH / freq as main number.
      */
     function chipmapMainLabel(c, metric, analysis) {
       if (!c) return "—";
-      // optional: show metric number when it's not temperature-colored
+      if (chipmapIsTempSimpleMetric(metric)) {
+        return c.temp != null && Number.isFinite(Number(c.temp))
+          ? String(Math.round(Number(c.temp)))
+          : "—";
+      }
       if (metric === "est_th" && c.est_th != null && Number.isFinite(Number(c.est_th))) {
         const t = Number(c.est_th);
         return t >= 10 ? t.toFixed(1) : t.toFixed(2);
@@ -11404,22 +11441,27 @@
         if (n >= 1000) return (n / 1000).toFixed(1) + "k";
         return String(Math.round(n));
       }
-      // default + gradient/outliers/nonce_def/temp/freq: large = °C
+      if (metric === "nonce_rate" && c.nonce_rate != null && Number.isFinite(Number(c.nonce_rate))) {
+        return Number(c.nonce_rate).toFixed(1);
+      }
+      if (metric === "freq" && c.freq != null) {
+        return String(Math.round(Number(c.freq)));
+      }
       return c.temp != null && Number.isFinite(Number(c.temp))
         ? String(Math.round(Number(c.temp)))
         : "—";
     }
 
     /**
-     * HashSource-style cell:
-     *   freq  vol
-     *     MAIN
-     *  err crc x r
-     * + C# corner · color by metric
+     * Cell layout:
+     * - temp / gradient / outliers / nonce_def → simple: °C center + C# top-right
+     * - hash metrics → dense: freq/vol · main · err + C#
      */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
       cell.className = "chip-cell";
+      const simple = chipmapIsTempSimpleMetric(metric);
+      if (simple) cell.classList.add("chip-simple");
       if (!c) {
         cell.classList.add("empty");
         cell.innerHTML =
@@ -11440,25 +11482,17 @@
         const t =
           (Number(v) - metricRange.min) /
           (metricRange.max - metricRange.min);
-        const lightFill =
-          chipmapIsAnalysisMetric(metric)
-            ? t > 0.35 && t < 0.75 // mid yellows
-            : t > 0.5;
-        // also force dark text on very light greens/yellows via luminance heuristic
-        if (lightFill && !chipmapIsAnalysisMetric(metric)) {
-          cell.classList.add("chip-light");
-        } else if (metric === "temp" && t > 0.55) {
-          cell.classList.add("chip-light");
-        } else if (
-          (metric === "nonce" ||
-            metric === "est_th" ||
-            metric === "nonce_rate" ||
-            metric === "freq") &&
-          t > 0.55
-        ) {
+        if (simple) {
+          // temp scale: hotter → lighter yellow → dark text
+          if (metric === "temp" && t > 0.5) cell.classList.add("chip-light");
+          // hazard mid-band yellows
+          else if (metric !== "temp" && t > 0.3 && t < 0.75)
+            cell.classList.add("chip-light");
+        } else if (t > 0.55) {
           cell.classList.add("chip-light");
         }
       }
+      const chipNo = c.id != null ? c.id : id;
       const freq =
         c.freq != null && Number.isFinite(Number(c.freq))
           ? String(Math.round(Number(c.freq)))
@@ -11477,27 +11511,40 @@
             ? String(c.x2 | 0)
             : "0";
       const main = chipmapMainLabel(c, metric, analysis);
-      cell.innerHTML =
-        '<span class="c-id">C' +
-        (c.id != null ? c.id : id) +
-        "</span>" +
-        '<span class="c-top"><span>' +
-        freq +
-        "</span><span>" +
-        vol +
-        "</span></span>" +
-        '<span class="c-main">' +
-        main +
-        "</span>" +
-        '<span class="c-bot"><span>' +
-        err +
-        "</span><span>" +
-        crc +
-        "</span><span>" +
-        x +
-        "</span><span>" +
-        rep +
-        "</span></span>";
+      if (simple) {
+        // clean: large temp + C# corner (freq/err in tooltip)
+        cell.innerHTML =
+          '<span class="c-id">' +
+          chipNo +
+          "</span>" +
+          '<span class="c-top"></span>' +
+          '<span class="c-main">' +
+          main +
+          "</span>" +
+          '<span class="c-bot"></span>';
+      } else {
+        cell.innerHTML =
+          '<span class="c-id">C' +
+          chipNo +
+          "</span>" +
+          '<span class="c-top"><span>' +
+          freq +
+          "</span><span>" +
+          vol +
+          "</span></span>" +
+          '<span class="c-main">' +
+          main +
+          "</span>" +
+          '<span class="c-bot"><span>' +
+          err +
+          "</span><span>" +
+          crc +
+          "</span><span>" +
+          x +
+          "</span><span>" +
+          rep +
+          "</span></span>";
+      }
       let tip =
         "C" +
         c.id +
@@ -11857,7 +11904,11 @@
           " → " +
           labels.high +
           " (10 steps)</span>" +
-          "<span>ячейка: C# · freq/vol · temp · err/crc/x/r · layout " +
+          "<span>" +
+          (chipmapIsTempSimpleMetric(metric)
+            ? "ячейка: °C по центру · № чипа справа сверху"
+            : "ячейка: C# · freq/vol · value · err/crc/x/r") +
+          " · layout " +
           (isHydro ? "hydro/link" : "snake") +
           "</span>";
       }
