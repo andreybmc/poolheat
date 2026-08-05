@@ -1,0 +1,24 @@
+{
+  "source": "WhatsMinerTool 9.2.4 data/error_code.txt",
+  "source_encoding": "gbk",
+  "count": 209,
+  "languages": [
+    "en",
+    "zh",
+    "ru"
+  ],
+  "aliases": {
+    "ch": "zh",
+    "cn": "zh",
+    "zh-cn": "zh",
+    "zh_CN": "zh",
+    "zh-hans": "zh",
+    "ru": "ru",
+    "ru-ru": "ru",
+    "ru_RU": "ru"
+  },
+  "fallback": [
+    "en"
+  ],
+  "note": "WMT: en + Chinese (ch→zh). Russian (ru) translated for mining terms (хешплата, БП, слот, nonce, пул)."
+}

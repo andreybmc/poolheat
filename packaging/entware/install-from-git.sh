@@ -13,10 +13,18 @@ mkdir -p /opt/bin /opt/lib/poolheat /opt/share/poolheat/www \
 
 # app files
 cp -f "$ROOT/ui-demo/serve.py" /opt/lib/poolheat/serve.py
-if [ -f "$ROOT/ui-demo/whatsminer_driver.py" ]; then
-  cp -f "$ROOT/ui-demo/whatsminer_driver.py" /opt/lib/poolheat/whatsminer_driver.py
+# whatsminer-lib (vendored package)
+if [ -d "$ROOT/ui-demo/whatsminer" ]; then
+  rm -rf /opt/lib/poolheat/whatsminer
+  cp -a "$ROOT/ui-demo/whatsminer" /opt/lib/poolheat/whatsminer
 fi
+# remove legacy monolith if present
+rm -f /opt/lib/poolheat/whatsminer_driver.py
 cp -f "$ROOT/ui-demo/index.html" /opt/share/poolheat/www/index.html
+if [ -d "$ROOT/ui-demo/icons" ]; then
+  rm -rf /opt/share/poolheat/www/icons
+  cp -a "$ROOT/ui-demo/icons" /opt/share/poolheat/www/icons
+fi
 if [ -f "$ROOT/VERSION" ]; then
   cp -f "$ROOT/VERSION" /opt/lib/poolheat/VERSION
   cp -f "$ROOT/VERSION" /opt/share/poolheat/VERSION

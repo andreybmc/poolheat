@@ -8028,6 +8028,15 @@ def apply_github_update(ref: str | None = None) -> dict:
                             (".py", ".html")
                         ):
                             yield m
+                        # vendored whatsminer-lib package
+                        elif rel.startswith("ui-demo/whatsminer/") and (
+                            rel.endswith(".py")
+                            or rel.endswith(".json")
+                            or rel.endswith(".md")
+                            or rel.endswith("LICENSE")
+                            or rel.endswith(".txt")
+                        ):
+                            yield m
                         # Meteocons weather icons (fill SVG) for Outdoor widget
                         elif rel.startswith("ui-demo/icons/weather/") and (
                             rel.endswith(".svg")
@@ -8045,15 +8054,28 @@ def apply_github_update(ref: str | None = None) -> dict:
             mapping = [
                 (src_root / "ui-demo" / "serve.py", lib_dir / "serve.py"),
                 (
-                    src_root / "ui-demo" / "whatsminer_driver.py",
-                    lib_dir / "whatsminer_driver.py",
-                ),
-                (
                     src_root / "ui-demo" / "luci_proxy.py",
                     lib_dir / "luci_proxy.py",
                 ),
                 (src_root / "ui-demo" / "index.html", www_dir / "index.html"),
             ]
+            # whatsminer-lib package (vendored next to serve.py)
+            wm_src = src_root / "ui-demo" / "whatsminer"
+            wm_dst = lib_dir / "whatsminer"
+            if wm_src.is_dir():
+                try:
+                    if wm_dst.exists():
+                        shutil.rmtree(wm_dst)
+                    shutil.copytree(
+                        wm_src,
+                        wm_dst,
+                        ignore=shutil.ignore_patterns(
+                            "__pycache__", "*.pyc", ".DS_Store"
+                        ),
+                    )
+                    installed.append(str(wm_dst))
+                except Exception as e:
+                    print(f"[update] whatsminer package: {e}")
             # Outdoor weather icons → www/icons/weather/
             wx_src_dir = src_root / "ui-demo" / "icons" / "weather"
             wx_dst_dir = www_dir / "icons" / "weather"
@@ -8467,43 +8489,257 @@ def privileged_cmd(
     raise RuntimeError(_OVER_MAX_CONNECT_RU)
 
 
-# ─── Whatsminer driver (LuCI-first, btccom/libbtctools parity) ───────────────
-# Control with API off: HTTPS LuCI (pools / power mode / restart / reboot).
-# TCP :4028 / :4433 only when needed (limit, suspend, factory) — no get_token spam.
-# See ui-demo/whatsminer_driver.py and github.com/btccom/libbtctools
-#   src/lua/scripts/{configurator,rebooter}/WhatsMinerHttpsLuci.lua
+# ─── Whatsminer via whatsminer-lib (UniversalMiner) ───────────────────────────
+# Vendored package: next to serve.py as ``whatsminer/`` (also pip: whatsminer-lib).
+# Upstream: https://github.com/andreybmc/whatsminer-lib
+# Legacy monolith whatsminer_driver.py archived under projects/whatsminer/.
+
+import sys as _sys
+
+_lib_dir = Path(__file__).resolve().parent
+if str(_lib_dir) not in _sys.path:
+    _sys.path.insert(0, str(_lib_dir))
 
 try:
-    from whatsminer_driver import LuciClient, WhatsminerDriver  # type: ignore
-except ImportError:
-    # Entware layout: same dir as serve.py
-    import sys as _sys
-
-    _lib = Path(__file__).resolve().parent
-    if str(_lib) not in _sys.path:
-        _sys.path.insert(0, str(_lib))
-    from whatsminer_driver import LuciClient, WhatsminerDriver  # type: ignore
+    from whatsminer import LuCIClient, UniversalMiner  # type: ignore
+    from whatsminer.web.luci import LuCIError  # type: ignore
+except ImportError as _wm_imp_err:  # pragma: no cover
+    raise ImportError(
+        "whatsminer-lib not found. Expected package ``whatsminer`` next to serve.py "
+        "or ``pip install whatsminer-lib``. "
+        f"detail: {_wm_imp_err}"
+    ) from _wm_imp_err
 
 _wm_driver_lock = threading.Lock()
-_wm_driver: "WhatsminerDriver | None" = None
+_wm_driver: "PoolheatMiner | None" = None
 _wm_driver_pw_fp: str = ""
 
 
-def get_whatsminer_driver(password: str | None = None) -> "WhatsminerDriver":
+class _LuciCompat:
     """
-    Shared WhatsminerDriver for poolheat writes.
-    LuCI first for mode/pools/reboot/restart — never burns get_token slots.
+    Thin compatibility layer for poolheat helpers that still call
+    luci.request / luci.clear / extract_token on the old LuciClient.
+    """
+
+    def __init__(self, luci: "LuCIClient"):
+        self._luci = luci
+
+    def __getattr__(self, name: str):
+        return getattr(self._luci, name)
+
+    @property
+    def password(self) -> str:
+        return str(getattr(self._luci, "password", "") or "")
+
+    @password.setter
+    def password(self, value: str) -> None:
+        self._luci.password = value
+
+    @property
+    def timeout(self) -> float:
+        return float(getattr(self._luci, "timeout", 10.0) or 10.0)
+
+    @timeout.setter
+    def timeout(self, value: float) -> None:
+        self._luci.timeout = float(value)
+
+    def clear(self) -> None:
+        # reset login state if available
+        for attr in ("_logged_in", "_token", "_wmoc_cache"):
+            if hasattr(self._luci, attr):
+                try:
+                    setattr(
+                        self._luci,
+                        attr,
+                        False if attr == "_logged_in" else None,
+                    )
+                except Exception:
+                    pass
+        cj = getattr(self._luci, "_cj", None)
+        if cj is not None:
+            try:
+                cj.clear()
+            except Exception:
+                pass
+
+    def login(self) -> None:
+        self._luci.login()
+
+    def request(
+        self,
+        path: str,
+        data: dict | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> tuple[int, str]:
+        """Return (status_code, body_text) like the old LuciClient.request."""
+        old_to = self.timeout
+        try:
+            if timeout is not None:
+                self.timeout = float(timeout)
+            if not path.startswith("/"):
+                path = "/" + path
+            if data:
+                # form POST
+                raw = urllib.parse.urlencode(
+                    {str(k): str(v) for k, v in data.items()}
+                ).encode("utf-8")
+                code, body, _ = self._luci._open(path, data=raw, method="POST")
+            else:
+                code, body, _ = self._luci._open(path)
+            text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
+            return int(code), text
+        finally:
+            self.timeout = old_to
+
+    @staticmethod
+    def extract_token(html: str | bytes) -> str:
+        tok = LuCIClient._extract_token(html)
+        return tok or ""
+
+    def get_coin_type(self) -> str:
+        try:
+            pools = self._luci.get_pools()
+            return str((pools or {}).get("coin_type") or "").strip()
+        except Exception:
+            return ""
+
+
+class PoolheatMiner:
+    """
+    Adapter: whatsminer-lib UniversalMiner + methods poolheat already calls
+    (set_power_mode, restart_btminer, set_pools, write_cmd, enable_api_switch).
+    """
+
+    def __init__(
+        self,
+        host: str,
+        *,
+        api_password: str = "admin",
+        luci_username: str = "admin",
+        luci_password: str | None = None,
+        wmt_password: str = "super",
+    ):
+        self.host = host
+        self.api_password = api_password
+        self.luci_password = luci_password if luci_password is not None else api_password
+        self._m = UniversalMiner(
+            host,
+            password=api_password,
+            account="super",
+            wmt_password=wmt_password,
+            luci_username=luci_username,
+            luci_password=self.luci_password,
+            auto_probe=True,
+            prefer_netpacket=False,
+            try_enable_api=False,
+        )
+        self._luci_compat = _LuciCompat(self._m.luci)
+
+    @property
+    def luci(self) -> _LuciCompat:
+        return self._luci_compat
+
+    def set_power_mode(self, mode: str) -> dict:
+        return self._m.set_power_mode(str(mode))
+
+    def reboot(self) -> dict:
+        return self._m.reboot()
+
+    def restart_btminer(self) -> dict:
+        return self._m.restart_mining()
+
+    def set_pools(self, pools: list, *, coin_type: str | None = None) -> dict:
+        """pools: [{url,user,pass|password}, …] up to 3."""
+        slots = [{"url": "", "user": "", "password": "x"} for _ in range(3)]
+        for i, p in enumerate((pools or [])[:3]):
+            if not isinstance(p, dict):
+                continue
+            url = str(p.get("url") or p.get("pool") or "")
+            user = str(p.get("user") or p.get("worker") or "")
+            pw = str(
+                p.get("pass")
+                if p.get("pass") is not None
+                else p.get("password")
+                if p.get("password") is not None
+                else p.get("passwd")
+                if p.get("passwd") is not None
+                else "x"
+            )
+            slots[i] = {"url": url, "user": user, "password": pw}
+        # Prefer universal update_pools (auto transport)
+        try:
+            return self._m.update_pools(
+                slots[0]["url"],
+                slots[0]["user"],
+                slots[0]["password"],
+                slots[1]["url"],
+                slots[1]["user"],
+                slots[1]["password"],
+                slots[2]["url"],
+                slots[2]["user"],
+                slots[2]["password"],
+            )
+        except Exception:
+            # LuCI-only fallback with coin_type
+            return self._m.set_pools_luci(
+                [
+                    {
+                        "index": i,
+                        "url": slots[i]["url"],
+                        "user": slots[i]["user"],
+                        "password": slots[i]["password"],
+                    }
+                    for i in range(3)
+                    if slots[i]["url"] or slots[i]["user"]
+                ],
+                coin_type=str(coin_type or "BTC"),
+            )
+
+    def enable_api_switch(self, enable: bool = True) -> dict:
+        return self._m.set_api_switch(bool(enable))
+
+    def write_cmd(self, cmd: dict) -> dict:
+        """Map legacy privileged cmd dicts onto UniversalMiner actions."""
+        cname = str((cmd or {}).get("cmd") or "").strip()
+        if cname in ("set_low_power",):
+            return self.set_power_mode("low")
+        if cname in ("set_normal_power",):
+            return self.set_power_mode("normal")
+        if cname in ("set_high_power",):
+            return self.set_power_mode("high")
+        if cname == "reboot":
+            return self.reboot()
+        if cname in ("restart_btminer", "restart_cgminer"):
+            return self.restart_btminer()
+        if cname in ("adjust_power_limit", "set_power_limit", "power_limit"):
+            w = cmd.get("power_limit") or cmd.get("watts") or cmd.get("value")
+            return self._m.set_power_limit(int(float(w)))
+        if cname in ("set_power_pct", "power_pct"):
+            pct = cmd.get("percent") or cmd.get("pct") or cmd.get("value")
+            return self._m.set_power_pct(int(float(pct)))
+        if cname in ("sleep", "suspend", "power_off"):
+            return self._m.power_off()
+        if cname in ("resume", "power_on", "wakeup"):
+            return self._m.power_on()
+        if cname in ("factory_reset", "factory"):
+            return self._m.factory_reset()
+        if cname in ("update_pools", "set_pools"):
+            pools = cmd.get("pools") or []
+            ct = cmd.get("coin_type") or cmd.get("coin")
+            return self.set_pools(pools, coin_type=str(ct) if ct else None)
+        # fall back to TCP privileged path still in serve.py
+        return privileged_cmd(cmd, self.api_password, token_attempts=1)
+
+
+def get_whatsminer_driver(password: str | None = None) -> "PoolheatMiner":
+    """
+    Shared UniversalMiner adapter for poolheat writes.
+    Auto-selects V3/V2/NetPacket/LuCI (whatsminer-lib).
     """
     global _wm_driver, _wm_driver_pw_fp
     pw = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
     fp = _password_fingerprint(pw)
-
-    def _tcp_write(cmd: dict, p: str) -> dict:
-        # Few token attempts: each get_token burns a 30‑min slot (max ~100).
-        return privileged_cmd(cmd, p, token_attempts=1)
-
-    def _v3_write(cmd: dict, p: str) -> dict:
-        return v3_write_legacy(cmd, p)
 
     with _wm_driver_lock:
         if (
@@ -8513,20 +8749,20 @@ def get_whatsminer_driver(password: str | None = None) -> "WhatsminerDriver":
         ):
             _wm_driver.api_password = pw
             _wm_driver.luci_password = pw
-            _wm_driver.luci.password = pw
+            try:
+                _wm_driver.luci.password = pw
+                _wm_driver._m.password = pw
+                _wm_driver._m.luci_password = pw
+                _wm_driver._m.v3_password = pw
+            except Exception:
+                pass
             return _wm_driver
-        d = WhatsminerDriver(
+        d = PoolheatMiner(
             HOST_MINER,
             api_password=pw,
             luci_username="admin",
             luci_password=pw,
-            port_v2=int(PORT_MINER) if PORT_MINER else 4028,
-            port_v3=4433,
-            tcp_write=_tcp_write,
-            v3_write=_v3_write,
-            is_online=lambda: miner_is_online(
-                max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True
-            ),
+            wmt_password="super",
         )
         _wm_driver = d
         _wm_driver_pw_fp = fp
@@ -8549,41 +8785,34 @@ def _luci_request(
     data: dict | None = None,
     timeout: float = 15.0,
 ) -> tuple[int, str]:
-    """Compat for chipmap / enable-write helpers — routes through LuciClient."""
+    """Compat for chipmap / enable-write helpers — routes through LuCI."""
     d = get_whatsminer_driver(password)
-    # LuciClient.request timeout is per-call
-    old_to = d.luci.timeout
-    try:
-        if timeout and timeout != old_to:
-            d.luci.timeout = float(timeout)
-        return d.luci.request(path, data=data, timeout=timeout)
-    finally:
-        d.luci.timeout = old_to
+    return d.luci.request(path, data=data, timeout=timeout)
 
 
 def _luci_extract_token(html: str) -> str:
-    return LuciClient.extract_token(html)
+    return _LuciCompat.extract_token(html)
 
 
 def luci_set_power_mode(mode: str, password: str) -> dict:
-    """Power Mode via LuCI (btccom path) — no TCP write unlock."""
+    """Power Mode via best available transport (LuCI / NetPacket / API)."""
     return get_whatsminer_driver(password).set_power_mode(mode)
 
 
 def luci_reboot_asic(password: str) -> dict:
-    """Full reboot via LuCI /system/reboot/call (libbtctools)."""
+    """Full reboot via best available transport."""
     return get_whatsminer_driver(password).reboot()
 
 
 def luci_restart_btminer(password: str) -> dict:
-    """Restart mining process via LuCI status/{prog}status/restart."""
+    """Restart mining process (btminer)."""
     return get_whatsminer_driver(password).restart_btminer()
 
 
 def luci_set_pools(
     pools: list, password: str, *, coin_type: str | None = None
 ) -> dict:
-    """Set up to 3 pools via LuCI (btccom setMinerConf)."""
+    """Set up to 3 pools (auto transport)."""
     return get_whatsminer_driver(password).set_pools(
         pools, coin_type=coin_type
     )
@@ -8593,11 +8822,7 @@ def fetch_miner_coin_type() -> str:
     """Best-effort Coin Type from LuCI pools form."""
     try:
         d = get_whatsminer_driver(DEFAULT_API_PASSWORD)
-        luci = getattr(d, "luci", None)
-        if luci is None:
-            return ""
-        if hasattr(luci, "get_coin_type"):
-            return str(luci.get_coin_type() or "").strip()
+        return str(d.luci.get_coin_type() or "").strip()
     except Exception as e:
         print(f"[pools] coin_type: {e}")
     return ""
@@ -8605,8 +8830,8 @@ def fetch_miner_coin_type() -> str:
 
 def luci_enable_api_switch(password: str, *, enable: bool = True) -> dict:
     """
-    Enable Miner API Switch (open_by_api / apiswitch) via LuCI form POST.
-    Used only when TCP privileged write is required (suspend, power_limit, …).
+    Enable Miner API Switch via NetPacket set_api_switch (WMT path).
+    Used when TCP privileged write is required (suspend, power_limit, …).
     """
     password = password or DEFAULT_API_PASSWORD
     out = get_whatsminer_driver(password).enable_api_switch(enable)
@@ -9103,16 +9328,12 @@ def enable_write_api(
 
 def miner_write_cmd(cmd: dict, password: str) -> dict:
     """
-    Unified write path via WhatsminerDriver (libbtctools-aligned):
+    Unified write path via whatsminer-lib UniversalMiner (PoolheatMiner adapter):
 
       0) Refuse if ASIC offline
-      A) LuCI FIRST for mode / reboot / restart_btminer / pools
-         — no get_token, works with apiswitch=0 (btccom path)
-      B) TCP v2 privileged (limit, suspend, factory, …) — 1 token attempt
-      C) If write locked → auto LuCI open_by_api once, retry TCP
-      D) API v3 :4433 when available
-    Concurrent WMT + poolheat used to exhaust get_token («over max connect»);
-    LuCI-first avoids that for everyday mode/reboot control.
+      A) High-level ops: mode / reboot / restart / pools / limit / suspend
+         — transport auto (V3/V2 → NetPacket :8889 → LuCI)
+      B) Fallback: legacy TCP privileged_cmd for obscure cmds
     """
     password = password or DEFAULT_API_PASSWORD
     cname = str(cmd.get("cmd") or "").strip()
@@ -9125,59 +9346,27 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
 
     d = get_whatsminer_driver(password)
 
-    # ── A) LuCI-native ops first (never touch get_token) ───────────────────
-    luci_first = {
-        "set_low_power": lambda: d.set_power_mode("low"),
-        "set_normal_power": lambda: d.set_power_mode("normal"),
-        "set_high_power": lambda: d.set_power_mode("high"),
-        "reboot": lambda: d.reboot(),
-        "restart_btminer": lambda: d.restart_btminer(),
-        "restart_cgminer": lambda: d.restart_btminer(),
-    }
-    if cname in luci_first:
-        errors: list[str] = []
-        try:
-            return luci_first[cname]()
-        except Exception as e:
-            errors.append(f"luci: {e}")
-        # rare TCP fallback if LuCI down but API open
-        try:
-            resp = privileged_cmd(cmd, password, token_attempts=1)
-            ok, msg = _miner_cmd_result(resp)
-            if ok:
-                if isinstance(resp, dict):
-                    resp = dict(resp)
-                    resp.setdefault("transport", "api_v2")
-                return (
-                    resp
-                    if isinstance(resp, dict)
-                    else {"STATUS": "S", "Msg": str(resp), "transport": "api_v2"}
-                )
-            errors.append(f"v2: {msg or resp}")
-        except Exception as e2:
-            errors.append(f"v2: {e2}")
-        raise RuntimeError(" · ".join(errors) if errors else f"write failed: {cname}")
-
-    if cname in ("update_pools", "set_pools"):
-        pools = cmd.get("pools")
-        if not isinstance(pools, list):
-            raise ValueError("update_pools requires pools=[{url,user,pass},…]")
-        ct = cmd.get("coin_type")
-        if ct is None:
-            ct = cmd.get("coin")
-        return d.set_pools(
-            pools,
-            coin_type=str(ct).strip() if ct is not None else None,
-        )
-
-    # ── B/C/D) TCP / v3 path via driver.write_cmd ──────────────────────────
     try:
         return d.write_cmd(cmd)
     except Exception as e:
-        # keep previous RU over-max message when applicable
         err = str(e)
         if "over max" in err.lower() and "лимит" not in err.lower():
             raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
+        # last resort: direct TCP privileged for unknown cmds
+        if cname and cname not in (
+            "set_low_power",
+            "set_normal_power",
+            "set_high_power",
+            "reboot",
+            "restart_btminer",
+            "restart_cgminer",
+            "update_pools",
+            "set_pools",
+        ):
+            try:
+                return privileged_cmd(cmd, password, token_attempts=1)
+            except Exception:
+                pass
         raise
 
 # Human tooltips (hover) for ErrorCode — not shown as Cause
