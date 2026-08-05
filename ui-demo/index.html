@@ -1394,10 +1394,22 @@
       border-color: rgba(240, 180, 41, 0.45);
       background: rgba(240, 180, 41, 0.12);
     }
-    /* heat zone on liquid/env card */
+    /* heat zone badge under liquid/env title (own row — no wrap into °C) */
+    .temp-card .tc-label.tc-label-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+    .temp-card .tc-label-main {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0 2px;
+    }
     .zone-badge {
       display: inline-block;
-      margin-left: 8px;
+      margin-left: 0;
       font-size: 0.68rem;
       font-weight: 650;
       letter-spacing: 0.02em;
@@ -1407,7 +1419,7 @@
       border: 1px solid var(--border);
       color: var(--text);
       background: rgba(0,0,0,0.18);
-      max-width: 58%;
+      max-width: 100%;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -1696,17 +1708,26 @@
 
     .temp-card .tc-val.tc-val-dual {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       align-items: baseline;
-      gap: 0 0.15em;
+      gap: 0 0.2em;
       font-size: 1.45rem;
+      white-space: nowrap;
+    }
+
+    .temp-card .tc-val .tc-pair {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 0.2em;
+      white-space: nowrap;
     }
 
     .temp-card .tc-val .tc-sep {
-      margin: 0 0.35em;
+      margin: 0 0.25em;
       color: var(--dim);
       font-weight: 500;
       font-size: 0.9em;
+      flex-shrink: 0;
     }
 
     .temp-card .tc-val small {
@@ -1971,22 +1992,24 @@
         <!-- Primary temperatures -->
         <div class="temp-grid">
           <div class="temp-card liquid-env">
-            <div class="tc-label">
-              <span class="tip" data-tip-key="t_ctrl">Теплоноситель</span>
-              <span style="color:var(--dim)"> / </span>
-              <span class="tip" data-tip-key="env">Окружение</span>
+            <div class="tc-label tc-label-stack">
+              <div class="tc-label-main">
+                <span class="tip" data-tip-key="t_ctrl">Теплоноситель</span>
+                <span style="color:var(--dim)"> / </span>
+                <span class="tip" data-tip-key="env">Окружение</span>
+              </div>
               <span
                 class="zone-badge tip"
                 data-tip-key="zone"
                 id="dash-zone-badge"
                 data-bind="zoneName"
-                title="Тепловая зона (T_ctrl)"
+                title="Тепловая зона (T_ctrl) · Safety = chip max"
               >—</span>
             </div>
             <div class="tc-val tc-val-dual">
-              <span id="t-liquid" class="tip" data-tip-key="t_ctrl">—</span> <small>°C</small>
+              <span class="tc-pair tip" data-tip-key="t_ctrl"><span id="t-liquid">—</span><small>°C</small></span>
               <span class="tc-sep" aria-hidden="true">/</span>
-              <span id="t-env" class="tip" data-tip-key="env">—</span> <small>°C</small>
+              <span class="tc-pair tip" data-tip-key="env"><span id="t-env">—</span><small>°C</small></span>
             </div>
             <div class="tc-extra">
               <div data-bind="zoneHint" id="dash-zone-hint">—</div>
@@ -4411,8 +4434,22 @@
     }
 
     function fmt(n, d = 1) {
-      if (n == null || !Number.isFinite(Number(n))) return "—";
-      return Number(n).toFixed(d);
+      if (n == null || n === "") return "—";
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "—";
+      return v.toFixed(d);
+    }
+
+    /**
+     * Liquid/env display: Whatsminer often sends 0 when sensor N/A.
+     * Treat non-positive as missing for liquid (coolant never 0 in operation).
+     */
+    function fmtSensorTemp(n, d = 1, opts) {
+      if (n == null || n === "") return "—";
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "—";
+      if (opts && opts.rejectZero && v <= 0) return "—";
+      return v.toFixed(d);
     }
 
     /** last-write timestamp: DD.MM.YYYY HH:MM:SS (local). */
@@ -5605,8 +5642,9 @@
         ? boards.reduce((a, b) => a + b, 0) / boards.length
         : NaN;
 
-      setId("t-liquid", fmt(r.liquid));
-      setId("t-env", fmt(r.env));
+      // liquid 0 / null = N/A on many FW; env 0 is also rare → dash
+      setId("t-liquid", fmtSensorTemp(r.liquid, 1, { rejectZero: true }));
+      setId("t-env", fmtSensorTemp(r.env, 1, { rejectZero: true }));
       setId("t-board-max", fmt(boardMax));
       setId("t-chip-max", fmt(r.chip_max));
       // compact extras with unit glued to number: 38.0°C
@@ -6186,14 +6224,26 @@
       policyZone = heatZone;
 
       // Safety Critical sticky: enter ≥ T_crit, leave ≤ T_crit_clear
-      if (Number.isFinite(tSafe)) {
+      // Require a real chip reading (not 0/null) so empty chip_max never latches Safety.
+      const chipValid =
+        Number.isFinite(tSafe) && tSafe > 5 && tSafe < 150;
+      if (chipValid) {
         if (tSafe >= th.crit) safetySticky = true;
         else if (tSafe <= th.critClear) safetySticky = false;
+      } else if (!Number.isFinite(tSafe) || tSafe <= 0) {
+        // offline / no chip data — do not keep sticky Critical on the badge
+        safetySticky = false;
       }
 
       if (safetySticky) {
         zone = "critical";
-        zoneName = NAMES.critical;
+        // short label on card (full wording in title/hint)
+        zoneName = "Safety";
+        const zbSafety = document.getElementById("dash-zone-badge");
+        if (zbSafety) {
+          zbSafety.title =
+            "Safety · Critical · chip max ≥ T_crit (не T_ctrl)";
+        }
         const entering = Number.isFinite(tSafe) && tSafe >= th.crit;
         // while latched Critical — apply on_crit profile; on_clear runs at exit to Z1
         const act = zoneActuators("on_crit");
