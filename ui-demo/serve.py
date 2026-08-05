@@ -8497,18 +8497,25 @@ def privileged_cmd(
 import sys as _sys
 
 _lib_dir = Path(__file__).resolve().parent
-if str(_lib_dir) not in _sys.path:
-    _sys.path.insert(0, str(_lib_dir))
+# Always prefer /opt/lib/poolheat (and local ui-demo) on sys.path for vendored lib
+for _p in (str(_lib_dir), "/opt/lib/poolheat"):
+    if _p and _p not in _sys.path and Path(_p).is_dir():
+        _sys.path.insert(0, _p)
 
+_WM_IMPORT_ERROR: str | None = None
 try:
     from whatsminer import LuCIClient, UniversalMiner  # type: ignore
     from whatsminer.web.luci import LuCIError  # type: ignore
-except ImportError as _wm_imp_err:  # pragma: no cover
-    raise ImportError(
-        "whatsminer-lib not found. Expected package ``whatsminer`` next to serve.py "
-        "or ``pip install whatsminer-lib``. "
-        f"detail: {_wm_imp_err}"
-    ) from _wm_imp_err
+except Exception as _wm_imp_err:  # pragma: no cover — keep UI up even if package missing
+    LuCIClient = None  # type: ignore
+    UniversalMiner = None  # type: ignore
+    LuCIError = RuntimeError  # type: ignore
+    _WM_IMPORT_ERROR = (
+        f"whatsminer-lib import failed: {_wm_imp_err!r}. "
+        "Expected /opt/lib/poolheat/whatsminer (vendored) or pip install whatsminer-lib. "
+        "Need pycryptodome/Cryptodome + passlib."
+    )
+    print(f"[poolheat] FATAL-soft: {_WM_IMPORT_ERROR}", flush=True)
 
 _wm_driver_lock = threading.Lock()
 _wm_driver: "PoolheatMiner | None" = None
@@ -8594,6 +8601,8 @@ class _LuciCompat:
 
     @staticmethod
     def extract_token(html: str | bytes) -> str:
+        if LuCIClient is None:
+            return ""
         tok = LuCIClient._extract_token(html)
         return tok or ""
 
@@ -8738,6 +8747,12 @@ def get_whatsminer_driver(password: str | None = None) -> "PoolheatMiner":
     Auto-selects V3/V2/NetPacket/LuCI (whatsminer-lib).
     """
     global _wm_driver, _wm_driver_pw_fp
+    if UniversalMiner is None or LuCIClient is None:
+        raise RuntimeError(
+            _WM_IMPORT_ERROR
+            or "whatsminer-lib not available — reinstall poolheat 0.5.2+ "
+            "(package whatsminer next to serve.py)"
+        )
     pw = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
     fp = _password_fingerprint(pw)
 

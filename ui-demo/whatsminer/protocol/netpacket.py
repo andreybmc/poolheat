@@ -102,7 +102,10 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Optional, Union
 
-from Crypto.Cipher import AES
+try:
+    from Crypto.Cipher import AES  # type: ignore
+except ImportError:
+    from Cryptodome.Cipher import AES  # type: ignore
 
 from ..errors import AuthError, CommandError, ProtocolError
 

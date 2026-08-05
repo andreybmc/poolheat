@@ -6,12 +6,15 @@ export POOLHEAT_WWW=/opt/share/poolheat/www
 export POOLHEAT_DATA=/opt/var/poolheat
 export POOLHEAT_CONFIG=/opt/etc/poolheat/config.json
 
-# Entware site-packages
-export PYTHONPATH=/opt/lib/python3.13/site-packages:/opt/lib/python3.11/site-packages:/opt/lib/python3.10/site-packages:$PYTHONPATH
+# Entware site-packages + poolheat lib (vendored whatsminer package lives here)
+export PYTHONPATH=/opt/lib/poolheat:/opt/lib/python3.13/site-packages:/opt/lib/python3.11/site-packages:/opt/lib/python3.10/site-packages:/opt/lib/python3.9/site-packages:$PYTHONPATH
 
 PY=/opt/bin/python3
 if [ ! -x "$PY" ]; then
   PY=python3
 fi
 
-exec "$PY" /opt/lib/poolheat/serve.py
+# Log startup failures (service used to die silently on ImportError)
+LOG=/opt/var/poolheat/serve.boot.log
+mkdir -p /opt/var/poolheat 2>/dev/null || true
+exec "$PY" /opt/lib/poolheat/serve.py >>"$LOG" 2>&1
