@@ -174,7 +174,7 @@
       background: var(--bg2);
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
-      max-width: 320px;
+      max-width: 420px;
     }
 
     nav.subtabs button {
@@ -2027,7 +2027,6 @@
     <nav class="tabs" role="tablist">
       <button type="button" class="active" data-tab="dash">Обзор</button>
       <button type="button" data-tab="miner">Майнер</button>
-      <button type="button" data-tab="chips">Чипы</button>
       <button type="button" data-tab="map">Карта зон</button>
       <button type="button" data-tab="pool">Бассейн</button>
       <button type="button" data-tab="settings">Настройки</button>
@@ -2218,6 +2217,13 @@
 
     <!-- ========== MINER ========== -->
     <section class="view" id="view-miner">
+      <nav class="subtabs" role="tablist" aria-label="Майнер">
+        <button type="button" class="active" data-subtab="miner">Майнер</button>
+        <button type="button" data-subtab="chips">Чипы</button>
+        <button type="button" data-subtab="pools">Пулы</button>
+      </nav>
+
+      <div class="subview active" id="subview-miner">
       <div class="stack">
         <div class="card" id="panel-dry-run">
           <div class="card-h">
@@ -2350,41 +2356,6 @@
           </div>
         </div>
 
-        <div class="card" id="panel-miner-pools">
-          <div class="card-h">
-            <div>
-              <h2>Pools</h2>
-              <div class="sub">stratum · Active · shares · Whatsminer pools</div>
-            </div>
-            <button class="btn" type="button" id="btn-pools-refresh">Обновить</button>
-          </div>
-          <div class="card-b" style="padding-top:8px">
-            <div style="overflow:auto">
-              <table class="err-table pools-table" id="miner-pools-table">
-                <thead>
-                  <tr>
-                    <th>Pool</th>
-                    <th>URL</th>
-                    <th>Active</th>
-                    <th>User</th>
-                    <th>Status</th>
-                    <th>Difficulty</th>
-                    <th>GetWorks</th>
-                    <th>Accepted</th>
-                    <th>Rejected</th>
-                    <th>Stale</th>
-                    <th>LST</th>
-                  </tr>
-                </thead>
-                <tbody id="miner-pools-body">
-                  <tr><td colspan="11" style="color:var(--muted);text-align:center">—</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="miner-pools-status">—</p>
-          </div>
-        </div>
-
         <div class="card">
           <div class="card-h">
             <div>
@@ -2466,10 +2437,9 @@
           </div>
         </div>
       </div>
-    </section>
+      </div><!-- /subview-miner -->
 
-    <!-- ========== CHIP MAP ========== -->
-    <section class="view" id="view-chips">
+      <div class="subview" id="subview-chips">
       <div class="stack">
         <div class="card">
           <div class="card-h">
@@ -2540,6 +2510,46 @@
         </div>
       </div>
       <div class="chip-tip" id="chipmap-tip"></div>
+      </div><!-- /subview-chips -->
+
+      <div class="subview" id="subview-pools">
+      <div class="stack">
+        <div class="card" id="panel-miner-pools">
+          <div class="card-h">
+            <div>
+              <h2>Pools</h2>
+              <div class="sub">stratum · Active · shares · Whatsminer pools</div>
+            </div>
+            <button class="btn" type="button" id="btn-pools-refresh">Обновить</button>
+          </div>
+          <div class="card-b" style="padding-top:8px">
+            <div style="overflow:auto">
+              <table class="err-table pools-table" id="miner-pools-table">
+                <thead>
+                  <tr>
+                    <th>Pool</th>
+                    <th>URL</th>
+                    <th>Active</th>
+                    <th>User</th>
+                    <th>Status</th>
+                    <th>Difficulty</th>
+                    <th>GetWorks</th>
+                    <th>Accepted</th>
+                    <th>Rejected</th>
+                    <th>Stale</th>
+                    <th>LST</th>
+                  </tr>
+                </thead>
+                <tbody id="miner-pools-body">
+                  <tr><td colspan="11" style="color:var(--muted);text-align:center">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="miner-pools-status">—</p>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-pools -->
     </section>
 
     <!-- ========== MAP ========== -->
@@ -4171,8 +4181,18 @@
     }
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
-    /* "logs" is a virtual tab → main "info" + subtab "logs" */
-    const TAB_IDS = ["dash", "miner", "chips", "map", "pool", "settings", "info", "logs"];
+    /* Virtual tabs (no top-level nav): logs → info, chips/pools → miner */
+    const TAB_IDS = [
+      "dash",
+      "miner",
+      "chips",
+      "pools",
+      "map",
+      "pool",
+      "settings",
+      "info",
+      "logs",
+    ];
     const TAB_ALIASES = {
       "": "dash",
       "/": "dash",
@@ -4185,6 +4205,9 @@
       chips: "chips",
       chipmap: "chips",
       chip: "chips",
+      miningpools: "pools",
+      "miner-pools": "pools",
+      stratum: "pools",
       zones: "map",
       zone: "map",
       weather: "pool",
@@ -4205,10 +4228,36 @@
       return sub;
     }
 
+    function setMinerSubtab(subId) {
+      const allowed = { miner: 1, chips: 1, pools: 1 };
+      const sub = allowed[subId] ? subId : "miner";
+      document.querySelectorAll("#view-miner nav.subtabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.subtab === sub);
+      });
+      document.querySelectorAll("#view-miner .subview").forEach((v) => {
+        v.classList.toggle("active", v.id === "subview-" + sub);
+      });
+      return sub;
+    }
+
     function isLogsSubtabActive() {
       return (
         document.getElementById("view-info")?.classList.contains("active") &&
         document.getElementById("subview-logs")?.classList.contains("active")
+      );
+    }
+
+    function isChipsSubtabActive() {
+      return (
+        document.getElementById("view-miner")?.classList.contains("active") &&
+        document.getElementById("subview-chips")?.classList.contains("active")
+      );
+    }
+
+    function isPoolsSubtabActive() {
+      return (
+        document.getElementById("view-miner")?.classList.contains("active") &&
+        document.getElementById("subview-pools")?.classList.contains("active")
       );
     }
 
@@ -4284,18 +4333,32 @@
     function activateTab(tabId, opts) {
       opts = opts || {};
       if (!TAB_IDS.includes(tabId)) tabId = "dash";
-      // virtual "logs" → main view info + subtab logs
-      const mainTab = tabId === "logs" ? "info" : tabId;
-      const infoSub = tabId === "logs" ? "logs" : "info";
+      // virtual tabs → main view + subtab
+      let mainTab = tabId;
+      let infoSub = "info";
+      let minerSub = "miner";
+      if (tabId === "logs") {
+        mainTab = "info";
+        infoSub = "logs";
+      } else if (tabId === "chips") {
+        mainTab = "miner";
+        minerSub = "chips";
+      } else if (tabId === "pools") {
+        mainTab = "miner";
+        minerSub = "pools";
+      } else if (tabId === "info") {
+        infoSub = "info";
+      } else if (tabId === "miner") {
+        minerSub = "miner";
+      }
       document.querySelectorAll("nav.tabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.tab === mainTab);
       });
       document.querySelectorAll(".view").forEach((v) => {
         v.classList.toggle("active", v.id === "view-" + mainTab);
       });
-      if (mainTab === "info") {
-        setInfoSubtab(infoSub);
-      }
+      if (mainTab === "info") setInfoSubtab(infoSub);
+      if (mainTab === "miner") setMinerSubtab(minerSub);
       if (tabId === "dash") {
         try {
           if (typeof loadHistoryCharts === "function") loadHistoryCharts();
@@ -4303,22 +4366,22 @@
           if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
         } catch (_) { /* ignore */ }
       }
-      if (tabId === "logs" || (mainTab === "info" && infoSub === "logs")) {
+      if (mainTab === "info" && infoSub === "logs") {
         if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
         if (typeof loadActionLog === "function") loadActionLog();
       }
       if (mainTab === "info" && infoSub === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
       }
-      if (tabId === "miner" && typeof loadMiningPools === "function") {
+      if (mainTab === "miner" && minerSub === "pools" && typeof loadMiningPools === "function") {
         loadMiningPools(false);
       }
-      if (tabId === "chips") {
+      if (mainTab === "miner" && minerSub === "chips") {
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadChipmap === "function") loadChipmap(false);
       }
       if (!opts.skipUrl) {
-        // #logs when logs subtab; #info when info subtab
+        // #chips / #pools / #logs keep deep-link hashes
         setTabUrl(tabId, opts.replaceUrl ? "replace" : "push");
       }
       return tabId;
@@ -4333,6 +4396,14 @@
       btn.addEventListener("click", () => {
         const sub = btn.dataset.subtab === "logs" ? "logs" : "info";
         activateTab(sub);
+      });
+    });
+    document.querySelectorAll("#view-miner nav.subtabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const s = btn.dataset.subtab;
+        if (s === "chips") activateTab("chips");
+        else if (s === "pools") activateTab("pools");
+        else activateTab("miner");
       });
     });
     window.addEventListener("hashchange", () => {
@@ -11029,9 +11100,10 @@
         Number(document.getElementById("chipmap-interval")?.value || 30) * 1000;
       chipmapTimer = setInterval(() => {
         const active =
-          document.querySelector('nav.tabs button[data-tab="chips"].active') ||
-          document.getElementById("view-chips")?.classList.contains("active");
-        // always refresh cache display when tab open; server has own poll
+          typeof isChipsSubtabActive === "function"
+            ? isChipsSubtabActive()
+            : document.getElementById("subview-chips")?.classList.contains("active");
+        // always refresh cache display when subtab open; server has own poll
         if (active) void loadChipmap(false);
       }, Math.max(5000, Math.min(iv, 60000)));
     }
