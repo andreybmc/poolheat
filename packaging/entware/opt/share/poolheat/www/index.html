@@ -2875,8 +2875,8 @@
           <div class="card">
             <div class="card-h">
               <div>
-                <h2 data-i18n="h2.would_apply">What would apply now</h2>
-                <div class="sub" data-i18n="sub.would_apply">preview · dry_run</div>
+                <h2 id="would-apply-title" data-i18n="h2.would_apply">What would apply now</h2>
+                <div class="sub" id="would-apply-sub" data-i18n="sub.would_apply">preview · dry_run</div>
               </div>
             </div>
             <div class="card-b">
@@ -2887,11 +2887,11 @@
                 </div>
                 <div class="metric">
                   <label>power_limit</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevLim">— skip</div>
+                  <div class="val" style="font-size:1rem" data-bind="prevLim" data-i18n="label.skip">— skip</div>
                 </div>
                 <div class="metric">
                   <label>power_pct</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevPct">— skip</div>
+                  <div class="val" style="font-size:1rem" data-bind="prevPct" data-i18n="label.skip">— skip</div>
                 </div>
               </div>
               <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
@@ -4928,7 +4928,12 @@
         "h2.layers": "Decision layers",
         "sub.layers": "priority top to bottom",
         "h2.would_apply": "What would apply now",
-        "sub.would_apply": "preview · dry_run",
+        "sub.would_apply": "preview · dry_run on",
+        "h2.applied_now": "What is applied now",
+        "sub.applied_now": "live · dry_run off",
+        "label.skip": "— skip",
+        "label.blocked_up": "— blocked ↑",
+        "label.hold": "— hold",
         "field.power_mode": "Power Mode",
         "field.mining_control": "Mining Control",
         "field.status": "Status",
@@ -5209,6 +5214,11 @@
         "sub.layers": "приоритет сверху вниз",
         "h2.would_apply": "Что применили бы сейчас",
         "sub.would_apply": "предпросмотр · включен dry_run",
+        "h2.applied_now": "Что применено сейчас",
+        "sub.applied_now": "live · dry_run выключен",
+        "label.skip": "— пропуск",
+        "label.blocked_up": "— блок ↑",
+        "label.hold": "— hold",
         "field.power_mode": "Power Mode",
         "field.mining_control": "Mining Control",
         "field.status": "Статус",
@@ -5389,6 +5399,55 @@
       return fallback != null ? fallback : (key || "");
     }
 
+    function lblSkip() {
+      return t("label.skip", "— skip");
+    }
+    function lblBlockedUp() {
+      return t("label.blocked_up", "— blocked ↑");
+    }
+    function lblHold() {
+      return t("label.hold", "— hold");
+    }
+    function isSkipLabel(s) {
+      if (s == null) return false;
+      const v = String(s);
+      return (
+        v === "— skip" ||
+        v === "— пропуск" ||
+        v === lblSkip() ||
+        (I18N.en && v === I18N.en["label.skip"]) ||
+        (I18N.ru && v === I18N.ru["label.skip"])
+      );
+    }
+
+    /** Card title: preview when dry_run ON, applied when OFF */
+    function updateWouldApplyLabels(dry) {
+      if (dry == null) {
+        try {
+          const r = typeof getReading === "function" ? getReading() : null;
+          if (r && typeof r.dry === "boolean") dry = r.dry;
+          else if (typeof dryRunServer === "boolean") dry = dryRunServer;
+          else dry = !!(document.getElementById("dry-run") || {}).checked;
+        } catch (_) {
+          dry = true;
+        }
+      }
+      const h = document.getElementById("would-apply-title");
+      const s = document.getElementById("would-apply-sub");
+      if (h) {
+        h.textContent = dry
+          ? t("h2.would_apply", "What would apply now")
+          : t("h2.applied_now", "What is applied now");
+        h.setAttribute("data-i18n", dry ? "h2.would_apply" : "h2.applied_now");
+      }
+      if (s) {
+        s.textContent = dry
+          ? t("sub.would_apply", "preview · dry_run on")
+          : t("sub.applied_now", "live · dry_run off");
+        s.setAttribute("data-i18n", dry ? "sub.would_apply" : "sub.applied_now");
+      }
+    }
+
     /** Format template with {name} placeholders */
     function tf(key, vars, fallback) {
       let s = t(key, fallback || key);
@@ -5494,6 +5553,9 @@
       } catch (_) {}
       try {
         if (typeof renderSensorsList === "function") renderSensorsList();
+      } catch (_) {}
+      try {
+        if (typeof updateWouldApplyLabels === "function") updateWouldApplyLabels();
       } catch (_) {}
       return lang;
     }
@@ -6681,14 +6743,15 @@
       const modeVal = document.getElementById(prefix + "-mode-v")?.value || "—";
       const limVal = document.getElementById(prefix + "-lim-v")?.value;
       const pctVal = document.getElementById(prefix + "-pct-v")?.value;
+      const skip = lblSkip();
       return {
-        mode: modeEn ? modeVal : "— skip",
-        lim: limEn ? limVal + " W" : "— skip",
-        pct: pctEn ? pctVal + " %" : "— skip",
-        work: workEn ? workVal : "— skip",
+        mode: modeEn ? modeVal : skip,
+        lim: limEn ? limVal + " W" : skip,
+        pct: pctEn ? pctVal + " %" : skip,
+        work: workEn ? workVal : skip,
         workLabel: workEn
           ? (workVal === "suspend" ? "Suspend Mining" : "Resume Mining")
-          : "— skip",
+          : skip,
       };
     }
 
@@ -8667,6 +8730,7 @@
 
       document.getElementById("banner-dry").style.display = dry ? "flex" : "none";
       document.getElementById("pill-dry").style.display = dry ? "inline-flex" : "none";
+      updateWouldApplyLabels(dry);
 
       // WARMUP only when mining is active (not Suspend)
       const miningSuspended = inferWorkState(r) === "suspend";
@@ -8765,8 +8829,8 @@
       let zoneName = NAMES.z1;
       let zoneHint = "";
       let prevMode = "—";
-      let prevLim = "— skip";
-      let prevPct = "— skip";
+      let prevLim = lblSkip();
+      let prevPct = lblSkip();
       let reason = "";
       let heatZone = evaluateHeatZone(tLiquid, policyZone, th);
       policyZone = heatZone;
@@ -8797,11 +8861,11 @@
         const act = zoneActuators("on_crit");
         prevMode = act.mode;
         prevLim = act.lim;
-        prevPct = act.workLabel && act.workLabel !== "— skip" ? act.workLabel : act.pct;
+        prevPct = act.workLabel && !isSkipLabel(act.workLabel) ? act.workLabel : act.pct;
         if (entering) {
           zoneHint = "T_safe ≥ " + th.crit + "°C · critical";
           reason = "Safety If T_crit: chip_max=" + fmt(tSafe) + " ≥ " + th.crit +
-            " · " + (act.workLabel !== "— skip" ? act.workLabel : act.mode);
+            " · " + (!isSkipLabel(act.workLabel) ? act.workLabel : act.mode);
         } else {
           zoneHint = "latch · clear ≤ " + th.critClear + "°C";
           reason = "Safety latch: chip_max=" + fmt(tSafe) + " · clear ≤ " + th.critClear +
@@ -8819,9 +8883,10 @@
         if (heatZone === "z0") {
           zoneHint = "T_ctrl ≤ " + th.t0 + "°C · high heat";
           if (upfreq) {
-            prevMode = "— blocked ↑";
-            prevLim = "— blocked ↑";
-            prevPct = "— blocked ↑";
+            const blk = lblBlockedUp();
+            prevMode = blk;
+            prevLim = blk;
+            prevPct = blk;
             reason = "Z0 High Heat needed, but warmup blocks upward";
           } else {
             prevMode = act.mode;
@@ -8850,7 +8915,7 @@
           prevPct = act.pct;
           reason = "Z2 Reduced heat · T_ctrl(" + tCtrlSens + ")=" + fmt(tLiquid) +
             " ∈ (" + th.t1 + " … " + th.t2 + ") · h=" + th.h +
-            (act.workLabel && act.workLabel !== "— skip" ? " · " + act.workLabel : "");
+            (act.workLabel && !isSkipLabel(act.workLabel) ? " · " + act.workLabel : "");
         }
 
         const zEl = document.getElementById("zone-" + heatZone);
