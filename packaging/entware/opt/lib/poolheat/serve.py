@@ -129,6 +129,8 @@ ZONE_CFG_FILE = DATA / "zone_map_config.json"
 ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
 POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
+# Peripherals → Devices (Tapo / webhook / … actuators)
+DEVICES_CFG_FILE = DATA / "devices_config.json"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
@@ -2576,6 +2578,736 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
     }
 
 
+# ── Peripherals · Devices (multi-backend actuators) ───────────────────────────
+# Same backends as filtration (Tapo / eWeLink / Webhook / Shelly / HA).
+# Each device: connection + mining policy + bot button (alias = slash command).
+#
+# Mining options:
+#   auto_on_mining        — Resume → force logical ON
+#   auto_off_suspend      — Suspend → force logical OFF
+#   allow_off_while_mining — manual OFF while mining allowed
+#   allow_on_while_suspend — manual ON while suspend allowed
+# inverted: logical ON means physical OFF (and vice versa)
+
+DEFAULT_DEVICES_CFG: dict = {"version": 1, "devices": []}
+
+# Telegram / system aliases that cannot be used as device bot commands
+DEVICE_ALIAS_RESERVED: frozenset[str] = frozenset(
+    {
+        "start",
+        "help",
+        "menu",
+        "status",
+        "miner",
+        "info",
+        "pools",
+        "pool",
+        "dry_run",
+        "dryrun",
+        "dry",
+        "mode",
+        "limit",
+        "pct",
+        "power_pct",
+        "pwpct",
+        "reboot",
+        "reboot_asic",
+        "reboot_miner",
+        "restart",
+        "restart_miner",
+        "settings",
+        "update",
+        "profile",
+        "events",
+        "force_stop",
+        "forcestop",
+        "force",
+        "stop",
+        "continue",
+        "resume",
+        "suspend",
+        "sleep",
+        "mining",
+        "filtration",
+        "filter",
+        "lang",
+        "lang_ru",
+        "lang_en",
+        "notify",
+        "notify_zone",
+        "notify_safety",
+        "notify_offline",
+        "notify_events",
+        "notify_all",
+        "cancel",
+        "yes",
+        "no",
+        "ok",
+        "on",
+        "off",
+        "cmd",
+        "commands",
+        "device",
+        "devices",
+        "sensor",
+        "sensors",
+        "zone",
+        "zones",
+        "safety",
+        "offline",
+        "apply",
+        "override",
+        "factory",
+        "factory_reset",
+        "chipmap",
+        "firmware",
+        "backup",
+        "config",
+        "admin",
+        "bot",
+        "test",
+        "ping",
+        "version",
+        "about",
+        "home",
+        "back",
+        "close",
+        "open",
+        "set",
+        "get",
+        "list",
+        "add",
+        "delete",
+        "remove",
+        "edit",
+        "save",
+        "load",
+        "ui",
+        "web",
+        "api",
+        "poolheat",
+    }
+)
+
+DEVICE_ICON_DEFAULTS: tuple[str, ...] = (
+    "🔌",
+    "💡",
+    "💧",
+    "🔥",
+    "🌀",
+    "⚙️",
+    "🔆",
+    "🧊",
+    "🚿",
+    "🪴",
+    "🔋",
+    "🛠️",
+    "🏠",
+    "⚡",
+    "🌡️",
+    "🔔",
+)
+
+_devices_cfg_lock = threading.Lock()
+_devices_cfg: dict = dict(DEFAULT_DEVICES_CFG)
+# per-device last-try throttle for auto-sync after errors
+_devices_sync_ts: dict[str, float] = {}
+
+
+def _device_alias_ok(alias: str) -> bool:
+    a = str(alias or "").strip().lower()
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]{0,31}", a))
+
+
+def _device_alias_reserved(alias: str) -> bool:
+    a = str(alias or "").strip().lower()
+    return a in DEVICE_ALIAS_RESERVED
+
+
+def _new_device_id() -> str:
+    return "d_" + uuid.uuid4().hex[:12]
+
+
+def _device_backend_fields_from_raw(raw: dict) -> dict:
+    """Normalize connection fields shared with filtration backends."""
+    be = str(raw.get("backend") or "tapo").strip().lower()
+    if be not in _FILTRATION_BACKEND_IDS:
+        be = "tapo"
+    out: dict = {
+        "backend": be,
+        "ip": str(raw.get("ip") or "").strip()[:64],
+        "email": str(raw.get("email") or "").strip()[:120],
+        "password": str(raw.get("password") or ""),
+        "device_id": str(raw.get("device_id") or "").strip()[:64],
+        "ewelink_port": 8081,
+        "webhook_on_url": str(raw.get("webhook_on_url") or "").strip()[:500],
+        "webhook_off_url": str(raw.get("webhook_off_url") or "").strip()[:500],
+        "webhook_method": "POST"
+        if str(raw.get("webhook_method") or "GET").upper() == "POST"
+        else "GET",
+        "webhook_body_on": str(raw.get("webhook_body_on") or "")[:2000],
+        "webhook_body_off": str(raw.get("webhook_body_off") or "")[:2000],
+        "webhook_headers": str(raw.get("webhook_headers") or "")[:2000],
+        "shelly_channel": 0,
+        "shelly_gen": "auto",
+        "ha_url": str(raw.get("ha_url") or "").strip()[:300],
+        "ha_token": str(raw.get("ha_token") or ""),
+        "ha_entity_id": str(raw.get("ha_entity_id") or "").strip()[:120],
+    }
+    try:
+        out["ewelink_port"] = max(1, min(65535, int(raw.get("ewelink_port") or 8081)))
+    except (TypeError, ValueError):
+        out["ewelink_port"] = 8081
+    try:
+        out["shelly_channel"] = max(0, min(3, int(raw.get("shelly_channel") or 0)))
+    except (TypeError, ValueError):
+        out["shelly_channel"] = 0
+    sg = str(raw.get("shelly_gen") or "auto").strip().lower()
+    out["shelly_gen"] = sg if sg in ("auto", "1", "2", "gen1", "gen2") else "auto"
+    if out["shelly_gen"] == "gen1":
+        out["shelly_gen"] = "1"
+    if out["shelly_gen"] == "gen2":
+        out["shelly_gen"] = "2"
+    return out
+
+
+def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    alias = str(raw.get("alias") or "").strip().lower()
+    if not _device_alias_ok(alias):
+        return None
+    if _device_alias_reserved(alias):
+        return None
+    did = str(raw.get("id") or "").strip() or _new_device_id()
+    # bilingual name / description (legacy ``name`` / ``description`` supported)
+    name_en = str(raw.get("name_en") or "").strip()
+    name_ru = str(raw.get("name_ru") or "").strip()
+    name_legacy = str(raw.get("name") or "").strip()
+    if not name_en and not name_ru:
+        name_en = name_ru = name_legacy or alias
+    elif name_en and not name_ru:
+        name_ru = name_en
+    elif name_ru and not name_en:
+        name_en = name_ru
+    name_en = (name_en or alias)[:80]
+    name_ru = (name_ru or name_en or alias)[:80]
+    name = name_en or name_ru or alias
+
+    desc_en = str(raw.get("description_en") or "").strip()
+    desc_ru = str(raw.get("description_ru") or "").strip()
+    desc_legacy = str(raw.get("description") or raw.get("desc") or "").strip()
+    if not desc_en and not desc_ru:
+        desc_en = desc_ru = desc_legacy
+    elif desc_en and not desc_ru:
+        desc_ru = desc_en
+    elif desc_ru and not desc_en:
+        desc_en = desc_ru
+    desc_en = desc_en[:300]
+    desc_ru = desc_ru[:300]
+    description = desc_en or desc_ru
+
+    icon = str(raw.get("icon") or "🔌").strip()[:8] or "🔌"
+    # single-codepoint-ish: keep first grapheme-ish chunk
+    if len(icon) > 4:
+        icon = icon[:4]
+    enabled = _as_bool(raw.get("enabled", True))
+    inverted = _as_bool(raw.get("inverted", False))
+    show_in_bot = _as_bool(raw.get("show_in_bot", False))
+    fields = _device_backend_fields_from_raw(raw)
+    if not keep_secrets:
+        # used only when redacting for UI list
+        pass
+    last_on = raw.get("last_on")
+    if last_on is not None:
+        last_on = _as_bool(last_on)
+    return {
+        "id": did,
+        "alias": alias,
+        "name": name,
+        "name_en": name_en,
+        "name_ru": name_ru,
+        "description": description,
+        "description_en": desc_en,
+        "description_ru": desc_ru,
+        "icon": icon,
+        "enabled": enabled,
+        "inverted": inverted,
+        "show_in_bot": show_in_bot,
+        "auto_on_mining": _as_bool(raw.get("auto_on_mining", False)),
+        "auto_off_suspend": _as_bool(raw.get("auto_off_suspend", False)),
+        "allow_off_while_mining": _as_bool(raw.get("allow_off_while_mining", False)),
+        "allow_on_while_suspend": _as_bool(raw.get("allow_on_while_suspend", False)),
+        **fields,
+        "last_on": last_on,
+        "last_error": raw.get("last_error"),
+        "last_ok_ts": raw.get("last_ok_ts"),
+        "last_action": raw.get("last_action"),
+    }
+
+
+def _load_devices_cfg() -> None:
+    global _devices_cfg
+    with _devices_cfg_lock:
+        raw = _load_json(DEVICES_CFG_FILE, DEFAULT_DEVICES_CFG)
+        if not isinstance(raw, dict):
+            raw = {}
+        devices_in = raw.get("devices") if isinstance(raw.get("devices"), list) else []
+        clean: list[dict] = []
+        seen_alias: set[str] = set()
+        for d in devices_in:
+            nd = _normalize_device(d)
+            if not nd:
+                continue
+            if nd["alias"] in seen_alias:
+                continue
+            seen_alias.add(nd["alias"])
+            clean.append(nd)
+        _devices_cfg = {"version": 1, "devices": clean}
+
+
+def _save_devices_cfg() -> None:
+    with _devices_cfg_lock:
+        _save_json(DEVICES_CFG_FILE, dict(_devices_cfg))
+
+
+def get_devices_cfg(*, redact: bool = True) -> dict:
+    with _devices_cfg_lock:
+        devices = json.loads(json.dumps(_devices_cfg.get("devices") or []))
+    if redact:
+        for d in devices:
+            d["password_set"] = bool(d.get("password"))
+            d["ha_token_set"] = bool(d.get("ha_token"))
+            if d.get("password"):
+                d["password"] = ""
+            if d.get("ha_token"):
+                d["ha_token"] = ""
+    return {
+        "version": 1,
+        "devices": devices,
+        "backends": list_filtration_backends(),
+        "reserved_aliases": sorted(DEVICE_ALIAS_RESERVED),
+        "icons": list(DEVICE_ICON_DEFAULTS),
+    }
+
+
+def list_devices(*, redact: bool = True) -> list[dict]:
+    return get_devices_cfg(redact=redact).get("devices") or []
+
+
+def get_device_by_id(did: str, *, redact: bool = True) -> dict | None:
+    did = str(did or "").strip()
+    for d in list_devices(redact=redact):
+        if d.get("id") == did:
+            return d
+    return None
+
+
+def get_device_by_alias(alias: str, *, redact: bool = True) -> dict | None:
+    a = str(alias or "").strip().lower()
+    for d in list_devices(redact=redact):
+        if d.get("alias") == a:
+            return d
+    return None
+
+
+def _device_update_in_store(did: str, mutator) -> dict | None:
+    """Apply mutator(device_dict) under lock; save; return redacted copy."""
+    with _devices_cfg_lock:
+        devices = list(_devices_cfg.get("devices") or [])
+        idx = next((i for i, d in enumerate(devices) if d.get("id") == did), None)
+        if idx is None:
+            return None
+        d = dict(devices[idx])
+        mutator(d)
+        devices[idx] = d
+        _devices_cfg["devices"] = devices
+    _save_devices_cfg()
+    return get_device_by_id(did, redact=True)
+
+
+def upsert_device(raw: dict) -> dict:
+    """Create or update a device. Alias must be unique and not reserved."""
+    if not isinstance(raw, dict):
+        raise ValueError("invalid device")
+    alias = str(raw.get("alias") or "").strip().lower()
+    if not _device_alias_ok(alias):
+        raise ValueError("invalid alias (a-z, a-z0-9_, max 32)")
+    if _device_alias_reserved(alias):
+        raise ValueError(f"alias reserved: {alias}")
+    # merge secrets if UI sent empty password/token and device exists
+    existing = None
+    did = str(raw.get("id") or "").strip()
+    with _devices_cfg_lock:
+        for d in _devices_cfg.get("devices") or []:
+            if did and d.get("id") == did:
+                existing = dict(d)
+                break
+            if not did and d.get("alias") == alias:
+                existing = dict(d)
+                break
+    merged = dict(raw)
+    if existing:
+        if not did:
+            merged["id"] = existing.get("id")
+        # keep secrets when blank / placeholder
+        pw = merged.get("password")
+        if pw is None or str(pw).strip() in ("", "••••", "****", "***"):
+            merged["password"] = existing.get("password") or ""
+        tok = merged.get("ha_token")
+        if tok is None or str(tok).strip() in ("", "••••", "****", "***"):
+            merged["ha_token"] = existing.get("ha_token") or ""
+        # preserve runtime unless explicitly provided
+        for rk in ("last_on", "last_error", "last_ok_ts", "last_action"):
+            if rk not in merged or merged.get(rk) is None:
+                merged[rk] = existing.get(rk)
+    nd = _normalize_device(merged)
+    if not nd:
+        raise ValueError("invalid device (alias / fields)")
+    with _devices_cfg_lock:
+        devices = list(_devices_cfg.get("devices") or [])
+        idx = next((i for i, d in enumerate(devices) if d.get("id") == nd["id"]), None)
+        for d in devices:
+            if d.get("alias") == nd["alias"] and d.get("id") != nd["id"]:
+                raise ValueError(f"alias already used: {nd['alias']}")
+        if idx is None:
+            devices.append(nd)
+        else:
+            devices[idx] = nd
+        _devices_cfg["devices"] = devices
+    _save_devices_cfg()
+    out = get_device_by_id(nd["id"], redact=True)
+    return out or nd
+
+
+def delete_device(did: str) -> bool:
+    did = str(did or "").strip()
+    with _devices_cfg_lock:
+        devices = list(_devices_cfg.get("devices") or [])
+        new = [d for d in devices if d.get("id") != did]
+        if len(new) == len(devices):
+            return False
+        _devices_cfg["devices"] = new
+    _save_devices_cfg()
+    _devices_sync_ts.pop(did, None)
+    return True
+
+
+def replace_devices(devices_list: list) -> list[dict]:
+    clean: list[dict] = []
+    seen: set[str] = set()
+    for d in devices_list or []:
+        nd = _normalize_device(d)
+        if not nd or nd["alias"] in seen:
+            continue
+        seen.add(nd["alias"])
+        clean.append(nd)
+    with _devices_cfg_lock:
+        _devices_cfg["devices"] = clean
+    _save_devices_cfg()
+    return list_devices(redact=True)
+
+
+def _device_cfg_snapshot(did: str) -> dict | None:
+    with _devices_cfg_lock:
+        for d in _devices_cfg.get("devices") or []:
+            if d.get("id") == did:
+                return dict(d)
+    return None
+
+
+def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
+    """on=None read; else set physical state. Reuses filtration backends."""
+    be = str(cfg.get("backend") or "tapo").lower()
+    if be == "tapo":
+        return _filtration_backend_tapo(on, cfg)
+    if be in ("ewelink", "sonoff", "sonoff_diy"):
+        return _filtration_backend_ewelink(on, cfg)
+    if be == "webhook":
+        return _filtration_backend_webhook(on, cfg)
+    if be == "shelly":
+        return _filtration_backend_shelly(on, cfg)
+    if be in ("homeassistant", "ha"):
+        return _filtration_backend_ha(on, cfg)
+    raise ValueError(f"unknown backend: {be}")
+
+
+def _device_logical_to_physical(logical_on: bool, inverted: bool) -> bool:
+    return (not logical_on) if inverted else bool(logical_on)
+
+
+def _device_physical_to_logical(physical_on: bool, inverted: bool) -> bool:
+    return (not physical_on) if inverted else bool(physical_on)
+
+
+def _device_ready(cfg: dict) -> bool:
+    be = str(cfg.get("backend") or "tapo").lower()
+    if be == "tapo":
+        return bool(str(cfg.get("ip") or "").strip())
+    if be == "ewelink":
+        return bool(
+            str(cfg.get("ip") or "").strip() and str(cfg.get("device_id") or "").strip()
+        )
+    if be == "webhook":
+        return bool(
+            str(cfg.get("webhook_on_url") or "").strip()
+            or str(cfg.get("webhook_off_url") or "").strip()
+        )
+    if be == "shelly":
+        return bool(str(cfg.get("ip") or "").strip())
+    if be in ("homeassistant", "ha"):
+        return bool(
+            str(cfg.get("ha_url") or "").strip()
+            and str(cfg.get("ha_entity_id") or "").strip()
+        )
+    return False
+
+
+def _mining_work_state() -> str | None:
+    """'resume' | 'suspend' | None from cache / policy (no miner I/O)."""
+    try:
+        with _cache_lock:
+            if isinstance(_cache, dict) and _cache.get("ok"):
+                w = _live_work(dict(_cache))
+                if w:
+                    return str(w).lower()
+    except Exception:
+        pass
+    try:
+        with _policy_lock:
+            mw = str(_policy_ctrl.get("measured_work") or "").strip().lower()
+        if mw in ("resume", "mining"):
+            return "resume"
+        if mw in ("suspend", "sleep"):
+            return "suspend"
+    except Exception:
+        pass
+    return None
+
+
+def device_test(did: str) -> dict:
+    cfg = _device_cfg_snapshot(did)
+    if not cfg:
+        return {"ok": False, "error": "device not found"}
+    be = str(cfg.get("backend") or "tapo")
+    try:
+        out = _device_backend_dispatch(None, cfg)
+        phys = out.get("on")
+        logical = None
+        if phys is not None:
+            logical = _device_physical_to_logical(bool(phys), bool(cfg.get("inverted")))
+        def _mut(d):
+            if logical is not None:
+                d["last_on"] = bool(logical)
+            d["last_error"] = None
+            d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
+            d["last_action"] = f"test:{be}"
+
+        _device_update_in_store(did, _mut)
+        return {
+            "ok": True,
+            "id": did,
+            "backend": be,
+            "on": logical,
+            "physical_on": phys,
+            **{k: v for k, v in out.items() if k not in ("on",)},
+        }
+    except Exception as e:
+        pretty = _filtration_user_error(e, on=None, backend=be, lang="ru")
+        def _mut_err(d):
+            d["last_error"] = pretty
+            d["last_action"] = "test_fail"
+
+        _device_update_in_store(did, _mut_err)
+        return {"ok": False, "id": did, "error": pretty, "backend": be}
+
+
+def device_set(
+    did: str,
+    on: bool,
+    *,
+    source: str = "manual",
+    force: bool = False,
+) -> dict:
+    """
+    Set device logical ON/OFF.
+    Gates: allow_off_while_mining / allow_on_while_suspend (unless force).
+    Inverted devices flip physical polarity.
+    """
+    on = bool(on)
+    cfg = _device_cfg_snapshot(did)
+    if not cfg:
+        return {"ok": False, "error": "device not found"}
+    if not cfg.get("enabled") and not force:
+        return {"ok": False, "error": "device disabled"}
+    be = str(cfg.get("backend") or "tapo")
+    inverted = bool(cfg.get("inverted"))
+    work = _mining_work_state()
+    if not force:
+        if not on and work == "resume" and not bool(
+            cfg.get("allow_off_while_mining", False)
+        ):
+            return {
+                "ok": False,
+                "error": "нельзя выключить при майнинге (разрешите OFF при майнинге)",
+                "id": did,
+            }
+        if on and work in ("suspend", "sleep") and not bool(
+            cfg.get("allow_on_while_suspend", False)
+        ):
+            return {
+                "ok": False,
+                "error": "нельзя включить при Suspend (разрешите ON при suspend)",
+                "id": did,
+            }
+    physical = _device_logical_to_physical(on, inverted)
+    prev = cfg.get("last_on")
+    try:
+        out = _device_backend_dispatch(physical, cfg)
+        got_phys = out.get("on")
+        if got_phys is None:
+            got_phys = physical
+        got_logical = _device_physical_to_logical(bool(got_phys), inverted)
+
+        def _mut(d):
+            d["last_on"] = bool(got_logical)
+            d["last_error"] = None
+            d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
+            d["last_action"] = f"{source}:{be}:{'on' if on else 'off'}"
+
+        _device_update_in_store(did, _mut)
+        return {
+            "ok": True,
+            "id": did,
+            "on": bool(got_logical),
+            "physical_on": bool(got_phys),
+            "source": source,
+            "backend": be,
+            "alias": cfg.get("alias"),
+            "name": cfg.get("name"),
+            "icon": cfg.get("icon"),
+            "prev_on": prev,
+            **{k: v for k, v in out.items() if k not in ("on",)},
+        }
+    except Exception as e:
+        pretty = _filtration_user_error(e, on=on, backend=be, lang="ru")
+
+        def _mut_err(d):
+            d["last_error"] = pretty
+            d["last_action"] = f"{source}_fail"
+
+        _device_update_in_store(did, _mut_err)
+        return {
+            "ok": False,
+            "error": pretty,
+            "id": did,
+            "source": source,
+            "backend": be,
+        }
+
+
+def devices_sync_with_mining(measured_work: str | None) -> None:
+    """
+    Called from policy_tick for every enabled device with auto flags.
+    """
+    work = str(measured_work or "").lower()
+    if work not in ("resume", "suspend", "sleep", "mining"):
+        return
+    if work == "mining":
+        work = "resume"
+    now = time.time()
+    with _devices_cfg_lock:
+        devices = [dict(d) for d in (_devices_cfg.get("devices") or [])]
+    for cfg in devices:
+        if not cfg.get("enabled"):
+            continue
+        if not _device_ready(cfg):
+            continue
+        did = str(cfg.get("id") or "")
+        auto_on = bool(cfg.get("auto_on_mining", False))
+        auto_off = bool(cfg.get("auto_off_suspend", False))
+        last_on = cfg.get("last_on")
+        last_err = cfg.get("last_error")
+        last_act = str(cfg.get("last_action") or "")
+        if last_err and last_act.endswith("_fail"):
+            last_try = float(_devices_sync_ts.get(did) or 0)
+            if now - last_try < 20.0:
+                continue
+        want: bool | None = None
+        src = "auto"
+        if work == "resume" and auto_on:
+            if last_on is not True:
+                want = True
+                src = "auto_mining"
+        elif work in ("suspend", "sleep") and auto_off:
+            if last_on is not False:
+                want = False
+                src = "auto_suspend"
+        if want is None:
+            continue
+        _devices_sync_ts[did] = now
+        try:
+            device_set(did, want, source=src, force=True)
+        except Exception as e:
+            print(f"[devices] sync {cfg.get('alias')}: {e}")
+
+
+def get_device_status(did: str, *, probe_live: bool = False) -> dict:
+    d = get_device_by_id(did, redact=True)
+    if not d:
+        return {"ok": False, "error": "not found"}
+    work = _mining_work_state()
+    mining = work == "resume" if work else None
+    on = d.get("last_on")
+    can_off = bool(d.get("allow_off_while_mining")) or not (
+        bool(d.get("enabled")) and mining is True and on is True
+    )
+    can_on = bool(d.get("allow_on_while_suspend")) or not (
+        bool(d.get("enabled")) and mining is False and on is False
+    )
+    return {
+        "ok": True,
+        **d,
+        "mining": mining,
+        "can_turn_off": can_off,
+        "can_turn_on": can_on,
+    }
+
+
+def device_display_name(d: dict, lang: str = "ru") -> str:
+    """Pick name_en / name_ru by chat/UI language."""
+    if not isinstance(d, dict):
+        return ""
+    en = str(d.get("name_en") or d.get("name") or "").strip()
+    ru = str(d.get("name_ru") or d.get("name") or "").strip()
+    if str(lang or "ru").lower().startswith("en"):
+        return en or ru or str(d.get("alias") or d.get("id") or "")
+    return ru or en or str(d.get("alias") or d.get("id") or "")
+
+
+def list_devices_bot_buttons(lang: str = "ru") -> list[dict]:
+    """Enabled devices with show_in_bot for Telegram keyboard."""
+    out = []
+    for d in list_devices(redact=True):
+        if not d.get("enabled"):
+            continue
+        if not d.get("show_in_bot"):
+            continue
+        out.append(
+            {
+                "id": d.get("id"),
+                "alias": d.get("alias"),
+                "name": device_display_name(d, lang),
+                "name_en": d.get("name_en") or d.get("name"),
+                "name_ru": d.get("name_ru") or d.get("name"),
+                "icon": d.get("icon") or "🔌",
+                "description": d.get("description") or "",
+                "on": d.get("last_on"),
+            }
+        )
+    return out
+
+
 # ── Chip map (LuCI Miner API Log scrape) ─────────────────────────────────────
 # Source: https://<miner>/cgi-bin/luci/admin/status/btminerapi
 # Per-chip: C0..C263 × slot 0..3 · temp · freq · vol · nonce · pct · err
@@ -4309,6 +5041,10 @@ def build_config_backup() -> dict:
         history = dict(_hist_cfg)
     logs = get_logs_cfg()
     sensors = get_sensors_cfg()
+    devices = get_devices_cfg(redact=False)
+    devices.pop("backends", None)
+    devices.pop("reserved_aliases", None)
+    devices.pop("icons", None)
     with _weather_cfg_lock:
         weather = dict(_weather_cfg)
     with _pool_cfg_lock:
@@ -4342,6 +5078,7 @@ def build_config_backup() -> dict:
             "history": history,
             "logs": logs,
             "sensors": sensors,
+            "devices": devices,
             "weather": weather,
             "pool": pool,
             "zone_map": zone,
@@ -4476,6 +5213,16 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("sensors")
         except Exception as e:
             errors["sensors"] = str(e)
+
+    # 2d) peripherals devices (actuators)
+    if "devices" in want and isinstance(cfgs.get("devices"), dict):
+        try:
+            dl = cfgs["devices"].get("devices")
+            if isinstance(dl, list):
+                replace_devices(dl)
+            applied.append("devices")
+        except Exception as e:
+            errors["devices"] = str(e)
 
     # 3) weather
     if "weather" in want and isinstance(cfgs.get("weather"), dict):
@@ -5783,6 +6530,7 @@ _load_zone_cfg()
 _load_zone_presets()
 _load_pool_presets()
 _load_filtration_cfg()
+_load_devices_cfg()
 _load_chipmap_cfg()
 _load_chipmap_cache_disk()
 _load_luci_proxy_cfg()
@@ -13323,6 +14071,34 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     if filt_enabled and _show("show_filtration") and fl_btn:
         rows.append([{"text": fl_btn}])
 
+    # Peripherals devices with «show button in bot»
+    try:
+        bot_devs = list_devices_bot_buttons(lang="en" if en else "ru")
+    except Exception:
+        bot_devs = []
+    if bot_devs:
+        # up to 2 buttons per row
+        row_dev: list[dict] = []
+        for bd in bot_devs[:12]:
+            icon = str(bd.get("icon") or "🔌")
+            name = str(bd.get("name") or bd.get("alias") or "device")[:24]
+            st = bd.get("on")
+            if st is True:
+                mark = "●" if en else "●"
+            elif st is False:
+                mark = "○"
+            else:
+                mark = "·"
+            label = f"{icon} {name} [{mark}]"
+            if len(label) > 40:
+                label = f"{icon} {name[:18]} [{mark}]"
+            row_dev.append({"text": label})
+            if len(row_dev) >= 2:
+                rows.append(row_dev)
+                row_dev = []
+        if row_dev:
+            rows.append(row_dev)
+
     # Settings / Help
     tail: list[dict] = []
     if _show("show_settings"):
@@ -13592,6 +14368,45 @@ def _tg_normalize_incoming_text(text: str) -> str:
         return "/help"
     if "menu" in bare or "меню" in bare:
         return "/start"
+    # Peripheral device buttons: "🔌 Name [●]" → /alias
+    try:
+        bot_devs = list_devices_bot_buttons(lang="ru")
+    except Exception:
+        bot_devs = []
+    if bot_devs:
+        # strip trailing state marker [●]/○ ·]
+        name_part = re.sub(r"\s*\[[^\]]*\]\s*$", "", t).strip()
+        name_low = name_part.lower()
+        bare_name = re.sub(
+            r"[^\w\s\-а-яё]+",
+            " ",
+            name_low,
+            flags=re.I,
+        )
+        bare_name = " ".join(bare_name.split())
+        for bd in bot_devs:
+            alias = str(bd.get("alias") or "").strip().lower()
+            names = {
+                str(bd.get("name") or "").strip().lower(),
+                str(bd.get("name_en") or "").strip().lower(),
+                str(bd.get("name_ru") or "").strip().lower(),
+            }
+            names.discard("")
+            if not alias:
+                continue
+            if bare_name == alias or bare.endswith(alias) or bare.startswith(alias + " "):
+                return f"/{alias}"
+            for dname in names:
+                if (
+                    bare_name == dname
+                    or bare_name.endswith(dname)
+                    or dname in bare_name
+                    or bare_name in dname
+                ):
+                    return f"/{alias}"
+                icon = str(bd.get("icon") or "")
+                if icon and icon in t and dname in low:
+                    return f"/{alias}"
     return t
 
 
@@ -15469,6 +16284,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
             "/force_stop [on|off] — emergency stop\n"
             "⏹ Stop mining · ▶️ Continue mining\n"
             "/filtration [on|off] — pump filter (OFF locked while mining unless allowed)\n"
+            "/<alias> [on|off] — peripheral device (bot button / alias)\n"
             "/lang_ru — Russian\n"
             "/lang_en — English\n"
             "\n"
@@ -15500,6 +16316,7 @@ def _tg_commands_help(lang: str = "ru") -> str:
         "/force_stop [on|off] — экстренная остановка\n"
         "⏹ Остановить майнинг · ▶️ Продолжить майнинг\n"
         "/filtration [on|off] — фильтрация (ВЫКЛ при майнинге — если не разрешено)\n"
+        "/<alias> [on|off] — устройство (кнопка бота / alias)\n"
         "/lang_ru — русский\n"
         "/lang_en — English\n"
         "\n"
@@ -17296,6 +18113,89 @@ def _tg_handle_command(
             )
         return
 
+    # Peripheral devices: /alias [on|off] (alias from Devices → bot)
+    _dev_alias = cmd[1:] if cmd.startswith("/") else ""
+    _dev = None
+    if _dev_alias and _device_alias_ok(_dev_alias) and not _device_alias_reserved(
+        _dev_alias
+    ):
+        try:
+            _dev = get_device_by_alias(_dev_alias, redact=True)
+        except Exception:
+            _dev = None
+    if _dev and _dev.get("show_in_bot") and _dev.get("enabled"):
+        arg0 = str(args[0]).lower() if args else ""
+        onoff = _tg_parse_onoff(arg0) if arg0 else None
+        if onoff is None:
+            onoff = not (_dev.get("last_on") is True)
+        st = get_device_status(str(_dev.get("id") or ""), probe_live=False)
+        if not onoff and st.get("mining") is True and not st.get("can_turn_off"):
+            tg_send_message(
+                chat_id,
+                (
+                    f"🔒 {_dev.get('icon') or ''} {_dev.get('name')}: OFF locked while mining"
+                    if en
+                    else f"🔒 {_dev.get('icon') or ''} {_dev.get('name')}: ВЫКЛ недоступно при майнинге"
+                ),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        if onoff and st.get("mining") is False and not st.get("can_turn_on"):
+            tg_send_message(
+                chat_id,
+                (
+                    f"🔒 {_dev.get('icon') or ''} {_dev.get('name')}: ON locked while Suspend"
+                    if en
+                    else f"🔒 {_dev.get('icon') or ''} {_dev.get('name')}: ВКЛ недоступно при Suspend"
+                ),
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+            return
+        try:
+            _tg_log_control(
+                chat_id,
+                from_user,
+                f"Device {_dev.get('alias')} " + ("ON" if onoff else "OFF"),
+            )
+            out = device_set(
+                str(_dev.get("id")),
+                bool(onoff),
+                source="telegram",
+                force=False,
+            )
+            if not out.get("ok"):
+                tg_send_message(
+                    chat_id,
+                    f"❌ {out.get('error') or 'fail'}",
+                    reply_markup=_tg_main_keyboard(lang, chat_id),
+                )
+                return
+            got = out.get("on")
+            if got is None:
+                got = onoff
+            icon = out.get("icon") or _dev.get("icon") or "🔌"
+            name = out.get("name") or _dev.get("name") or _dev.get("alias")
+            if en:
+                msg = f"{icon} {name} is on" if got else f"{icon} {name} is off"
+            else:
+                msg = (
+                    f"{icon} {name} включено"
+                    if got
+                    else f"{icon} {name} выключено"
+                )
+            tg_send_message(
+                chat_id,
+                msg,
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        except Exception as e:
+            tg_send_message(
+                chat_id,
+                f"❌ {e}",
+                reply_markup=_tg_main_keyboard(lang, chat_id),
+            )
+        return
+
     if cmd in ("/filtration", "/filter"):
         try:
             st = get_filtration_status()
@@ -18496,6 +19396,12 @@ def policy_tick() -> None:
     except Exception as e:
         print(f"[filtration] sync: {e}")
 
+    # Peripherals devices: Auto ON mining / Auto OFF suspend
+    try:
+        devices_sync_with_mining(measured_work)
+    except Exception as e:
+        print(f"[devices] sync: {e}")
+
     if not need_cmds:
         # Already matches miner — no write, no notification
         # Keep warmup block key so we don't spam the same log every poll
@@ -18682,6 +19588,21 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/sensors/catalog", "/api/sensors/meta"):
             self._json_response(200, {"ok": True, **sensors_catalog()})
+            return
+        if path in ("/api/devices", "/api/devices/list", "/api/devices/config"):
+            self._api_devices_get()
+            return
+        if path in ("/api/devices/meta", "/api/devices/catalog"):
+            cfg = get_devices_cfg(redact=True)
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "backends": cfg.get("backends") or list_filtration_backends(),
+                    "reserved_aliases": cfg.get("reserved_aliases") or [],
+                    "icons": cfg.get("icons") or list(DEVICE_ICON_DEFAULTS),
+                },
+            )
             return
         if path == "/api/weather":
             self._api_weather_get()
@@ -18916,6 +19837,18 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/sensors/delete", "/api/sensors/remove"):
             self._api_sensors_delete()
+            return
+        if path in ("/api/devices", "/api/devices/save", "/api/devices/config"):
+            self._api_devices_post()
+            return
+        if path in ("/api/devices/delete", "/api/devices/remove"):
+            self._api_devices_delete()
+            return
+        if path in ("/api/devices/set", "/api/devices/on", "/api/devices/off"):
+            self._api_devices_set()
+            return
+        if path == "/api/devices/test":
+            self._api_devices_test()
             return
         if path == "/api/weather/config":
             self._api_weather_config_post()
@@ -19675,6 +20608,137 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_devices_get(self) -> None:
+        try:
+            body = get_devices_cfg(redact=True)
+            # attach gate flags from mining state (cache)
+            work = _mining_work_state()
+            mining = work == "resume" if work else None
+            devices = []
+            for d in body.get("devices") or []:
+                on = d.get("last_on")
+                can_off = bool(d.get("allow_off_while_mining")) or not (
+                    bool(d.get("enabled")) and mining is True and on is True
+                )
+                can_on = bool(d.get("allow_on_while_suspend")) or not (
+                    bool(d.get("enabled")) and mining is False and on is False
+                )
+                devices.append(
+                    {
+                        **d,
+                        "mining": mining,
+                        "can_turn_off": can_off,
+                        "can_turn_on": can_on,
+                    }
+                )
+            body["devices"] = devices
+            body["ok"] = True
+            body["mining"] = mining
+            self._json_response(200, body)
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_devices_post(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            # bulk replace
+            if isinstance(req.get("devices"), list) and "alias" not in req:
+                clean = replace_devices(req["devices"])
+                self._json_response(200, {"ok": True, "devices": clean})
+                return
+            body = req.get("device") if isinstance(req.get("device"), dict) else req
+            saved = upsert_device(body)
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "device": saved,
+                    "devices": list_devices(redact=True),
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_devices_delete(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            did = str(
+                (req.get("id") if isinstance(req, dict) else None)
+                or parse_qs(urlparse(self.path).query).get("id", [""])[0]
+                or ""
+            ).strip()
+            if not did:
+                raise ValueError("id required")
+            ok = delete_device(did)
+            if not ok:
+                self._json_response(404, {"ok": False, "error": "not found"})
+                return
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "deleted": did,
+                    "devices": list_devices(redact=True),
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_devices_set(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                req = {}
+            path = urlparse(self.path).path.rstrip("/")
+            did = str(req.get("id") or req.get("device_id") or "").strip()
+            if not did and req.get("alias"):
+                d = get_device_by_alias(str(req.get("alias")), redact=False)
+                if d:
+                    did = str(d.get("id") or "")
+            if not did:
+                raise ValueError("id or alias required")
+            if path.endswith("/on"):
+                on = True
+            elif path.endswith("/off"):
+                on = False
+            else:
+                if "on" in req:
+                    on = _as_bool(req.get("on"))
+                elif "state" in req:
+                    on = _as_bool(req.get("state"))
+                else:
+                    raise ValueError("on (bool) required")
+            out = device_set(
+                did,
+                bool(on),
+                source=str(req.get("source") or "manual"),
+                force=_as_bool(req.get("force", False)),
+            )
+            code = 200 if out.get("ok") else 400
+            self._json_response(code, out)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_devices_test(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            did = str(
+                (req.get("id") if isinstance(req, dict) else None) or ""
+            ).strip()
+            if not did and isinstance(req, dict) and req.get("alias"):
+                d = get_device_by_alias(str(req.get("alias")), redact=False)
+                if d:
+                    did = str(d.get("id") or "")
+            if not did:
+                raise ValueError("id or alias required")
+            out = device_test(did)
+            code = 200 if out.get("ok") else 400
+            self._json_response(code, out)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_weather_get(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
         force = (qs.get("force", ["0"])[0] or "0") in ("1", "true", "yes")
@@ -20315,6 +21379,7 @@ def main() -> None:
     print(f"zone presets:      GET/POST /api/zone/presets")
     print(f"pool presets:      GET/POST /api/miner/pools/presets")
     print(f"filtration:        GET/POST /api/filtration · /set · /test")
+    print(f"devices:           GET/POST /api/devices · /set · /test · /delete")
     print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
     try:
         lp = get_luci_proxy_cfg()

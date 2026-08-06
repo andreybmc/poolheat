@@ -680,6 +680,46 @@
       display: none !important;
     }
 
+    /* bilingual field legend · compact en/ru toggle */
+    .field-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .field-head > span:first-child {
+      flex: 0 1 auto;
+    }
+    label.lang-chk {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin: 0;
+      padding: 0 2px;
+      font-size: 0.68rem;
+      font-weight: 650;
+      letter-spacing: 0.02em;
+      color: var(--dim);
+      cursor: pointer;
+      user-select: none;
+      text-transform: lowercase;
+    }
+    label.lang-chk input {
+      width: 12px;
+      height: 12px;
+      margin: 0;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    label.lang-chk.is-on,
+    label.lang-chk:has(input:checked) {
+      color: var(--accent);
+    }
+    label.lang-chk .lang-chk-tag {
+      font-family: var(--mono, ui-monospace, monospace);
+      line-height: 1;
+    }
+
     /* —— forms —— */
     label.field {
       display: flex;
@@ -3325,7 +3365,7 @@
               </div>
             </div>
             <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="fw.flash_warn">
-              Destructive: miner reboots. Use only files for this model. Keep power and network stable.
+              After the update the miner will reboot. Do not cut power or network during flashing.
             </p>
           </div>
         </div>
@@ -4193,14 +4233,235 @@
                 <h2 data-i18n="h2.devices">Devices</h2>
                 <div class="sub" data-i18n="sub.devices_card">relays · pumps · valves · smart sockets · actuators</div>
               </div>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn" type="button" id="btn-devices-refresh" data-i18n="btn.refresh">Refresh</button>
+                <button class="btn primary" type="button" id="btn-device-new" data-i18n="btn.device_new">New device</button>
+              </div>
             </div>
-            <div class="card-b stack" style="gap:12px">
-              <p style="font-size:0.85rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.devices_empty">
-                No devices configured yet. Filtration pump, heaters, valves and smart outlets will appear here.
+            <div class="card-b stack" style="gap:14px">
+              <p style="font-size:0.82rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.devices_help">
+                Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant). Mining auto rules and optional Telegram bot button (alias = command).
               </p>
-              <div class="metric" style="margin:0">
-                <label data-i18n="periph.count">Connected</label>
-                <div class="val" style="font-size:1.15rem" id="periph-devices-count">0</div>
+              <div id="devices-list" class="stack" style="gap:10px"></div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0" id="devices-status">—</p>
+            </div>
+          </div>
+
+          <div class="card" id="panel-device-editor" hidden>
+            <div class="card-h">
+              <div>
+                <h2 id="device-editor-title" data-i18n="h2.device_edit">Edit device</h2>
+                <div class="sub" data-i18n="sub.device_edit">backend · mining · bot</div>
+              </div>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn danger ghost" type="button" id="btn-device-delete" data-i18n="btn.delete">Delete</button>
+                <button class="btn" type="button" id="btn-device-cancel" data-i18n="btn.cancel">Cancel</button>
+                <button class="btn" type="button" id="btn-device-test" data-i18n="dev.btn_test">Test</button>
+                <button class="btn primary" type="button" id="btn-device-save" data-i18n="btn.save">Save</button>
+              </div>
+            </div>
+            <div class="card-b stack" style="gap:14px">
+              <input type="hidden" id="device-id" value="" />
+
+              <input type="hidden" id="device-icon" value="🔌" />
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:end">
+                <label class="field">
+                  <span class="field-head">
+                    <span data-i18n="dev.name">Name</span>
+                    <label class="lang-chk" id="device-name-lang-chk" title="Other language">
+                      <input type="checkbox" id="device-name-other-lang" />
+                      <span class="lang-chk-tag" id="device-name-other-tag">en</span>
+                    </label>
+                  </span>
+                  <input type="text" id="device-name" placeholder="Pool pump" autocomplete="off" />
+                </label>
+                <label class="field"><span data-i18n="dev.alias">Alias</span>
+                  <input type="text" id="device-alias" placeholder="pump" autocomplete="off" pattern="[a-z][a-z0-9_]*" />
+                </label>
+              </div>
+              <div>
+                <div style="font-size:0.8rem;color:var(--muted);margin:0 0 6px" data-i18n="dev.icon">Icon</div>
+                <div id="device-icon-picker" class="btn-row" style="gap:6px;flex-wrap:wrap"></div>
+              </div>
+              <p style="font-size:0.72rem;color:var(--dim);margin:0" data-i18n="dev.alias_hint">
+                Alias is used as Telegram command (/alias). Reserved names blocked (status, filtration, …).
+              </p>
+              <label class="field">
+                <span class="field-head">
+                  <span data-i18n="dev.description">Description</span>
+                  <label class="lang-chk" id="device-desc-lang-chk" title="Other language">
+                    <input type="checkbox" id="device-desc-other-lang" />
+                    <span class="lang-chk-tag" id="device-desc-other-tag">en</span>
+                  </label>
+                </span>
+                <input type="text" id="device-description" placeholder="" autocomplete="off" />
+              </label>
+
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="check">
+                  <input type="checkbox" id="device-enabled" checked />
+                  <span data-i18n="dev.enabled">Enabled</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" id="device-inverted" />
+                  <span><span data-i18n="dev.inverted">Inverted</span>
+                    <span class="desc" data-i18n="dev.inverted_desc">logical On = physical Off</span>
+                  </span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" id="device-show-bot" />
+                  <span data-i18n="dev.show_bot">Show button in bot</span>
+                </label>
+              </div>
+
+              <label class="field"><span data-i18n="dev.control_type">Control type</span>
+                <select id="device-backend">
+                  <option value="tapo">Tapo P100 / P110</option>
+                  <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
+                  <option value="webhook">Webhook (HTTP)</option>
+                  <option value="shelly">Shelly</option>
+                  <option value="homeassistant">Home Assistant</option>
+                </select>
+              </label>
+              <p id="device-backend-hint" style="font-size:0.75rem;color:var(--dim);margin:0"></p>
+
+              <!-- Tapo -->
+              <div class="dev-be" data-be="tapo" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                  <label class="field"><span data-i18n="filt.outlet_ip">Outlet IP</span>
+                    <input type="text" id="dev-ip" placeholder="192.168.1.50" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.tapo_email">Tapo email</span>
+                    <input type="text" id="dev-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.tapo_password">Tapo password</span>
+                    <span class="pw-wrap">
+                      <input type="password" id="dev-password" placeholder="••••" autocomplete="off" />
+                      <button type="button" class="pw-eye" data-pw-for="dev-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- eWeLink DIY -->
+              <div class="dev-be" data-be="ewelink" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                  <label class="field"><span data-i18n="filt.device_ip">Device IP</span>
+                    <input type="text" id="dev-ewelink-ip" placeholder="192.168.1.60" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.device_id">deviceid (DIY)</span>
+                    <input type="text" id="dev-device-id" placeholder="1000xxxxxx" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.port_diy">Port DIY</span>
+                    <input type="number" id="dev-ewelink-port" value="8081" min="1" max="65535" />
+                  </label>
+                </div>
+              </div>
+
+              <!-- Webhook -->
+              <div class="dev-be" data-be="webhook" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                  <label class="field"><span data-i18n="filt.url_on">URL ON</span>
+                    <input type="text" id="dev-wh-on" placeholder="http://…/on" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.url_off">URL OFF</span>
+                    <input type="text" id="dev-wh-off" placeholder="http://…/off" autocomplete="off" />
+                  </label>
+                </div>
+                <div class="row" style="grid-template-columns:120px 1fr 1fr;gap:12px;margin-top:10px">
+                  <label class="field"><span data-i18n="filt.method">Method</span>
+                    <select id="dev-wh-method">
+                      <option value="GET">GET</option>
+                      <option value="POST">POST</option>
+                    </select>
+                  </label>
+                  <label class="field"><span data-i18n="filt.body_on">Body ON (POST)</span>
+                    <input type="text" id="dev-wh-body-on" placeholder='{"state":"on"}' autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.body_off">Body OFF (POST)</span>
+                    <input type="text" id="dev-wh-body-off" placeholder='{"state":"off"}' autocomplete="off" />
+                  </label>
+                </div>
+                <label class="field" style="margin-top:10px"><span data-i18n="filt.headers">Headers JSON (opt.)</span>
+                  <input type="text" id="dev-wh-headers" placeholder='{"Authorization":"Bearer …"}' autocomplete="off" />
+                </label>
+              </div>
+
+              <!-- Shelly -->
+              <div class="dev-be" data-be="shelly" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 100px 120px;gap:12px">
+                  <label class="field"><span data-i18n="filt.shelly_ip">IP Shelly</span>
+                    <input type="text" id="dev-shelly-ip" placeholder="192.168.1.70" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.channel">Channel</span>
+                    <input type="number" id="dev-shelly-ch" value="0" min="0" max="3" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.gen">Gen</span>
+                    <select id="dev-shelly-gen">
+                      <option value="auto">auto</option>
+                      <option value="1">Gen1</option>
+                      <option value="2">Gen2</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Home Assistant -->
+              <div class="dev-be" data-be="homeassistant" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                  <label class="field"><span data-i18n="filt.ha_url">HA URL</span>
+                    <input type="text" id="dev-ha-url" placeholder="http://192.168.1.20:8123" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="filt.entity_id">Entity ID</span>
+                    <input type="text" id="dev-ha-entity" placeholder="switch.pump" autocomplete="off" />
+                  </label>
+                </div>
+                <label class="field" style="margin-top:10px"><span data-i18n="filt.ha_token">Long-lived token</span>
+                  <span class="pw-wrap">
+                    <input type="password" id="dev-ha-token" placeholder="••••" autocomplete="off" />
+                    <button type="button" class="pw-eye" data-pw-for="dev-ha-token" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
+                  </span>
+                </label>
+              </div>
+
+              <button type="button" class="collapse-toggle" id="btn-toggle-dev-mining"
+                aria-expanded="false" aria-controls="dev-mining-panel">
+                <span class="chev" aria-hidden="true">▶</span>
+                <span class="collapse-label" data-i18n="dev.mining_options">Mining options</span>
+              </button>
+              <div class="collapse-panel is-collapsed" id="dev-mining-panel" hidden>
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                  <label class="check">
+                    <input type="checkbox" id="dev-auto-mining" />
+                    <span><span data-i18n="dev.auto_on_mining">Auto On while mining</span>
+                      <span class="desc" data-i18n="dev.auto_on_mining_desc">Resume → device ON</span>
+                    </span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="dev-auto-suspend" />
+                    <span><span data-i18n="dev.auto_off_suspend">Auto Off on Suspend</span>
+                      <span class="desc" data-i18n="dev.auto_off_suspend_desc">Suspend → device OFF</span>
+                    </span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="dev-allow-off-mining" />
+                    <span><span data-i18n="dev.allow_off_mining">Allow OFF while mining</span>
+                      <span class="desc" data-i18n="dev.allow_off_mining_desc">manual Off during Resume</span>
+                    </span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="dev-allow-on-suspend" />
+                    <span><span data-i18n="dev.allow_on_suspend">Allow ON while Suspend</span>
+                      <span class="desc" data-i18n="dev.allow_on_suspend_desc">manual On during Suspend</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+                <button class="btn primary" type="button" id="btn-device-on" data-i18n="dev.btn_on">Turn ON</button>
+                <button class="btn danger" type="button" id="btn-device-off" data-i18n="dev.btn_off">Turn OFF</button>
+                <span id="device-editor-status" style="font-size:0.78rem;color:var(--muted)">—</span>
               </div>
             </div>
           </div>
@@ -4251,7 +4512,8 @@
           <div class="card-b">
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
               Included: miner connection, dry_run, zone map & presets,
-              <strong>pool presets</strong>, pool, weather, history, filtration, chipmap,
+              <strong>pool presets</strong>, pool, weather, history, filtration,
+              <strong>sensors &amp; devices</strong>, chipmap,
               luci_proxy, Telegram
               <strong>(including passwords and bot token)</strong>,
               plus <strong>meta</strong> — app version, Keenetic, hostname, paths
@@ -5153,8 +5415,44 @@
         "sub.devices_card": "relays · pumps · valves · smart sockets · actuators",
         "periph.sensors_empty": "No sensors yet. Create an alias with priority sources and optional virtual rules.",
         "periph.sensors_help": "Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).",
-        "periph.devices_empty": "No devices configured yet. Filtration pump, heaters, valves and smart outlets will appear here.",
+        "periph.devices_empty": "No devices yet. Create an actuator (Tapo, Webhook, …) with mining rules and optional bot button.",
+        "periph.devices_help": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant). Mining auto rules and optional Telegram bot button (alias = command).",
         "periph.count": "Connected",
+        "btn.device_new": "New device",
+        "h2.device_edit": "Edit device",
+        "sub.device_edit": "backend · mining · bot",
+        "dev.icon": "Icon",
+        "dev.name": "Name",
+        "dev.alias": "Alias",
+        "dev.alias_hint": "Alias is used as Telegram command (/alias). Reserved names blocked (status, filtration, …).",
+        "dev.description": "Description",
+        "dev.lang_other_tip": "Edit the other language (UI is {ui})",
+        "dev.enabled": "Enabled",
+        "dev.inverted": "Inverted",
+        "dev.inverted_desc": "logical On = physical Off",
+        "dev.show_bot": "Show button in bot",
+        "dev.control_type": "Control type",
+        "dev.mining_options": "Mining options",
+        "dev.auto_on_mining": "Auto On while mining",
+        "dev.auto_on_mining_desc": "Resume → device ON",
+        "dev.auto_off_suspend": "Auto Off on Suspend",
+        "dev.auto_off_suspend_desc": "Suspend → device OFF",
+        "dev.allow_off_mining": "Allow OFF while mining",
+        "dev.allow_off_mining_desc": "manual Off during Resume",
+        "dev.allow_on_suspend": "Allow ON while Suspend",
+        "dev.allow_on_suspend_desc": "manual On during Suspend",
+        "dev.btn_test": "Test",
+        "dev.btn_on": "Turn ON",
+        "dev.btn_off": "Turn OFF",
+        "dev.state_on": "ON",
+        "dev.state_off": "OFF",
+        "dev.state_unknown": "—",
+        "dev.disabled": "disabled",
+        "dev.inverted_tag": "inv",
+        "dev.bot_tag": "bot",
+        "toast.device_saved": "Device saved",
+        "toast.device_deleted": "Device deleted",
+        "toast.device_test_ok": "Device OK",
         "h2.sensor_edit": "Edit sensor",
         "sub.sensor_edit": "alias · sources · transform",
         "btn.sensor_new": "New sensor",
@@ -5414,7 +5712,7 @@
         "fw.flash_select": "Compatible firmware",
         "fw.flash_force": "Allow incompatible (not in model map)",
         "fw.flash_btn": "Flash to miner",
-        "fw.flash_warn": "Destructive: miner reboots. Use only files for this model. Keep power and network stable.",
+        "fw.flash_warn": "After the update the miner will reboot. Do not cut power or network during flashing.",
         "fw.flash_none": "No compatible firmware in library (or repo disabled)",
         "fw.flash_repo_off": "Enable Settings → Firmware repository first",
         "fw.flash_confirm1": "Flash firmware to the miner?",
@@ -5535,7 +5833,43 @@
         "sub.devices_card": "реле · насосы · клапаны · умные розетки · приводы",
         "periph.sensors_empty": "Датчиков пока нет. Создайте alias с источниками по приоритету и опциональным правилом.",
         "periph.sensors_help": "Системный alias (например outdoor, pool_water). Источники по приоритету — берётся первый с данными. Правила: фиксированный offset или Δ из таблицы мощности (напр. chip_max − 10°C при 3.5 kW).",
-        "periph.devices_empty": "Устройства пока не настроены. Здесь появятся насос фильтрации, нагреватели, клапаны и умные розетки.",
+        "periph.devices_empty": "Устройств пока нет. Создайте актуатор (Tapo, Webhook, …) с правилами майнинга и опциональной кнопкой бота.",
+        "periph.devices_help": "Создавайте актуаторы (Tapo, eWeLink, Webhook, Shelly, Home Assistant). Правила при майнинге и кнопка в Telegram (alias = команда).",
+        "btn.device_new": "Новое устройство",
+        "h2.device_edit": "Редактирование устройства",
+        "sub.device_edit": "backend · майнинг · бот",
+        "dev.icon": "Иконка",
+        "dev.name": "Название",
+        "dev.alias": "Alias",
+        "dev.alias_hint": "Alias используется как команда бота (/alias). Зарезервированные имена запрещены (status, filtration, …).",
+        "dev.description": "Описание",
+        "dev.lang_other_tip": "Редактировать другой язык (UI: {ui})",
+        "dev.enabled": "Активировано",
+        "dev.inverted": "Инвертировано",
+        "dev.inverted_desc": "логически On = физически Off",
+        "dev.show_bot": "Отображать кнопку в боте",
+        "dev.control_type": "Тип управления",
+        "dev.mining_options": "Опции при майнинге",
+        "dev.auto_on_mining": "Auto On при майнинге",
+        "dev.auto_on_mining_desc": "Resume → устройство ON",
+        "dev.auto_off_suspend": "Auto Off при Suspend",
+        "dev.auto_off_suspend_desc": "Suspend → устройство OFF",
+        "dev.allow_off_mining": "Разрешить OFF при майнинге",
+        "dev.allow_off_mining_desc": "ручной Off во время Resume",
+        "dev.allow_on_suspend": "Разрешить ON при Suspend",
+        "dev.allow_on_suspend_desc": "ручной On во время Suspend",
+        "dev.btn_test": "Тест",
+        "dev.btn_on": "Включить",
+        "dev.btn_off": "Выключить",
+        "dev.state_on": "ВКЛ",
+        "dev.state_off": "ВЫКЛ",
+        "dev.state_unknown": "—",
+        "dev.disabled": "выкл.",
+        "dev.inverted_tag": "инв.",
+        "dev.bot_tag": "бот",
+        "toast.device_saved": "Устройство сохранено",
+        "toast.device_deleted": "Устройство удалено",
+        "toast.device_test_ok": "Устройство OK",
         "periph.count": "Подключено",
         "h2.sensor_edit": "Редактор датчика",
         "sub.sensor_edit": "alias · источники · преобразование",
@@ -5796,7 +6130,7 @@
         "fw.flash_select": "Совместимая прошивка",
         "fw.flash_force": "Разрешить несовместимую (нет в карте моделей)",
         "fw.flash_btn": "Прошить майнер",
-        "fw.flash_warn": "Опасно: майнер перезагрузится. Только файлы для этой модели. Не отключайте питание и сеть.",
+        "fw.flash_warn": "После обновления майнер перезагрузится. Не отключайте питание и сеть во время прошивки.",
         "fw.flash_none": "В библиотеке нет совместимых прошивок (или репозиторий выключен)",
         "fw.flash_repo_off": "Сначала включите Настройки → Прошивки",
         "fw.flash_confirm1": "Прошить майнер выбранным файлом?",
@@ -6781,6 +7115,9 @@
       }
       if (mainTab === "periph" && periphSub === "sensors") {
         if (typeof loadSensors === "function") loadSensors();
+      }
+      if (mainTab === "periph" && periphSub === "devices") {
+        if (typeof loadDevices === "function") loadDevices();
       }
       if (!opts.skipUrl) {
         // #chips / #pools / #logs / #advanced keep deep-link hashes
@@ -14873,13 +15210,8 @@
               .join("");
         }
         if (hint) {
-          hint.textContent =
-            (mt && mt !== "—" ? mt + " · " : "") +
-            (data.on_usb ? "USB · " : "") +
-            items.length +
-            " " +
-            (force ? "file(s)" : "compatible") +
-            (data.storage_path ? " · " + data.storage_path : "");
+          // model only — no USB path / storage / file-count noise
+          hint.textContent = mt && mt !== "—" ? String(mt) : "";
         }
       } catch (e) {
         if (hint) hint.textContent = "error: " + (e.message || e);
@@ -17376,6 +17708,616 @@
       if (!box) return;
       box.insertAdjacentHTML("beforeend", powerTableRowHtml({ power_w: 2000, delta: 5 }));
       bindPowerTable();
+    });
+
+    // ── Peripherals · Devices ─────────────────────────────────────────────
+    let devicesCache = [];
+    let devicesMeta = {
+      backends: [],
+      reserved_aliases: [],
+      icons: ["🔌", "💡", "💧", "🔥", "🌀", "⚙️", "🔆", "🧊", "🚿", "🪴", "🔋", "🛠️", "🏠", "⚡", "🌡️", "🔔"],
+    };
+    let deviceEditorOpen = false;
+    /** Bilingual draft while editing: { en, ru } — checkbox switches active language in the input. */
+    let deviceNameBi = { en: "", ru: "" };
+    let deviceDescBi = { en: "", ru: "" };
+
+    function deviceUiLang() {
+      return typeof getUiLang === "function" && getUiLang() === "ru" ? "ru" : "en";
+    }
+
+    function deviceOtherLang(ui) {
+      return (ui || deviceUiLang()) === "ru" ? "en" : "ru";
+    }
+
+    function deviceActiveLang(which) {
+      // which: 'name' | 'desc'
+      const id = which === "desc" ? "device-desc-other-lang" : "device-name-other-lang";
+      const other = !!document.getElementById(id)?.checked;
+      const ui = deviceUiLang();
+      return other ? deviceOtherLang(ui) : ui;
+    }
+
+    function syncDeviceLangToggles() {
+      const ui = deviceUiLang();
+      const other = deviceOtherLang(ui);
+      const nameTag = document.getElementById("device-name-other-tag");
+      const descTag = document.getElementById("device-desc-other-tag");
+      if (nameTag) nameTag.textContent = other;
+      if (descTag) descTag.textContent = other;
+      const tip = tf
+        ? tf("dev.lang_other_tip", { ui: ui }, "Other language (UI: " + ui + ")")
+        : "Other language (UI: " + ui + ")";
+      const nameChk = document.getElementById("device-name-lang-chk");
+      const descChk = document.getElementById("device-desc-lang-chk");
+      if (nameChk) nameChk.title = tip;
+      if (descChk) descChk.title = tip;
+      // visual state
+      nameChk?.classList.toggle("is-on", !!document.getElementById("device-name-other-lang")?.checked);
+      descChk?.classList.toggle("is-on", !!document.getElementById("device-desc-other-lang")?.checked);
+    }
+
+    function flushDeviceNameInput() {
+      const el = document.getElementById("device-name");
+      if (!el) return;
+      const lang = deviceActiveLang("name");
+      deviceNameBi[lang] = (el.value || "").trim();
+    }
+
+    function flushDeviceDescInput() {
+      const el = document.getElementById("device-description");
+      if (!el) return;
+      const lang = deviceActiveLang("desc");
+      deviceDescBi[lang] = (el.value || "").trim();
+    }
+
+    function showDeviceNameForActiveLang() {
+      const el = document.getElementById("device-name");
+      if (!el) return;
+      const lang = deviceActiveLang("name");
+      el.value = deviceNameBi[lang] || "";
+      el.placeholder = lang === "ru" ? "Насос бассейна" : "Pool pump";
+    }
+
+    function showDeviceDescForActiveLang() {
+      const el = document.getElementById("device-description");
+      if (!el) return;
+      const lang = deviceActiveLang("desc");
+      el.value = deviceDescBi[lang] || "";
+    }
+
+    function onDeviceNameLangToggle() {
+      // leave-lang already includes current checkbox? Sequence:
+      // 1) read previous lang = opposite of NEW checked state
+      const box = document.getElementById("device-name-other-lang");
+      const nowOther = !!box?.checked;
+      const ui = deviceUiLang();
+      const prevLang = nowOther ? ui : deviceOtherLang(ui);
+      const el = document.getElementById("device-name");
+      if (el) deviceNameBi[prevLang] = (el.value || "").trim();
+      showDeviceNameForActiveLang();
+      syncDeviceLangToggles();
+    }
+
+    function onDeviceDescLangToggle() {
+      const box = document.getElementById("device-desc-other-lang");
+      const nowOther = !!box?.checked;
+      const ui = deviceUiLang();
+      const prevLang = nowOther ? ui : deviceOtherLang(ui);
+      const el = document.getElementById("device-description");
+      if (el) deviceDescBi[prevLang] = (el.value || "").trim();
+      showDeviceDescForActiveLang();
+      syncDeviceLangToggles();
+    }
+
+    function deviceDisplayName(d) {
+      if (!d) return "";
+      const ui = deviceUiLang();
+      const en = (d.name_en || d.name || "").trim();
+      const ru = (d.name_ru || d.name || "").trim();
+      if (ui === "ru") return ru || en || d.alias || d.id || "";
+      return en || ru || d.alias || d.id || "";
+    }
+
+    function deviceDisplayDesc(d) {
+      if (!d) return "";
+      const ui = deviceUiLang();
+      const en = (d.description_en || d.description || "").trim();
+      const ru = (d.description_ru || d.description || "").trim();
+      if (ui === "ru") return ru || en || "";
+      return en || ru || "";
+    }
+
+    function deviceBackendHint(be) {
+      const list = devicesMeta.backends || [];
+      const hit = list.find((b) => b.id === be);
+      return hit ? hit.hint || hit.label || "" : "";
+    }
+
+    function syncDeviceBackendUi() {
+      const be = (document.getElementById("device-backend")?.value || "tapo").trim();
+      document.querySelectorAll(".dev-be").forEach((el) => {
+        el.style.display = el.getAttribute("data-be") === be ? "" : "none";
+      });
+      const hint = document.getElementById("device-backend-hint");
+      if (hint) hint.textContent = deviceBackendHint(be) || "";
+      // shared IP field for tapo vs shelly vs ewelink
+      // (separate inputs — no sync needed)
+    }
+
+    function renderDeviceIconPicker() {
+      const box = document.getElementById("device-icon-picker");
+      if (!box) return;
+      const icons = devicesMeta.icons || [];
+      const cur = document.getElementById("device-icon")?.value || "🔌";
+      box.innerHTML = icons
+        .map(
+          (ic) =>
+            '<button type="button" class="btn' +
+            (ic === cur ? " primary" : "") +
+            ' device-icon-pick" data-icon="' +
+            ic +
+            '" style="font-size:1.15rem;padding:6px 10px;min-width:2.5rem">' +
+            ic +
+            "</button>"
+        )
+        .join("");
+      box.querySelectorAll(".device-icon-pick").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const el = document.getElementById("device-icon");
+          if (el) el.value = btn.getAttribute("data-icon") || "🔌";
+          renderDeviceIconPicker();
+        });
+      });
+    }
+
+    function renderDevicesList() {
+      const box = document.getElementById("devices-list");
+      const st = document.getElementById("devices-status");
+      if (!box) return;
+      const list = devicesCache || [];
+      if (!list.length) {
+        box.innerHTML =
+          '<p style="font-size:0.85rem;color:var(--muted);margin:0">' +
+          t("periph.devices_empty", "No devices yet.") +
+          "</p>";
+        if (st) st.textContent = "0";
+        return;
+      }
+      box.innerHTML = list
+        .map((d) => {
+          const en = d.enabled !== false;
+          const on = d.last_on;
+          let stateTxt = t("dev.state_unknown", "—");
+          if (on === true) stateTxt = t("dev.state_on", "ON");
+          else if (on === false) stateTxt = t("dev.state_off", "OFF");
+          if (!en) stateTxt = t("dev.disabled", "disabled");
+          const tags = [];
+          if (d.inverted) tags.push(t("dev.inverted_tag", "inv"));
+          if (d.show_in_bot) tags.push(t("dev.bot_tag", "bot"));
+          if (d.auto_on_mining) tags.push("auto↑");
+          if (d.auto_off_suspend) tags.push("auto↓");
+          const tagTxt = tags.length ? " · " + tags.join(" · ") : "";
+          const icon = d.icon || "🔌";
+          const name = deviceDisplayName(d);
+          const alias = d.alias || "";
+          const be = d.backend || "—";
+          const descRaw = deviceDisplayDesc(d);
+          const desc = descRaw
+            ? '<div style="font-size:0.75rem;color:var(--dim);margin-top:4px">' +
+              String(descRaw).replace(/</g, "&lt;") +
+              "</div>"
+            : "";
+          const err = d.last_error
+            ? '<div style="font-size:0.72rem;color:var(--danger);margin-top:4px">' +
+              String(d.last_error).replace(/</g, "&lt;").slice(0, 120) +
+              "</div>"
+            : "";
+          return (
+            '<div class="card" style="margin:0;background:var(--panel2)">' +
+            '<div class="card-b" style="padding:12px 14px">' +
+            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">' +
+            "<div>" +
+            '<div style="font-weight:650;font-size:0.95rem">' +
+            '<span style="font-size:1.2rem;margin-right:6px">' +
+            icon +
+            "</span>" +
+            name +
+            ' <span style="color:var(--dim);font-weight:500;font-size:0.8rem">· /' +
+            alias +
+            "</span></div>" +
+            '<div style="font-size:1.2rem;font-weight:650;margin-top:4px">' +
+            stateTxt +
+            "</div>" +
+            '<div style="font-size:0.72rem;color:var(--dim);margin-top:4px">' +
+            be +
+            tagTxt +
+            "</div>" +
+            desc +
+            err +
+            "</div>" +
+            '<div class="btn-row" style="gap:6px">' +
+            '<button class="btn" type="button" data-device-on="' +
+            String(d.id).replace(/"/g, "") +
+            '">ON</button>' +
+            '<button class="btn danger" type="button" data-device-off="' +
+            String(d.id).replace(/"/g, "") +
+            '">OFF</button>' +
+            '<button class="btn" type="button" data-device-edit="' +
+            String(d.id).replace(/"/g, "") +
+            '">' +
+            t("btn.edit", "Edit") +
+            "</button>" +
+            "</div></div></div></div>"
+          );
+        })
+        .join("");
+      box.querySelectorAll("[data-device-edit]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-device-edit");
+          const d = devicesCache.find((x) => x.id === id);
+          if (d) openDeviceEditor(d);
+        });
+      });
+      box.querySelectorAll("[data-device-on]").forEach((btn) => {
+        btn.addEventListener("click", () => deviceSetById(btn.getAttribute("data-device-on"), true));
+      });
+      box.querySelectorAll("[data-device-off]").forEach((btn) => {
+        btn.addEventListener("click", () => deviceSetById(btn.getAttribute("data-device-off"), false));
+      });
+      if (st) st.textContent = list.length + " · " + list.filter((d) => d.enabled !== false).length + " on";
+    }
+
+    function openDeviceEditor(device) {
+      deviceEditorOpen = true;
+      const panel = document.getElementById("panel-device-editor");
+      if (panel) panel.hidden = false;
+      const d = device || {
+        id: "",
+        alias: "",
+        name: "",
+        name_en: "",
+        name_ru: "",
+        description: "",
+        description_en: "",
+        description_ru: "",
+        icon: "🔌",
+        enabled: true,
+        inverted: false,
+        show_in_bot: false,
+        backend: "tapo",
+        auto_on_mining: false,
+        auto_off_suspend: false,
+        allow_off_while_mining: false,
+        allow_on_while_suspend: false,
+      };
+      document.getElementById("device-id").value = d.id || "";
+      document.getElementById("device-alias").value = d.alias || "";
+      // bilingual name / description
+      const nEn = (d.name_en || d.name || "").trim();
+      const nRu = (d.name_ru || d.name || "").trim();
+      deviceNameBi = { en: nEn, ru: nRu };
+      const dEn = (d.description_en || d.description || "").trim();
+      const dRu = (d.description_ru || d.description || "").trim();
+      deviceDescBi = { en: dEn, ru: dRu };
+      const nameOther = document.getElementById("device-name-other-lang");
+      const descOther = document.getElementById("device-desc-other-lang");
+      if (nameOther) nameOther.checked = false;
+      if (descOther) descOther.checked = false;
+      syncDeviceLangToggles();
+      showDeviceNameForActiveLang();
+      showDeviceDescForActiveLang();
+      document.getElementById("device-icon").value = d.icon || "🔌";
+      document.getElementById("device-enabled").checked = d.enabled !== false;
+      document.getElementById("device-inverted").checked = !!d.inverted;
+      document.getElementById("device-show-bot").checked = !!d.show_in_bot;
+      const beEl = document.getElementById("device-backend");
+      if (beEl) beEl.value = d.backend || "tapo";
+      // connection
+      const ip = d.ip || "";
+      document.getElementById("dev-ip").value = d.backend === "tapo" ? ip : ip;
+      document.getElementById("dev-email").value = d.email || "";
+      document.getElementById("dev-password").value = "";
+      document.getElementById("dev-password").placeholder = d.password_set ? "•••• (saved)" : "••••";
+      document.getElementById("dev-ewelink-ip").value = d.backend === "ewelink" ? ip : ip;
+      document.getElementById("dev-device-id").value = d.device_id || "";
+      document.getElementById("dev-ewelink-port").value = d.ewelink_port != null ? d.ewelink_port : 8081;
+      document.getElementById("dev-wh-on").value = d.webhook_on_url || "";
+      document.getElementById("dev-wh-off").value = d.webhook_off_url || "";
+      document.getElementById("dev-wh-method").value = d.webhook_method === "POST" ? "POST" : "GET";
+      document.getElementById("dev-wh-body-on").value = d.webhook_body_on || "";
+      document.getElementById("dev-wh-body-off").value = d.webhook_body_off || "";
+      document.getElementById("dev-wh-headers").value = d.webhook_headers || "";
+      document.getElementById("dev-shelly-ip").value = d.backend === "shelly" ? ip : ip;
+      document.getElementById("dev-shelly-ch").value = d.shelly_channel != null ? d.shelly_channel : 0;
+      document.getElementById("dev-shelly-gen").value = d.shelly_gen || "auto";
+      document.getElementById("dev-ha-url").value = d.ha_url || "";
+      document.getElementById("dev-ha-entity").value = d.ha_entity_id || "";
+      document.getElementById("dev-ha-token").value = "";
+      document.getElementById("dev-ha-token").placeholder = d.ha_token_set ? "•••• (saved)" : "••••";
+      document.getElementById("dev-auto-mining").checked = !!d.auto_on_mining;
+      document.getElementById("dev-auto-suspend").checked = !!d.auto_off_suspend;
+      document.getElementById("dev-allow-off-mining").checked = !!d.allow_off_while_mining;
+      document.getElementById("dev-allow-on-suspend").checked = !!d.allow_on_while_suspend;
+      // expand mining panel if any flag set
+      const anyMining =
+        d.auto_on_mining ||
+        d.auto_off_suspend ||
+        d.allow_off_while_mining ||
+        d.allow_on_while_suspend;
+      setDevMiningOpen(!!anyMining);
+      syncDeviceBackendUi();
+      renderDeviceIconPicker();
+      const est = document.getElementById("device-editor-status");
+      if (est) {
+        let s = d.last_on === true ? "ON" : d.last_on === false ? "OFF" : "—";
+        if (d.last_error) s += " · " + String(d.last_error).slice(0, 80);
+        est.textContent = s;
+      }
+      panel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function closeDeviceEditor() {
+      deviceEditorOpen = false;
+      const panel = document.getElementById("panel-device-editor");
+      if (panel) panel.hidden = true;
+    }
+
+    function setDevMiningOpen(open) {
+      const btn = document.getElementById("btn-toggle-dev-mining");
+      const panel = document.getElementById("dev-mining-panel");
+      if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+      if (panel) {
+        panel.hidden = !open;
+        panel.classList.toggle("is-collapsed", !open);
+      }
+    }
+
+    function collectDeviceFromEditor() {
+      const be = (document.getElementById("device-backend")?.value || "tapo").trim();
+      let ip = "";
+      if (be === "tapo") ip = (document.getElementById("dev-ip")?.value || "").trim();
+      else if (be === "ewelink") ip = (document.getElementById("dev-ewelink-ip")?.value || "").trim();
+      else if (be === "shelly") ip = (document.getElementById("dev-shelly-ip")?.value || "").trim();
+      // flush visible inputs into bilingual draft
+      flushDeviceNameInput();
+      flushDeviceDescInput();
+      let name_en = (deviceNameBi.en || "").trim();
+      let name_ru = (deviceNameBi.ru || "").trim();
+      if (name_en && !name_ru) name_ru = name_en;
+      if (name_ru && !name_en) name_en = name_ru;
+      let description_en = (deviceDescBi.en || "").trim();
+      let description_ru = (deviceDescBi.ru || "").trim();
+      if (description_en && !description_ru) description_ru = description_en;
+      if (description_ru && !description_en) description_en = description_ru;
+      const payload = {
+        id: document.getElementById("device-id")?.value || undefined,
+        alias: (document.getElementById("device-alias")?.value || "").trim().toLowerCase(),
+        name_en: name_en,
+        name_ru: name_ru,
+        name: name_en || name_ru,
+        description_en: description_en,
+        description_ru: description_ru,
+        description: description_en || description_ru,
+        icon: (document.getElementById("device-icon")?.value || "🔌").trim() || "🔌",
+        enabled: !!document.getElementById("device-enabled")?.checked,
+        inverted: !!document.getElementById("device-inverted")?.checked,
+        show_in_bot: !!document.getElementById("device-show-bot")?.checked,
+        backend: be,
+        ip: ip,
+        email: (document.getElementById("dev-email")?.value || "").trim(),
+        password: document.getElementById("dev-password")?.value || "",
+        device_id: (document.getElementById("dev-device-id")?.value || "").trim(),
+        ewelink_port: Number(document.getElementById("dev-ewelink-port")?.value) || 8081,
+        webhook_on_url: (document.getElementById("dev-wh-on")?.value || "").trim(),
+        webhook_off_url: (document.getElementById("dev-wh-off")?.value || "").trim(),
+        webhook_method: document.getElementById("dev-wh-method")?.value || "GET",
+        webhook_body_on: document.getElementById("dev-wh-body-on")?.value || "",
+        webhook_body_off: document.getElementById("dev-wh-body-off")?.value || "",
+        webhook_headers: document.getElementById("dev-wh-headers")?.value || "",
+        shelly_channel: Number(document.getElementById("dev-shelly-ch")?.value) || 0,
+        shelly_gen: document.getElementById("dev-shelly-gen")?.value || "auto",
+        ha_url: (document.getElementById("dev-ha-url")?.value || "").trim(),
+        ha_entity_id: (document.getElementById("dev-ha-entity")?.value || "").trim(),
+        ha_token: document.getElementById("dev-ha-token")?.value || "",
+        auto_on_mining: !!document.getElementById("dev-auto-mining")?.checked,
+        auto_off_suspend: !!document.getElementById("dev-auto-suspend")?.checked,
+        allow_off_while_mining: !!document.getElementById("dev-allow-off-mining")?.checked,
+        allow_on_while_suspend: !!document.getElementById("dev-allow-on-suspend")?.checked,
+      };
+      if (!payload.id) delete payload.id;
+      // empty secrets → omit so server keeps saved
+      if (!payload.password) delete payload.password;
+      if (!payload.ha_token) delete payload.ha_token;
+      return payload;
+    }
+
+    async function loadDevices() {
+      const st = document.getElementById("devices-status");
+      try {
+        const res = await fetch("/api/devices", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "devices fail");
+        devicesCache = body.devices || [];
+        if (body.backends) devicesMeta.backends = body.backends;
+        if (body.reserved_aliases) devicesMeta.reserved_aliases = body.reserved_aliases;
+        if (body.icons) devicesMeta.icons = body.icons;
+        renderDevicesList();
+        // keep editor status fresh if open
+        if (deviceEditorOpen) {
+          const id = document.getElementById("device-id")?.value;
+          if (id) {
+            const d = devicesCache.find((x) => x.id === id);
+            if (d) {
+              const est = document.getElementById("device-editor-status");
+              if (est) {
+                let s = d.last_on === true ? "ON" : d.last_on === false ? "OFF" : "—";
+                if (d.last_error) s += " · " + String(d.last_error).slice(0, 80);
+                est.textContent = s;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        if (st) st.textContent = "error: " + e.message;
+      }
+    }
+
+    async function saveDeviceFromEditor() {
+      const payload = collectDeviceFromEditor();
+      if (!payload.alias) {
+        toastError(t("dev.alias", "Alias") + " required");
+        return;
+      }
+      const reserved = devicesMeta.reserved_aliases || [];
+      if (reserved.includes(payload.alias)) {
+        toastError("alias reserved: " + payload.alias);
+        return;
+      }
+      try {
+        const res = await fetch("/api/devices", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        toastSuccess(t("toast.device_saved", "Device saved"));
+        devicesCache = body.devices || [];
+        if (body.device && body.device.id) {
+          document.getElementById("device-id").value = body.device.id;
+        }
+        renderDevicesList();
+        closeDeviceEditor();
+      } catch (e) {
+        toastError(e.message);
+      }
+    }
+
+    async function deleteDeviceFromEditor() {
+      const id = document.getElementById("device-id")?.value;
+      if (!id) {
+        closeDeviceEditor();
+        return;
+      }
+      if (!confirm(t("btn.delete", "Delete") + "?")) return;
+      try {
+        const res = await fetch("/api/devices/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "delete fail");
+        toastSuccess(t("toast.device_deleted", "Device deleted"));
+        await loadDevices();
+        closeDeviceEditor();
+      } catch (e) {
+        toastError(e.message);
+      }
+    }
+
+    async function deviceSetById(id, on) {
+      if (!id) return;
+      try {
+        const res = await fetch("/api/devices/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, on: !!on }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "set fail");
+        toastSuccess(on ? t("dev.state_on", "ON") : t("dev.state_off", "OFF"));
+        await loadDevices();
+      } catch (e) {
+        toastError(e.message);
+      }
+    }
+
+    async function testDeviceFromEditor() {
+      let id = document.getElementById("device-id")?.value;
+      if (!id) {
+        // save without closing so we can test immediately
+        const payload = collectDeviceFromEditor();
+        if (!payload.alias) {
+          toastError(t("dev.alias", "Alias") + " required");
+          return;
+        }
+        try {
+          const res = await fetch("/api/devices", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json();
+          if (!body.ok) throw new Error(body.error || "save fail");
+          devicesCache = body.devices || [];
+          id = (body.device && body.device.id) || "";
+          if (id) document.getElementById("device-id").value = id;
+          renderDevicesList();
+        } catch (e) {
+          toastError(e.message);
+          return;
+        }
+      }
+      if (!id) return;
+      try {
+        const res = await fetch("/api/devices/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "test fail");
+        toastSuccess(t("toast.device_test_ok", "Device OK"));
+        await loadDevices();
+      } catch (e) {
+        toastError(e.message);
+      }
+    }
+
+    document.getElementById("btn-devices-refresh")?.addEventListener("click", () => {
+      loadDevices().then(() => toastSuccess(t("btn.refresh", "Refresh")));
+    });
+    document.getElementById("btn-device-new")?.addEventListener("click", () => {
+      openDeviceEditor(null);
+    });
+    document.getElementById("btn-device-cancel")?.addEventListener("click", closeDeviceEditor);
+    document.getElementById("btn-device-save")?.addEventListener("click", saveDeviceFromEditor);
+    document.getElementById("btn-device-delete")?.addEventListener("click", deleteDeviceFromEditor);
+    document.getElementById("btn-device-test")?.addEventListener("click", testDeviceFromEditor);
+    document.getElementById("btn-device-on")?.addEventListener("click", () => {
+      const id = document.getElementById("device-id")?.value;
+      if (id) deviceSetById(id, true);
+      else toastError("Save device first");
+    });
+    document.getElementById("btn-device-off")?.addEventListener("click", () => {
+      const id = document.getElementById("device-id")?.value;
+      if (id) deviceSetById(id, false);
+      else toastError("Save device first");
+    });
+    document.getElementById("device-backend")?.addEventListener("change", syncDeviceBackendUi);
+    document.getElementById("btn-toggle-dev-mining")?.addEventListener("click", () => {
+      const btn = document.getElementById("btn-toggle-dev-mining");
+      const open = btn?.getAttribute("aria-expanded") === "true";
+      setDevMiningOpen(!open);
+    });
+    document.getElementById("device-name-other-lang")?.addEventListener("change", onDeviceNameLangToggle);
+    document.getElementById("device-desc-other-lang")?.addEventListener("change", onDeviceDescLangToggle);
+    // keep bilingual drafts if user types while on a lang, then switches UI lang mid-edit
+    document.addEventListener("poolheat:lang", () => {
+      if (!deviceEditorOpen) return;
+      flushDeviceNameInput();
+      flushDeviceDescInput();
+      // reset other-lang toggles to primary UI language
+      const nameOther = document.getElementById("device-name-other-lang");
+      const descOther = document.getElementById("device-desc-other-lang");
+      if (nameOther) nameOther.checked = false;
+      if (descOther) descOther.checked = false;
+      syncDeviceLangToggles();
+      showDeviceNameForActiveLang();
+      showDeviceDescForActiveLang();
+      renderDevicesList();
     });
 
     loadChipmapConfig();
