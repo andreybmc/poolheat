@@ -1,5 +1,6 @@
 #!/bin/sh
-# poolheat daemon launcher (Entware / Keenetic)
+# poolheat daemon launcher (Entware / Keenetic) — USB-aware
+# Standard paths under /opt may be symlinks to USB storage.
 export PATH=/opt/bin:/opt/sbin:$PATH
 
 export POOLHEAT_WWW=/opt/share/poolheat/www
@@ -14,7 +15,26 @@ if [ ! -x "$PY" ]; then
   PY=python3
 fi
 
-# Log startup failures (service used to die silently on ImportError)
-LOG=/opt/var/poolheat/serve.boot.log
+# Wait for USB-backed paths (disk often mounts after Entware starts)
+wait_paths() {
+  i=0
+  while [ $i -lt 60 ]; do
+    if [ -f /opt/lib/poolheat/serve.py ] && [ -d /opt/var/poolheat ]; then
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  return 1
+}
+
+LOG=/tmp/poolheat-serve.boot.log
+if ! wait_paths; then
+  echo "poolheatd: storage not ready after 60s (/opt/lib/poolheat/serve.py missing — is USB mounted?)" >>"$LOG"
+  echo "poolheatd: storage not ready after 60s" >&2
+  exit 1
+fi
+
 mkdir -p /opt/var/poolheat 2>/dev/null || true
+LOG=/opt/var/poolheat/serve.boot.log
 exec "$PY" /opt/lib/poolheat/serve.py >>"$LOG" 2>&1

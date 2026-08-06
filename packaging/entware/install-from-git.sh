@@ -75,4 +75,10 @@ echo "OK. Open: http://<keenetic-ip>:8787/"
 echo "Config:  /opt/etc/poolheat/config.json"
 echo "Log:     /opt/var/poolheat/poolheat.log"
 echo "Update:  cd $ROOT && git pull && sh packaging/entware/install-from-git.sh"
+if [ -L /opt/lib/poolheat ]; then
+  echo "USB:     /opt/lib/poolheat -> $(readlink /opt/lib/poolheat)"
+  echo "         (install writes through symlink onto USB — OK)"
+else
+  echo "Flash:   package on internal /opt (to move: sh packaging/entware/migrate-to-usb.sh)"
+fi
 echo ""
