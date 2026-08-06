@@ -47,6 +47,36 @@ except ImportError:
 
 from passlib.hash import md5_crypt
 
+try:
+    from miner_models import (
+        catalog_summary as miner_models_catalog,
+        list_families as miner_models_list_families,
+        list_manufacturers as miner_models_list_manufacturers,
+        resolve_hashboard_layout as _mm_resolve_hashboard_layout,
+        resolve_miner_model,
+    )
+except ImportError:
+    # Entware: same package dir as serve.py (/opt/lib/poolheat)
+    try:
+        import sys as _sys
+
+        _lib = Path(__file__).resolve().parent
+        if str(_lib) not in _sys.path:
+            _sys.path.insert(0, str(_lib))
+        from miner_models import (
+            catalog_summary as miner_models_catalog,
+            list_families as miner_models_list_families,
+            list_manufacturers as miner_models_list_manufacturers,
+            resolve_hashboard_layout as _mm_resolve_hashboard_layout,
+            resolve_miner_model,
+        )
+    except ImportError:
+        miner_models_catalog = None  # type: ignore
+        miner_models_list_families = None  # type: ignore
+        miner_models_list_manufacturers = None  # type: ignore
+        _mm_resolve_hashboard_layout = None  # type: ignore
+        resolve_miner_model = None  # type: ignore
+
 
 def _load_app_config() -> dict:
     """Resolve paths for local demo or Entware (/opt)."""
@@ -1350,6 +1380,8 @@ def _load_filtration_cfg() -> None:
             cfg["last_on"] = (
                 None if raw.get("last_on") is None else bool(raw.get("last_on"))
             )
+        # Legacy Filtration UI/bot removed — use Peripherals → Devices
+        cfg["enabled"] = False
         _filtration_cfg = cfg
 
 
@@ -1450,6 +1482,8 @@ def apply_filtration_cfg(req: dict) -> dict:
             )
         _filtration_session["token"] = None
         _filtration_session["cookie"] = None
+        # Feature removed from Settings/bot — devices only
+        _filtration_cfg["enabled"] = False
     _save_filtration_cfg()
     out = get_filtration_cfg(redact=True)
     # re-read file once so enabled is confirmed persisted
@@ -2429,13 +2463,6 @@ def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> 
             _filtration_cfg["last_sync_ts"] = _filtration_cfg["last_ok_ts"]
             _filtration_cfg["last_action"] = f"{source}:{be}:{'on' if on else 'off'}"
         _save_filtration_cfg()
-        # TG push on real state change. Skip source=telegram — handler already
-        # replies with the same text + updated main keyboard.
-        if prev_on is not bool(got) and str(source or "") != "telegram":
-            try:
-                _tg_notify_filtration(bool(got), source=source)
-            except Exception as _tg_e:
-                print(f"[filtration] tg notify: {_tg_e}")
         return {"ok": True, "on": bool(got), "source": source, "backend": be, **out}
     except Exception as e:
         pretty = _filtration_user_error(e, on=on, backend=be, lang="ru")
@@ -2628,8 +2655,6 @@ DEVICE_ALIAS_RESERVED: frozenset[str] = frozenset(
         "suspend",
         "sleep",
         "mining",
-        "filtration",
-        "filter",
         "lang",
         "lang_ru",
         "lang_en",
@@ -3911,7 +3936,7 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             "host": base,
             **parsed,
         }
-        # model string for physical layout (snake / chips_per_domain / slot_link)
+        # model string + profile for physical layout (snake / cpd / slot_link)
         try:
             ident = get_miner_identity_cached(force=False)
             if isinstance(ident, dict):
@@ -3920,6 +3945,20 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
                     out["miner_type"] = mt
         except Exception:
             pass
+        if resolve_miner_model is not None:
+            try:
+                n_b = out.get("board_count")
+                try:
+                    n_b_i = int(n_b) if n_b is not None else None
+                except (TypeError, ValueError):
+                    n_b_i = None
+                out["model"] = resolve_miner_model(
+                    out.get("miner_type"),
+                    n_devs=n_b_i,
+                    board_num=n_b_i,
+                )
+            except Exception:
+                pass
         out = _chipmap_attach_hash_estimates(out)
         with _chipmap_lock:
             _chipmap_cache.clear()
@@ -5284,18 +5323,19 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
                     "width_m",
                     "depth_m",
                     "flow_m3h",
-                    "hex_delta_c",
                     "shape",
-                    "comment",
                     "water_sensor",
                 ):
                     if key in req and req[key] is not None:
                         if key == "water_sensor":
                             _pool_cfg[key] = _normalize_pool_water_sensor(req[key])
-                        elif key in ("shape", "comment"):
+                        elif key == "shape":
                             _pool_cfg[key] = str(req[key])
                         else:
                             _pool_cfg[key] = float(req[key])
+                # legacy keys no longer used
+                _pool_cfg.pop("hex_delta_c", None)
+                _pool_cfg.pop("comment", None)
             _save_pool_cfg()
             applied.append("pool")
         except Exception as e:
@@ -5418,21 +5458,17 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
     }
 
 
-# Rectangular pool geometry + circulation through heat exchanger
+# Pool geometry + circulation flow (for turnover time only)
 DEFAULT_POOL_CFG = {
     "length_m": 8.0,
     "width_m": 4.0,
     "depth_m": 1.5,
-    # circulation flow through heat exchanger, m³/h
+    # circulation flow, m³/h — used for turnover T = V / flow
     "flow_m3h": 12.0,
-    # ΔT heat exchanger (water in − water out), °C
-    "hex_delta_c": 5.0,
     # Which live field is pool water temperature for heat balance / Tw
     # (same ids as zone T_ctrl sensors)
     "water_sensor": "liquid",
-    # optional notes
     "shape": "rect",
-    "comment": "",
 }
 
 # Sensors selectable as «вода в бассейне» (pool water °C)
@@ -5451,7 +5487,7 @@ DEFAULT_HISTORY_CFG = {
     "prune_every_samples": 20,
 }
 
-# Open-Meteo — no API key. City presets for quick pick (RU + common).
+# Open-Meteo — no API key. City is chosen via geocoding search in UI.
 DEFAULT_WEATHER_CFG = {
     "enabled": True,
     "city": "Москва",
@@ -5464,16 +5500,8 @@ DEFAULT_WEATHER_CFG = {
     "refresh_interval_sec": 600,
 }
 
-WEATHER_PRESETS = [
-    {"city": "Москва", "country": "RU", "admin1": "", "latitude": 55.7558, "longitude": 37.6173, "timezone": "Europe/Moscow"},
-    {"city": "Санкт-Петербург", "country": "RU", "admin1": "", "latitude": 59.9343, "longitude": 30.3351, "timezone": "Europe/Moscow"},
-    {"city": "Екатеринбург", "country": "RU", "admin1": "", "latitude": 56.8389, "longitude": 60.6057, "timezone": "Asia/Yekaterinburg"},
-    {"city": "Новосибирск", "country": "RU", "admin1": "", "latitude": 55.0084, "longitude": 82.9357, "timezone": "Asia/Novosibirsk"},
-    {"city": "Томск", "country": "RU", "admin1": "", "latitude": 56.4977, "longitude": 84.9744, "timezone": "Asia/Tomsk"},
-    {"city": "Красноярск", "country": "RU", "admin1": "", "latitude": 56.0153, "longitude": 92.8932, "timezone": "Asia/Krasnoyarsk"},
-    {"city": "Иркутск", "country": "RU", "admin1": "", "latitude": 52.2869, "longitude": 104.3050, "timezone": "Asia/Irkutsk"},
-    {"city": "Хабаровск", "country": "RU", "admin1": "", "latitude": 48.4827, "longitude": 135.0838, "timezone": "Asia/Vladivostok"},
-]
+# Kept empty: Quick pick removed; city search autocomplete uses /api/weather/search.
+WEATHER_PRESETS: list[dict] = []
 
 _weather_cfg_lock = threading.Lock()
 _weather_cfg: dict = dict(DEFAULT_WEATHER_CFG)
@@ -5499,12 +5527,17 @@ _state: dict = {
     "power_limit_cmd": None,
     "mode_cmd": None,
     "work_cmd": None,  # Mining Control: sleep (suspend) | resume
+    "work_cmd_ts": None,  # unix time when work_cmd was last set (ok write)
     "last_write": None,
     "last_write_result": None,
     # Frozen Cause text per active firmware error (code@ts → {code,ts,cause})
     # so hashrate in Cause does not change on every poll
     "miner_error_cache": {},
 }
+
+# How long "Останавливается" / "Запускается" may show after a real work command.
+# After this, sticky work_cmd is reconciled to measured miner state.
+_WORK_CMD_TRANSITION_SEC = 90.0
 
 _hist_cfg_lock = threading.Lock()
 _hist_cfg: dict = dict(DEFAULT_HISTORY_CFG)
@@ -6229,7 +6262,6 @@ def _load_pool_cfg() -> None:
             ("width_m", 4.0),
             ("depth_m", 1.5),
             ("flow_m3h", 12.0),
-            ("hex_delta_c", 5.0),
         ):
             try:
                 v = float(_pool_cfg.get(key, default))
@@ -6238,8 +6270,6 @@ def _load_pool_cfg() -> None:
             # sane clamps
             if key == "flow_m3h":
                 v = max(0.0, min(500.0, v))
-            elif key == "hex_delta_c":
-                v = max(0.1, min(40.0, v))
             else:
                 v = max(0.1, min(200.0, v))
             _pool_cfg[key] = v
@@ -6251,28 +6281,131 @@ def _load_pool_cfg() -> None:
         else:
             shape = "rect"
         _pool_cfg["shape"] = shape
-        _pool_cfg["comment"] = str(_pool_cfg.get("comment") or "")
+        # drop legacy HX / comment fields if present in old configs
+        _pool_cfg.pop("hex_delta_c", None)
+        _pool_cfg.pop("comment", None)
         _pool_cfg["water_sensor"] = _normalize_pool_water_sensor(
             _pool_cfg.get("water_sensor", "liquid")
         )
 
 
 def _normalize_pool_water_sensor(v) -> str:
-    """Pool water °C source — subset of T_ctrl sensor ids."""
-    s = _normalize_t_ctrl_sensor(v)
-    if s not in POOL_WATER_SENSORS:
-        return "liquid"
-    return s
+    """
+    Pool water °C source:
+      - built-in miner fields: liquid | env | chip_avg | chip_max | board_max
+      - peripheral virtual sensors: sensor:<alias>  (Peripherals → Sensors)
+    """
+    raw = str(v or "liquid").strip()
+    s = raw.lower().replace("-", "_").replace(" ", "_")
+    # explicit virtual sensor reference
+    for pref in ("sensor:", "sensors:", "alias:", "virt:", "virtual:"):
+        if s.startswith(pref):
+            alias = s.split(":", 1)[1].strip().lower()
+            if _sensor_alias_ok(alias):
+                return f"sensor:{alias}"
+            return "liquid"
+    # built-in map (same aliases as T_ctrl)
+    aliases = {
+        "liquid_temp": "liquid",
+        "coolant": "liquid",
+        "water": "liquid",
+        "env_temp": "env",
+        "ambient": "env",
+        "environment": "env",
+        "chip": "chip_max",
+        "chipmax": "chip_max",
+        "pcb": "board_max",
+        "board": "board_max",
+        "boards": "board_max",
+        "pcb_max": "board_max",
+    }
+    s = aliases.get(s, s)
+    if s in POOL_WATER_SENSORS:
+        return s
+    # bare alias of a configured peripheral sensor
+    if _sensor_alias_ok(s):
+        try:
+            if get_sensor_by_alias(s) is not None:
+                return f"sensor:{s}"
+        except Exception:
+            pass
+        # allow storing alias even if not loaded yet (backup restore)
+        return f"sensor:{s}"
+    return "liquid"
+
+
+def list_pool_water_sensor_options() -> list[dict]:
+    """Options for Pool UI select: miner live fields + virtual sensors."""
+    out: list[dict] = []
+    labels = {
+        "liquid": "liquid — ASIC liquid_temp (coolant)",
+        "env": "env — Env Temp (ambient)",
+        "chip_avg": "chip avg",
+        "chip_max": "chip max",
+        "board_max": "board max (PCB)",
+    }
+    for sid in POOL_WATER_SENSORS:
+        out.append(
+            {
+                "id": sid,
+                "group": "miner",
+                "label": labels.get(sid, sid),
+            }
+        )
+    try:
+        for s in list_sensors():
+            if not isinstance(s, dict):
+                continue
+            if s.get("enabled") is False:
+                continue
+            alias = str(s.get("alias") or "").strip().lower()
+            if not _sensor_alias_ok(alias):
+                continue
+            out.append(
+                {
+                    "id": f"sensor:{alias}",
+                    "group": "sensors",
+                    "alias": alias,
+                    "name": s.get("name") or alias,
+                    "name_en": s.get("name_en") or s.get("name") or alias,
+                    "name_ru": s.get("name_ru") or s.get("name") or alias,
+                    "unit": s.get("unit") or "°C",
+                    "label": f"{s.get('name') or alias} · {alias}",
+                }
+            )
+    except Exception:
+        pass
+    return out
 
 
 def resolve_pool_water(
     live: dict | None, sensor: str | None = None
 ) -> tuple[float | None, str]:
-    """Pool water temperature from live snapshot + pool_config.water_sensor."""
+    """
+    Pool water temperature from live snapshot and/or peripheral sensors.
+    sensor id: built-in or ``sensor:<alias>``.
+    """
     if sensor is None:
         with _pool_cfg_lock:
             sensor = _pool_cfg.get("water_sensor") or "liquid"
-    return resolve_t_ctrl(live, _normalize_pool_water_sensor(sensor))
+    sens = _normalize_pool_water_sensor(sensor)
+    if sens.startswith("sensor:"):
+        alias = sens.split(":", 1)[1]
+        try:
+            sdef = get_sensor_by_alias(alias)
+        except Exception:
+            sdef = None
+        if not sdef or sdef.get("enabled") is False:
+            return None, sens
+        try:
+            live_d = live if isinstance(live, dict) else None
+            ev = evaluate_sensor(sdef, live=live_d)
+            if ev.get("ok"):
+                return _f(ev.get("value")), sens
+        except Exception:
+            pass
+        return None, sens
+    return resolve_t_ctrl(live, sens)
 
 
 def _save_pool_cfg() -> None:
@@ -6294,10 +6427,6 @@ def pool_derived(cfg: dict | None = None) -> dict:
     W = float(c.get("width_m") or 0)
     D = float(c.get("depth_m") or 0)
     flow = float(c.get("flow_m3h") or 0)
-    try:
-        hex_dT = float(c.get("hex_delta_c") or 0)
-    except (TypeError, ValueError):
-        hex_dT = 0.0
     shape = str(c.get("shape") or "rect").lower()
     if shape in ("round", "circular", "circle"):
         shape = "circle"
@@ -6325,19 +6454,11 @@ def pool_derived(cfg: dict | None = None) -> dict:
 
     turnover_h = (volume_m3 / flow) if flow > 0 else None
     mass_kg = volume_m3 * 1000.0
-    # HEX heat capacity: ṁ · c · ΔT
-    # ṁ [kg/s] = flow_m3h · 1000 / 3600; c = 4186 J/(kg·K)
-    hex_power_kw = None
-    if flow > 0 and hex_dT > 0:
-        m_dot = flow * 1000.0 / 3600.0
-        hex_power_kw = round(m_dot * 4186.0 * hex_dT / 1000.0, 3)
     return {
         "length_m": L,
         "width_m": W,
         "depth_m": D,
         "flow_m3h": flow,
-        "hex_delta_c": hex_dT,
-        "hex_power_kw": hex_power_kw,
         "volume_m3": round(volume_m3, 3),
         "surface_m2": round(surface_m2, 3),
         "turnover_h": round(turnover_h, 3) if turnover_h is not None else None,
@@ -6345,9 +6466,9 @@ def pool_derived(cfg: dict | None = None) -> dict:
         "shape": shape,
         "formula_v": formula_v,
         "formula_s": formula_s,
-        "comment": c.get("comment") or "",
         "water_sensor": _normalize_pool_water_sensor(c.get("water_sensor")),
         "water_sensors": list(POOL_WATER_SENSORS),
+        "water_sensor_options": list_pool_water_sensor_options(),
     }
 
 
@@ -8462,26 +8583,6 @@ def _ghs_to_th(ghs: float | None) -> float | None:
     return g / 1000.0
 
 
-# Whatsminer hashboard layout by model family.
-# M63-class: 4 logical slots (2 physical PCBs × 2 virtual halves → paired temps).
-# M60S-class: 3 physical hashboards, 3 sensors → chart all three board0/1/2.
-HASHBOARD_LAYOUT: dict[str, dict] = {
-    "M66": {"boards": 4, "chart": [0, 2], "note": "4 slots · paired sensors"},
-    "M63": {"boards": 4, "chart": [0, 2], "note": "2 physical × 2 virtual slots"},
-    "M60S": {"boards": 3, "chart": [0, 1, 2], "note": "3 hashboards"},
-    "M60": {"boards": 3, "chart": [0, 1, 2]},
-    "M56": {"boards": 3, "chart": [0, 1, 2]},
-    "M53": {"boards": 3, "chart": [0, 1, 2]},
-    "M50S": {"boards": 3, "chart": [0, 1, 2]},
-    "M50": {"boards": 3, "chart": [0, 1, 2]},
-    "M33S": {"boards": 3, "chart": [0, 1, 2]},
-    "M30S": {"boards": 3, "chart": [0, 1, 2]},
-    "M30": {"boards": 3, "chart": [0, 1, 2]},
-    "M21S": {"boards": 3, "chart": [0, 1, 2]},
-    "M20S": {"boards": 3, "chart": [0, 1, 2]},
-}
-
-
 def resolve_hashboard_layout(
     miner_type: str | None = None,
     *,
@@ -8491,51 +8592,34 @@ def resolve_hashboard_layout(
     """
     How many PCB/hashboard slots to show and which indices for charts.
 
-    Priority:
-      1) live DEVS count (when > 0) — source of truth on M60S (3) / M63 (4)
-      2) v3 miner.board-num
-      3) model map (M63→4, M60S→3, …)
-      4) default 4
+    Delegates to miner_models.resolve_hashboard_layout (manufacturer + family
+    catalog). Fallback keeps previous defaults if the module is missing.
     """
-    mt = str(miner_type or "").strip().upper().replace(" ", "").replace("-", "")
-    base = mt.split("_")[0] if mt else ""
-    layout: dict | None = None
-    for key in sorted(HASHBOARD_LAYOUT.keys(), key=len, reverse=True):
-        if base.startswith(key) or mt.startswith(key):
-            layout = dict(HASHBOARD_LAYOUT[key])
-            layout["model_key"] = key
-            break
-    if layout is None:
-        n_guess = 4
-        if board_num and int(board_num) > 0:
-            n_guess = int(board_num)
-        elif n_devs and int(n_devs) > 0:
-            n_guess = int(n_devs)
-        n_guess = max(1, min(8, n_guess))
-        if n_guess >= 4:
-            chart = [0, 2]
-        elif n_guess >= 3:
-            chart = [0, 1, 2]
-        elif n_guess >= 2:
-            chart = [0, 1]
-        else:
-            chart = [0]
-        layout = {
-            "boards": n_guess,
-            "chart": chart,
-            "model_key": "auto",
-            "note": "auto from DEVS/board-num",
-        }
-    # Live DEVS wins when present — also fix chart slots for board count
-    if n_devs is not None and int(n_devs) > 0:
-        n = max(1, min(8, int(n_devs)))
-        layout["boards"] = n
-        layout["chart"] = _chart_slots_for_boards(n, layout.get("chart"))
-    elif board_num is not None and int(board_num) > 0:
-        n = max(1, min(8, int(board_num)))
-        layout["boards"] = n
-        layout["chart"] = _chart_slots_for_boards(n, layout.get("chart"))
-    return layout
+    if _mm_resolve_hashboard_layout is not None:
+        return _mm_resolve_hashboard_layout(
+            miner_type, n_devs=n_devs, board_num=board_num
+        )
+    # Fallback without miner_models
+    n_guess = 4
+    if n_devs and int(n_devs) > 0:
+        n_guess = int(n_devs)
+    elif board_num and int(board_num) > 0:
+        n_guess = int(board_num)
+    n_guess = max(1, min(8, n_guess))
+    if n_guess >= 4:
+        chart = [0, 2]
+    elif n_guess >= 3:
+        chart = [0, 1, 2]
+    elif n_guess >= 2:
+        chart = [0, 1]
+    else:
+        chart = [0]
+    return {
+        "boards": n_guess,
+        "chart": chart,
+        "model_key": "auto",
+        "note": "auto (miner_models unavailable)",
+    }
 
 
 def _chart_slots_for_boards(n: int, preferred: list | None = None) -> list[int]:
@@ -8544,7 +8628,6 @@ def _chart_slots_for_boards(n: int, preferred: list | None = None) -> list[int]:
     pref = [int(x) for x in (preferred or []) if isinstance(x, (int, float))]
     pref = [x for x in pref if 0 <= x < n]
     if n >= 4:
-        # M63-class: keep paired physical sensors if still valid
         if pref == [0, 2] or (len(pref) == 2 and pref[0] == 0 and pref[-1] == 2):
             return [0, 2]
         if len(pref) >= 2:
@@ -10324,6 +10407,9 @@ class PoolheatMiner:
     """
     Adapter: whatsminer-lib UniversalMiner + methods poolheat already calls
     (set_power_mode, restart_btminer, set_pools, write_cmd, enable_api_switch).
+
+    Privileged writes (power mode / limit / pct / suspend) go **WhatsMinerTool
+    NetPacket :8889 first** (same path as WMT), then public API / LuCI fallback.
     """
 
     def __init__(
@@ -10346,7 +10432,9 @@ class PoolheatMiner:
             luci_username=luci_username,
             luci_password=self.luci_password,
             auto_probe=True,
-            prefer_netpacket=False,
+            # Prefer WMT private NetPacket (:8889) — works with Miner API Switch OFF
+            # and avoids public get_token «over max connect» burn.
+            prefer_netpacket=True,
             try_enable_api=False,
         )
         self._luci_compat = _LuciCompat(self._m.luci)
@@ -10355,11 +10443,85 @@ class PoolheatMiner:
     def luci(self) -> _LuciCompat:
         return self._luci_compat
 
+    def _wmt_first(self, action: str, wmt_fn, fallback_fn) -> dict:
+        """
+        Run WhatsMinerTool NetPacket method first; on failure use UniversalMiner
+        multi-transport fallback (public / LuCI).
+        """
+        errors: list[str] = []
+        try:
+            raw = wmt_fn()
+            if isinstance(raw, dict):
+                out = dict(raw)
+            else:
+                out = {"result": raw}
+            out.setdefault("ok", True)
+            out["transport"] = "netpacket"
+            out["action"] = action
+            return out
+        except Exception as e:
+            errors.append(f"netpacket: {e}")
+        try:
+            out = fallback_fn()
+            if isinstance(out, dict):
+                out.setdefault("action", action)
+                return out
+            return {"ok": True, "action": action, "result": out, "transport": "fallback"}
+        except Exception as e:
+            errors.append(str(e))
+            raise RuntimeError(
+                f"{self.host}: {action} failed · " + " · ".join(errors[:4])
+            ) from e
+
     def set_power_mode(self, mode: str) -> dict:
-        return self._m.set_power_mode(str(mode))
+        """WMT Performance Mode (NetPacket cmd 5) via library."""
+        m = str(mode).lower().strip()
+        return self._wmt_first(
+            "set_power_mode",
+            lambda: self._m.wmt.set_power_mode(m),
+            lambda: self._m.set_power_mode(m),
+        )
+
+    def set_power_limit(self, watts: int | float | str) -> dict:
+        """WMT Power Limit watts (NetPacket cmd 13 param 14)."""
+        w = int(float(watts))
+        return self._wmt_first(
+            "set_power_limit",
+            lambda: self._m.wmt.set_power_limit(w),
+            lambda: self._m.set_power_limit(w),
+        )
+
+    def set_power_pct(self, percent: int | float | str, *, fast: bool = False) -> dict:
+        """WMT Adjust Power % (NetPacket cmd 13 param 20, or 9 if fast)."""
+        pct = int(float(percent))
+        return self._wmt_first(
+            "set_power_pct",
+            lambda: self._m.wmt.set_power_pct(pct, fast=fast),
+            lambda: self._m.set_power_pct(pct, fast=fast),
+        )
+
+    def power_off(self) -> dict:
+        """WMT Suspend Mining (NetPacket ``8=0``)."""
+        return self._wmt_first(
+            "power_off",
+            lambda: self._m.wmt.suspend(),
+            lambda: self._m.power_off(),
+        )
+
+    def power_on(self) -> dict:
+        """WMT Resume Mining (NetPacket ``8=1``)."""
+        return self._wmt_first(
+            "power_on",
+            lambda: self._m.wmt.resume(),
+            lambda: self._m.power_on(),
+        )
 
     def reboot(self) -> dict:
-        return self._m.reboot()
+        return self._wmt_first(
+            "reboot",
+            lambda: self._m.wmt.reboot(),
+            lambda: self._m.reboot(),
+        )
 
     def restart_btminer(self) -> dict:
         return self._m.restart_mining()
@@ -10382,7 +10544,7 @@ class PoolheatMiner:
                 else "x"
             )
             slots[i] = {"url": url, "user": user, "password": pw}
-        # Prefer universal update_pools (auto transport)
+        # Prefer universal update_pools (auto transport; NetPacket preferred)
         try:
             return self._m.update_pools(
                 slots[0]["url"],
@@ -10415,7 +10577,7 @@ class PoolheatMiner:
         return self._m.set_api_switch(bool(enable))
 
     def write_cmd(self, cmd: dict) -> dict:
-        """Map legacy privileged cmd dicts onto UniversalMiner actions."""
+        """Map legacy privileged cmd dicts onto UniversalMiner / WMT actions."""
         cname = str((cmd or {}).get("cmd") or "").strip()
         if cname in ("set_low_power",):
             return self.set_power_mode("low")
@@ -10429,14 +10591,14 @@ class PoolheatMiner:
             return self.restart_btminer()
         if cname in ("adjust_power_limit", "set_power_limit", "power_limit"):
             w = cmd.get("power_limit") or cmd.get("watts") or cmd.get("value")
-            return self._m.set_power_limit(int(float(w)))
+            return self.set_power_limit(w)
         if cname in ("set_power_pct", "power_pct"):
             pct = cmd.get("percent") or cmd.get("pct") or cmd.get("value")
-            return self._m.set_power_pct(int(float(pct)))
+            return self.set_power_pct(pct)
         if cname in ("sleep", "suspend", "power_off"):
-            return self._m.power_off()
+            return self.power_off()
         if cname in ("resume", "power_on", "wakeup"):
-            return self._m.power_on()
+            return self.power_on()
         if cname in ("factory_reset", "factory"):
             # NetPacket-only (WhatsMinerTool) — see UniversalMiner.factory_reset
             return self._m.factory_reset(netpacket_only=True)
@@ -10451,7 +10613,7 @@ class PoolheatMiner:
 def get_whatsminer_driver(password: str | None = None) -> "PoolheatMiner":
     """
     Shared UniversalMiner adapter for poolheat writes.
-    Auto-selects V3/V2/NetPacket/LuCI (whatsminer-lib).
+    Prefers WhatsMinerTool NetPacket :8889, then public API / LuCI.
     """
     global _wm_driver, _wm_driver_pw_fp
     if UniversalMiner is None or LuCIClient is None:
@@ -10464,6 +10626,15 @@ def get_whatsminer_driver(password: str | None = None) -> "PoolheatMiner":
     fp = _password_fingerprint(pw)
 
     with _wm_driver_lock:
+        # Drop stale adapter built with prefer_netpacket=False
+        if _wm_driver is not None:
+            try:
+                pref = bool(getattr(_wm_driver._m, "prefer_netpacket", False))
+            except Exception:
+                pref = False
+            if not pref or str(_wm_driver.host) != str(HOST_MINER):
+                _wm_driver = None
+                _wm_driver_pw_fp = None
         if (
             _wm_driver is not None
             and _wm_driver_pw_fp == fp
@@ -10476,6 +10647,8 @@ def get_whatsminer_driver(password: str | None = None) -> "PoolheatMiner":
                 _wm_driver._m.password = pw
                 _wm_driver._m.luci_password = pw
                 _wm_driver._m.v3_password = pw
+                # keep WMT preference sticky
+                _wm_driver._m.prefer_netpacket = True
             except Exception:
                 pass
             return _wm_driver
@@ -11629,10 +11802,22 @@ def _build_temp_sensors_catalog(
     """
     out: list[dict] = []
     mt = str(miner_type or "").upper()
-    # Liquid coolers: M53/M56/M63/M66 families often expose liquid_temp
-    liquid_family = any(
-        x in mt for x in ("M53", "M56", "M63", "M66", "M50S", "M30S++", "LIQUID")
-    )
+    # Prefer model catalog cooling/sensors; fallback to legacy family names
+    liquid_family = False
+    if resolve_miner_model is not None:
+        try:
+            mp = resolve_miner_model(miner_type)
+            sens = mp.get("sensors") or {}
+            liquid_family = bool(
+                sens.get("liquid_temp")
+                or str(mp.get("cooling") or "").lower() == "liquid"
+            )
+        except Exception:
+            liquid_family = False
+    if not liquid_family:
+        liquid_family = any(
+            x in mt for x in ("M53", "M56", "M63", "M66", "M50S", "M30S++", "LIQUID")
+        )
 
     def _add(
         sid: str,
@@ -11927,12 +12112,25 @@ def fetch_live() -> dict:
                 pass
     except Exception:
         pass
+    n_devs_live = len(devs) if isinstance(devs, list) else 0
     hb_layout = resolve_hashboard_layout(
         miner_type_s,
-        n_devs=len(devs) if isinstance(devs, list) else 0,
+        n_devs=n_devs_live,
         board_num=board_num_hint,
     )
     n_boards = int(hb_layout.get("boards") or 4)
+    model_profile: dict | None = None
+    if resolve_miner_model is not None:
+        try:
+            model_profile = resolve_miner_model(
+                miner_type_s,
+                n_devs=n_devs_live,
+                board_num=board_num_hint,
+            )
+        except Exception:
+            model_profile = hb_layout.get("profile") if isinstance(hb_layout, dict) else None
+    elif isinstance(hb_layout, dict) and isinstance(hb_layout.get("profile"), dict):
+        model_profile = hb_layout.get("profile")
 
     boards: list[float | None] = []
     board_chip_min: list[float | None] = []
@@ -11977,6 +12175,7 @@ def fetch_live() -> dict:
         lim_cmd = _state.get("power_limit_cmd")
         mode_cmd = _state.get("mode_cmd")
         work_cmd = _state.get("work_cmd")
+        work_cmd_ts = _state.get("work_cmd_ts")
         last_write = _state.get("last_write")
 
     hash_pct = status.get("hash_percent")
@@ -12064,6 +12263,7 @@ def fetch_live() -> dict:
         "board_layout_key": hb_layout.get("model_key"),
         "board_layout_note": hb_layout.get("note"),
         "miner_type": miner_type_s,
+        "model": model_profile,
         "power": summary.get("Power"),
         "mode": mode,
         "mode_norm": mode_norm,
@@ -12076,7 +12276,8 @@ def fetch_live() -> dict:
         "power_limit_cmd": lim_cmd,
         "mode_cmd": mode_cmd,
         "work_cmd": work_cmd,
-        # measured from miner API (for UI); work_cmd remains last commanded
+        "work_cmd_ts": work_cmd_ts,
+        # measured from miner API (for UI); work_cmd = last successful command
         "work_measured": (
             "suspend"
             if _measured_work_state(
@@ -12539,19 +12740,23 @@ def _record_write(action: str, value, resp, *, warning: str | None = None) -> di
     with _state_lock:
         _state["last_write"] = entry
         _state["last_write_result"] = resp
-        if action == "mode":
-            _state["mode_cmd"] = value
-        elif action == "working":
-            _state["work_cmd"] = value
-        elif action == "power_pct":
-            _state["power_pct_cmd"] = value
-        elif action == "power_limit":
-            _state["power_limit_cmd"] = value
+        # Only sticky-cmd on successful writes — failed Suspend must not leave
+        # UI stuck on «Останавливается» forever.
+        if ok:
+            if action == "mode":
+                _state["mode_cmd"] = value
+            elif action == "working":
+                _state["work_cmd"] = value
+                _state["work_cmd_ts"] = time.time()
+            elif action == "power_pct":
+                _state["power_pct_cmd"] = value
+            elif action == "power_limit":
+                _state["power_limit_cmd"] = value
         _save_state()
     # Soft invalidate: keep last-good for instant TG /status; also patch
     # commanded fields so miner card reflects the write before next poll.
     with _cache_lock:
-        if isinstance(_cache, dict) and _cache.get("ok"):
+        if isinstance(_cache, dict) and _cache.get("ok") and ok:
             if action == "mode" and value is not None:
                 _cache["mode"] = value
                 _cache["mode_norm"] = str(value).strip().lower()
@@ -12559,13 +12764,10 @@ def _record_write(action: str, value, resp, *, warning: str | None = None) -> di
                 _cache["mode_cmd"] = value
             elif action == "working" and value is not None:
                 v = str(value).strip().lower()
-                if v in ("sleep", "suspend"):
-                    _cache["work_measured"] = "suspend"
-                    _cache["mineroff"] = "true"
-                elif v in ("resume", "mining", "on"):
-                    _cache["work_measured"] = "resume"
-                    _cache["mineroff"] = "false"
+                # Do NOT overwrite measured mineroff/work — wait for next live poll.
+                # Only stamp commanded work_cmd for lifecycle "starting/stopping".
                 _cache["work_cmd"] = value
+                _cache["work_cmd_ts"] = time.time()
             elif action == "power_pct" and value is not None:
                 _cache["power_pct_cmd"] = value
             elif action == "power_limit" and value is not None:
@@ -12576,6 +12778,8 @@ def _record_write(action: str, value, resp, *, warning: str | None = None) -> di
                     _cache["power_limit_measured"] = w
                 except (TypeError, ValueError):
                     pass
+            _cache["last_write"] = entry
+        elif isinstance(_cache, dict):
             _cache["last_write"] = entry
     _invalidate_cache(hard=False)
     if not ok:
@@ -12949,7 +13153,6 @@ DEFAULT_CHAT_PREFS = {
     "show_miner": True,
     "show_policy": True,  # Events section visibility
     "show_force_stop": True,
-    "show_filtration": True,
     "show_settings": True,
     "show_help": True,
 }
@@ -12965,7 +13168,6 @@ _TG_BOOL_PREF_KEYS = (
     "show_miner",
     "show_policy",
     "show_force_stop",
-    "show_filtration",
     "show_settings",
     "show_help",
 )
@@ -12975,7 +13177,6 @@ _TG_SECTION_TOG = {
     "miner": "show_miner",
     "policy": "show_policy",
     "force_stop": "show_force_stop",
-    "filtration": "show_filtration",
     "settings": "show_settings",
     "help": "show_help",
 }
@@ -13986,81 +14187,11 @@ def _tg_force_stop_btn_label(lang: str = "ru") -> str:
     return "▶️ Продолжить майнинг" if on else "⏹ Остановить майнинг"
 
 
-def _tg_notify_filtration(on: bool, *, source: str = "") -> None:
-    """
-    Push on pump state change:
-      💦 Насос фильтрации включен
-      🚱 Насос фильтрации выключен
-    """
-    on = bool(on)
-    text_ru = (
-        "💦 Насос фильтрации включен" if on else "🚱 Насос фильтрации выключен"
-    )
-    text_en = (
-        "💦 Filtration pump is on" if on else "🚱 Filtration pump is off"
-    )
-    tg_broadcast(
-        text_ru,
-        debounce_key=f"filtr:{1 if on else 0}",
-        notify_kind="events",
-        text_by_lang={"ru": text_ru, "en": text_en},
-    )
-
-
-def _tg_filtration_status_lines(lang: str = "ru") -> list[str]:
-    """
-    Status card lines when filtration control is enabled.
-    Uses last known pump state from config (no device/miner poll).
-    """
-    en = str(lang or "ru").lower().startswith("en")
-    try:
-        cfg = get_filtration_cfg(redact=True)
-    except Exception:
-        return []
-    if not cfg.get("enabled"):
-        return []
-    on = cfg.get("last_on")
-    if on is True:
-        return ["💦 Filtration:  on" if en else "💦 Фильтрация:  вкл"]
-    if on is False:
-        return ["🚱 Filtration:  off" if en else "🚱 Фильтрация:  выкл"]
-    return ["💧 Filtration:  —" if en else "💧 Фильтрация:  —"]
-
-
-def _tg_filtration_btn_label(lang: str = "ru") -> str:
-    """
-    Main-menu filtration toggle label: «Фильтрация [вкл]» / «[выкл]».
-    OFF is locked while mining (🔒) unless allow_off_while_mining / can_turn_off.
-    Telegram cannot disable a reply key, so the lock is on the label and the
-    handler refuses OFF when the option is off.
-    """
-    en = str(lang or "ru").lower().startswith("en")
-    try:
-        st = get_filtration_status(probe_live=False)
-    except Exception:
-        st = {}
-    if not st.get("enabled"):
-        return "💧 Filtration [—]" if en else "💧 Фильтрация [—]"
-    on = st.get("on") is True
-    mining = st.get("mining") is True
-    # Same gate as UI / filtration_set: can_turn_off (allow_off_while_mining)
-    locked = bool(on and mining and not st.get("can_turn_off"))
-    if en:
-        state = "on" if on else "off"
-        if locked:
-            return f"🔒 Filtration [{state}]"
-        return f"💧 Filtration [{state}]"
-    state = "вкл" if on else "выкл"
-    if locked:
-        return f"🔒 Фильтрация [{state}]"
-    return f"💧 Фильтрация [{state}]"
-
-
 def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     """
     Persistent reply keyboard — main navigation.
     Per-chat show_* prefs hide optional sections (Status + Profile always on).
-    Fast path: no miner I/O (filtration label uses cache only).
+    Pump / outlets: only via Peripherals → Devices bot buttons.
     """
     prefs: dict = {}
     if chat_id is not None:
@@ -14079,34 +14210,6 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     # Info + Pools live under Miner (inline), not on the main keyboard.
     fs_btn = _tg_force_stop_btn_label(lang)
 
-    # One status read (cache) — avoid double get_filtration_status → was 2× fetch_live
-    filt_st: dict = {}
-    try:
-        filt_st = get_filtration_status(probe_live=False)
-    except Exception:
-        filt_st = {}
-    filt_enabled = bool(filt_st.get("enabled"))
-    fl_btn = None
-    if filt_enabled:
-        # inline label from same snapshot (no second call)
-        on = filt_st.get("on") is True
-        mining = filt_st.get("mining") is True
-        locked = bool(on and mining and not filt_st.get("can_turn_off"))
-        if en:
-            state = "on" if on else "off"
-            fl_btn = (
-                f"🔒 Filtration [{state}]"
-                if locked
-                else f"💧 Filtration [{state}]"
-            )
-        else:
-            state = "вкл" if on else "выкл"
-            fl_btn = (
-                f"🔒 Фильтрация [{state}]"
-                if locked
-                else f"💧 Фильтрация [{state}]"
-            )
-
     # Row 1: Status always · Miner optional
     row1 = [{"text": "📊 Status" if en else "📊 Статус"}]
     if _show("show_miner"):
@@ -14120,8 +14223,6 @@ def _tg_main_keyboard(lang: str = "ru", chat_id=None) -> dict:
     rows: list[list[dict]] = [row1, row2]
     if _show("show_force_stop"):
         rows.append([{"text": fs_btn}])
-    if filt_enabled and _show("show_filtration") and fl_btn:
-        rows.append([{"text": fl_btn}])
 
     # Peripherals devices with «show button in bot»
     try:
@@ -14253,7 +14354,6 @@ def _tg_settings_inline(
             [sec_btn("miner", "⛏ Miner", "⛏ Майнер")],
             [sec_btn("policy", "📋 Events", "📋 События")],
             [sec_btn("force_stop", "⏹ Force Stop", "⏹ Force Stop")],
-            [sec_btn("filtration", "💧 Filtration", "💧 Фильтрация")],
             [sec_btn("settings", "⚙️ Settings", "⚙️ Настройки")],
             [sec_btn("help", "❓ Help", "❓ Справка")],
             [
@@ -14381,13 +14481,6 @@ def _tg_normalize_incoming_text(text: str) -> str:
         return "/settings"
     if "update" in bare or "обновл" in bare:
         return "/update"
-    # Filtration before bare "mining" match
-    if (
-        "filtr" in bare
-        or "фильтр" in bare
-        or bare in ("filter", "filtration", "фильтрация")
-    ):
-        return "/filtration"
     if (
         "stop mining" in bare
         or "stop work" in bare
@@ -15053,10 +15146,9 @@ def compute_heat_balance(
 ) -> dict | None:
     """
     Same model as UI «Нагрев / остывание»:
-      T_water = pool water sensor (config water_sensor, default liquid)
-      Tw = T_water − hex_delta_c
+      Tw = pool water sensor (config water_sensor, default liquid)
       Q_loss = U · S · max(0, Tw − Ta)
-      Q_in   = min(P_miner, HEX capacity)   [HEX = ṁ·c·ΔT if known]
+      Q_in   = P_miner
       Q_net  = Q_in − Q_loss
       rate   = Q_net / (m·c) · 3600   °C/h   (+ heat, − cool)
     Returns None if inputs incomplete.
@@ -15074,10 +15166,7 @@ def compute_heat_balance(
     Tliq, water_sens = resolve_pool_water(live, der.get("water_sensor"))
     if Tliq is None:
         return None
-    hex_dt = _f(der.get("hex_delta_c")) or 0.0
-    if hex_dt < 0:
-        hex_dt = 0.0
-    Tw = float(Tliq) - float(hex_dt)
+    Tw = float(Tliq)
 
     Ta = street_c
     if Ta is None:
@@ -15092,22 +15181,7 @@ def compute_heat_balance(
     dT = Tw - float(Ta)
     Q_loss_W = POOL_U_W_M2K * float(S) * max(0.0, dT)
 
-    hex_cap_W = None
-    hp = _f(der.get("hex_power_kw"))
-    if hp is not None and hp > 0:
-        hex_cap_W = float(hp) * 1000.0
-    else:
-        flow = _f(der.get("flow_m3h"))
-        if flow is not None and flow > 0 and hex_dt > 0:
-            m_dot = float(flow) * 1000.0 / 3600.0
-            hex_cap_W = m_dot * 4186.0 * float(hex_dt)
-
     Q_in_W = float(P_W)
-    limited = False
-    if hex_cap_W is not None and hex_cap_W > 0 and Q_in_W > hex_cap_W:
-        Q_in_W = hex_cap_W
-        limited = True
-
     Q_net_W = Q_in_W - Q_loss_W
     c = 4186.0
     rate = (Q_net_W / (float(mass) * c)) * 3600.0  # °C/h
@@ -15130,7 +15204,6 @@ def compute_heat_balance(
         "water_sensor": water_sens,
         "ta_c": float(Ta),
         "dt_c": dT,
-        "limited_by_hex": limited,
         "balance": bal,  # heat | cool | hold
     }
 
@@ -15171,10 +15244,9 @@ def _tg_heat_balance_lines(
     # ❄️ Остывание
     # -0.075 °C/h  ·  -2.12 kW
     # in: 1.99 kW · loss: 4.11 kW
-    cap = " · HEX cap" if hb.get("limited_by_hex") else ""
     head = f"{icon} {bal_lab}"
     line1 = f"{sgn(rate, 3)} °C/h  ·  {sgn(qn, 2)} kW"
-    line2 = f"in: {_tg_fmt_num(qi, 2)} kW · loss: {_tg_fmt_num(ql, 2)} kW{cap}"
+    line2 = f"in: {_tg_fmt_num(qi, 2)} kW · loss: {_tg_fmt_num(ql, 2)} kW"
     return [head, line1, line2]
 
 
@@ -15519,10 +15591,6 @@ def _tg_status_text(lang: str = "ru") -> str:
         sep,
         power_line,
     ]
-    fl_lines = _tg_filtration_status_lines(lang)
-    if fl_lines:
-        lines.append("")
-        lines.extend(fl_lines)
     lines += [
         "",
         temps_h,
@@ -16387,7 +16455,6 @@ def _tg_commands_help(lang: str = "ru") -> str:
             "Force Stop (no arg = toggle)\n"
             "/force_stop [on|off] — emergency stop\n"
             "⏹ Stop mining · ▶️ Continue mining\n"
-            "/filtration [on|off] — pump filter (OFF locked while mining unless allowed)\n"
             "/<alias> [on|off] — peripheral device (bot button / alias)\n"
             "/lang_ru — Russian\n"
             "/lang_en — English\n"
@@ -16419,7 +16486,6 @@ def _tg_commands_help(lang: str = "ru") -> str:
         "Force Stop (без arg = переключить)\n"
         "/force_stop [on|off] — экстренная остановка\n"
         "⏹ Остановить майнинг · ▶️ Продолжить майнинг\n"
-        "/filtration [on|off] — фильтрация (ВЫКЛ при майнинге — если не разрешено)\n"
         "/<alias> [on|off] — устройство (кнопка бота / alias)\n"
         "/lang_ru — русский\n"
         "/lang_en — English\n"
@@ -16474,7 +16540,6 @@ def _tg_prefs_text(
             f"Miner: {_sec('show_miner')}\n"
             f"Events: {_sec('show_policy')}\n"
             f"Force Stop: {_sec('show_force_stop')}\n"
-            f"Filtration: {_sec('show_filtration')}\n"
             f"Settings: {_sec('show_settings')}\n"
             f"Help: {_sec('show_help')}\n"
             f"\n"
@@ -16506,7 +16571,6 @@ def _tg_prefs_text(
         f"Майнер: {_sec('show_miner')}\n"
         f"События: {_sec('show_policy')}\n"
         f"Force Stop: {_sec('show_force_stop')}\n"
-        f"Фильтрация: {_sec('show_filtration')}\n"
         f"Настройки: {_sec('show_settings')}\n"
         f"Справка: {_sec('show_help')}\n"
         f"\n"
@@ -18300,102 +18364,6 @@ def _tg_handle_command(
             )
         return
 
-    if cmd in ("/filtration", "/filter"):
-        try:
-            st = get_filtration_status()
-        except Exception as e:
-            tg_send_message(
-                chat_id,
-                f"❌ filtration: {e}",
-                reply_markup=_tg_main_keyboard(lang, chat_id),
-            )
-            return
-        if not st.get("enabled"):
-            tg_send_message(
-                chat_id,
-                (
-                    "💧 Filtration disabled in Settings"
-                    if en
-                    else "💧 Фильтрация отключена в настройках"
-                ),
-                reply_markup=_tg_main_keyboard(lang, chat_id),
-            )
-            return
-        arg0 = str(args[0]).lower() if args else ""
-        onoff = _tg_parse_onoff(arg0) if arg0 else None
-        if onoff is None:
-            # bare button / no arg → toggle
-            onoff = not (st.get("on") is True)
-        # OFF locked while mining unless allow_off_while_mining (can_turn_off)
-        if not onoff and st.get("mining") is True and not st.get("can_turn_off"):
-            tg_send_message(
-                chat_id,
-                (
-                    "🔒 Filtration OFF unavailable while mining\n"
-                    "Stop mining first, or enable «Allow OFF while mining» in Settings"
-                    if en
-                    else "🔒 Фильтрация ВЫКЛ недоступна при майнинге\n"
-                    "Остановите майнинг или включите «Разрешить OFF при mining» в настройках"
-                ),
-                reply_markup=_tg_main_keyboard(lang, chat_id),
-            )
-            return
-        try:
-            _tg_log_control(
-                chat_id,
-                from_user,
-                "Filtration " + ("ON" if onoff else "OFF"))
-            out = filtration_set(bool(onoff), source="telegram", force=False)
-            if not out.get("ok"):
-                err = out.get("error") or "fail"
-                # re-pretty with chat language if raw slipped through
-                if "\n" not in str(err) or "Не удалось" not in str(err):
-                    err = _filtration_user_error(
-                        Exception(str(err)),
-                        on=bool(onoff),
-                        backend=out.get("backend") or st.get("backend"),
-                        lang=lang,
-                    )
-                tg_send_message(
-                    chat_id,
-                    f"❌ {err}",
-                    reply_markup=_tg_main_keyboard(lang, chat_id),
-                )
-                return
-            # Same wording as auto-notify; keyboard rebuilt after last_on update
-            got_on = out.get("on")
-            if got_on is None:
-                got_on = onoff
-            if en:
-                msg = (
-                    "💦 Filtration pump is on"
-                    if got_on
-                    else "🚱 Filtration pump is off"
-                )
-            else:
-                msg = (
-                    "💦 Насос фильтрации включен"
-                    if got_on
-                    else "🚱 Насос фильтрации выключен"
-                )
-            tg_send_message(
-                chat_id,
-                msg,
-                reply_markup=_tg_main_keyboard(lang, chat_id),
-            )
-        except Exception as e:
-            tg_send_message(
-                chat_id,
-                "❌ "
-                + _filtration_user_error(
-                    e,
-                    on=bool(onoff),
-                    backend=st.get("backend") if isinstance(st, dict) else None,
-                    lang=lang,
-                ),
-                reply_markup=_tg_main_keyboard(lang, chat_id),
-            )
-        return
 
     if cmd == "/override":
         mins = 30.0
@@ -18788,16 +18756,89 @@ def _normalize_work_side(v) -> str | None:
     return None
 
 
+def _work_cmd_age_sec(live: dict | None = None) -> float:
+    """Seconds since work_cmd was last set; large if unknown."""
+    ts = None
+    if isinstance(live, dict) and live.get("work_cmd_ts") is not None:
+        try:
+            ts = float(live.get("work_cmd_ts"))
+        except (TypeError, ValueError):
+            ts = None
+    if ts is None:
+        with _state_lock:
+            try:
+                ts = float(_state.get("work_cmd_ts")) if _state.get("work_cmd_ts") is not None else None
+            except (TypeError, ValueError):
+                ts = None
+    if ts is None:
+        return 1e9
+    return max(0.0, time.time() - ts)
+
+
+def _reconcile_work_cmd(live: dict) -> None:
+    """
+    If sticky work_cmd contradicts clear measured state past the transition
+    window, adopt measured reality (clears stuck «Останавливается»).
+    """
+    if not isinstance(live, dict):
+        return
+    cmd = _normalize_work_side(live.get("work_cmd"))
+    meas = _normalize_work_side(live.get("work_measured"))
+    if meas is None:
+        try:
+            mw = _measured_work_state(live)
+            meas = "suspend" if mw in ("sleep", "suspend") else "resume"
+        except Exception:
+            return
+    if not cmd or not meas or cmd == meas:
+        return
+    if _work_cmd_age_sec(live) < _WORK_CMD_TRANSITION_SEC:
+        return
+    # Require solid evidence before flipping sticky command
+    h = _f(live.get("hashrate_th"))
+    p = _f(live.get("power"))
+    mo = str(live.get("mineroff") or "").strip().lower()
+    solid_resume = (h is not None and h >= 1.0) or (
+        mo in ("false", "0", "no") and p is not None and p >= 400
+    )
+    solid_suspend = mo in ("true", "1", "yes") and not (
+        h is not None and h >= 1.0
+    )
+    if cmd == "suspend" and meas == "resume" and solid_resume:
+        new_cmd = "resume"
+    elif cmd == "resume" and meas == "suspend" and solid_suspend:
+        new_cmd = "sleep"
+    else:
+        return
+    with _state_lock:
+        _state["work_cmd"] = new_cmd
+        _state["work_cmd_ts"] = time.time()
+        _save_state()
+    live["work_cmd"] = new_cmd
+    live["work_cmd_ts"] = _state.get("work_cmd_ts")
+    with _cache_lock:
+        if isinstance(_cache, dict):
+            _cache["work_cmd"] = new_cmd
+            _cache["work_cmd_ts"] = live["work_cmd_ts"]
+
+
 def mining_run_status(live: dict | None) -> dict:
     """
     Miner lifecycle for UI / Telegram:
-      starting  — commanded Resume, API still Suspend
-      stopping  — commanded Suspend, API still Resume
+      starting  — commanded Resume, API still Suspend (brief)
+      stopping  — commanded Suspend, API still Resume (brief)
       tuning    — mining, boards still Upfreq
       running   — mining, Upfreq complete
       stopped   — Suspend (stable)
+
+    Transitional labels only for ~_WORK_CMD_TRANSITION_SEC after a successful
+    work write; stale sticky work_cmd is reconciled to measured state.
     """
     live = live or {}
+    try:
+        _reconcile_work_cmd(live)
+    except Exception:
+        pass
     meas = _normalize_work_side(live.get("work_measured"))
     if meas is None:
         try:
@@ -18806,15 +18847,17 @@ def mining_run_status(live: dict | None) -> dict:
         except Exception:
             meas = None
     cmd = _normalize_work_side(live.get("work_cmd"))
+    age = _work_cmd_age_sec(live)
+    transitional = age <= _WORK_CMD_TRANSITION_SEC
 
-    # commanded vs measured mismatch = transitional
-    if cmd == "resume" and meas == "suspend":
+    # commanded vs measured mismatch = transitional (only while recent)
+    if transitional and cmd == "resume" and meas == "suspend":
         return {
             "key": "starting",
             "label_ru": "Запускается",
             "label_en": "Starting",
         }
-    if cmd == "suspend" and meas == "resume":
+    if transitional and cmd == "suspend" and meas == "resume":
         return {
             "key": "stopping",
             "label_ru": "Останавливается",
@@ -19494,12 +19537,6 @@ def policy_tick() -> None:
                 need_cmds = []
             desired = desired or "force_stop"
 
-    # Filtration (Tapo P100): force ON while mining; optional OFF on suspend
-    try:
-        filtration_sync_with_mining(measured_work)
-    except Exception as e:
-        print(f"[filtration] sync: {e}")
-
     # Peripherals devices: Auto ON mining / Auto OFF suspend
     try:
         devices_sync_with_mining(measured_work)
@@ -19751,7 +19788,17 @@ class Handler(SimpleHTTPRequestHandler):
             self._api_pool_presets_get()
             return
         if path in ("/api/filtration", "/api/filtration/status", "/api/filtration/config"):
-            self._json_response(200, get_filtration_status())
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "enabled": False,
+                    "on": None,
+                    "removed": True,
+                    "error": None,
+                    "message": "Filtration settings removed — use Peripherals → Devices",
+                },
+            )
             return
         if path in ("/api/chipmap", "/api/chips", "/api/chipmap/status"):
             qs = parse_qs(urlparse(self.path).query)
@@ -19789,6 +19836,16 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/miner/errors", "/api/errors/log"):
             self._api_miner_error_log()
+            return
+        if path in (
+            "/api/miner/models",
+            "/api/miner/model/catalog",
+            "/api/models",
+        ):
+            self._api_miner_models_catalog()
+            return
+        if path in ("/api/miner/model", "/api/model"):
+            self._api_miner_model_resolve()
             return
         if path == "/api/miner/config":
             self._api_miner_config_get()
@@ -21091,28 +21148,87 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(500, {"ok": False, "error": str(e), "errors": []})
 
+    def _api_miner_models_catalog(self) -> None:
+        """GET /api/miner/models — manufacturers + family profiles."""
+        if miner_models_catalog is None:
+            self._json_response(
+                503,
+                {
+                    "ok": False,
+                    "error": "miner_models module not installed",
+                    "manufacturers": [],
+                    "families": [],
+                },
+            )
+            return
+        try:
+            body = miner_models_catalog()
+            self._json_response(200, body)
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_miner_model_resolve(self) -> None:
+        """
+        GET /api/miner/model?type=M63_VK2A
+        Optional: boards=4 · n_devs=4
+        Without type — resolve from identity cache.
+        """
+        if resolve_miner_model is None:
+            self._json_response(
+                503, {"ok": False, "error": "miner_models module not installed"}
+            )
+            return
+        qs = parse_qs(urlparse(self.path).query)
+        mt = (qs.get("type") or qs.get("model") or qs.get("miner_type") or [""])[0]
+        mt = str(mt or "").strip()
+        if not mt:
+            try:
+                ident = get_miner_identity_cached(force=False)
+                if isinstance(ident, dict):
+                    mt = str(ident.get("miner_type") or ident.get("model") or "").strip()
+            except Exception:
+                pass
+        n_devs = None
+        board_num = None
+        for key, dest in (("n_devs", "n"), ("boards", "n"), ("board_num", "b")):
+            raw = (qs.get(key) or [None])[0]
+            if raw is None or raw == "":
+                continue
+            try:
+                v = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if key == "board_num":
+                board_num = v
+            else:
+                n_devs = v
+        try:
+            profile = resolve_miner_model(mt or None, n_devs=n_devs, board_num=board_num)
+            self._json_response(200, profile)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_pool_config_post(self) -> None:
         try:
             req = self._read_json_body()
             with _pool_cfg_lock:
-                for key in ("length_m", "width_m", "depth_m", "flow_m3h", "hex_delta_c"):
+                for key in ("length_m", "width_m", "depth_m", "flow_m3h"):
                     if key in req and req[key] is not None:
                         v = float(req[key])
                         if key == "flow_m3h":
                             v = max(0.0, min(500.0, v))
-                        elif key == "hex_delta_c":
-                            v = max(0.1, min(40.0, v))
                         else:
                             v = max(0.1, min(200.0, v))
                         _pool_cfg[key] = v
                 if "shape" in req and req["shape"] is not None:
                     _pool_cfg["shape"] = str(req["shape"])
-                if "comment" in req and req["comment"] is not None:
-                    _pool_cfg["comment"] = str(req["comment"])
                 if "water_sensor" in req and req["water_sensor"] is not None:
                     _pool_cfg["water_sensor"] = _normalize_pool_water_sensor(
                         req["water_sensor"]
                     )
+                # legacy fields removed from model
+                _pool_cfg.pop("hex_delta_c", None)
+                _pool_cfg.pop("comment", None)
                 cfg = dict(_pool_cfg)
             _save_pool_cfg()
             derived = pool_derived(cfg)
@@ -21236,38 +21352,35 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_filtration_post(self) -> None:
-        try:
-            req = self._read_json_body() or {}
-            cfg = apply_filtration_cfg(req if isinstance(req, dict) else {})
-            self._json_response(200, {"ok": True, "config": cfg, **get_filtration_status()})
-        except Exception as e:
-            self._json_response(400, {"ok": False, "error": str(e)})
+        # Legacy Filtration · pump settings removed — use Peripherals → Devices
+        self._json_response(
+            410,
+            {
+                "ok": False,
+                "enabled": False,
+                "error": "Filtration settings removed — use Peripherals → Devices",
+            },
+        )
 
     def _api_filtration_set(self) -> None:
-        try:
-            req = self._read_json_body() or {}
-            if not isinstance(req, dict):
-                req = {}
-            if "on" in req:
-                on = bool(req["on"])
-            else:
-                # path-based
-                path = urlparse(self.path).path.rstrip("/")
-                if path.endswith("/off"):
-                    on = False
-                elif path.endswith("/on"):
-                    on = True
-                else:
-                    raise ValueError("need {on: true|false}")
-            out = filtration_set(on, source=str(req.get("source") or "manual"), force=False)
-            code = 200 if out.get("ok") else 400
-            self._json_response(code, out)
-        except Exception as e:
-            self._json_response(400, {"ok": False, "error": str(e)})
+        self._json_response(
+            410,
+            {
+                "ok": False,
+                "enabled": False,
+                "error": "Filtration control removed — use Peripherals → Devices (/alias)",
+            },
+        )
 
     def _api_filtration_test(self) -> None:
-        out = filtration_test()
-        self._json_response(200 if out.get("ok") else 400, out)
+        self._json_response(
+            410,
+            {
+                "ok": False,
+                "enabled": False,
+                "error": "Filtration test removed — use Peripherals → Devices",
+            },
+        )
 
     def _api_zone_presets_post(self) -> None:
         """
@@ -21520,6 +21633,7 @@ def main() -> None:
     print(f"filtration:        GET/POST /api/filtration · /set · /test")
     print(f"devices:           GET/POST /api/devices · /set · /test · /delete")
     print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
+    print(f"miner models:      GET /api/miner/models · /api/miner/model?type=M63")
     try:
         lp = get_luci_proxy_cfg()
         lpc = lp.get("config") or {}

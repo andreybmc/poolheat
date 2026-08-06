@@ -357,11 +357,12 @@
       font-weight: 650;
     }
 
-    /* Chip map (LuCI scrape · snake layout · HashSource-style) */
+    /* Chip map (LuCI scrape · snake/hydro · fit page width) */
     .chip-board {
       margin-bottom: 18px;
-      overflow-x: auto;
+      overflow-x: hidden; /* strips wrap; no page-wide scroll */
       padding-bottom: 4px;
+      max-width: 100%;
     }
     .chip-board-h {
       display: flex;
@@ -381,11 +382,12 @@
     }
     .chip-pair {
       margin-bottom: 18px;
-      overflow-x: auto;
+      overflow-x: hidden;
       padding: 12px 12px 8px;
       border: 1px solid var(--border);
       border-radius: var(--radius);
       background: var(--panel);
+      max-width: 100%;
     }
     .chip-pair-h {
       font-weight: 650;
@@ -399,41 +401,66 @@
       margin-bottom: 0;
     }
     .chip-snake {
+      --chip-size: 24px;
+      --chip-gap: 1px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      width: max-content;
-      max-width: none;
+      gap: 10px;
+      width: 100%;
+      max-width: 100%;
+    }
+    .chip-half-lab {
+      font-size: 0.72rem;
+      font-weight: 650;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+      margin: 2px 0 0;
+    }
+    .chip-strip {
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 2px;
+    }
+    .chip-strip-lab {
+      font-size: 0.68rem;
+      color: var(--dim);
+      font-variant-numeric: tabular-nums;
+      margin: 0 0 4px;
+      letter-spacing: 0.01em;
     }
     .chip-section {
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: var(--chip-gap, 1px);
+      width: max-content;
+      max-width: 100%;
     }
     .chip-row {
       display: flex;
       flex-direction: row;
-      gap: 2px;
+      flex-wrap: nowrap;
+      gap: var(--chip-gap, 1px);
     }
     /* legacy flat grid (fallback when layout unknown) */
     .chip-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
       gap: 2px;
       max-width: 100%;
     }
     /*
-     * Compact HashSource-style cell (36×36 — fits 45d / 3-board maps):
-     *  top:    freq  vol
+     * Cell size from --chip-size (fit-to-width).
      *  mid:    large value (temp / metric)
      *  bot:    err crc x repeat
      *  corner: C#
      */
     .chip-cell {
-      width: 36px;
-      height: 36px;
-      flex: 0 0 36px;
-      border-radius: 3px;
+      width: var(--chip-size, 24px);
+      height: var(--chip-size, 24px);
+      flex: 0 0 var(--chip-size, 24px);
+      border-radius: 2px;
       border: 1px solid rgba(255, 255, 255, 0.08);
       background: var(--border2);
       cursor: default;
@@ -442,7 +469,7 @@
       flex-direction: column;
       align-items: center;
       justify-content: space-between;
-      padding: 2px 1px 1px;
+      padding: 1px;
       font-weight: 600;
       line-height: 1;
       color: rgba(255, 255, 255, 0.92);
@@ -450,6 +477,27 @@
       user-select: none;
       box-sizing: border-box;
       overflow: hidden;
+    }
+    /* tiny cells: hide dense chrome, keep value + id */
+    .chip-snake.is-dense .chip-cell .c-bot,
+    .chip-snake.is-dense .chip-cell .c-top {
+      display: none;
+    }
+    .chip-snake.is-dense .chip-cell .c-aux {
+      display: none;
+    }
+    .chip-snake.is-dense .chip-cell .c-id {
+      font-size: 0.32rem;
+      opacity: 0.45;
+    }
+    .chip-snake.is-dense .chip-cell .c-main {
+      font-size: calc(var(--chip-size, 20px) * 0.38);
+    }
+    .chip-snake.is-tiny .chip-cell .c-id {
+      display: none;
+    }
+    .chip-snake.is-tiny .chip-cell .c-main {
+      font-size: calc(var(--chip-size, 14px) * 0.42);
     }
     .chip-cell.empty {
       opacity: 0.28;
@@ -481,7 +529,7 @@
       letter-spacing: -0.03em;
     }
     .chip-cell .c-main {
-      font-size: 0.78rem;
+      font-size: max(0.55rem, calc(var(--chip-size, 24px) * 0.34));
       font-weight: 700;
       letter-spacing: -0.03em;
       line-height: 1;
@@ -2169,8 +2217,68 @@
     }
 
     .temp-card.board-chip::before {
-      /* top: PCB aluminum · bottom: chip silicon */
-      background: linear-gradient(180deg, var(--alum) 0 50%, var(--silicon) 50% 100%);
+      /* Boards (alum, top) → Chips (silicon, bottom) — mirrored from prior */
+      background: linear-gradient(
+        180deg,
+        var(--alum) 0%,
+        #b8b4c4 30%,
+        #a78bd9 70%,
+        var(--silicon) 100%
+      );
+    }
+
+    /* Drag-reorder handles (sensors, devices, sensor sources) */
+    .drag-handle {
+      cursor: grab;
+      color: var(--dim);
+      user-select: none;
+      -webkit-user-select: none;
+      padding: 6px 8px;
+      margin: -4px 0;
+      font-size: 0.95rem;
+      line-height: 1;
+      letter-spacing: -0.08em;
+      border-radius: 6px;
+      flex: 0 0 auto;
+      touch-action: none;
+    }
+    .drag-handle:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .drag-handle:active { cursor: grabbing; }
+    .sortable-item.is-dragging {
+      opacity: 0.5;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .sortable-item.drag-over-top {
+      box-shadow: inset 0 2px 0 0 var(--accent);
+    }
+    .sortable-item.drag-over-bot {
+      box-shadow: inset 0 -2px 0 0 var(--accent);
+    }
+    .sensor-source-row.sortable-item {
+      position: relative;
+    }
+    .sensor-source-row .drag-handle {
+      align-self: center;
+    }
+    /* Compact cards in Sensors / Devices lists */
+    #sensors-list .card .card-b.periph-item-body,
+    #devices-list .card .card-b.periph-item-body,
+    .periph-item-body {
+      padding: 8px 10px !important;
+    }
+    #sensors-list.stack,
+    #devices-list.stack {
+      gap: 8px;
+    }
+    #sensors-list .card .btn,
+    #devices-list .card .btn {
+      padding: 4px 10px;
+      font-size: 0.78rem;
+    }
+    #sensors-list .drag-handle,
+    #devices-list .drag-handle {
+      padding: 4px 5px;
+      margin: -2px 0;
     }
     .temp-card.board-chip .tc-pcb {
       color: var(--alum);
@@ -2199,6 +2307,68 @@
     .temp-card.power-meas .tc-val,
     .temp-card.heat-balance .tc-val {
       font-size: 1.25rem;
+    }
+    /* Power measured: W | TH/s · freq + J/T left-aligned with offset */
+    .temp-card.power-meas .tc-val-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 0;
+      min-width: 0;
+    }
+    .temp-card.power-meas .tc-val-row > .tc-val {
+      flex: 0 1 auto;
+      min-width: 0;
+      color: var(--text);
+    }
+    /* digits (W · TH/s) same white as primary value */
+    .temp-card.power-meas .tc-val [data-bind="pw"],
+    .temp-card.power-meas .tc-val [data-bind="hr"] {
+      color: var(--text);
+    }
+    .temp-card.power-meas .tc-val small {
+      color: var(--muted);
+    }
+    .temp-card.power-meas .pm-side {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      flex: 0 0 auto;
+      gap: 1px;
+      margin-left: 1.1rem; /* offset from TH/s */
+      font-family: var(--mono);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.78rem;
+      font-weight: 650;
+      line-height: 1.25;
+      color: var(--text);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .temp-card.power-meas .pm-side .pm-side-line {
+      display: block;
+      color: var(--text);
+    }
+    .temp-card.power-meas .pm-side [data-bind="freq"],
+    .temp-card.power-meas .pm-side [data-bind="eff"] {
+      color: var(--text);
+      font-weight: 650;
+    }
+    .temp-card.power-meas .pm-side .tip {
+      color: var(--muted);
+      font-weight: 500;
+      border-bottom-color: rgba(139, 155, 176, 0.35);
+    }
+    .temp-card.power-meas .tc-extra.pm-extra {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+      line-height: 1.4;
+    }
+    .temp-card.power-meas .pm-extra-line {
+      display: block;
     }
     .temp-card.heat-balance .tc-val .hb-pos { color: var(--ok); }
     .temp-card.heat-balance .tc-val .hb-neg { color: var(--danger); }
@@ -2795,23 +2965,32 @@
               <span class="tip" data-tip-key="power_measured" data-i18n="dash.power_measured">Power measured</span>
               <span class="pm-badge" id="pm-work-badge">—</span>
             </div>
-            <div class="tc-val tc-val-dual">
-              <span data-bind="pw">—</span> <small>W</small>
-              <span class="tc-sep" aria-hidden="true">|</span>
-              <span data-bind="hr">—</span> <small class="tip" data-tip-key="hashrate">TH/s</small>
+            <div class="tc-val-row">
+              <div class="tc-val tc-val-dual">
+                <span data-bind="pw">—</span> <small>W</small>
+                <span class="tc-sep" aria-hidden="true">|</span>
+                <span data-bind="hr">—</span> <small class="tip" data-tip-key="hashrate">TH/s</small>
+              </div>
+              <div class="pm-side" aria-label="freq and efficiency">
+                <span class="pm-side-line"><span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span></span>
+                <span class="pm-side-line"><span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span></span>
+              </div>
             </div>
-            <div class="tc-extra">
-              <span data-bind="pwMode">—</span>
-              · <span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span>
-              · <span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span>
-              · <span class="tip" data-tip-key="psu_vin">Vin</span> <span data-bind="psuVin">—</span>
-              · <span class="tip" data-tip-key="psu_iin">Iin</span> <span data-bind="psuIin">—</span>
-              · <span class="tip" data-tip-key="psu_temp">PSU</span> <span data-bind="psuTemp">—</span>
-              · <span class="tip" data-tip-key="psu_fan" data-bind="psuFan">—</span>
-              · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot">uptime</span>
+            <div class="tc-extra pm-extra">
+              <div class="pm-extra-line">
+                <span data-bind="pwMode">—</span>
+                · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot">uptime</span>
                 <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
-              · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
+                · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
                 <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
+              </div>
+              <div class="pm-extra-line">
+                <span class="tip" data-tip-key="psu_temp">PSU</span>
+                <span data-bind="psuTemp">—</span>
+                · <span data-bind="psuFan">—</span>
+                · <span data-bind="psuVin" class="tip" data-tip-key="psu_vin">—</span>
+                · <span data-bind="psuIin" class="tip" data-tip-key="psu_iin">—</span>
+              </div>
             </div>
           </div>
           <div class="temp-card board-chip">
@@ -3328,6 +3507,23 @@
                 <label>Chip</label>
                 <div class="val" style="font-size:0.85rem;line-height:1.3;word-break:break-all" id="info-miner-chip">—</div>
                 <div class="hint">chip data</div>
+              </div>
+            </div>
+            <div class="grid-3" id="info-model-profile-row">
+              <div class="metric">
+                <label>Manufacturer</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-mfr">—</div>
+                <div class="hint" id="info-model-family">family —</div>
+              </div>
+              <div class="metric">
+                <label>Cooling · boards</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-cooling">—</div>
+                <div class="hint" id="info-model-boards">—</div>
+              </div>
+              <div class="metric">
+                <label>Chip layout</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-layout">—</div>
+                <div class="hint" id="info-model-sensors">sensors —</div>
               </div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
@@ -3999,17 +4195,21 @@
             <label class="field">
               <span class="tip" data-tip-key="pool_water_sensor" data-i18n="pool.water_sensor">Pool water sensor</span>
               <select id="pool-water-sensor">
-                <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
-                <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
-                <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
-                <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
-                <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
+                <optgroup label="Miner" data-i18n-label="pool.ws.group_miner">
+                  <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
+                  <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
+                  <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
+                  <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
+                  <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
+                </optgroup>
+                <!-- virtual sensors from Peripherals → Sensors filled by JS -->
+                <optgroup id="pool-ws-sensors-group" label="Sensors" data-i18n-label="pool.ws.group_sensors" hidden></optgroup>
               </select>
               <span class="hint" style="font-size:0.72rem;color:var(--dim);display:block;margin-top:4px" data-i18n="pool.ws.hint">
-                Water °C source for heat/cool model (Tw = water − ΔT HX)
+                Water °C source for heat/cool model — miner live fields or Peripherals → Sensors
               </span>
             </label>
-            <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
               <label class="field" id="pool-length-field">
                 <span class="tip" data-tip-key="pool_geometry" id="pool-length-label" data-i18n="pool.length_m">Length, m</span>
                 <input type="number" id="pool-length" value="8" min="0.5" max="200" step="0.1" />
@@ -4018,9 +4218,13 @@
                 <span id="pool-width-label" data-i18n="pool.width_m">Width, m</span>
                 <input type="number" id="pool-width" value="4" min="0.5" max="200" step="0.1" />
               </label>
-              <label class="field">
+              <label class="field" id="pool-depth-field">
                 <span data-i18n="pool.depth_m">Depth, m</span>
                 <input type="number" id="pool-depth" value="1.5" min="0.3" max="20" step="0.05" />
+              </label>
+              <label class="field" id="pool-flow-field">
+                <span class="tip" data-tip-key="pool_flow" data-i18n="pool.flow">Flow Q, L/h</span>
+                <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
               </label>
             </div>
             <div class="grid-3">
@@ -4046,39 +4250,8 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2 data-i18n="h2.circulation">Water exchange · circulation</h2>
-              <div class="sub" data-i18n="sub.circulation">pumping rate through heat exchanger</div>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:14px">
-            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
-              <label class="field"><span class="tip" data-tip-key="pool_flow" data-i18n="pool.flow">Flow Q, L/h</span>
-                <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
-              </label>
-              <label class="field"><span class="tip" data-tip-key="hex_delta" data-i18n="pool.hex_dt">HX ΔT, °C</span>
-                <input type="number" id="pool-hex-dt" value="5" min="0.1" max="40" step="0.1" />
-              </label>
-            </div>
-            <div class="metric" style="margin:0">
-              <label data-i18n="pool.hex_power">HX power (from Q and ΔT)</label>
-              <div class="val" style="font-size:1.15rem"><span id="pool-hex-kw">—</span> <small>kW</small></div>
-              <div class="hint">Q_hex = ṁ · c · ΔT · c=4186</div>
-            </div>
-            <p style="font-size:0.78rem;color:var(--muted);line-height:1.45" data-i18n="pool.circ_help">
-              Flow — liters through heat exchanger per hour.
-              ΔT — temperature difference in pool vs miner loop.
-            </p>
-            <label class="field"><span data-i18n="pool.comment">Comment</span>
-              <input type="text" id="pool-comment" data-i18n-placeholder="pool.comment_ph" placeholder="e.g. 8×4, heat exchanger on bypass" autocomplete="off" />
-            </label>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
               <h2 data-i18n="h2.weather">Weather · city</h2>
-              <div class="sub" data-i18n="sub.weather">Open-Meteo · outdoor °C · no API key</div>
+              <div class="sub" id="wx-card-sub">—</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn" type="button" id="btn-wx-refresh" data-i18n="btn.refresh_weather">Refresh weather</button>
@@ -4102,16 +4275,11 @@
                 <input type="number" id="wx-interval-min" value="10" min="1" max="1440" step="1" />
               </label>
             </div>
-            <div class="row" style="align-items:end">
-              <label class="field" style="flex:1"><span data-i18n="field.city_search">City search</span>
+            <div style="position:relative">
+              <label class="field" style="margin:0"><span data-i18n="field.city_search">City search</span>
                 <input type="text" id="wx-search" data-i18n-placeholder="wx.city_ph" placeholder="e.g. Moscow" autocomplete="off" />
               </label>
-              <button class="btn primary" type="button" id="btn-wx-search" data-i18n="btn.find">Find</button>
-            </div>
-            <div class="weather-results" id="wx-results" hidden></div>
-            <div>
-              <div style="font-size:0.75rem;color:var(--dim);margin-bottom:4px" data-i18n="label.quick_pick">Quick pick</div>
-              <div class="weather-preset-row" id="wx-presets"></div>
+              <div class="weather-results" id="wx-results" hidden style="position:absolute;left:0;right:0;z-index:20;margin-top:4px;max-height:240px;overflow:auto"></div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted)" id="wx-status">—</p>
           </div>
@@ -4144,7 +4312,7 @@
                 Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins.
                 Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).
               </p>
-              <div id="sensors-list" class="stack" style="gap:10px"></div>
+              <div id="sensors-list" class="stack" style="gap:8px"></div>
               <p style="font-size:0.75rem;color:var(--dim);margin:0" id="sensors-status">—</p>
             </div>
           </div>
@@ -4196,7 +4364,10 @@
 
               <div>
                 <div class="btn-row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
-                  <div style="font-weight:600;font-size:0.9rem" data-i18n="field.sensor_sources">Sources (priority top → bottom)</div>
+                  <div>
+                    <div style="font-weight:600;font-size:0.9rem" data-i18n="field.sensor_sources">Sources (priority top → bottom)</div>
+                    <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="field.sensor_sources_drag">drag ⋮⋮ to change priority</div>
+                  </div>
                   <button class="btn" type="button" id="btn-sensor-source-add" data-i18n="btn.add_source">Add source</button>
                 </div>
                 <div id="sensor-sources" class="stack" style="gap:8px"></div>
@@ -4240,18 +4411,15 @@
             <div class="card-h">
               <div>
                 <h2 data-i18n="h2.devices">Devices</h2>
-                <div class="sub" data-i18n="sub.devices_card">relays · pumps · valves · smart sockets · actuators</div>
+                <div class="sub" data-i18n="sub.devices_card">Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)</div>
               </div>
               <div class="btn-row" style="gap:8px;flex-wrap:wrap">
                 <button class="btn" type="button" id="btn-devices-refresh" data-i18n="btn.refresh">Refresh</button>
                 <button class="btn primary" type="button" id="btn-device-new" data-i18n="btn.device_new">New device</button>
               </div>
             </div>
-            <div class="card-b stack" style="gap:14px">
-              <p style="font-size:0.82rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.devices_help">
-                Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant). Mining auto rules and optional Telegram bot button (alias = command).
-              </p>
-              <div id="devices-list" class="stack" style="gap:10px"></div>
+            <div class="card-b stack" style="gap:10px">
+              <div id="devices-list" class="stack" style="gap:8px"></div>
               <p style="font-size:0.75rem;color:var(--dim);margin:0" id="devices-status">—</p>
             </div>
           </div>
@@ -4529,7 +4697,7 @@
           <div class="card-b">
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
               Included: miner connection, dry_run, zone map & presets,
-              <strong>pool presets</strong>, pool, weather, history, filtration,
+              <strong>pool presets</strong>, pool, weather, history,
               <strong>sensors &amp; devices</strong>, chipmap,
               luci_proxy, Telegram
               <strong>(including passwords and bot token)</strong>,
@@ -4594,169 +4762,6 @@
               Then: Suspend/Resume, Power Mode, Power Limit on :4028/:4433.
               Mode/reboot also via LuCI if write is still closed. Auto-enable
               on the first write command if the switch was off.
-            </p>
-          </div>
-        </div>
-
-        <div class="card" id="panel-filtration">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.filtration">Filtration · pump</h2>
-              <div class="sub" data-i18n="sub.filtration">outlet / webhook · auto ON while mining</div>
-            </div>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-filt-test" data-i18n="filt.btn_test">Test</button>
-              <button class="btn primary" type="button" id="btn-filt-save" data-i18n="filt.btn_save">Save</button>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <label class="check">
-              <input type="checkbox" id="filt-enabled" />
-              <span><span data-i18n="filt.enable">Enable filtration control</span>
-                <span class="desc" data-i18n="filt.enable_desc">policy + manual buttons</span>
-              </span>
-            </label>
-            <label class="field"><span data-i18n="filt.control_type">Control type</span>
-              <select id="filt-backend">
-                <option value="tapo">Tapo P100 / P110</option>
-                <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
-                <option value="webhook">Webhook (HTTP)</option>
-                <option value="shelly">Shelly</option>
-                <option value="homeassistant">Home Assistant</option>
-              </select>
-            </label>
-            <p id="filt-backend-hint" style="font-size:0.75rem;color:var(--dim);margin:0"></p>
-
-            <!-- Tapo -->
-            <div class="filt-be" data-be="tapo" style="display:none">
-              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="filt.outlet_ip">Outlet IP</span>
-                  <input type="text" id="filt-ip" placeholder="192.168.1.50" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.tapo_email">Tapo email</span>
-                  <input type="text" id="filt-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.tapo_password">Tapo password</span>
-                  <span class="pw-wrap">
-                    <input type="password" id="filt-password" placeholder="••••" autocomplete="off" />
-                    <button type="button" class="pw-eye" data-pw-for="filt-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
-                  </span>
-                </label>
-              </div>
-            </div>
-
-            <!-- eWeLink DIY -->
-            <div class="filt-be" data-be="ewelink" style="display:none">
-              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="filt.device_ip">Device IP</span>
-                  <input type="text" id="filt-ewelink-ip" placeholder="192.168.1.60" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.device_id">deviceid (DIY)</span>
-                  <input type="text" id="filt-device-id" placeholder="1000xxxxxx" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.port_diy">Port DIY</span>
-                  <input type="number" id="filt-ewelink-port" value="8081" min="1" max="65535" />
-                </label>
-              </div>
-              <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0" data-i18n-html="filt.ewelink_note">
-                Sonoff in <strong>DIY mode</strong> (LAN) required. eWeLink cloud without DIY — use Webhook / HA.
-              </p>
-            </div>
-
-            <!-- Webhook -->
-            <div class="filt-be" data-be="webhook" style="display:none">
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="filt.url_on">URL ON</span>
-                  <input type="text" id="filt-wh-on" placeholder="http://…/on" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.url_off">URL OFF</span>
-                  <input type="text" id="filt-wh-off" placeholder="http://…/off" autocomplete="off" />
-                </label>
-              </div>
-              <div class="row" style="grid-template-columns:120px 1fr 1fr;gap:12px;margin-top:10px">
-                <label class="field"><span data-i18n="filt.method">Method</span>
-                  <select id="filt-wh-method">
-                    <option value="GET">GET</option>
-                    <option value="POST">POST</option>
-                  </select>
-                </label>
-                <label class="field"><span data-i18n="filt.body_on">Body ON (POST)</span>
-                  <input type="text" id="filt-wh-body-on" placeholder='{"state":"on"}' autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.body_off">Body OFF (POST)</span>
-                  <input type="text" id="filt-wh-body-off" placeholder='{"state":"off"}' autocomplete="off" />
-                </label>
-              </div>
-              <label class="field" style="margin-top:10px"><span data-i18n="filt.headers">Headers JSON (opt.)</span>
-                <input type="text" id="filt-wh-headers" placeholder='{"Authorization":"Bearer …"}' autocomplete="off" />
-              </label>
-            </div>
-
-            <!-- Shelly -->
-            <div class="filt-be" data-be="shelly" style="display:none">
-              <div class="row" style="grid-template-columns:1fr 100px 120px;gap:12px">
-                <label class="field"><span data-i18n="filt.shelly_ip">IP Shelly</span>
-                  <input type="text" id="filt-shelly-ip" placeholder="192.168.1.70" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.channel">Channel</span>
-                  <input type="number" id="filt-shelly-ch" value="0" min="0" max="3" />
-                </label>
-                <label class="field"><span data-i18n="filt.gen">Gen</span>
-                  <select id="filt-shelly-gen">
-                    <option value="auto">auto</option>
-                    <option value="1">Gen1</option>
-                    <option value="2">Gen2</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <!-- Home Assistant -->
-            <div class="filt-be" data-be="homeassistant" style="display:none">
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="filt.ha_url">HA URL</span>
-                  <input type="text" id="filt-ha-url" placeholder="http://192.168.1.20:8123" autocomplete="off" />
-                </label>
-                <label class="field"><span data-i18n="filt.entity_id">Entity ID</span>
-                  <input type="text" id="filt-ha-entity" placeholder="switch.filtration" autocomplete="off" />
-                </label>
-              </div>
-              <label class="field" style="margin-top:10px"><span data-i18n="filt.ha_token">Long-lived token</span>
-                <span class="pw-wrap">
-                  <input type="password" id="filt-ha-token" placeholder="••••" autocomplete="off" />
-                  <button type="button" class="pw-eye" data-pw-for="filt-ha-token" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
-                </span>
-              </label>
-            </div>
-
-            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-              <label class="check">
-                <input type="checkbox" id="filt-auto-mining" checked />
-                <span><span data-i18n="filt.auto_on_mining">Auto ON while mining</span>
-                  <span class="desc" data-i18n="filt.auto_on_mining_desc">MC Resume → pump ON</span>
-                </span>
-              </label>
-              <label class="check">
-                <input type="checkbox" id="filt-auto-suspend" />
-                <span><span data-i18n="filt.auto_off_suspend">Auto OFF on Suspend</span>
-                  <span class="desc" data-i18n="filt.auto_off_suspend_desc">Suspend → pump OFF</span>
-                </span>
-              </label>
-              <label class="check">
-                <input type="checkbox" id="filt-allow-off-mining" />
-                <span><span data-i18n="filt.allow_off_mining">Allow OFF while mining</span>
-                  <span class="desc" data-i18n="filt.allow_off_mining_desc">do not block pump stop while mining</span>
-                </span>
-              </label>
-            </div>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
-              <button class="btn primary" type="button" id="btn-filt-on" data-i18n="filt.btn_on">Turn pump ON</button>
-              <button class="btn danger" type="button" id="btn-filt-off" data-i18n="filt.btn_off">Turn pump OFF</button>
-              <span id="filt-status" style="font-size:0.78rem;color:var(--muted)">status: —</span>
-            </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" id="filt-off-hint" data-i18n="filt.off_hint">
-              Without “Allow OFF while mining” — Off is blocked during Resume.
-              With option + Auto ON — policy may turn the pump back on.
             </p>
           </div>
         </div>
@@ -5429,11 +5434,11 @@
         "h2.sensors": "Sensors",
         "h2.devices": "Devices",
         "sub.sensors_card": "alias · priority sources · virtual rules",
-        "sub.devices_card": "relays · pumps · valves · smart sockets · actuators",
+        "sub.devices_card": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)",
         "periph.sensors_empty": "No sensors yet. Create an alias with priority sources and optional virtual rules.",
         "periph.sensors_help": "Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).",
         "periph.devices_empty": "No devices yet. Create an actuator (Tapo, Webhook, …) with mining rules and optional bot button.",
-        "periph.devices_help": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant). Mining auto rules and optional Telegram bot button (alias = command).",
+        "periph.devices_help": "",
         "periph.count": "Connected",
         "btn.device_new": "New device",
         "h2.device_edit": "Edit device",
@@ -5441,7 +5446,7 @@
         "dev.icon": "Icon",
         "dev.name": "Name",
         "dev.alias": "Alias",
-        "dev.alias_hint": "Alias is used as Telegram command (/alias). Reserved names blocked (status, filtration, …).",
+        "dev.alias_hint": "Alias is used as Telegram command (/alias). Reserved names blocked (status, suspend, …).",
         "dev.alias_hint_cmd": "Alias is used as Telegram command (/alias).",
         "dev.alias_reserved_link": "Reserved names…",
         "dev.alias_reserved_hide": "Hide list",
@@ -5467,6 +5472,8 @@
         "dev.btn_off": "Turn OFF",
         "dev.state_on": "ON",
         "dev.state_off": "OFF",
+        "dev.toast_on": "On",
+        "dev.toast_off": "Off",
         "dev.state_unknown": "—",
         "dev.disabled": "disabled",
         "dev.inverted_tag": "inv",
@@ -5491,6 +5498,8 @@
         "hint.sensor_name_bilingual": "If left empty, the other language is copied from the primary name on save.",
         "field.sensor_unit": "Unit",
         "field.sensor_sources": "Sources (priority top → bottom)",
+        "field.sensor_sources_drag": "drag ⋮⋮ to change priority",
+        "btn.drag_reorder": "Drag to reorder",
         "field.sensor_transform": "Transform",
         "field.transform_type": "Rule",
         "field.offset_c": "Offset Δ, °C",
@@ -5623,12 +5632,14 @@
         "pool.shape.circle": "Round",
         "pool.shape.oval": "Oval",
         "pool.water_sensor": "Pool water sensor",
+        "pool.ws.group_miner": "Miner",
+        "pool.ws.group_sensors": "Sensors (Peripherals)",
+        "pool.ws.hint": "Water °C source for heat/cool model — miner live fields or Peripherals → Sensors",
         "pool.ws.liquid": "liquid — ASIC liquid_temp (coolant)",
         "pool.ws.env": "env — Env Temp (ambient)",
         "pool.ws.chip_avg": "chip avg — average across chips",
         "pool.ws.chip_max": "chip max — max across chips",
         "pool.ws.board_max": "board max — max PCB",
-        "pool.ws.hint": "Water °C source for heat/cool model (Tw = water − ΔT HX)",
         "pool.length_m": "Length, m",
         "pool.width_m": "Width, m",
         "pool.depth_m": "Depth, m",
@@ -5638,9 +5649,10 @@
         "pool.metric.cycle": "Full cycle",
         "pool.hint.surface": "water surface area",
         "pool.flow": "Flow Q, L/h",
+        "pool.flow_hint": "Turnover: T = V × 1000 / Q",
         "pool.hex_dt": "HX ΔT, °C",
         "pool.hex_power": "HX power (from Q and ΔT)",
-        "pool.circ_help": "Flow — liters through heat exchanger per hour. ΔT — temperature difference in pool vs miner loop.",
+        "pool.circ_help": "Flow — liters per hour for full turnover time.",
         "pool.comment": "Comment",
         "pool.comment_ph": "e.g. 8×4, heat exchanger on bypass",
         "pool.toast_saved": "Pool: V={vol} m³ · S={surf} m² · turnover {turn}",
@@ -5857,18 +5869,18 @@
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
         "sub.sensors_card": "alias · источники по приоритету · виртуальные правила",
-        "sub.devices_card": "реле · насосы · клапаны · умные розетки · приводы",
+        "sub.devices_card": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)",
         "periph.sensors_empty": "Датчиков пока нет. Создайте alias с источниками по приоритету и опциональным правилом.",
         "periph.sensors_help": "Системный alias (например outdoor, pool_water). Источники по приоритету — берётся первый с данными. Правила: фиксированный offset или Δ из таблицы мощности (напр. chip_max − 10°C при 3.5 kW).",
         "periph.devices_empty": "Устройств пока нет. Создайте актуатор (Tapo, Webhook, …) с правилами майнинга и опциональной кнопкой бота.",
-        "periph.devices_help": "Создавайте актуаторы (Tapo, eWeLink, Webhook, Shelly, Home Assistant). Правила при майнинге и кнопка в Telegram (alias = команда).",
+        "periph.devices_help": "",
         "btn.device_new": "Новое устройство",
         "h2.device_edit": "Редактирование устройства",
         "sub.device_edit": "backend · майнинг · бот",
         "dev.icon": "Иконка",
         "dev.name": "Название",
         "dev.alias": "Alias",
-        "dev.alias_hint": "Alias используется как команда бота (/alias). Зарезервированные имена запрещены (status, filtration, …).",
+        "dev.alias_hint": "Alias используется как команда бота (/alias). Зарезервированные имена запрещены (status, suspend, …).",
         "dev.alias_hint_cmd": "Alias используется как команда бота (/alias).",
         "dev.alias_reserved_link": "Зарезервированные имена…",
         "dev.alias_reserved_hide": "Скрыть список",
@@ -5894,6 +5906,8 @@
         "dev.btn_off": "Выключить",
         "dev.state_on": "ВКЛ",
         "dev.state_off": "ВЫКЛ",
+        "dev.toast_on": "On",
+        "dev.toast_off": "Off",
         "dev.state_unknown": "—",
         "dev.disabled": "выкл.",
         "dev.inverted_tag": "инв.",
@@ -5919,6 +5933,8 @@
         "hint.sensor_name_bilingual": "Если второе поле пустое — при сохранении скопируется из основного.",
         "field.sensor_unit": "Единица",
         "field.sensor_sources": "Источники (приоритет сверху вниз)",
+        "field.sensor_sources_drag": "перетащите ⋮⋮ чтобы изменить приоритет",
+        "btn.drag_reorder": "Перетащить",
         "field.sensor_transform": "Преобразование",
         "field.transform_type": "Правило",
         "field.offset_c": "Смещение Δ, °C",
@@ -6051,12 +6067,14 @@
         "pool.shape.circle": "Круглый",
         "pool.shape.oval": "Овальный",
         "pool.water_sensor": "Датчик воды бассейна",
+        "pool.ws.group_miner": "Майнер",
+        "pool.ws.group_sensors": "Датчики (Периферия)",
+        "pool.ws.hint": "Источник °C воды для тепловой модели — live майнера или Периферия → Датчики",
         "pool.ws.liquid": "liquid — ASIC liquid_temp (теплоноситель)",
         "pool.ws.env": "env — Env Temp (окружающая среда)",
         "pool.ws.chip_avg": "chip avg — среднее по чипам",
         "pool.ws.chip_max": "chip max — максимум по чипам",
         "pool.ws.board_max": "board max — максимум PCB",
-        "pool.ws.hint": "Источник °C воды для модели нагрева/остывания (Tw = вода − ΔT ТО)",
         "pool.length_m": "Длина, м",
         "pool.width_m": "Ширина, м",
         "pool.depth_m": "Глубина, м",
@@ -6066,9 +6084,10 @@
         "pool.metric.cycle": "Полный цикл",
         "pool.hint.surface": "площадь зеркала воды",
         "pool.flow": "Расход Q, л/ч",
+        "pool.flow_hint": "Оборот: T = V × 1000 / Q",
         "pool.hex_dt": "ΔT ТО, °C",
         "pool.hex_power": "Мощность ТО (из Q и ΔT)",
-        "pool.circ_help": "Расход — литры через теплообменник в час. ΔT — разница температур контура бассейна и майнера.",
+        "pool.circ_help": "Расход — литры в час для времени полного оборота.",
         "pool.comment": "Комментарий",
         "pool.comment_ph": "напр. 8×4, теплообменник на байпасе",
         "pool.toast_saved": "Бассейн: V={vol} м³ · S={surf} м² · цикл {turn}",
@@ -6526,12 +6545,12 @@
         body: "Ambient temperature from summary (sensor/estimate from miner).\nInformational; not the main control lever in MVP.",
       },
       pcb: {
-        title: "PCB / boards",
-        body: "Hashboard PCB temperature (devs[].Temperature).\nBoard count: DEVS / board-num / model map (M63=4, M60S=3).\nM63: 4 slots (2 physical × 2 virtual, paired t≈t).\nM60S: 3 boards · 3 sensors.\nDo not confuse with Chip Temp — chips are usually hotter.",
+        title: "Boards (max)",
+        body: "Max PCB °C across hashboards.",
       },
       chip_max: {
-        title: "Chip Temp Max",
-        body: "Maximum chip temperature (summary).\nPrimary safety signal → T_safe / Critical.",
+        title: "Chips (max)",
+        body: "Max chip °C · safety / Critical.",
       },
       power_mode: {
         title: "Power Mode",
@@ -6551,7 +6570,7 @@
       },
       power_measured: {
         title: "Power measured",
-        body: "Measured power (W) and hashrate (TH/s) from ASIC.\nMining Control — measured (mineroff + hash), as on the Miner tab.\nBadge: Suspend / Mining.\nBelow: mode · freq · J/T · Vin · Iin · PSU · uptime.",
+        body: "Measured power (W) and hashrate (TH/s) from ASIC.\nRight: freq · J/T.\nLine 1: mode · uptime · mining.\nLine 2: PSU · rpm · V · A.",
       },
       psu_vin: {
         title: "PowerVin",
@@ -6587,7 +6606,7 @@
       },
       heat_balance: {
         title: "Heat / cool-down",
-        body: "Balance: Q_net = Q_in − Q_loss.\nQ_in = min(miner Power, HX power from Q·ΔT).\n+°C/h — heating, −°C/h — cool-down.\nSurplus/deficit kW — how much power is above/below what is needed to hold current t°.",
+        body: "Balance: Q_net = Q_in − Q_loss.\nQ_in = miner Power measured.\n+°C/h — heating, −°C/h — cool-down.\nSurplus/deficit kW — how much power is above/below what is needed to hold current t°.",
       },
       pool_geometry: {
         title: "Pool geometry",
@@ -6595,15 +6614,11 @@
       },
       pool_water_sensor: {
         title: "Pool water sensor",
-        body: "Which live field is water °C for heat/cool model.\n• liquid — liquid_temp ASIC (often coolant)\n• env / chip / board — fallback sources\nTw = water t − HX ΔT.",
+        body: "Which live field is water °C for heat/cool model.\n• liquid — liquid_temp ASIC (often coolant)\n• env / chip / board — fallback sources\n• Sensors — Peripherals → Sensors aliases\nTw = pool water t°.",
       },
       pool_flow: {
-        title: "Circulation / water exchange",
-        body: "Flow through heat exchanger, L/h.\nFull turnover time ≈ V(m³)×1000 / Q(L/h) (h).",
-      },
-      hex_delta: {
-        title: "HX ΔT",
-        body: "Water ΔT across HX inlet/outlet, °C.\nPower: ṁ·c·ΔT (ṁ from flow Q).\nTypically 3–8 °C for pool HX.",
+        title: "Flow Q",
+        body: "Circulation flow, L/h.\nFull turnover time ≈ V(m³)×1000 / Q(L/h) (h).",
       },
       hashrate: {
         title: "Hashrate TH/s",
@@ -10074,6 +10089,9 @@
           try {
             window.__lastLive = body;
             if (body.miner_type) window.__poolheatMinerType = body.miner_type;
+            if (body.model && typeof body.model === "object") {
+              window.__poolheatModelProfile = body.model;
+            }
           } catch (_) { /* ignore */ }
           if (body.ok === false || !res.ok) {
             liveError = body.error || ("HTTP " + res.status);
@@ -12690,6 +12708,91 @@
           : "model —"
       );
       setTxt("info-miner-chip", m.chip || "—");
+      // Model catalog profile (manufacturer / cooling / boards / chip layout)
+      (function paintModelProfile() {
+        const type = (m.miner_type || "").trim();
+        const apply = (p) => {
+          if (!p || !p.ok && p.matched === false && !p.family && !p.manufacturer) {
+            // still paint what we have
+          }
+          if (p && typeof window !== "undefined") {
+            try { window.__poolheatModelProfile = p; } catch (_) { /* ignore */ }
+          }
+          const mfr = (p && p.manufacturer) || {};
+          const boards = (p && p.boards) || {};
+          const cl = (p && p.chip_layout) || {};
+          const sens = (p && p.sensors) || {};
+          const mfrLabel =
+            (mfr.brand || mfr.name || p && p.manufacturer_id || "—") +
+            (mfr.support === "planned" ? " · planned" : "");
+          setTxt("info-model-mfr", mfrLabel);
+          setTxt(
+            "info-model-family",
+            p && p.family
+              ? "family " + p.family + (p.sku ? " · SKU " + p.sku : "")
+              : "family —"
+          );
+          const cool = (p && p.cooling) || "—";
+          setTxt("info-model-cooling", cool);
+          const nB = boards.count != null ? boards.count : p && p.board_count;
+          const note = boards.note || (p && p.board_layout_note) || "";
+          setTxt(
+            "info-model-boards",
+            nB != null
+              ? nB +
+                  " slots" +
+                  (boards.physical != null && boards.physical !== nB
+                    ? " · " + boards.physical + " physical"
+                    : "") +
+                  (note ? " · " + note : "")
+              : "—"
+          );
+          const cpd = cl.chips_per_domain || cl.chips_per_domain_default;
+          const style = cl.style || (cl.slot_link ? "hydro" : "—");
+          setTxt(
+            "info-model-layout",
+            (style || "—") +
+              (cpd ? " · " + cpd + " c/d" : "") +
+              (cl.slot_link ? " · " + cl.slot_link : "")
+          );
+          const sensBits = [];
+          if (sens.liquid_temp) sensBits.push("liquid");
+          if (sens.env_temp) sensBits.push("env");
+          if (sens.chip_temp) sensBits.push("chip");
+          if (sens.pcb_temp) sensBits.push("pcb");
+          if (sens.psu_temp) sensBits.push("psu");
+          setTxt(
+            "info-model-sensors",
+            sensBits.length ? "sensors: " + sensBits.join(", ") : "sensors —"
+          );
+        };
+        // live.model first, else fetch /api/miner/model
+        const fromLive =
+          (typeof live !== "undefined" && live && live.model) ||
+          (typeof window !== "undefined" && window.__poolheatModelProfile) ||
+          null;
+        if (fromLive && fromLive.miner_type_norm) {
+          apply(fromLive);
+          return;
+        }
+        if (!type) {
+          setTxt("info-model-mfr", "—");
+          setTxt("info-model-family", "family —");
+          setTxt("info-model-cooling", "—");
+          setTxt("info-model-boards", "—");
+          setTxt("info-model-layout", "—");
+          setTxt("info-model-sensors", "sensors —");
+          return;
+        }
+        void fetch("/api/miner/model?type=" + encodeURIComponent(type), {
+          cache: "no-store",
+        })
+          .then((r) => r.json())
+          .then((p) => {
+            if (p && (p.ok || p.family || p.manufacturer)) apply(p);
+          })
+          .catch(() => { /* ignore */ });
+      })();
       const errEl = document.getElementById("info-miner-err");
       if (errEl) {
         if (m.error && !fromCache) {
@@ -13376,6 +13479,25 @@
       return String(s);
     }
 
+    /** Live weather one-liner: now: 21.3 °C · ясно · 07.08.2026 00:15 */
+    function formatWxNowLine(w) {
+      if (!w || w.enabled === false) {
+        return t("wx.off", "weather off · Pool → Weather");
+      }
+      if (w && (w.ok || w.stale) && w.temp_c != null) {
+        const cond = wxConditionText(w);
+        const when = w.observed_at ? fmtWxObserved(w.observed_at) : "";
+        let line =
+          "now: " + fmtWxTemp(w.temp_c) + " °C" +
+          (cond && cond !== "—" ? " · " + cond : "") +
+          (when ? " · " + when : "");
+        if (w.stale) line += " · " + t("wx.stale", "stale");
+        return line;
+      }
+      if (w && w.error) return "weather error: " + w.error;
+      return "—";
+    }
+
     /**
      * WMO weather_code → Meteocons (Bas Milius) fill icon + card theme.
      * Icons: ui-demo/icons/weather/*.svg from @bybas/weather-icons (MIT).
@@ -13562,7 +13684,7 @@
         setWxTheme(card, "off");
         showMeta(rhWrap, false);
         showMeta(windWrap, false);
-        if (srcEl) srcEl.textContent = "Open-Meteo";
+        if (srcEl) srcEl.textContent = formatWxNowLine(w || { enabled: false });
         updateHeatLoss();
         return;
       }
@@ -13605,11 +13727,7 @@
         } else {
           showMeta(windWrap, false);
         }
-        if (srcEl) {
-          srcEl.textContent = w.stale
-            ? t("wx.stale", "stale")
-            : "Open-Meteo";
-        }
+        if (srcEl) srcEl.textContent = formatWxNowLine(w);
       } else {
         tEl.textContent = "—";
         if (condEl) condEl.textContent = "error: " + (w.error || "no data");
@@ -13618,29 +13736,20 @@
         setWxTheme(card, "error");
         showMeta(rhWrap, false);
         showMeta(windWrap, false);
-        if (srcEl) srcEl.textContent = "Open-Meteo";
+        if (srcEl) srcEl.textContent = formatWxNowLine(w);
       }
       updateHeatLoss();
     }
 
     /**
      * Shared pool thermal inputs for heat-loss / heat-balance cards.
+     * Tw = pool water sensor °C (no HX ΔT offset).
      */
     function getPoolThermalContext() {
       const S = poolDerived && Number(poolDerived.surface_m2);
       const V = poolDerived && Number(poolDerived.volume_m3);
       const massKg = (poolDerived && Number(poolDerived.mass_kg)) ||
         (Number.isFinite(V) ? V * 1000 : NaN);
-
-      let hexDt = NaN;
-      if (poolDerived && poolDerived.hex_delta_c != null) {
-        hexDt = Number(poolDerived.hex_delta_c);
-      }
-      if (!Number.isFinite(hexDt) || hexDt <= 0) {
-        const el = document.getElementById("pool-hex-dt");
-        if (el) hexDt = parseFloat(el.value);
-      }
-      if (!Number.isFinite(hexDt) || hexDt < 0) hexDt = 0;
 
       let flowM3h = NaN;
       if (poolDerived && poolDerived.flow_m3h != null) {
@@ -13654,14 +13763,20 @@
         }
       }
 
-      // Pool water °C from selected sensor (Pool → water_sensor)
+      // Pool water °C from selected sensor (miner live or Peripherals → Sensors)
       let waterSens =
         (poolDerived && poolDerived.water_sensor) ||
         document.getElementById("pool-water-sensor")?.value ||
         "liquid";
       waterSens = String(waterSens || "liquid").trim().toLowerCase();
       let Tliq = NaN;
-      if (live && live.ok !== false) {
+      if (waterSens.startsWith("sensor:") || waterSens.startsWith("alias:")) {
+        const alias = waterSens.split(":").slice(1).join(":").trim();
+        const ev =
+          (typeof sensorsValues !== "undefined" && sensorsValues && sensorsValues[alias]) ||
+          null;
+        if (ev && ev.ok && ev.value != null) Tliq = Number(ev.value);
+      } else if (live && live.ok !== false) {
         if (waterSens === "liquid" && live.liquid != null && live.liquid !== "") {
           Tliq = Number(live.liquid);
         } else if (waterSens === "env" && live.env != null) {
@@ -13691,7 +13806,7 @@
       if (!Number.isFinite(Tliq) && simLiquid && waterSens === "liquid") {
         Tliq = parseFloat(simLiquid.value);
       }
-      const Tw = Number.isFinite(Tliq) ? Tliq - hexDt : NaN;
+      const Tw = Number.isFinite(Tliq) ? Tliq : NaN;
 
       let Ta = NaN;
       if (weatherData && (weatherData.ok || weatherData.stale) && weatherData.temp_c != null) {
@@ -13712,16 +13827,7 @@
         if (el) P_W = parseFloat(String(el.textContent).replace(/\s/g, "").replace(",", "."));
       }
 
-      // HEX thermal capacity: ṁ·c·ΔT
-      let hexCap_W = NaN;
-      if (Number.isFinite(flowM3h) && flowM3h > 0 && Number.isFinite(hexDt) && hexDt > 0) {
-        const mDot = flowM3h * 1000 / 3600; // kg/s
-        hexCap_W = mDot * 4186 * hexDt;
-      } else if (poolDerived && poolDerived.hex_power_kw != null) {
-        hexCap_W = Number(poolDerived.hex_power_kw) * 1000;
-      }
-
-      return { S, V, massKg, hexDt, flowM3h, Tliq, Tw, Ta, P_W, hexCap_W };
+      return { S, V, massKg, flowM3h, Tliq, Tw, Ta, P_W };
     }
 
     /**
@@ -13791,7 +13897,7 @@
 
     /**
      * Net heating vs losses at current conditions:
-     *   Q_in  = min(P_miner, Q_hex_cap)  — heat into pool
+     *   Q_in  = P_miner  — heat into pool
      *   Q_net = Q_in − Q_loss
      *   rate  = Q_net / (m·c) · 3600   °C/h  (+ heat, − cool)
      *   surplus/deficit to hold current temp = Q_net
@@ -13816,7 +13922,7 @@
         return;
       }
 
-      const { massKg, P_W, hexCap_W, Q_loss_W } = ctx;
+      const { massKg, P_W, Q_loss_W } = ctx;
       if (!Number.isFinite(P_W) || P_W < 0) {
         clear(t("dash.hb.no_power", "no Power measured"));
         return;
@@ -13826,14 +13932,7 @@
         return;
       }
 
-      // heat delivered to pool (limited by HEX thermal capacity if known)
-      let Q_in_W = P_W;
-      let limited = false;
-      if (Number.isFinite(hexCap_W) && hexCap_W > 0 && P_W > hexCap_W) {
-        Q_in_W = hexCap_W;
-        limited = true;
-      }
-
+      const Q_in_W = P_W;
       const Q_net_W = Q_in_W - Q_loss_W;
       const Q_net_kW = Q_net_W / 1000;
       const c = 4186;
@@ -13865,7 +13964,7 @@
             bal: bal,
             qin: (Q_in_W / 1000).toFixed(2),
             qloss: (Q_loss_W / 1000).toFixed(2),
-            cap: limited ? t("dash.hb.hx_cap", " (HX cap)") : "",
+            cap: "",
           },
           "{bal} · in {qin} kW{cap} · loss {qloss} kW"
         );
@@ -13874,6 +13973,8 @@
 
     // weather: checkbox + interval edit local until «Save»
     let wxEnabledDirty = false;
+    let wxSearchTimer = null;
+    let wxSearchSeq = 0;
 
     function renderWeatherSettings(cfg, w) {
       weatherCfg = cfg || weatherCfg;
@@ -13881,6 +13982,7 @@
       const meta = document.getElementById("wx-cfg-meta");
       const en = document.getElementById("wx-enabled");
       const st = document.getElementById("wx-status");
+      const sub = document.getElementById("wx-card-sub");
       // don't overwrite local unsaved checkbox / interval
       if (en && cfg && !wxEnabledDirty) en.checked = !!cfg.enabled;
       const intEl = document.getElementById("wx-interval-min");
@@ -13902,39 +14004,11 @@
         }
         meta.textContent = parts.join(" · ");
       }
-      if (st) {
-        if (w && (w.ok || w.stale) && w.temp_c != null) {
-          st.textContent =
-            "now: " + fmtWxTemp(w.temp_c) + " °C" +
-            (w.weather_text ? " · " + w.weather_text : "") +
-            (w.observed_at ? " · " + fmtWxObserved(w.observed_at) : "");
-        } else if (w && w.error) {
-          st.textContent = "weather error: " + w.error;
-        } else {
-          st.textContent = "select a city and save";
-        }
-      }
-      // highlight active preset
-      const row = document.getElementById("wx-presets");
-      if (row && cfg) {
-        row.querySelectorAll("button").forEach((b) => {
-          b.classList.toggle("active", b.dataset.city === cfg.city);
-        });
-      }
-    }
-
-    function renderPresets(presets) {
-      const row = document.getElementById("wx-presets");
-      if (!row) return;
-      row.innerHTML = "";
-      (presets || []).forEach((p) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.textContent = p.city;
-        b.dataset.city = p.city;
-        b.addEventListener("click", () => saveWeatherCity(p));
-        row.appendChild(b);
-      });
+      const nowLine = w
+        ? formatWxNowLine(w)
+        : (cfg ? t("wx.pick_city", "select a city and save") : "—");
+      if (st) st.textContent = nowLine;
+      if (sub) sub.textContent = nowLine;
     }
 
     async function loadWeatherConfig() {
@@ -13943,13 +14017,14 @@
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "config fail");
         weatherCfg = body.config;
-        renderPresets(body.presets || []);
         renderWeatherSettings(body.config, null);
         scheduleWeatherRefresh();
         return body.config;
       } catch (e) {
         const st = document.getElementById("wx-status");
+        const sub = document.getElementById("wx-card-sub");
         if (st) st.textContent = "config: " + e.message;
+        if (sub) sub.textContent = "config: " + e.message;
         return null;
       }
     }
@@ -14032,19 +14107,31 @@
       }
     }
 
-    async function searchWeatherCities() {
+    function hideWxResults() {
+      const box = document.getElementById("wx-results");
+      if (box) {
+        box.hidden = true;
+        box.innerHTML = "";
+      }
+    }
+
+    async function searchWeatherCities(opts) {
+      const silent = !!(opts && opts.silent);
       const q = (document.getElementById("wx-search")?.value || "").trim();
       const box = document.getElementById("wx-results");
       if (!box) return;
       if (q.length < 2) {
-        toastWarn("Enter at least 2 characters");
+        hideWxResults();
+        if (!silent) toastWarn("Enter at least 2 characters");
         return;
       }
+      const seq = ++wxSearchSeq;
       box.hidden = false;
       box.innerHTML = "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>search…</div>";
       try {
         const res = await fetch("/api/weather/search?q=" + encodeURIComponent(q) + "&count=12");
         const body = await res.json();
+        if (seq !== wxSearchSeq) return; // stale response
         if (!body.ok) throw new Error(body.error || "search fail");
         const list = body.results || [];
         if (!list.length) {
@@ -14060,16 +14147,34 @@
             "<span class='wr-sub'>" +
             Number(r.latitude).toFixed(3) + ", " + Number(r.longitude).toFixed(3) +
             "</span>";
-          b.addEventListener("click", () => saveWeatherCity(r));
+          b.addEventListener("mousedown", (ev) => {
+            // mousedown before blur so click registers
+            ev.preventDefault();
+            saveWeatherCity(r);
+            const inp = document.getElementById("wx-search");
+            if (inp) inp.value = r.city || r.label || "";
+            hideWxResults();
+          });
           box.appendChild(b);
         });
       } catch (e) {
+        if (seq !== wxSearchSeq) return;
         box.innerHTML = "<div style='padding:10px;color:var(--danger);font-size:0.8rem'>" +
           String(e.message).replace(/</g, "&lt;") + "</div>";
       }
     }
 
-    document.getElementById("btn-wx-search")?.addEventListener("click", searchWeatherCities);
+    function scheduleWxSearch() {
+      if (wxSearchTimer) clearTimeout(wxSearchTimer);
+      wxSearchTimer = setTimeout(() => {
+        wxSearchTimer = null;
+        void searchWeatherCities({ silent: true });
+      }, 280);
+    }
+
+    document.getElementById("btn-wx-search")?.addEventListener("click", () => {
+      void searchWeatherCities();
+    });
     document.getElementById("wx-interval-min")?.addEventListener("input", () => {
       window.__wxIntervalDirty = true;
     });
@@ -14114,11 +14219,24 @@
         toastError("Weather: " + e.message);
       }
     });
+    document.getElementById("wx-search")?.addEventListener("input", () => {
+      scheduleWxSearch();
+    });
     document.getElementById("wx-search")?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        searchWeatherCities();
+        if (wxSearchTimer) {
+          clearTimeout(wxSearchTimer);
+          wxSearchTimer = null;
+        }
+        void searchWeatherCities();
+      } else if (e.key === "Escape") {
+        hideWxResults();
       }
+    });
+    document.getElementById("wx-search")?.addEventListener("blur", () => {
+      // delay so mousedown on result can fire first
+      setTimeout(hideWxResults, 180);
     });
     document.getElementById("btn-wx-refresh")?.addEventListener("click", async () => {
       toastInfo("Updating weather…", 1200);
@@ -14130,12 +14248,13 @@
     document.getElementById("wx-enabled")?.addEventListener("change", () => {
       wxEnabledDirty = true;
       const st = document.getElementById("wx-status");
-      if (st) {
-        const on = document.getElementById("wx-enabled").checked;
-        st.textContent =
-          (on ? t("wx.display_on", "display on") : t("wx.display_off", "display off")) +
-          t("wx.not_saved", " · not saved — press Save");
-      }
+      const sub = document.getElementById("wx-card-sub");
+      const on = document.getElementById("wx-enabled").checked;
+      const msg =
+        (on ? t("wx.display_on", "display on") : t("wx.display_off", "display off")) +
+        t("wx.not_saved", " · not saved — press Save");
+      if (st) st.textContent = msg;
+      if (sub) sub.textContent = msg;
     });
 
     // ─── Pool geometry / circulation ───────────────────────────────────────
@@ -14152,20 +14271,21 @@
       const widLab = document.getElementById("pool-width-label");
       const widField = document.getElementById("pool-width-field");
       const row = document.getElementById("pool-dims-row");
+      // L · W · D · Flow — 4 in one row (circle hides W → 3 cols)
       if (shape === "circle") {
         if (lenLab) lenLab.textContent = t("pool.diameter_m", "Diameter, m");
         if (widField) widField.style.display = "none";
-        if (row) row.style.gridTemplateColumns = "1fr 1fr";
+        if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr";
       } else if (shape === "oval") {
         if (lenLab) lenLab.textContent = t("pool.length_m", "Length, m");
         if (widLab) widLab.textContent = t("pool.width_m", "Width, m");
         if (widField) widField.style.display = "";
-        if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr";
+        if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr 1fr";
       } else {
         if (lenLab) lenLab.textContent = t("pool.length_m", "Length, m");
         if (widLab) widLab.textContent = t("pool.width_m", "Width, m");
         if (widField) widField.style.display = "";
-        if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr";
+        if (row) row.style.gridTemplateColumns = "1fr 1fr 1fr 1fr";
       }
     }
 
@@ -14199,15 +14319,9 @@
       const W = parseFloat(document.getElementById("pool-width")?.value);
       const D = parseFloat(document.getElementById("pool-depth")?.value);
       const Q_lph = parseFloat(document.getElementById("pool-flow")?.value);
-      const dT = parseFloat(document.getElementById("pool-hex-dt")?.value);
       const g = poolGeomLocal(L, W, D, shape);
       const turn = (Number.isFinite(g.vol) && Number.isFinite(Q_lph) && Q_lph > 0)
         ? (g.vol * 1000) / Q_lph : NaN;
-      // ṁ kg/s = (L/h) / 3600; Q_kW = ṁ · 4186 · ΔT / 1000
-      let hexKw = NaN;
-      if (Number.isFinite(Q_lph) && Q_lph > 0 && Number.isFinite(dT) && dT > 0) {
-        hexKw = (Q_lph / 3600) * 4186 * dT / 1000;
-      }
       const set = (id, v, d) => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -14216,18 +14330,114 @@
       set("pool-volume", g.vol, 2);
       set("pool-surface", g.surf, 2);
       set("pool-turnover", turn, 2);
-      set("pool-hex-kw", hexKw, 2);
       const fv = document.getElementById("pool-formula-v");
       if (fv) fv.textContent = g.fv;
       // live preview for heat-loss card while editing geometry
       if (Number.isFinite(g.vol) && Number.isFinite(g.surf)) {
+        const flowM3h = Number.isFinite(Q_lph) ? Q_lph / 1000 : NaN;
         poolDerived = {
           ...(poolDerived || {}),
           volume_m3: g.vol,
           surface_m2: g.surf,
           mass_kg: g.vol * 1000,
+          flow_m3h: Number.isFinite(flowM3h) ? flowM3h : (poolDerived && poolDerived.flow_m3h),
+          turnover_h: Number.isFinite(turn) ? turn : null,
         };
         updateHeatLoss();
+      }
+    }
+
+    function fillPoolWaterSensorSelect(selected, optionsFromApi) {
+      const sel = document.getElementById("pool-water-sensor");
+      if (!sel) return;
+      const cur = String(selected || sel.value || "liquid").trim();
+      const minerGroupLabel = t("pool.ws.group_miner", "Miner");
+      const sensGroupLabel = t("pool.ws.group_sensors", "Sensors (Peripherals)");
+      const minerOpts = [
+        {
+          id: "liquid",
+          label: t("pool.ws.liquid", "liquid — ASIC liquid_temp (coolant)"),
+        },
+        {
+          id: "env",
+          label: t("pool.ws.env", "env — Env Temp (ambient)"),
+        },
+        {
+          id: "chip_avg",
+          label: t("pool.ws.chip_avg", "chip avg — average across chips"),
+        },
+        {
+          id: "chip_max",
+          label: t("pool.ws.chip_max", "chip max — max across chips"),
+        },
+        {
+          id: "board_max",
+          label: t("pool.ws.board_max", "board max — max PCB"),
+        },
+      ];
+      let virt = [];
+      if (Array.isArray(optionsFromApi)) {
+        virt = optionsFromApi.filter((o) => o && o.group === "sensors");
+      } else if (typeof sensorsCache !== "undefined" && Array.isArray(sensorsCache)) {
+        virt = sensorsCache
+          .filter((s) => s && s.enabled !== false && s.alias)
+          .map((s) => {
+            const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+            const nm =
+              lang === "ru"
+                ? s.name_ru || s.name || s.alias
+                : s.name_en || s.name || s.alias;
+            return {
+              id: "sensor:" + s.alias,
+              alias: s.alias,
+              label: nm + " · " + s.alias,
+            };
+          });
+      }
+      let html =
+        '<optgroup label="' +
+        minerGroupLabel.replace(/"/g, "&quot;") +
+        '">';
+      minerOpts.forEach((o) => {
+        html +=
+          '<option value="' +
+          o.id +
+          '">' +
+          o.label.replace(/</g, "&lt;") +
+          "</option>";
+      });
+      html += "</optgroup>";
+      if (virt.length) {
+        html +=
+          '<optgroup label="' +
+          sensGroupLabel.replace(/"/g, "&quot;") +
+          '">';
+        virt.forEach((o) => {
+          const id = o.id || ("sensor:" + (o.alias || ""));
+          const lab = o.label || o.name || id;
+          html +=
+            '<option value="' +
+            String(id).replace(/"/g, "") +
+            '">' +
+            String(lab).replace(/</g, "&lt;") +
+            "</option>";
+        });
+        html += "</optgroup>";
+      }
+      sel.innerHTML = html;
+      if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+      else if (
+        cur.startsWith("sensor:") &&
+        ![...sel.options].some((o) => o.value === cur)
+      ) {
+        // keep orphan selection visible until sensors load
+        const opt = document.createElement("option");
+        opt.value = cur;
+        opt.textContent = cur + " (missing)";
+        sel.appendChild(opt);
+        sel.value = cur;
+      } else {
+        sel.value = "liquid";
       }
     }
 
@@ -14250,13 +14460,15 @@
         if (c.flow_m3h != null && Number.isFinite(Number(c.flow_m3h))) {
           setVal("pool-flow", Math.round(Number(c.flow_m3h) * 1000));
         }
-        if (c.hex_delta_c != null) setVal("pool-hex-dt", c.hex_delta_c);
-        setVal("pool-comment", c.comment || "");
-        const wsens = document.getElementById("pool-water-sensor");
-        if (wsens) {
-          const s = c.water_sensor || (d && d.water_sensor) || "liquid";
-          if ([...wsens.options].some((o) => o.value === s)) wsens.value = s;
-          else wsens.value = "liquid";
+        const selectedWs =
+          c.water_sensor || (d && d.water_sensor) || "liquid";
+        fillPoolWaterSensorSelect(
+          selectedWs,
+          (d && d.water_sensor_options) || body.water_sensor_options || null
+        );
+        // keep sensorsValues fresh when pool tab uses virtual sensors
+        if (typeof loadSensors === "function") {
+          void loadSensors();
         }
         syncPoolShapeUI();
         const setTxt = (id, v, d) => {
@@ -14267,7 +14479,6 @@
         setTxt("pool-volume", d.volume_m3, 2);
         setTxt("pool-surface", d.surface_m2, 2);
         setTxt("pool-turnover", d.turnover_h, 2);
-        setTxt("pool-hex-kw", d.hex_power_kw, 2);
         if (document.getElementById("pool-formula-v") && d.formula_v) {
           document.getElementById("pool-formula-v").textContent = d.formula_v;
         }
@@ -14294,8 +14505,6 @@
         width_m: width,
         depth_m: Number(document.getElementById("pool-depth").value),
         flow_m3h: Number.isFinite(flowLph) ? flowLph / 1000 : 0,
-        hex_delta_c: Number(document.getElementById("pool-hex-dt")?.value) || 5,
-        comment: document.getElementById("pool-comment")?.value || "",
         shape,
         water_sensor:
           document.getElementById("pool-water-sensor")?.value || "liquid",
@@ -14320,7 +14529,7 @@
       }
     }
 
-    ["pool-length", "pool-width", "pool-depth", "pool-flow", "pool-hex-dt"].forEach((id) => {
+    ["pool-length", "pool-width", "pool-depth", "pool-flow"].forEach((id) => {
       const el = document.getElementById(id);
       if (!el) return;
       el.addEventListener("input", recalcPoolLocal);
@@ -14372,296 +14581,6 @@
     }, 15000);
     loadZoneMapConfig();
     loadZonePresets();
-
-    /* ── Filtration · multi-backend ───────────────────────────────── */
-    function filtHintFor(be) {
-      const map = {
-        tapo: "filt.hint_tapo",
-        ewelink: "filt.hint_ewelink",
-        webhook: "filt.hint_webhook",
-        shelly: "filt.hint_shelly",
-        homeassistant: "filt.hint_ha",
-      };
-      const key = map[be];
-      return key ? t(key) : "";
-    }
-
-    /** Don't overwrite form while user is editing (periodic poll was unchecking enabled). */
-    let filtFormDirty = false;
-    let filtDirtyTimer = null;
-    function markFiltDirty() {
-      filtFormDirty = true;
-      if (filtDirtyTimer) clearTimeout(filtDirtyTimer);
-      // auto-clear dirty after 2 min idle so poll can resume
-      filtDirtyTimer = setTimeout(() => {
-        filtFormDirty = false;
-      }, 120000);
-    }
-    function clearFiltDirty() {
-      filtFormDirty = false;
-      if (filtDirtyTimer) {
-        clearTimeout(filtDirtyTimer);
-        filtDirtyTimer = null;
-      }
-    }
-
-    function filtBackend() {
-      return (document.getElementById("filt-backend")?.value || "tapo").trim();
-    }
-
-    function syncFiltBackendPanels() {
-      const be = filtBackend();
-      document.querySelectorAll(".filt-be").forEach((el) => {
-        const match = el.getAttribute("data-be") === be;
-        el.style.display = match ? "block" : "none";
-        el.hidden = !match;
-      });
-      const hint = document.getElementById("filt-backend-hint");
-      if (hint) hint.textContent = filtHintFor(be);
-    }
-
-    async function loadFiltrationConfig(opts) {
-      opts = opts || {};
-      // skip full form overwrite while editing (status line still updates)
-      if (filtFormDirty && !opts.force) {
-        try {
-          const res = await fetch("/api/filtration", { cache: "no-store" });
-          const body = await res.json();
-          if (body && body.ok !== false) syncFiltrationStatusUI(body);
-        } catch (_) { /* ignore */ }
-        return null;
-      }
-      const st = document.getElementById("filt-status");
-      try {
-        const res = await fetch("/api/filtration", { cache: "no-store" });
-        const body = await res.json();
-        if (body.ok === false) throw new Error(body.error || "fail");
-        const setV = (id, v) => {
-          const el = document.getElementById(id);
-          if (el && v != null) el.value = v;
-        };
-        const setC = (id, v) => {
-          const el = document.getElementById(id);
-          if (el) el.checked = !!v;
-        };
-        setC("filt-enabled", body.enabled === true || body.enabled === 1 || body.enabled === "true");
-        const beEl = document.getElementById("filt-backend");
-        if (beEl && body.backend) beEl.value = body.backend;
-        // tapo / common
-        setV("filt-ip", body.ip || "");
-        setV("filt-email", body.email || "");
-        // ewelink — reuse ip field storage: server has single "ip"
-        setV("filt-ewelink-ip", body.ip || "");
-        setV("filt-device-id", body.device_id || "");
-        setV("filt-ewelink-port", body.ewelink_port != null ? body.ewelink_port : 8081);
-        // webhook
-        setV("filt-wh-on", body.webhook_on_url || "");
-        setV("filt-wh-off", body.webhook_off_url || "");
-        setV("filt-wh-method", body.webhook_method || "GET");
-        setV("filt-wh-body-on", body.webhook_body_on || "");
-        setV("filt-wh-body-off", body.webhook_body_off || "");
-        setV("filt-wh-headers", body.webhook_headers || "");
-        // shelly
-        setV("filt-shelly-ip", body.ip || "");
-        setV("filt-shelly-ch", body.shelly_channel != null ? body.shelly_channel : 0);
-        setV("filt-shelly-gen", body.shelly_gen || "auto");
-        // HA
-        setV("filt-ha-url", body.ha_url || "");
-        setV("filt-ha-entity", body.ha_entity_id || "");
-        setC("filt-auto-mining", body.auto_on_mining !== false);
-        setC("filt-auto-suspend", body.auto_off_suspend);
-        setC("filt-allow-off-mining", !!body.allow_off_while_mining);
-        syncFiltBackendPanels();
-        syncFiltrationStatusUI(body);
-        return body;
-      } catch (e) {
-        if (st) st.textContent = "error: " + e.message;
-        return null;
-      }
-    }
-
-    function syncFiltrationStatusUI(body) {
-      const st = document.getElementById("filt-status");
-      if (!st || !body) return;
-      const on =
-        body.on === true ? "ON" : body.on === false ? "OFF" : "—";
-      const mine =
-        body.mining === true
-          ? "mining"
-          : body.mining === false
-            ? "suspend"
-            : "ASIC ?";
-      let t =
-        (body.backend || "?") + " · pump: " + on + " · " + mine;
-      if (body.last_action) t += " · " + body.last_action;
-      if (body.last_error) t += " · err: " + String(body.last_error).slice(0, 60);
-      st.textContent = t;
-      const offBtn = document.getElementById("btn-filt-off");
-      if (offBtn) {
-        offBtn.disabled = body.can_turn_off === false;
-        offBtn.title =
-          body.can_turn_off === false
-            ? t("filt.off_blocked_title")
-            : t("filt.btn_off");
-      }
-    }
-
-    function collectFiltrationPayload() {
-      const be = filtBackend();
-      const payload = {
-        enabled: !!document.getElementById("filt-enabled")?.checked,
-        backend: be,
-        auto_on_mining: !!document.getElementById("filt-auto-mining")?.checked,
-        auto_off_suspend: !!document.getElementById("filt-auto-suspend")?.checked,
-        allow_off_while_mining: !!document.getElementById("filt-allow-off-mining")
-          ?.checked,
-      };
-      if (be === "tapo") {
-        payload.ip = (document.getElementById("filt-ip")?.value || "").trim();
-        payload.email = (document.getElementById("filt-email")?.value || "").trim();
-        const pw = document.getElementById("filt-password")?.value;
-        if (pw) payload.password = pw;
-      } else if (be === "ewelink") {
-        payload.ip = (document.getElementById("filt-ewelink-ip")?.value || "").trim();
-        payload.device_id = (document.getElementById("filt-device-id")?.value || "").trim();
-        payload.ewelink_port = Number(
-          document.getElementById("filt-ewelink-port")?.value || 8081
-        );
-      } else if (be === "webhook") {
-        payload.webhook_on_url = (
-          document.getElementById("filt-wh-on")?.value || ""
-        ).trim();
-        payload.webhook_off_url = (
-          document.getElementById("filt-wh-off")?.value || ""
-        ).trim();
-        payload.webhook_method =
-          document.getElementById("filt-wh-method")?.value || "GET";
-        payload.webhook_body_on =
-          document.getElementById("filt-wh-body-on")?.value || "";
-        payload.webhook_body_off =
-          document.getElementById("filt-wh-body-off")?.value || "";
-        payload.webhook_headers =
-          document.getElementById("filt-wh-headers")?.value || "";
-      } else if (be === "shelly") {
-        payload.ip = (document.getElementById("filt-shelly-ip")?.value || "").trim();
-        payload.shelly_channel = Number(
-          document.getElementById("filt-shelly-ch")?.value || 0
-        );
-        payload.shelly_gen =
-          document.getElementById("filt-shelly-gen")?.value || "auto";
-      } else if (be === "homeassistant") {
-        payload.ha_url = (document.getElementById("filt-ha-url")?.value || "").trim();
-        payload.ha_entity_id = (
-          document.getElementById("filt-ha-entity")?.value || ""
-        ).trim();
-        const tok = document.getElementById("filt-ha-token")?.value;
-        if (tok) payload.ha_token = tok;
-      }
-      return payload;
-    }
-
-    async function saveFiltrationConfig() {
-      const st = document.getElementById("filt-status");
-      try {
-        const payload = collectFiltrationPayload();
-        // always send explicit boolean
-        payload.enabled = !!document.getElementById("filt-enabled")?.checked;
-        const res = await fetch("/api/filtration/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const body = await res.json();
-        if (!res.ok || body.ok === false)
-          throw new Error((body && body.error) || "save fail");
-        const pw = document.getElementById("filt-password");
-        if (pw) pw.value = "";
-        const tok = document.getElementById("filt-ha-token");
-        if (tok) tok.value = "";
-        clearFiltDirty();
-        // apply response immediately (don't wait for re-fetch race)
-        const enEl = document.getElementById("filt-enabled");
-        if (enEl && body.enabled != null) enEl.checked = !!body.enabled;
-        toastSuccess(
-          body.enabled
-            ? "Filtration · saved (on)"
-            : "Filtration · saved (off)"
-        );
-        await loadFiltrationConfig({ force: true });
-      } catch (e) {
-        toastError("Filtration: " + e.message);
-        if (st) st.textContent = "save err: " + e.message;
-      }
-    }
-
-    async function filtrationTest() {
-      const st = document.getElementById("filt-status");
-      if (st) st.textContent = "checking…";
-      try {
-        // save first so test uses form values? better require save
-        await saveFiltrationConfig();
-        const res = await fetch("/api/filtration/test", { method: "POST" });
-        const body = await res.json();
-        if (!body.ok) throw new Error(body.error || "test fail");
-        toastSuccess("OK · pump " + (body.on ? "ON" : "OFF"));
-        await loadFiltrationConfig();
-      } catch (e) {
-        const m = String(e.message || e);
-        toastError(m, 6000);
-        if (st) st.textContent = m.replace(/\n/g, " · ");
-      }
-    }
-
-    async function filtrationSet(on) {
-      try {
-        const res = await fetch("/api/filtration/set", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ on: !!on, source: "manual" }),
-        });
-        const body = await res.json();
-        if (!res.ok || body.ok === false)
-          throw new Error((body && body.error) || "set fail");
-        toastSuccess(on ? "Pump ON" : "Pump OFF");
-        await loadFiltrationConfig();
-      } catch (e) {
-        toastError(String(e.message || e), 6000);
-      }
-    }
-
-    document
-      .getElementById("btn-filt-save")
-      ?.addEventListener("click", () => void saveFiltrationConfig());
-    document
-      .getElementById("btn-filt-test")
-      ?.addEventListener("click", () => void filtrationTest());
-    document
-      .getElementById("btn-filt-on")
-      ?.addEventListener("click", () => void filtrationSet(true));
-    document
-      .getElementById("btn-filt-off")
-      ?.addEventListener("click", () => void filtrationSet(false));
-    document
-      .getElementById("filt-backend")
-      ?.addEventListener("change", () => {
-        markFiltDirty();
-        syncFiltBackendPanels();
-      });
-    // mark dirty on any filtration field edit so poll won't uncheck enabled
-    const filtPanel = document.getElementById("panel-filtration");
-    if (filtPanel) {
-      filtPanel.addEventListener("input", markFiltDirty);
-      filtPanel.addEventListener("change", markFiltDirty);
-    }
-    // show correct fields immediately (don't wait for API)
-    syncFiltBackendPanels();
-    loadFiltrationConfig({ force: true });
-    setInterval(() => {
-      if (document.getElementById("view-settings")?.classList.contains("active") ||
-          document.querySelector('nav.tabs button[data-tab="settings"].active')) {
-        void loadFiltrationConfig();
-      }
-    }, 15000);
 
     /* ── Firmware repository (USB) ─────────────────────────────────── */
     let _fwState = null;
@@ -15627,10 +15546,56 @@
         .replace(/[^A-Z0-9+]/g, "");
     }
 
-    function chipmapLookupModel(modelStr) {
+    /**
+     * Prefer server model profile (live.model / chipmap.model / /api/miner/model),
+     * fall back to embedded CHIPMAP_MODELS table.
+     */
+    function chipmapCfgFromProfile(profile) {
+      if (!profile || typeof profile !== "object") return null;
+      const cl = profile.chip_layout || {};
+      const boards = profile.boards || {};
+      const cpd = cl.chips_per_domain != null
+        ? Number(cl.chips_per_domain)
+        : cl.chips_per_domain_default != null
+          ? Number(cl.chips_per_domain_default)
+          : 0;
+      const link = cl.slot_link || boards.slot_link || null;
+      const style = cl.style || (link ? "hydro" : "snake");
+      return {
+        model: profile.sku || profile.family || profile.miner_type_norm || profile.miner_type || "—",
+        cpd: Number.isFinite(cpd) && cpd > 0 ? cpd : 0,
+        link: link || null,
+        style: style,
+        cooling: profile.cooling || null,
+        manufacturer: (profile.manufacturer && profile.manufacturer.name) || profile.manufacturer_id || null,
+        brand: (profile.manufacturer && profile.manufacturer.brand) || null,
+        family: profile.family || null,
+        board_count: boards.count != null ? Number(boards.count) : profile.board_count,
+        fuzzy: !!(cl.sku_fuzzy),
+        from_server: true,
+        profile: profile,
+      };
+    }
+
+    function chipmapLookupModel(modelStr, profileOpt) {
+      // 1) explicit profile (from API)
+      const fromProf = chipmapCfgFromProfile(profileOpt);
+      if (fromProf && (fromProf.cpd > 0 || fromProf.link || fromProf.style)) {
+        return fromProf;
+      }
+      // 2) cached live.model / window profile
+      try {
+        const cached =
+          (typeof window !== "undefined" && window.__poolheatModelProfile) ||
+          (typeof live !== "undefined" && live && live.model) ||
+          null;
+        const fromCache = chipmapCfgFromProfile(cached);
+        if (fromCache && (fromCache.cpd > 0 || fromCache.link)) return fromCache;
+      } catch (_) { /* ignore */ }
+
       const n = chipmapNormModel(modelStr);
-      if (!n) return null;
-      // exact contains (longest model first)
+      if (!n) return fromProf || null;
+      // 3) embedded SKU table (HashSource)
       let best = null;
       let bestLen = 0;
       for (const row of CHIPMAP_MODELS) {
@@ -15645,6 +15610,7 @@
           model: best[0],
           cpd: best[1] | 0,
           link: best[2] || null,
+          style: best[2] ? "hydro" : "snake",
         };
       }
       // prefix series fallback M60S / M63 etc.
@@ -15652,11 +15618,17 @@
         const pref = n.slice(0, len);
         for (const row of CHIPMAP_MODELS) {
           if (row[0].startsWith(pref)) {
-            return { model: row[0], cpd: row[1] | 0, link: row[2] || null, fuzzy: true };
+            return {
+              model: row[0],
+              cpd: row[1] | 0,
+              link: row[2] || null,
+              style: row[2] ? "hydro" : "snake",
+              fuzzy: true,
+            };
           }
         }
       }
-      return null;
+      return fromProf || null;
     }
 
     function chipmapInferCpd(chipCount) {
@@ -16257,45 +16229,106 @@
       return cell;
     }
 
-    /** Render section of domains as rows (HashSource render_section). */
-    function chipmapRenderSection(
+    /** Available width for chip map inside the page card. */
+    function chipmapHostWidth() {
+      const host = document.getElementById("chipmap-boards");
+      if (!host) return 900;
+      let el = host;
+      let w = 0;
+      while (el && el !== document.body) {
+        const cw = el.clientWidth || 0;
+        if (cw > 120) {
+          w = cw;
+          break;
+        }
+        el = el.parentElement;
+      }
+      if (!w) w = Math.min(window.innerWidth || 900, 1200);
+      // card padding / borders
+      return Math.max(260, w - 28);
+    }
+
+    /**
+     * Fit cell size + domains-per-strip so a strip fits page width.
+     * Prefer ~20–28px cells; wrap long maps into labeled strips.
+     */
+    function chipmapFitParams(numDomains) {
+      const n = Math.max(1, numDomains | 0);
+      const avail = chipmapHostWidth();
+      const gap = 1;
+      // target cell for readability
+      let cell = 22;
+      let perStrip = Math.floor((avail + gap) / (cell + gap));
+      if (perStrip < 1) perStrip = 1;
+      if (n <= perStrip) {
+        // stretch a bit to use width (not huge)
+        cell = Math.min(
+          30,
+          Math.max(16, Math.floor((avail - gap * (n - 1)) / n))
+        );
+        return { cell: cell, gap: gap, domainsPerStrip: n, dense: cell < 20, tiny: cell < 15 };
+      }
+      // wrap: shrink cell to pack more columns, min 12
+      cell = Math.max(
+        12,
+        Math.min(22, Math.floor((avail - gap * (perStrip - 1)) / perStrip))
+      );
+      perStrip = Math.max(6, Math.floor((avail + gap) / (cell + gap)));
+      perStrip = Math.min(perStrip, n);
+      return {
+        cell: cell,
+        gap: gap,
+        domainsPerStrip: perStrip,
+        dense: cell < 20,
+        tiny: cell < 15,
+      };
+    }
+
+    /**
+     * Render domain range as one or more width-fitting strips.
+     * domainList: left→right domain indices.
+     */
+    function chipmapAppendDomainStrips(
+      root,
       byId,
       cpd,
-      startDomain,
-      endDomain,
-      reversed,
+      domainList,
       metric,
       metricRange,
       analysisMap,
-      rowOrderRev
+      rowOrderRev,
+      fit
     ) {
-      const section = document.createElement("div");
-      section.className = "chip-section";
-      const domainCount = endDomain - startDomain;
-      if (domainCount <= 0) return section;
-      const rows = [];
-      for (let r = 0; r < cpd; r++) rows.push(r);
-      if (rowOrderRev) rows.reverse();
-      rows.forEach((rowIdx) => {
-        const rowEl = document.createElement("div");
-        rowEl.className = "chip-row";
-        for (let i = 0; i < domainCount; i++) {
-          const domainIdx = reversed
-            ? endDomain - 1 - i
-            : startDomain + i;
-          const chipIdx = domainIdx * cpd + rowIdx;
-          const c = byId[chipIdx];
-          const a = analysisMap ? analysisMap[chipIdx] : null;
-          rowEl.appendChild(
-            chipmapMakeCell(c, chipIdx, metric, metricRange, a)
-          );
-        }
-        section.appendChild(rowEl);
-      });
-      return section;
+      if (!domainList || !domainList.length) return;
+      const per = Math.max(1, fit.domainsPerStrip | 0);
+      for (let off = 0; off < domainList.length; off += per) {
+        const slice = domainList.slice(off, off + per);
+        const strip = document.createElement("div");
+        strip.className = "chip-strip";
+        const section = document.createElement("div");
+        section.className = "chip-section";
+        const rows = [];
+        for (let r = 0; r < cpd; r++) rows.push(r);
+        if (rowOrderRev) rows.reverse();
+        rows.forEach((rowIdx) => {
+          const rowEl = document.createElement("div");
+          rowEl.className = "chip-row";
+          slice.forEach((domainIdx) => {
+            const chipIdx = domainIdx * cpd + rowIdx;
+            const c = byId[chipIdx];
+            const a = analysisMap ? analysisMap[chipIdx] : null;
+            rowEl.appendChild(
+              chipmapMakeCell(c, chipIdx, metric, metricRange, a)
+            );
+          });
+          section.appendChild(rowEl);
+        });
+        strip.appendChild(section);
+        root.appendChild(strip);
+      }
     }
 
-    /** Air snake layout (non-hydro). */
+    /** Air snake / hydro layout — fits page width via cell size + domain strips. */
     function chipmapBuildSnakeGrid(
       chips,
       cpd,
@@ -16319,94 +16352,127 @@
       const numDomains =
         cpdUse > 0 ? Math.ceil((nChips || chips.length) / cpdUse) : 1;
 
+      // widest strip we'll draw (half for hydro)
+      const half = hydro ? Math.ceil(numDomains / 2) : numDomains;
+      const fit = chipmapFitParams(half);
+
       const root = document.createElement("div");
       root.className = "chip-snake";
+      root.style.setProperty("--chip-size", fit.cell + "px");
+      root.style.setProperty("--chip-gap", fit.gap + "px");
+      if (fit.dense) root.classList.add("is-dense");
+      if (fit.tiny) root.classList.add("is-tiny");
 
       if (hydro) {
-        // linked/hydro: half domains right (D0 far right), half left — no snake
+        // hydro: two halves · D0..mid-1 and mid..end-1 · wrap each to page width
         const rightDomains = Math.ceil(numDomains / 2);
-        const leftDomains = numDomains - rightDomains;
-        root.appendChild(
-          chipmapRenderSection(
+        // HashSource: first half reversed (D{mid-1} … D0), C0 at bottom
+        const halfA = [];
+        for (let d = rightDomains - 1; d >= 0; d--) halfA.push(d);
+        const halfB = [];
+        for (let d = rightDomains; d < numDomains; d++) halfB.push(d);
+
+        chipmapAppendDomainStrips(
+          root,
+          byId,
+          cpdUse,
+          halfA,
+          metric,
+          metricRange,
+          analysisMap,
+          true,
+          fit
+        );
+        if (halfB.length) {
+          chipmapAppendDomainStrips(
+            root,
             byId,
             cpdUse,
-            0,
-            rightDomains,
-            true,
+            halfB,
             metric,
             metricRange,
             analysisMap,
-            true // C0 bottom
-          )
-        );
-        if (leftDomains > 0) {
-          root.appendChild(
-            chipmapRenderSection(
-              byId,
-              cpdUse,
-              rightDomains,
-              numDomains,
-              false,
-              metric,
-              metricRange,
-              analysisMap,
-              false
-            )
+            false,
+            fit
           );
         }
+        const strips = Math.ceil(rightDomains / fit.domainsPerStrip) +
+          (halfB.length
+            ? Math.ceil(halfB.length / fit.domainsPerStrip)
+            : 0);
         root.dataset.layout =
-          numDomains + "d × " + cpdUse + "c/d  [hydro " + rightDomains + "+" + leftDomains + "]";
+          numDomains +
+          "d × " +
+          cpdUse +
+          "c/d · hydro " +
+          rightDomains +
+          "+" +
+          (numDomains - rightDomains) +
+          " · cell " +
+          fit.cell +
+          "px · " +
+          strips +
+          " strips";
         return root;
       }
 
-      // Snake: first domain sticks out, split remaining
+      // Snake: bottom section (D0 stick) + top section
       const remaining = Math.max(0, numDomains - 1);
       const bottomDomains = 1 + Math.floor(remaining / 2);
       const topDomains = remaining - Math.floor(remaining / 2);
       if (topDomains > 0) {
-        root.appendChild(
-          chipmapRenderSection(
-            byId,
-            cpdUse,
-            bottomDomains,
-            numDomains,
-            false,
-            metric,
-            metricRange,
-            analysisMap,
-            false
-          )
-        );
-      }
-      root.appendChild(
-        chipmapRenderSection(
+        const topList = [];
+        for (let d = bottomDomains; d < numDomains; d++) topList.push(d);
+        chipmapAppendDomainStrips(
+          root,
           byId,
           cpdUse,
-          0,
-          bottomDomains,
-          true,
+          topList,
           metric,
           metricRange,
           analysisMap,
-          false
-        )
+          false,
+          fit
+        );
+      }
+      const botList = [];
+      for (let d = bottomDomains - 1; d >= 0; d--) botList.push(d);
+      chipmapAppendDomainStrips(
+        root,
+        byId,
+        cpdUse,
+        botList,
+        metric,
+        metricRange,
+        analysisMap,
+        false,
+        fit
       );
       root.dataset.layout =
         numDomains +
         "d × " +
         cpdUse +
-        "c/d  [" +
+        "c/d · snake " +
         bottomDomains +
         "+" +
         topDomains +
-        " snake]";
+        " · cell " +
+        fit.cell +
+        "px";
       return root;
+    }
+
+    /** Whatsminer slot label: SM0…SM3 (Miner API / error codes). */
+    function chipmapSlotLabel(slot) {
+      const n = Number(slot);
+      if (Number.isFinite(n) && n >= 0 && n < 32) return "SM" + n;
+      return "SM" + String(slot ?? "?");
     }
 
     function chipmapBoardHeader(b, layoutInfo, extraTitle) {
       const h = document.createElement("div");
       h.className = "chip-board-h";
-      const title = extraTitle || "Board / Slot " + b.slot;
+      const title = extraTitle || chipmapSlotLabel(b.slot);
       h.innerHTML =
         '<span class="title">' +
         title +
@@ -16447,16 +16513,24 @@
             !data.error));
 
       const modelStr =
-        (data && (data.miner_type || data.model)) ||
+        (data && (data.miner_type || (typeof data.model === "string" ? data.model : null))) ||
         (typeof window !== "undefined" && window.__poolheatMinerType) ||
         "";
-      const cfg = chipmapLookupModel(modelStr);
+      const serverProfile =
+        (data && data.model && typeof data.model === "object" && data.model) ||
+        (typeof window !== "undefined" && window.__poolheatModelProfile) ||
+        null;
+      if (serverProfile && typeof window !== "undefined") {
+        try { window.__poolheatModelProfile = serverProfile; } catch (_) { /* ignore */ }
+      }
+      const cfg = chipmapLookupModel(modelStr, serverProfile);
       let cpd =
         (cfg && cfg.cpd) ||
         (boards[0] && chipmapInferCpd((boards[0].chips || []).length)) ||
         3;
       const links = chipmapParseLinks(cfg && cfg.link);
-      const isHydro = links.length > 0;
+      const isHydro =
+        links.length > 0 || !!(cfg && cfg.style === "hydro");
 
       if (st) {
         if (!data) {
@@ -16480,7 +16554,7 @@
             (data.chip_count || 0) +
             " · boards " +
             (data.board_count || boards.length);
-          if (cfg)
+          if (cfg) {
             t +=
               " · layout " +
               (cfg.fuzzy ? "~" : "") +
@@ -16489,7 +16563,13 @@
               cpd +
               " c/d" +
               (isHydro ? " · hydro" : " · snake");
-          else t += " · layout infer cpd=" + cpd;
+            if (cfg.manufacturer || cfg.brand) {
+              t +=
+                " · " +
+                (cfg.brand || cfg.manufacturer) +
+                (cfg.cooling ? " / " + cfg.cooling : "");
+            }
+          } else t += " · layout infer cpd=" + cpd;
           if (data.temp_min != null)
             t +=
               " · temp " +
@@ -16635,7 +16715,7 @@
           const ph = document.createElement("div");
           ph.className = "chip-pair-h";
           ph.textContent =
-            "Linked slots " + a + "+" + b + " (hydro/immersion)";
+            chipmapSlotLabel(a) + " + " + chipmapSlotLabel(b) + " (hydro)";
           pair.appendChild(ph);
           if (ba) {
             const el = appendBoard(ba, true);
@@ -16661,6 +16741,32 @@
         });
       }
     }
+
+    // Refit chip map when card width changes (window / sidebar)
+    let _chipmapResizeT = null;
+    let _chipmapLastW = 0;
+    function chipmapOnResize() {
+      if (!chipmapData) return;
+      const host = document.getElementById("chipmap-boards");
+      if (!host) return;
+      const w = host.clientWidth || 0;
+      if (Math.abs(w - _chipmapLastW) < 24) return;
+      _chipmapLastW = w;
+      if (_chipmapResizeT) clearTimeout(_chipmapResizeT);
+      _chipmapResizeT = setTimeout(() => {
+        if (chipmapData) renderChipmap(chipmapData);
+      }, 120);
+    }
+    if (typeof ResizeObserver !== "undefined") {
+      const host = document.getElementById("chipmap-boards");
+      if (host) {
+        const ro = new ResizeObserver(() => chipmapOnResize());
+        ro.observe(host);
+        // also watch parent card for padding/layout shifts
+        if (host.parentElement) ro.observe(host.parentElement);
+      }
+    }
+    window.addEventListener("resize", () => chipmapOnResize());
 
     // chip tooltip
     (function chipTip() {
@@ -17311,6 +17417,74 @@
       return src.type || "?";
     }
 
+    /**
+     * HTML5 drag-reorder for a list of .sortable-item children.
+     * Handle: .drag-handle (or whole item if none).
+     * onDrop(idsFromDom) after drop; getId(el) returns id string.
+     */
+    function bindSortableList(container, opts) {
+      opts = opts || {};
+      if (!container) return;
+      const itemSel = opts.itemSelector || ".sortable-item";
+      const getId =
+        opts.getId ||
+        ((el) => el.getAttribute("data-id") || el.dataset.id || "");
+      let dragEl = null;
+
+      const clearMarks = () => {
+        container.querySelectorAll(itemSel).forEach((el) => {
+          el.classList.remove("drag-over-top", "drag-over-bot", "is-dragging");
+        });
+      };
+
+      container.querySelectorAll(itemSel).forEach((el) => {
+        const handle = el.querySelector(".drag-handle") || el;
+        handle.setAttribute("draggable", "true");
+        handle.addEventListener("dragstart", (e) => {
+          dragEl = el;
+          el.classList.add("is-dragging");
+          try {
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", getId(el) || "x");
+          } catch (_) { /* ignore */ }
+        });
+        handle.addEventListener("dragend", () => {
+          clearMarks();
+          dragEl = null;
+        });
+        el.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          if (!dragEl || dragEl === el) return;
+          try {
+            e.dataTransfer.dropEffect = "move";
+          } catch (_) { /* ignore */ }
+          const rect = el.getBoundingClientRect();
+          const before = e.clientY < rect.top + rect.height / 2;
+          el.classList.toggle("drag-over-top", before);
+          el.classList.toggle("drag-over-bot", !before);
+          if (before) {
+            if (el.previousSibling !== dragEl) container.insertBefore(dragEl, el);
+          } else {
+            if (el.nextSibling !== dragEl)
+              container.insertBefore(dragEl, el.nextSibling);
+          }
+        });
+        el.addEventListener("dragleave", () => {
+          el.classList.remove("drag-over-top", "drag-over-bot");
+        });
+        el.addEventListener("drop", (e) => {
+          e.preventDefault();
+          clearMarks();
+          if (typeof opts.onDrop === "function") {
+            const ids = Array.from(container.querySelectorAll(itemSel)).map(
+              (node) => getId(node)
+            );
+            opts.onDrop(ids);
+          }
+        });
+      });
+    }
+
     function renderSensorsList() {
       const box = document.getElementById("sensors-list");
       const st = document.getElementById("sensors-status");
@@ -17325,7 +17499,7 @@
         return;
       }
       box.innerHTML = list
-        .map((s, idx) => {
+        .map((s) => {
           const alias = s.alias || s.id;
           const ev = (sensorsValues && sensorsValues[alias]) || {};
           const valTxt = ev.ok
@@ -17341,46 +17515,32 @@
           if (s.show_in_status) tags.push(t("sensor.status_tag", "status"));
           const tagTxt = tags.length ? " · " + tags.join(" · ") : "";
           const idEsc = String(s.id).replace(/"/g, "");
-          const canUp = idx > 0;
-          const canDown = idx < list.length - 1;
           return (
-            '<div class="card" style="margin:0;background:var(--panel2)">' +
-            '<div class="card-b" style="padding:12px 14px">' +
-            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">' +
-            "<div>" +
-            '<div style="font-weight:650;font-size:0.95rem">' +
+            '<div class="card sortable-item" data-id="' +
+            idEsc +
+            '" style="margin:0;background:var(--panel2)">' +
+            '<div class="card-b periph-item-body">' +
+            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">' +
+            '<div style="display:flex;gap:6px;align-items:flex-start;min-width:0;flex:1">' +
+            '<span class="drag-handle" title="' +
+            t("btn.drag_reorder", "Drag to reorder") +
+            '" aria-label="Drag">⋮⋮</span>' +
+            "<div style='min-width:0'>" +
+            '<div style="font-weight:650;font-size:0.92rem">' +
             title +
-            ' <span style="color:var(--dim);font-weight:500;font-size:0.8rem">· ' +
+            ' <span style="color:var(--dim);font-weight:500;font-size:0.78rem">· ' +
             alias +
             tagTxt +
             "</span></div>" +
-            '<div style="font-size:1.35rem;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums">' +
+            '<div style="font-size:1.2rem;font-weight:650;margin-top:2px;font-variant-numeric:tabular-nums">' +
             (en ? valTxt : t("sensor.disabled", "disabled")) +
             "</div>" +
-            '<div style="font-size:0.72rem;color:var(--dim);margin-top:4px">' +
+            '<div style="font-size:0.7rem;color:var(--dim);margin-top:2px">' +
             srcTxt +
             note +
             "</div>" +
-            "</div>" +
+            "</div></div>" +
             '<div class="btn-row" style="gap:6px;align-items:center">' +
-            '<button class="btn ghost" type="button" data-sensor-up="' +
-            idEsc +
-            '"' +
-            (canUp ? "" : " disabled") +
-            ' title="' +
-            t("btn.move_up", "↑") +
-            '">' +
-            t("btn.move_up", "↑") +
-            "</button>" +
-            '<button class="btn ghost" type="button" data-sensor-down="' +
-            idEsc +
-            '"' +
-            (canDown ? "" : " disabled") +
-            ' title="' +
-            t("btn.move_down", "↓") +
-            '">' +
-            t("btn.move_down", "↓") +
-            "</button>" +
             '<button class="btn" type="button" data-sensor-edit="' +
             idEsc +
             '">' +
@@ -17397,11 +17557,11 @@
           if (s) openSensorEditor(s);
         });
       });
-      box.querySelectorAll("[data-sensor-up]").forEach((btn) => {
-        btn.addEventListener("click", () => moveSensor(btn.getAttribute("data-sensor-up"), -1));
-      });
-      box.querySelectorAll("[data-sensor-down]").forEach((btn) => {
-        btn.addEventListener("click", () => moveSensor(btn.getAttribute("data-sensor-down"), 1));
+      bindSortableList(box, {
+        getId: (el) => el.getAttribute("data-id") || "",
+        onDrop: (ids) => {
+          void persistSensorOrder(ids);
+        },
       });
       if (st) {
         const okN = list.filter((s) => {
@@ -17409,6 +17569,28 @@
           return sensorsValues[a] && sensorsValues[a].ok;
         }).length;
         st.textContent = okN + " / " + list.length + " ok";
+      }
+    }
+
+    async function persistSensorOrder(ids) {
+      if (!ids || ids.length < 1) return;
+      // skip if already matches cache
+      const cur = (sensorsCache || []).map((s) => s.id).join(",");
+      if (cur === ids.join(",")) return;
+      try {
+        const res = await fetch("/api/sensors/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "reorder fail");
+        sensorsCache = body.sensors || sensorsCache;
+        if (body.values) sensorsValues = body.values;
+        renderSensorsList();
+      } catch (e) {
+        toastError(e.message);
+        renderSensorsList();
       }
     }
 
@@ -17422,21 +17604,7 @@
       const tmp = next[idx];
       next[idx] = next[j];
       next[j] = tmp;
-      const ids = next.map((s) => s.id);
-      try {
-        const res = await fetch("/api/sensors/reorder", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }),
-        });
-        const body = await res.json();
-        if (!body.ok) throw new Error(body.error || "reorder fail");
-        sensorsCache = body.sensors || next;
-        if (body.values) sensorsValues = body.values;
-        renderSensorsList();
-      } catch (e) {
-        toastError(e.message);
-      }
+      await persistSensorOrder(next.map((s) => s.id));
     }
 
     function sourceRowHtml(src, idx) {
@@ -17480,10 +17648,13 @@
         )
         .join("");
       return (
-        '<div class="sensor-source-row row" data-src-idx="' +
+        '<div class="sensor-source-row sortable-item row" data-src-idx="' +
         idx +
-        '" style="grid-template-columns:140px 1fr auto;gap:8px;align-items:end">' +
-        '<label class="field" style="margin:0"><span>#' +
+        '" style="grid-template-columns:auto 140px 1fr auto;gap:8px;align-items:end">' +
+        '<span class="drag-handle" title="' +
+        t("btn.drag_reorder", "Drag to reorder") +
+        '" aria-label="Drag">⋮⋮</span>' +
+        '<label class="field" style="margin:0"><span class="src-num">#' +
         (idx + 1) +
         '</span><select class="src-type">' +
         '<option value="live"' +
@@ -17529,6 +17700,16 @@
       );
     }
 
+    function reindexSourceRows() {
+      const box = document.getElementById("sensor-sources");
+      if (!box) return;
+      box.querySelectorAll(".sensor-source-row").forEach((row, i) => {
+        row.setAttribute("data-src-idx", String(i));
+        const num = row.querySelector(".src-num");
+        if (num) num.textContent = "#" + (i + 1);
+      });
+    }
+
     function bindSourceRows() {
       const box = document.getElementById("sensor-sources");
       if (!box) return;
@@ -17550,6 +17731,13 @@
           box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
           bindSourceRows();
         };
+      });
+      bindSortableList(box, {
+        itemSelector: ".sensor-source-row",
+        getId: (el) => el.getAttribute("data-src-idx") || "",
+        onDrop: () => {
+          reindexSourceRows();
+        },
       });
     }
 
@@ -17717,6 +17905,14 @@
         sensorsValues = body.values || {};
         if (body.catalog) sensorsCatalog = body.catalog;
         renderSensorsList();
+        // refresh Pool → water sensor options (virtual sensors)
+        if (typeof fillPoolWaterSensorSelect === "function") {
+          const cur =
+            document.getElementById("pool-water-sensor")?.value ||
+            (poolDerived && poolDerived.water_sensor) ||
+            "liquid";
+          fillPoolWaterSensorSelect(cur, null);
+        }
       } catch (e) {
         if (st) st.textContent = "error: " + e.message;
       }
@@ -18003,7 +18199,7 @@
         return;
       }
       box.innerHTML = list
-        .map((d, idx) => {
+        .map((d) => {
           const en = d.enabled !== false;
           const on = d.last_on;
           let stateTxt = t("dev.state_unknown", "—");
@@ -18032,50 +18228,36 @@
               "</div>"
             : "";
           const idEsc = String(d.id).replace(/"/g, "");
-          const canUp = idx > 0;
-          const canDown = idx < list.length - 1;
           return (
-            '<div class="card" style="margin:0;background:var(--panel2)">' +
-            '<div class="card-b" style="padding:12px 14px">' +
-            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">' +
-            "<div>" +
-            '<div style="font-weight:650;font-size:0.95rem">' +
-            '<span style="font-size:1.2rem;margin-right:6px">' +
+            '<div class="card sortable-item" data-id="' +
+            idEsc +
+            '" style="margin:0;background:var(--panel2)">' +
+            '<div class="card-b periph-item-body">' +
+            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">' +
+            '<div style="display:flex;gap:6px;align-items:flex-start;min-width:0;flex:1">' +
+            '<span class="drag-handle" title="' +
+            t("btn.drag_reorder", "Drag to reorder") +
+            '" aria-label="Drag">⋮⋮</span>' +
+            "<div style='min-width:0'>" +
+            '<div style="font-weight:650;font-size:0.92rem">' +
+            '<span style="font-size:1.1rem;margin-right:5px">' +
             icon +
             "</span>" +
             name +
-            ' <span style="color:var(--dim);font-weight:500;font-size:0.8rem">· /' +
+            ' <span style="color:var(--dim);font-weight:500;font-size:0.78rem">· /' +
             alias +
             "</span></div>" +
-            '<div style="font-size:1.2rem;font-weight:650;margin-top:4px">' +
+            '<div style="font-size:1.1rem;font-weight:650;margin-top:2px">' +
             stateTxt +
             "</div>" +
-            '<div style="font-size:0.72rem;color:var(--dim);margin-top:4px">' +
+            '<div style="font-size:0.7rem;color:var(--dim);margin-top:2px">' +
             be +
             tagTxt +
             "</div>" +
             desc +
             err +
-            "</div>" +
+            "</div></div>" +
             '<div class="btn-row" style="gap:6px;align-items:center">' +
-            '<button class="btn ghost" type="button" data-device-up="' +
-            idEsc +
-            '"' +
-            (canUp ? "" : " disabled") +
-            ' title="' +
-            t("btn.move_up", "↑") +
-            '">' +
-            t("btn.move_up", "↑") +
-            "</button>" +
-            '<button class="btn ghost" type="button" data-device-down="' +
-            idEsc +
-            '"' +
-            (canDown ? "" : " disabled") +
-            ' title="' +
-            t("btn.move_down", "↓") +
-            '">' +
-            t("btn.move_down", "↓") +
-            "</button>" +
             '<button class="btn" type="button" data-device-on="' +
             idEsc +
             '">ON</button>' +
@@ -18104,13 +18286,33 @@
       box.querySelectorAll("[data-device-off]").forEach((btn) => {
         btn.addEventListener("click", () => deviceSetById(btn.getAttribute("data-device-off"), false));
       });
-      box.querySelectorAll("[data-device-up]").forEach((btn) => {
-        btn.addEventListener("click", () => moveDevice(btn.getAttribute("data-device-up"), -1));
-      });
-      box.querySelectorAll("[data-device-down]").forEach((btn) => {
-        btn.addEventListener("click", () => moveDevice(btn.getAttribute("data-device-down"), 1));
+      bindSortableList(box, {
+        getId: (el) => el.getAttribute("data-id") || "",
+        onDrop: (ids) => {
+          void persistDeviceOrder(ids);
+        },
       });
       if (st) st.textContent = list.length + " · " + list.filter((d) => d.enabled !== false).length + " on";
+    }
+
+    async function persistDeviceOrder(ids) {
+      if (!ids || ids.length < 1) return;
+      const cur = (devicesCache || []).map((d) => d.id).join(",");
+      if (cur === ids.join(",")) return;
+      try {
+        const res = await fetch("/api/devices/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "reorder fail");
+        devicesCache = body.devices || devicesCache;
+        renderDevicesList();
+      } catch (e) {
+        toastError(e.message);
+        renderDevicesList();
+      }
     }
 
     async function moveDevice(id, delta) {
@@ -18123,20 +18325,7 @@
       const tmp = next[idx];
       next[idx] = next[j];
       next[j] = tmp;
-      const ids = next.map((d) => d.id);
-      try {
-        const res = await fetch("/api/devices/reorder", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids }),
-        });
-        const body = await res.json();
-        if (!body.ok) throw new Error(body.error || "reorder fail");
-        devicesCache = body.devices || next;
-        renderDevicesList();
-      } catch (e) {
-        toastError(e.message);
-      }
+      await persistDeviceOrder(next.map((d) => d.id));
     }
 
     function openDeviceEditor(device) {
@@ -18399,7 +18588,31 @@
         });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "set fail");
-        toastSuccess(on ? t("dev.state_on", "ON") : t("dev.state_off", "OFF"));
+        const cached = (devicesCache || []).find((x) => x && x.id === id) || null;
+        let name = "";
+        try {
+          if (typeof deviceDisplayName === "function" && (body.name || cached)) {
+            name = deviceDisplayName(
+              Object.assign({}, cached || {}, {
+                name: body.name || (cached && cached.name),
+                name_en: body.name_en || (cached && cached.name_en),
+                name_ru: body.name_ru || (cached && cached.name_ru),
+                alias: body.alias || (cached && cached.alias),
+              })
+            );
+          }
+        } catch (_) { /* ignore */ }
+        if (!name) {
+          name =
+            body.name ||
+            body.alias ||
+            (cached && (cached.name || cached.alias)) ||
+            "Device";
+        }
+        const state = on
+          ? t("dev.toast_on", "On")
+          : t("dev.toast_off", "Off");
+        toastSuccess(String(name).trim() + " " + state);
         await loadDevices();
       } catch (e) {
         toastError(e.message);

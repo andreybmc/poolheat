@@ -13,6 +13,13 @@ mkdir -p /opt/bin /opt/lib/poolheat /opt/share/poolheat/www \
 
 # app files
 cp -f "$ROOT/ui-demo/serve.py" /opt/lib/poolheat/serve.py
+# model catalog (manufacturer · cooling · chip layout)
+if [ -f "$ROOT/ui-demo/miner_models.py" ]; then
+  cp -f "$ROOT/ui-demo/miner_models.py" /opt/lib/poolheat/miner_models.py
+fi
+if [ -f "$ROOT/ui-demo/chipmap_skus.json" ]; then
+  cp -f "$ROOT/ui-demo/chipmap_skus.json" /opt/lib/poolheat/chipmap_skus.json
+fi
 # whatsminer-lib (vendored package)
 if [ -d "$ROOT/ui-demo/whatsminer" ]; then
   rm -rf /opt/lib/poolheat/whatsminer

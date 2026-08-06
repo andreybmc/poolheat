@@ -1,0 +1,1202 @@
+[
+{
+"sku": "M50S++VK10",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VK20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VK30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50S++VK40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VK50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VK60",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VL10",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50S++VL20",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50S++VL30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VL40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VL50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S++VL60",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S+VH30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50S+VH40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50S+VJ30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50S+VJ40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50S+VJ60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50S+VK10",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S+VK20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S+VK30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50S+VL10",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50S+VL20",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50S+VL30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVH20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVH30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50SVH40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50SVH50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVJ10",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVJ20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVJ30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVJ40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVJ50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVK10",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50SVK20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVK30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVK50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVK60",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVK70",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50SVK80",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50SVL10",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50SVL20",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50SVL30",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50VE30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M50VG30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50VH10",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50VH20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VH30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VH40",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50VH50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VH60",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50VH70",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VH80",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VH90",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VJ10",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M50VJ20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VJ30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VJ40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VJ60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M50VK40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M50VK50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M53HVH10",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S++VK10",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S++VK20",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S++VK30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S++VK50",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S++VL10",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S++VL30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S+VJ30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S+VJ40",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S+VJ50",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53S+VK30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53SVH20",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53SVH30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53SVJ30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53SVJ40",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53SVK30",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53VH30",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53VH40",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53VH50",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53VK30",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M53VK60",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S++VK10",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S++VK30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S++VK40",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S++VK50",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S+VJ30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S+VK30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S+VK40",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56S+VK50",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56SVH30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56SVJ30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56SVJ40",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M56VH30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M60S++VL10",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S++VL30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S++VL40",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S++VL50",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S++VL70",
+"cpd": 6,
+"slot_link": null
+},
+{
+"sku": "M60S++VM30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60S++VM40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60S++VM50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60S++VM60",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60S++VM70",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60S+VK30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S+VK40",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S+VK50",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S+VK60",
+"cpd": 6,
+"slot_link": null
+},
+{
+"sku": "M60S+VK70",
+"cpd": 6,
+"slot_link": null
+},
+{
+"sku": "M60S+VL100",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VL10",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VL30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S+VL40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VL50",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VL60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VL70",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60S+VL80",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VL90",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60S+VM20",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M60S+VM30",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M60S+VM40",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M60S+VM50",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M60SVK10",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60SVK20",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60SVK30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60SVK40",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60SVK60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVK70",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVK80",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60SVK90",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVL10",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60SVL20",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVL30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVL40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVL50",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVL60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60SVL70",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60SVL80",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60SVM20",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M60SVM40",
+"cpd": 2,
+"slot_link": null
+},
+{
+"sku": "M60VK10",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60VK20",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60VK30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M60VK40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60VK6A",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M60VL10",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60VL20",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60VL30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60VL40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M60VL50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M61S+VL30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M61SVK20",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M61SVK30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M61SVL10",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61SVL20",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61SVL30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61SVL60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61SVL90",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M61SVM30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M61VK10",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61VK20",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61VK30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61VK40",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61VK60",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M61VL10",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M61VL30",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M61VL40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M61VL50",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M61VL60",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M63S++VL20",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S++VL40",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S++VL50",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S++VL60",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S++VM20",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VK30",
+"cpd": 6,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL10",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL20",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL30",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL50",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL60",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL70",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL80",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VL90",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VM30",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63S+VM40",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK10",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK20",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK30",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK40",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK50",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK60",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK70",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK80",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVK90",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVL10",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVL20",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVL30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVL50",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVL60",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVL70",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63SVM30",
+"cpd": 2,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VK10",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VK20",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VK30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VL10",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VL20",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VL30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VL40",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VL60",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M63VL70",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S++VL20",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M66S++VL40",
+"cpd": 3,
+"slot_link": null
+},
+{
+"sku": "M66S++VL50",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S++VL60",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S++VM30",
+"cpd": 3,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VK30",
+"cpd": 5,
+"slot_link": null
+},
+{
+"sku": "M66S+VL10",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VL20",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VL30",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VL40",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VL50",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VL60",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66S+VL70",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVK20",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M66SVK30",
+"cpd": 4,
+"slot_link": null
+},
+{
+"sku": "M66SVK40",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVK50",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVK60",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVK70",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVK80",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVL10",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVL20",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVL30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVL40",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVL50",
+"cpd": 5,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66SVL80",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66VK20",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66VK30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66VK60",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66VL20",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+},
+{
+"sku": "M66VL30",
+"cpd": 4,
+"slot_link": "0:1 2:3"
+}
+]
