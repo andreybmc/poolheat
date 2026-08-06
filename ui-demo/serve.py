@@ -3008,6 +3008,28 @@ def replace_devices(devices_list: list) -> list[dict]:
     return list_devices(redact=True)
 
 
+def reorder_devices(ids: list) -> list[dict]:
+    """Reorder devices by id list (unknown ignored; missing stay at end)."""
+    want = [str(i).strip() for i in (ids or []) if str(i).strip()]
+    with _devices_cfg_lock:
+        devices = list(_devices_cfg.get("devices") or [])
+        by_id = {str(d.get("id")): d for d in devices if d.get("id")}
+        ordered: list[dict] = []
+        seen: set[str] = set()
+        for did in want:
+            if did in by_id and did not in seen:
+                ordered.append(by_id[did])
+                seen.add(did)
+        for d in devices:
+            did = str(d.get("id") or "")
+            if did and did not in seen:
+                ordered.append(d)
+                seen.add(did)
+        _devices_cfg["devices"] = ordered
+    _save_devices_cfg()
+    return list_devices(redact=True)
+
+
 def _device_cfg_snapshot(did: str) -> dict | None:
     with _devices_cfg_lock:
         for d in _devices_cfg.get("devices") or []:
@@ -5811,6 +5833,10 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
     name_en, name_ru, name = _normalize_sensor_names(raw, alias)
     unit = str(raw.get("unit") or "°C").strip() or "°C"
     enabled = bool(raw.get("enabled", True))
+    # Telegram /status card — show this sensor under temperatures
+    show_in_status = _as_bool(
+        raw.get("show_in_status", raw.get("status_in_bot", False))
+    )
     sources_raw = raw.get("sources")
     if not isinstance(sources_raw, list):
         sources_raw = []
@@ -5836,6 +5862,7 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
         "name_ru": name_ru,
         "unit": unit,
         "enabled": enabled,
+        "show_in_status": show_in_status,
         "sources": sources,
         "transform": transform,
         "note": str(raw.get("note") or "")[:500],
@@ -5939,6 +5966,31 @@ def replace_sensors(sensors_list: list) -> list[dict]:
         _sensors_cfg["sensors"] = clean
     _save_sensors_cfg()
     return clean
+
+
+def reorder_sensors(ids: list) -> list[dict]:
+    """
+    Reorder sensors by id list. Unknown ids ignored; any missing sensors
+    stay at the end in previous relative order.
+    """
+    want = [str(i).strip() for i in (ids or []) if str(i).strip()]
+    with _sensors_cfg_lock:
+        sensors = list(_sensors_cfg.get("sensors") or [])
+        by_id = {str(s.get("id")): s for s in sensors if s.get("id")}
+        ordered: list[dict] = []
+        seen: set[str] = set()
+        for sid in want:
+            if sid in by_id and sid not in seen:
+                ordered.append(by_id[sid])
+                seen.add(sid)
+        for s in sensors:
+            sid = str(s.get("id") or "")
+            if sid and sid not in seen:
+                ordered.append(s)
+                seen.add(sid)
+        _sensors_cfg["sensors"] = ordered
+    _save_sensors_cfg()
+    return list_sensors()
 
 
 def _live_snapshot_for_sensors() -> dict:
@@ -15321,6 +15373,52 @@ def _tg_status_fleet_power(live: dict | None) -> tuple[float | None, float | Non
     return pw, hr, jt
 
 
+def _tg_status_sensor_lines(lang: str = "ru") -> list[str]:
+    """
+    Extra temperature (and other) sensors for /status.
+    Only enabled sensors with show_in_status=True.
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    lines: list[str] = []
+    try:
+        sensors = list_sensors()
+    except Exception:
+        return lines
+    vals: dict = {}
+    try:
+        vals = evaluate_all_sensors()
+    except Exception:
+        vals = {}
+    for s in sensors:
+        if not isinstance(s, dict):
+            continue
+        if not s.get("enabled", True):
+            continue
+        if not s.get("show_in_status"):
+            continue
+        alias = str(s.get("alias") or s.get("id") or "")
+        if en:
+            label = str(s.get("name_en") or s.get("name") or alias)
+        else:
+            label = str(s.get("name_ru") or s.get("name") or alias)
+        label = (label or alias).strip() or alias
+        unit = str(s.get("unit") or "°C").strip() or "°C"
+        ev = vals.get(alias) if isinstance(vals, dict) else None
+        if not isinstance(ev, dict):
+            ev = {}
+        if ev.get("ok") and ev.get("value") is not None:
+            u = str(ev.get("unit") or unit)
+            val_s = _tg_fmt_num(ev.get("value"), 1)
+            if u and u not in ("", "—"):
+                lines.append(f"{label}:  {val_s} {u}")
+            else:
+                lines.append(f"{label}:  {val_s}")
+        else:
+            na = "n/a" if en else "н/д"
+            lines.append(f"{label}:  {na}")
+    return lines
+
+
 def _tg_status_text(lang: str = "ru") -> str:
     """
     Laconic Status card (no host / online / last_event):
@@ -15397,18 +15495,24 @@ def _tg_status_text(lang: str = "ru") -> str:
 
     if en:
         temps_h = "🌡  Temperatures:"
+        # Water (T_ctrl) intentionally omitted — use custom sensors with show_in_status
         temp_lines = [
-            f"Water:    {_tg_fmt_num(t_ctrl, 1)} °C",
             f"Street:  {_tg_fmt_num(street, 1)} °C",
             f"Chips:   {_tg_fmt_num(chip, 1)} °C",
         ]
     else:
         temps_h = "🌡  Температуры:"
         temp_lines = [
-            f"Вода:    {_tg_fmt_num(t_ctrl, 1)} °C",
             f"Улица:  {_tg_fmt_num(street, 1)} °C",
             f"Чипы:   {_tg_fmt_num(chip, 1)} °C",
         ]
+    # Custom sensors marked «Status in bot»
+    try:
+        extra = _tg_status_sensor_lines(lang)
+        if extra:
+            temp_lines.extend(extra)
+    except Exception:
+        pass
 
     lines = [
         title,
@@ -19838,11 +19942,17 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/sensors/delete", "/api/sensors/remove"):
             self._api_sensors_delete()
             return
+        if path in ("/api/sensors/reorder", "/api/sensors/order"):
+            self._api_sensors_reorder()
+            return
         if path in ("/api/devices", "/api/devices/save", "/api/devices/config"):
             self._api_devices_post()
             return
         if path in ("/api/devices/delete", "/api/devices/remove"):
             self._api_devices_delete()
+            return
+        if path in ("/api/devices/reorder", "/api/devices/order"):
+            self._api_devices_reorder()
             return
         if path in ("/api/devices/set", "/api/devices/on", "/api/devices/off"):
             self._api_devices_set()
@@ -20608,6 +20718,24 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_sensors_reorder(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            ids = req.get("ids") if isinstance(req, dict) else None
+            if not isinstance(ids, list):
+                raise ValueError("ids: string[] required")
+            clean = reorder_sensors(ids)
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "sensors": clean,
+                    "values": evaluate_all_sensors(),
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_devices_get(self) -> None:
         try:
             body = get_devices_cfg(redact=True)
@@ -20683,6 +20811,17 @@ class Handler(SimpleHTTPRequestHandler):
                     "devices": list_devices(redact=True),
                 },
             )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_devices_reorder(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            ids = req.get("ids") if isinstance(req, dict) else None
+            if not isinstance(ids, list):
+                raise ValueError("ids: string[] required")
+            clean = reorder_devices(ids)
+            self._json_response(200, {"ok": True, "devices": clean})
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 

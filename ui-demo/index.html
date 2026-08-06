@@ -1953,7 +1953,12 @@
     .temp-card.liquid-env::before {
       background: linear-gradient(180deg, var(--accent) 0 50%, var(--ok) 50% 100%);
     }
-    .temp-card.outdoor::before { display: none; }
+    /* outdoor weather: left tab matches sky/blue widget (same 3px bookmark as other cards) */
+    .temp-card.outdoor::before {
+      display: block;
+      background: linear-gradient(180deg, #7ec8f5 0%, #3d9cf0 45%, #1a6bb5 100%);
+      z-index: 2;
+    }
 
     /* —— Weather widget (iOS / Android style) —— */
     .temp-card.outdoor.wx-widget {
@@ -4163,27 +4168,31 @@
                   <input type="text" id="sensor-alias" placeholder="outdoor" autocomplete="off" pattern="[a-z][a-z0-9_]*" />
                 </label>
                 <label class="field" style="grid-column:span 1">
-                  <span id="sensor-name-primary-label" data-i18n="field.sensor_name">Display name</span>
-                  <input type="text" id="sensor-name-primary" placeholder="Outdoor" autocomplete="off" />
-                  <button type="button" class="linkish" id="btn-sensor-name-other" style="margin-top:6px;background:none;border:none;padding:0;color:var(--accent);font-size:0.75rem;cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px">
-                    + English name
-                  </button>
+                  <span class="field-head">
+                    <span data-i18n="field.sensor_name">Display name</span>
+                    <label class="lang-chk" id="sensor-name-lang-chk" title="Other language">
+                      <input type="checkbox" id="sensor-name-other-lang" />
+                      <span class="lang-chk-tag" id="sensor-name-other-tag">en</span>
+                    </label>
+                  </span>
+                  <input type="text" id="sensor-name" placeholder="Outdoor" autocomplete="off" />
                 </label>
                 <label class="field"><span data-i18n="field.sensor_unit">Unit</span>
                   <input type="text" id="sensor-unit" value="°C" autocomplete="off" />
                 </label>
               </div>
-              <label class="field" id="sensor-name-other-wrap" hidden style="max-width:420px">
-                <span id="sensor-name-other-label">English name</span>
-                <input type="text" id="sensor-name-other" placeholder="" autocomplete="off" />
-                <span class="desc" style="display:block;margin-top:4px;font-size:0.72rem;color:var(--dim)" data-i18n="hint.sensor_name_bilingual">
-                  If left empty, the other language is copied from the primary name on save.
-                </span>
-              </label>
-              <label class="check">
-                <input type="checkbox" id="sensor-enabled" checked />
-                <span data-i18n="check.sensor_enabled">Enabled</span>
-              </label>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                <label class="check">
+                  <input type="checkbox" id="sensor-enabled" checked />
+                  <span data-i18n="check.sensor_enabled">Enabled</span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" id="sensor-show-status" />
+                  <span><span data-i18n="check.sensor_status_bot">Status in bot</span>
+                    <span class="desc" data-i18n="check.sensor_status_bot_desc">show in Telegram /status</span>
+                  </span>
+                </label>
+              </div>
 
               <div>
                 <div class="btn-row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -4283,9 +4292,17 @@
                 <div style="font-size:0.8rem;color:var(--muted);margin:0 0 6px" data-i18n="dev.icon">Icon</div>
                 <div id="device-icon-picker" class="btn-row" style="gap:6px;flex-wrap:wrap"></div>
               </div>
-              <p style="font-size:0.72rem;color:var(--dim);margin:0" data-i18n="dev.alias_hint">
-                Alias is used as Telegram command (/alias). Reserved names blocked (status, filtration, …).
+              <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45">
+                <span data-i18n="dev.alias_hint_cmd">Alias is used as Telegram command (/alias).</span>
+                <button type="button" class="linkish" id="btn-dev-reserved-toggle"
+                  style="background:none;border:none;padding:0;margin:0 0 0 4px;color:var(--accent);font-size:0.72rem;cursor:pointer;text-decoration:underline;text-underline-offset:2px"
+                  aria-expanded="false" aria-controls="dev-reserved-list">
+                  <span data-i18n="dev.alias_reserved_link">Reserved names…</span>
+                </button>
               </p>
+              <div id="dev-reserved-list" hidden
+                style="font-size:0.7rem;color:var(--dim);line-height:1.5;margin:0;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--border);font-family:var(--mono,ui-monospace,monospace);word-break:break-word">
+              </div>
               <label class="field">
                 <span class="field-head">
                   <span data-i18n="dev.description">Description</span>
@@ -5425,6 +5442,10 @@
         "dev.name": "Name",
         "dev.alias": "Alias",
         "dev.alias_hint": "Alias is used as Telegram command (/alias). Reserved names blocked (status, filtration, …).",
+        "dev.alias_hint_cmd": "Alias is used as Telegram command (/alias).",
+        "dev.alias_reserved_link": "Reserved names…",
+        "dev.alias_reserved_hide": "Hide list",
+        "dev.alias_reserved_empty": "List unavailable — open editor after load.",
         "dev.description": "Description",
         "dev.lang_other_tip": "Edit the other language (UI is {ui})",
         "dev.enabled": "Enabled",
@@ -5477,6 +5498,12 @@
         "field.power_kw": "Power, kW",
         "field.delta_c": "Δ, °C",
         "check.sensor_enabled": "Enabled",
+        "check.sensor_status_bot": "Status in bot",
+        "check.sensor_status_bot_desc": "show in Telegram /status",
+        "sensor.status_tag": "status",
+        "btn.move_up": "↑",
+        "btn.move_down": "↓",
+        "toast.order_saved": "Order saved",
         "opt.xform_none": "none (as source)",
         "opt.xform_offset": "offset (source + Δ)",
         "opt.xform_power": "power table (source − Δ(P))",
@@ -5842,6 +5869,10 @@
         "dev.name": "Название",
         "dev.alias": "Alias",
         "dev.alias_hint": "Alias используется как команда бота (/alias). Зарезервированные имена запрещены (status, filtration, …).",
+        "dev.alias_hint_cmd": "Alias используется как команда бота (/alias).",
+        "dev.alias_reserved_link": "Зарезервированные имена…",
+        "dev.alias_reserved_hide": "Скрыть список",
+        "dev.alias_reserved_empty": "Список недоступен — откройте редактор после загрузки.",
         "dev.description": "Описание",
         "dev.lang_other_tip": "Редактировать другой язык (UI: {ui})",
         "dev.enabled": "Активировано",
@@ -5895,6 +5926,12 @@
         "field.power_kw": "Мощность, kW",
         "field.delta_c": "Δ, °C",
         "check.sensor_enabled": "Включён",
+        "check.sensor_status_bot": "Статус в боте",
+        "check.sensor_status_bot_desc": "показывать в Telegram /status",
+        "sensor.status_tag": "статус",
+        "btn.move_up": "↑",
+        "btn.move_down": "↓",
+        "toast.order_saved": "Порядок сохранён",
         "opt.xform_none": "нет (как источник)",
         "opt.xform_offset": "offset (источник + Δ)",
         "opt.xform_power": "таблица мощности (источник − Δ(P))",
@@ -6862,15 +6899,16 @@
       about: "info",
       log: "logs",
       errors: "logs",
-      peripheral: "periph",
-      peripherals: "periph",
-      periph: "periph",
+      /* Peripherals → always land on #sensors (not bare #periph) */
+      peripheral: "sensors",
+      peripherals: "sensors",
+      periph: "sensors",
       sensor: "sensors",
       sensors: "sensors",
       device: "devices",
       devices: "devices",
       /* RU deep-links */
-      periferiya: "periph",
+      periferiya: "sensors",
       datchiki: "sensors",
       ustroystva: "devices",
     };
@@ -7054,8 +7092,10 @@
         mainTab = "periph";
         periphSub = "devices";
       } else if (tabId === "periph") {
+        // Canonical URL is #sensors (no bare #periph alias)
         mainTab = "periph";
         periphSub = "sensors";
+        tabId = "sensors";
       } else if (tabId === "info") {
         infoSub = "info";
       } else if (tabId === "miner") {
@@ -7130,7 +7170,9 @@
 
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
-        activateTab(btn.dataset.tab);
+        // Peripherals tab → #sensors (not #periph)
+        const tab = btn.dataset.tab === "periph" ? "sensors" : btn.dataset.tab;
+        activateTab(tab);
       });
     });
     document.querySelectorAll("#view-info nav.subtabs button").forEach((btn) => {
@@ -17184,7 +17226,8 @@
     let sensorsValues = {};
     let sensorsCatalog = { live_fields: [], weather_fields: [] };
     let sensorEditorOpen = false;
-    let sensorNameOtherOpen = false;
+    /** Bilingual draft for name — same pattern as devices (en|ru checkbox). */
+    let sensorNameBi = { en: "", ru: "" };
 
     function fmtSensorVal(v) {
       if (v == null || v === "" || !Number.isFinite(Number(v))) return "—";
@@ -17192,45 +17235,71 @@
       return Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
     }
 
+    function sensorUiLang() {
+      return typeof getUiLang === "function" && getUiLang() === "ru" ? "ru" : "en";
+    }
+
+    function sensorOtherLang(ui) {
+      return (ui || sensorUiLang()) === "ru" ? "en" : "ru";
+    }
+
+    function sensorActiveNameLang() {
+      const other = !!document.getElementById("sensor-name-other-lang")?.checked;
+      const ui = sensorUiLang();
+      return other ? sensorOtherLang(ui) : ui;
+    }
+
+    function syncSensorLangToggle() {
+      const ui = sensorUiLang();
+      const other = sensorOtherLang(ui);
+      const tag = document.getElementById("sensor-name-other-tag");
+      if (tag) tag.textContent = other;
+      const tip = typeof tf === "function"
+        ? tf("dev.lang_other_tip", { ui: ui }, "Other language (UI: " + ui + ")")
+        : "Other language (UI: " + ui + ")";
+      const chk = document.getElementById("sensor-name-lang-chk");
+      if (chk) {
+        chk.title = tip;
+        chk.classList.toggle(
+          "is-on",
+          !!document.getElementById("sensor-name-other-lang")?.checked
+        );
+      }
+    }
+
+    function flushSensorNameInput() {
+      const el = document.getElementById("sensor-name");
+      if (!el) return;
+      const lang = sensorActiveNameLang();
+      sensorNameBi[lang] = (el.value || "").trim();
+    }
+
+    function showSensorNameForActiveLang() {
+      const el = document.getElementById("sensor-name");
+      if (!el) return;
+      const lang = sensorActiveNameLang();
+      el.value = sensorNameBi[lang] || "";
+      el.placeholder = lang === "ru" ? "Улица" : "Outdoor";
+    }
+
+    function onSensorNameLangToggle() {
+      const box = document.getElementById("sensor-name-other-lang");
+      const nowOther = !!box?.checked;
+      const ui = sensorUiLang();
+      const prevLang = nowOther ? ui : sensorOtherLang(ui);
+      const el = document.getElementById("sensor-name");
+      if (el) sensorNameBi[prevLang] = (el.value || "").trim();
+      showSensorNameForActiveLang();
+      syncSensorLangToggle();
+    }
+
     function sensorDisplayName(s) {
       if (!s) return "—";
-      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const lang = sensorUiLang();
       if (lang === "ru") {
         return s.name_ru || s.name || s.name_en || s.alias || s.id || "—";
       }
       return s.name_en || s.name || s.name_ru || s.alias || s.id || "—";
-    }
-
-    function syncSensorNameLabels() {
-      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
-      const primaryIsRu = lang === "ru";
-      const pLab = document.getElementById("sensor-name-primary-label");
-      const oLab = document.getElementById("sensor-name-other-label");
-      const link = document.getElementById("btn-sensor-name-other");
-      if (pLab) {
-        pLab.textContent = primaryIsRu
-          ? t("field.sensor_name_ru", "Russian name")
-          : t("field.sensor_name_en", "English name");
-      }
-      if (oLab) {
-        oLab.textContent = primaryIsRu
-          ? t("field.sensor_name_en", "English name")
-          : t("field.sensor_name_ru", "Russian name");
-      }
-      if (link && !sensorNameOtherOpen) {
-        link.textContent = primaryIsRu
-          ? t("link.sensor_name_other_en", "+ English name")
-          : t("link.sensor_name_other_ru", "+ Russian name");
-      } else if (link && sensorNameOtherOpen) {
-        link.textContent = t("link.sensor_name_hide", "Hide other language");
-      }
-    }
-
-    function setSensorNameOtherOpen(open) {
-      sensorNameOtherOpen = !!open;
-      const wrap = document.getElementById("sensor-name-other-wrap");
-      if (wrap) wrap.hidden = !sensorNameOtherOpen;
-      syncSensorNameLabels();
     }
 
     function describeSource(src) {
@@ -17256,7 +17325,7 @@
         return;
       }
       box.innerHTML = list
-        .map((s) => {
+        .map((s, idx) => {
           const alias = s.alias || s.id;
           const ev = (sensorsValues && sensorsValues[alias]) || {};
           const valTxt = ev.ok
@@ -17268,6 +17337,12 @@
           const note = ev.note ? " · " + ev.note : "";
           const en = s.enabled !== false;
           const title = sensorDisplayName(s);
+          const tags = [];
+          if (s.show_in_status) tags.push(t("sensor.status_tag", "status"));
+          const tagTxt = tags.length ? " · " + tags.join(" · ") : "";
+          const idEsc = String(s.id).replace(/"/g, "");
+          const canUp = idx > 0;
+          const canDown = idx < list.length - 1;
           return (
             '<div class="card" style="margin:0;background:var(--panel2)">' +
             '<div class="card-b" style="padding:12px 14px">' +
@@ -17277,6 +17352,7 @@
             title +
             ' <span style="color:var(--dim);font-weight:500;font-size:0.8rem">· ' +
             alias +
+            tagTxt +
             "</span></div>" +
             '<div style="font-size:1.35rem;font-weight:650;margin-top:4px;font-variant-numeric:tabular-nums">' +
             (en ? valTxt : t("sensor.disabled", "disabled")) +
@@ -17286,12 +17362,31 @@
             note +
             "</div>" +
             "</div>" +
+            '<div class="btn-row" style="gap:6px;align-items:center">' +
+            '<button class="btn ghost" type="button" data-sensor-up="' +
+            idEsc +
+            '"' +
+            (canUp ? "" : " disabled") +
+            ' title="' +
+            t("btn.move_up", "↑") +
+            '">' +
+            t("btn.move_up", "↑") +
+            "</button>" +
+            '<button class="btn ghost" type="button" data-sensor-down="' +
+            idEsc +
+            '"' +
+            (canDown ? "" : " disabled") +
+            ' title="' +
+            t("btn.move_down", "↓") +
+            '">' +
+            t("btn.move_down", "↓") +
+            "</button>" +
             '<button class="btn" type="button" data-sensor-edit="' +
-            String(s.id).replace(/"/g, "") +
+            idEsc +
             '">' +
             t("btn.edit", "Edit") +
             "</button>" +
-            "</div></div></div>"
+            "</div></div></div></div>"
           );
         })
         .join("");
@@ -17302,12 +17397,45 @@
           if (s) openSensorEditor(s);
         });
       });
+      box.querySelectorAll("[data-sensor-up]").forEach((btn) => {
+        btn.addEventListener("click", () => moveSensor(btn.getAttribute("data-sensor-up"), -1));
+      });
+      box.querySelectorAll("[data-sensor-down]").forEach((btn) => {
+        btn.addEventListener("click", () => moveSensor(btn.getAttribute("data-sensor-down"), 1));
+      });
       if (st) {
         const okN = list.filter((s) => {
           const a = s.alias || s.id;
           return sensorsValues[a] && sensorsValues[a].ok;
         }).length;
         st.textContent = okN + " / " + list.length + " ok";
+      }
+    }
+
+    async function moveSensor(id, delta) {
+      if (!id || !sensorsCache || sensorsCache.length < 2) return;
+      const idx = sensorsCache.findIndex((s) => s.id === id);
+      if (idx < 0) return;
+      const j = idx + delta;
+      if (j < 0 || j >= sensorsCache.length) return;
+      const next = sensorsCache.slice();
+      const tmp = next[idx];
+      next[idx] = next[j];
+      next[j] = tmp;
+      const ids = next.map((s) => s.id);
+      try {
+        const res = await fetch("/api/sensors/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "reorder fail");
+        sensorsCache = body.sensors || next;
+        if (body.values) sensorsValues = body.values;
+        renderSensorsList();
+      } catch (e) {
+        toastError(e.message);
       }
     }
 
@@ -17519,30 +17647,23 @@
         name_ru: "",
         unit: "°C",
         enabled: true,
+        show_in_status: false,
         sources: [{ type: "live", field: "liquid" }],
         transform: { type: "none" },
       };
       document.getElementById("sensor-id").value = s.id || "";
       document.getElementById("sensor-alias").value = s.alias || "";
-      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
-      const nameEn = s.name_en || s.name || "";
-      const nameRu = s.name_ru || s.name || "";
-      const primary = document.getElementById("sensor-name-primary");
-      const other = document.getElementById("sensor-name-other");
-      if (lang === "ru") {
-        if (primary) primary.value = nameRu;
-        if (other) other.value = nameEn;
-      } else {
-        if (primary) primary.value = nameEn;
-        if (other) other.value = nameRu;
-      }
-      // expand other lang if it differs from primary
-      const showOther =
-        !!(nameEn && nameRu && nameEn !== nameRu) ||
-        !!(nameEn && nameRu && nameEn.trim() !== nameRu.trim());
-      setSensorNameOtherOpen(showOther);
+      const nameEn = (s.name_en || s.name || "").trim();
+      const nameRu = (s.name_ru || s.name || "").trim();
+      sensorNameBi = { en: nameEn, ru: nameRu };
+      const nameOther = document.getElementById("sensor-name-other-lang");
+      if (nameOther) nameOther.checked = false;
+      syncSensorLangToggle();
+      showSensorNameForActiveLang();
       document.getElementById("sensor-unit").value = s.unit || "°C";
       document.getElementById("sensor-enabled").checked = s.enabled !== false;
+      const showSt = document.getElementById("sensor-show-status");
+      if (showSt) showSt.checked = !!s.show_in_status;
       document.getElementById("sensor-note").value = s.note || "";
       const sources = s.sources && s.sources.length ? s.sources : [{ type: "live", field: "liquid" }];
       const sbox = document.getElementById("sensor-sources");
@@ -17580,7 +17701,8 @@
 
     function closeSensorEditor() {
       sensorEditorOpen = false;
-      setSensorNameOtherOpen(false);
+      const nameOther = document.getElementById("sensor-name-other-lang");
+      if (nameOther) nameOther.checked = false;
       const panel = document.getElementById("panel-sensor-editor");
       if (panel) panel.hidden = true;
     }
@@ -17601,20 +17723,11 @@
     }
 
     async function saveSensorFromEditor() {
-      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
-      const primary = (document.getElementById("sensor-name-primary")?.value || "").trim();
-      let other = (document.getElementById("sensor-name-other")?.value || "").trim();
-      // if other empty or panel closed — auto-copy from primary
-      if (!other) other = primary;
-      let name_en = "";
-      let name_ru = "";
-      if (lang === "ru") {
-        name_ru = primary;
-        name_en = other || primary;
-      } else {
-        name_en = primary;
-        name_ru = other || primary;
-      }
+      flushSensorNameInput();
+      let name_en = (sensorNameBi.en || "").trim();
+      let name_ru = (sensorNameBi.ru || "").trim();
+      if (name_en && !name_ru) name_ru = name_en;
+      if (name_ru && !name_en) name_en = name_ru;
       const payload = {
         id: document.getElementById("sensor-id")?.value || undefined,
         alias: (document.getElementById("sensor-alias")?.value || "").trim().toLowerCase(),
@@ -17623,6 +17736,7 @@
         name: name_en || name_ru,
         unit: (document.getElementById("sensor-unit")?.value || "°C").trim(),
         enabled: !!document.getElementById("sensor-enabled")?.checked,
+        show_in_status: !!document.getElementById("sensor-show-status")?.checked,
         note: document.getElementById("sensor-note")?.value || "",
         sources: collectSourcesFromDom(),
         transform: { type: document.getElementById("sensor-xform-type")?.value || "none" },
@@ -17686,12 +17800,16 @@
     document.getElementById("btn-sensor-cancel")?.addEventListener("click", closeSensorEditor);
     document.getElementById("btn-sensor-save")?.addEventListener("click", saveSensorFromEditor);
     document.getElementById("btn-sensor-delete")?.addEventListener("click", deleteSensorFromEditor);
-    document.getElementById("btn-sensor-name-other")?.addEventListener("click", () => {
-      setSensorNameOtherOpen(!sensorNameOtherOpen);
-    });
-    // keep bilingual labels in sync when language changes while editor open
+    document.getElementById("sensor-name-other-lang")?.addEventListener("change", onSensorNameLangToggle);
+    // keep bilingual name in sync when UI language changes while editor open
     document.addEventListener("poolheat:lang", () => {
-      if (sensorEditorOpen) syncSensorNameLabels();
+      if (!sensorEditorOpen) return;
+      flushSensorNameInput();
+      const nameOther = document.getElementById("sensor-name-other-lang");
+      if (nameOther) nameOther.checked = false;
+      syncSensorLangToggle();
+      showSensorNameForActiveLang();
+      renderSensorsList();
     });
     document.getElementById("btn-sensor-source-add")?.addEventListener("click", () => {
       const sources = collectSourcesFromDom();
@@ -17885,7 +18003,7 @@
         return;
       }
       box.innerHTML = list
-        .map((d) => {
+        .map((d, idx) => {
           const en = d.enabled !== false;
           const on = d.last_on;
           let stateTxt = t("dev.state_unknown", "—");
@@ -17913,6 +18031,9 @@
               String(d.last_error).replace(/</g, "&lt;").slice(0, 120) +
               "</div>"
             : "";
+          const idEsc = String(d.id).replace(/"/g, "");
+          const canUp = idx > 0;
+          const canDown = idx < list.length - 1;
           return (
             '<div class="card" style="margin:0;background:var(--panel2)">' +
             '<div class="card-b" style="padding:12px 14px">' +
@@ -17936,15 +18057,33 @@
             desc +
             err +
             "</div>" +
-            '<div class="btn-row" style="gap:6px">' +
+            '<div class="btn-row" style="gap:6px;align-items:center">' +
+            '<button class="btn ghost" type="button" data-device-up="' +
+            idEsc +
+            '"' +
+            (canUp ? "" : " disabled") +
+            ' title="' +
+            t("btn.move_up", "↑") +
+            '">' +
+            t("btn.move_up", "↑") +
+            "</button>" +
+            '<button class="btn ghost" type="button" data-device-down="' +
+            idEsc +
+            '"' +
+            (canDown ? "" : " disabled") +
+            ' title="' +
+            t("btn.move_down", "↓") +
+            '">' +
+            t("btn.move_down", "↓") +
+            "</button>" +
             '<button class="btn" type="button" data-device-on="' +
-            String(d.id).replace(/"/g, "") +
+            idEsc +
             '">ON</button>' +
             '<button class="btn danger" type="button" data-device-off="' +
-            String(d.id).replace(/"/g, "") +
+            idEsc +
             '">OFF</button>' +
             '<button class="btn" type="button" data-device-edit="' +
-            String(d.id).replace(/"/g, "") +
+            idEsc +
             '">' +
             t("btn.edit", "Edit") +
             "</button>" +
@@ -17965,7 +18104,39 @@
       box.querySelectorAll("[data-device-off]").forEach((btn) => {
         btn.addEventListener("click", () => deviceSetById(btn.getAttribute("data-device-off"), false));
       });
+      box.querySelectorAll("[data-device-up]").forEach((btn) => {
+        btn.addEventListener("click", () => moveDevice(btn.getAttribute("data-device-up"), -1));
+      });
+      box.querySelectorAll("[data-device-down]").forEach((btn) => {
+        btn.addEventListener("click", () => moveDevice(btn.getAttribute("data-device-down"), 1));
+      });
       if (st) st.textContent = list.length + " · " + list.filter((d) => d.enabled !== false).length + " on";
+    }
+
+    async function moveDevice(id, delta) {
+      if (!id || !devicesCache || devicesCache.length < 2) return;
+      const idx = devicesCache.findIndex((d) => d.id === id);
+      if (idx < 0) return;
+      const j = idx + delta;
+      if (j < 0 || j >= devicesCache.length) return;
+      const next = devicesCache.slice();
+      const tmp = next[idx];
+      next[idx] = next[j];
+      next[j] = tmp;
+      const ids = next.map((d) => d.id);
+      try {
+        const res = await fetch("/api/devices/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "reorder fail");
+        devicesCache = body.devices || next;
+        renderDevicesList();
+      } catch (e) {
+        toastError(e.message);
+      }
     }
 
     function openDeviceEditor(device) {
@@ -18007,6 +18178,7 @@
       syncDeviceLangToggles();
       showDeviceNameForActiveLang();
       showDeviceDescForActiveLang();
+      setDeviceReservedOpen(false);
       document.getElementById("device-icon").value = d.icon || "🔌";
       document.getElementById("device-enabled").checked = d.enabled !== false;
       document.getElementById("device-inverted").checked = !!d.inverted;
@@ -18304,6 +18476,68 @@
     });
     document.getElementById("device-name-other-lang")?.addEventListener("change", onDeviceNameLangToggle);
     document.getElementById("device-desc-other-lang")?.addEventListener("change", onDeviceDescLangToggle);
+
+    function renderDeviceReservedList() {
+      const box = document.getElementById("dev-reserved-list");
+      if (!box) return;
+      const list = (devicesMeta.reserved_aliases || []).slice().sort();
+      if (!list.length) {
+        box.textContent = t(
+          "dev.alias_reserved_empty",
+          "List unavailable — open editor after load."
+        );
+        return;
+      }
+      box.textContent = list.join(", ");
+    }
+
+    function setDeviceReservedOpen(open) {
+      const btn = document.getElementById("btn-dev-reserved-toggle");
+      const box = document.getElementById("dev-reserved-list");
+      const openNow = !!open;
+      if (box) box.hidden = !openNow;
+      if (btn) {
+        btn.setAttribute("aria-expanded", openNow ? "true" : "false");
+        const lab = btn.querySelector("[data-i18n], span") || btn;
+        if (lab) {
+          lab.textContent = openNow
+            ? t("dev.alias_reserved_hide", "Hide list")
+            : t("dev.alias_reserved_link", "Reserved names…");
+        }
+      }
+      if (openNow) renderDeviceReservedList();
+    }
+
+    document.getElementById("btn-dev-reserved-toggle")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-dev-reserved-toggle");
+      const open = btn?.getAttribute("aria-expanded") === "true";
+      if (!open && !(devicesMeta.reserved_aliases || []).length) {
+        try {
+          const res = await fetch("/api/devices/meta", { cache: "no-store" });
+          const body = await res.json();
+          if (body.ok && Array.isArray(body.reserved_aliases)) {
+            devicesMeta.reserved_aliases = body.reserved_aliases;
+          }
+          if (Array.isArray(body.icons) && body.icons.length) {
+            devicesMeta.icons = body.icons;
+          }
+          if (Array.isArray(body.backends) && body.backends.length) {
+            devicesMeta.backends = body.backends;
+          }
+        } catch (_) { /* ignore */ }
+      }
+      setDeviceReservedOpen(!open);
+    });
+    document.addEventListener("poolheat:lang", () => {
+      const btn = document.getElementById("btn-dev-reserved-toggle");
+      if (!btn) return;
+      const open = btn.getAttribute("aria-expanded") === "true";
+      // refresh link label only (don't re-toggle panel)
+      const lab = btn.querySelector("span") || btn;
+      lab.textContent = open
+        ? t("dev.alias_reserved_hide", "Hide list")
+        : t("dev.alias_reserved_link", "Reserved names…");
+    });
     // keep bilingual drafts if user types while on a lang, then switches UI lang mid-edit
     document.addEventListener("poolheat:lang", () => {
       if (!deviceEditorOpen) return;
