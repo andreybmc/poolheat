@@ -1,8 +1,8 @@
 {
-  "source": "WhatsMinerTool 9.2.4 data/error_code.txt + firmware composite patterns (55x999/58xNNN/…) + live M6x extras",
+  "source": "WhatsMinerTool 9.2.4 data/error_code.txt + known FW/WMOC codes (exact match only)",
   "source_encoding": "gbk",
   "count": 235,
-  "version": "0.6.1",
+  "version": "0.6.2",
   "languages": [
     "en",
     "zh",
@@ -21,14 +21,5 @@
   "fallback": [
     "en"
   ],
-  "composites": {
-    "55x999": "Slot{x} chips been reset",
-    "58xNNN": "Slot{x} chip{NNN} is bad",
-    "58x999": "Slot{x} too many chips error",
-    "53xNNN": "Slot{x} chip{NNN} few nonce",
-    "56xNNN": "Slot{x} chip{NNN} zero nonce",
-    "52xNNN": "Slot{x} chip{NNN} error nonce",
-    "54xNNN": "Slot{x} chip{NNN} temp protected"
-  },
-  "note": "WMT en+zh; RU mining terms. Composites resolved at runtime for any chip index."
+  "note": "Exact code lookup only. No pattern expansion. Full runtime reason (e.g. 552999 + U1-U2-… chip list) comes from WMOC/firmware and should be passed via resolve_error(..., cause=)."
 }

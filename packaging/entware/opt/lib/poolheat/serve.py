@@ -5918,20 +5918,21 @@ def _sm_slot_from_error(code: str | None, cause: str | None) -> int | None:
     m = re.search(r"\bSM\s*([0-3])\b", text, re.I)
     if m:
         return int(m.group(1))
+    # WMOC reason: "Slot2 chips been reset, U1-U2-…"
     m = re.search(r"\bSlot\s*([0-3])\b", text, re.I)
     if m:
         return int(m.group(1))
     c = str(code or "").strip().lstrip("0") or str(code or "").strip()
     if not c.isdigit():
         return None
-    # 6-digit composites: 55s999 / 58sNNN / 53sNNN … (base ABC, slot = last digit of base)
-    if len(c) == 6 and c[:2] in ("52", "53", "54", "55", "56", "57", "58"):
-        try:
-            d = int(c[2])
-            if 0 <= d <= 3:
-                return d
-        except ValueError:
-            pass
+    # known exact FW codes with fixed slot (catalog titles, not pattern math)
+    _exact_slot = {
+        "550999": 0, "551999": 1, "552999": 2, "553999": 3,
+        "580999": 0, "581999": 1, "582999": 2, "583999": 3,
+        "5130": 0, "5131": 1, "5132": 2, "5133": 3,
+    }
+    if c in _exact_slot:
+        return _exact_slot[c]
     # last digit = board index for SM* families
     families = (
         "300", "301", "302", "303",
@@ -5948,18 +5949,13 @@ def _sm_slot_from_error(code: str | None, cause: str | None) -> int | None:
         "560", "561", "562", "563",
         "580", "581", "582", "583",
         "5110", "5111", "5112", "5113",
-        "5130", "5131", "5132", "5133",
     )
     if c in families or any(c.startswith(p) and len(c) == len(p) for p in ("30", "32", "35", "41", "42", "43", "44", "51", "53", "54", "55", "56", "58")):
         d = int(c[-1])
         if 0 <= d <= 3:
             return d
-    # 5110-5113 frequency up / 5130-5133 upfreq unstable
+    # 5110-5113 frequency up
     if c.startswith("511") and len(c) == 4:
-        d = int(c[-1])
-        if 0 <= d <= 3:
-            return d
-    if c.startswith("513") and len(c) == 4:
         d = int(c[-1])
         if 0 <= d <= 3:
             return d
@@ -9599,22 +9595,26 @@ _MINER_ERROR_CAUSES: dict[str, str] = {
 _DEFAULT_J_PER_TH = 17.31
 
 
-def _official_cause(code: str) -> str | None:
-    """Whatsminer web UI Cause (Reason) for error code, if known.
+def _official_cause(code: str, *, native_cause: str | None = None) -> str | None:
+    """Cause text for error code.
 
-    Prefers vendored whatsminer-lib catalog (WMT + composite 55x999/58xNNN…).
-    Falls back to local web-UI phrasing map.
+    Prefer native WMOC/firmware reason (may include chip list U1-U2-…).
+    Else short catalog title (exact code only — no invented patterns).
+    Else local web-UI map.
     """
     c = str(code).strip()
     c2 = c.lstrip("0") or "0"
-    # whatsminer-lib: full catalog + firmware composites (e.g. 552999)
+    if native_cause and str(native_cause).strip():
+        nc = str(native_cause).strip()
+        if nc.lower() not in (f"error code {c}".lower(), f"error {c}".lower()):
+            return nc
     try:
         from whatsminer.support.error_codes import resolve_error  # type: ignore
 
         for cand in (c, c2):
             if not cand:
                 continue
-            r = resolve_error(cand, lang="en")
+            r = resolve_error(cand, lang="en", cause=native_cause)
             if r.get("known") and r.get("cause"):
                 return str(r["cause"])
     except Exception:
@@ -9623,11 +9623,6 @@ def _official_cause(code: str) -> str | None:
         return _MINER_ERROR_CAUSES[c]
     if c2 in _MINER_ERROR_CAUSES:
         return _MINER_ERROR_CAUSES[c2]
-    # local map: also try 3-digit base of 6-digit composite
-    if c.isdigit() and len(c) == 6:
-        base = c[:3]
-        if base in _MINER_ERROR_CAUSES:
-            return _MINER_ERROR_CAUSES[base]
     return None
 
 
@@ -9813,8 +9808,9 @@ def _resolve_miner_errors(
                     factory_ghs=factory_ghs,
                 )
             else:
-                # match Whatsminer web Cause column (official Reason text)
-                cause = _official_cause(code) or f"Error code {code}"
+                # catalog short title if known; else "Error code N"
+                # Full WMOC text with U1-U2-… only when firmware sent it as cause
+                cause = _official_cause(code, native_cause=e.get("cause")) or f"Error code {code}"
 
         cache[key] = {"code": code, "ts": ts, "cause": cause, "hint": hint}
         active.append(

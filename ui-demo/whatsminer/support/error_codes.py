@@ -38,129 +38,6 @@ _CH = re.compile(r"^ch=(.*)$")
 # Package data root (installed wheel / editable checkout)
 _I18N_DIR = Path(__file__).resolve().parent / "i18n" / "errors"
 
-# Firmware composite codes: ABCXYZ → base ABC (slot family) + sub XYZ (chip / special).
-# Observed on M6x logs (miner-state): e.g. 552999 = Slot2 chips been reset.
-_SLOT_BY_BASE3: dict[str, int] = {
-    # few / error / zero nonce, chip id / bad chips / balance / xfer / reset
-    "520": 0, "521": 1, "522": 2, "523": 3,
-    "530": 0, "531": 1, "532": 2, "533": 3,
-    "540": 0, "541": 1, "542": 2, "543": 3,
-    "550": 0, "551": 1, "552": 2, "553": 3,
-    "560": 0, "561": 1, "562": 2, "563": 3,
-    "570": 0, "571": 1, "572": 2, "573": 3,
-    "580": 0, "581": 1, "582": 2, "583": 3,
-}
-
-# Family prefix (first 2 of base3) → message templates per lang.
-# {slot} 0..3, {chip} int subcode, {Slot} "Slot0".."Slot3"
-_COMPOSITE_FAMILY: dict[str, dict[str, dict[str, str]]] = {
-    # 55x999 — mass chip reset after board re-init (not in WMT short list)
-    "55": {
-        "en": {
-            "999": "Slot{slot} chips been reset",
-            "chip": "Slot{slot} chip{chip} have bad chips",
-        },
-        "zh": {
-            "999": "算力板{slot} 芯片被复位",
-            "chip": "算力板{slot} 芯片{chip} 坏芯片",
-        },
-        "ru": {
-            "999": "Слот {slot}: чипы были сброшены (reset)",
-            "chip": "Слот {slot}: чип {chip} неисправен",
-        },
-    },
-    # 58xNNN — per-chip bad; 58x999 — too many bad chips
-    "58": {
-        "en": {
-            "999": "Slot{slot} too many chips error",
-            "chip": "Slot{slot} chip{chip} is bad",
-        },
-        "zh": {
-            "999": "算力板{slot} 坏芯片过多",
-            "chip": "算力板{slot} 芯片{chip} 损坏",
-        },
-        "ru": {
-            "999": "Слот {slot}: слишком много неисправных чипов",
-            "chip": "Слот {slot}: чип {chip} неисправен",
-        },
-    },
-    # 53xNNN — few nonce on chip N (WMT only lists chips 1–3)
-    "53": {
-        "en": {
-            "999": "Slot{slot} too many chips few nonce",
-            "chip": "Slot{slot} chip{chip} few nonce",
-        },
-        "zh": {
-            "999": "算力板{slot} 芯片nonce过少过多",
-            "chip": "算力板{slot} 芯片{chip} nonce过少",
-        },
-        "ru": {
-            "999": "Слот {slot}: слишком много чипов с малым nonce",
-            "chip": "Слот {slot}: чип {chip} — мало nonce",
-        },
-    },
-    # 56xNNN — zero nonce
-    "56": {
-        "en": {
-            "999": "Slot{slot} too many chips zero nonce",
-            "chip": "Slot{slot} chip{chip} zero nonce",
-        },
-        "zh": {
-            "999": "算力板{slot} 零nonce芯片过多",
-            "chip": "算力板{slot} 芯片{chip} 零nonce",
-        },
-        "ru": {
-            "999": "Слот {slot}: слишком много чипов с zero nonce",
-            "chip": "Слот {slot}: чип {chip} — zero nonce",
-        },
-    },
-    # 52xNNN — error nonce
-    "52": {
-        "en": {
-            "999": "Slot{slot} too many chips error nonce",
-            "chip": "Slot{slot} chip{chip} error nonce",
-        },
-        "zh": {
-            "999": "算力板{slot} 错误nonce芯片过多",
-            "chip": "算力板{slot} 芯片{chip} 错误nonce",
-        },
-        "ru": {
-            "999": "Слот {slot}: слишком много чипов с error nonce",
-            "chip": "Слот {slot}: чип {chip} — error nonce",
-        },
-    },
-    # 54xNNN — chip temp protect (extended beyond WMT 0–3)
-    "54": {
-        "en": {
-            "999": "Slot{slot} chip temp protected (many)",
-            "chip": "Slot{slot} chip{chip} temp protected",
-        },
-        "zh": {
-            "999": "算力板{slot} 多芯片温度保护",
-            "chip": "算力板{slot} 芯片{chip} 温度保护",
-        },
-        "ru": {
-            "999": "Слот {slot}: термозащита многих чипов",
-            "chip": "Слот {slot}: чип {chip} — термозащита",
-        },
-    },
-    # 57xNNN — xfer / crc style
-    "57": {
-        "en": {
-            "999": "Slot{slot} too many xfer/crc chip errors",
-            "chip": "Slot{slot} chip{chip} xfer error",
-        },
-        "zh": {
-            "999": "算力板{slot} 传输/CRC错误过多",
-            "chip": "算力板{slot} 芯片{chip} 传输错误",
-        },
-        "ru": {
-            "999": "Слот {slot}: слишком много xfer/CRC ошибок чипов",
-            "chip": "Слот {slot}: чип {chip} — xfer error",
-        },
-    },
-}
-
 # Extra short codes seen on modern FW but missing from WMT 9.2.4 short dump
 _EXTRA_STATIC: dict[str, dict[str, str]] = {
     "2000": {
@@ -253,7 +130,9 @@ _EXTRA_STATIC: dict[str, dict[str, str]] = {
         "zh": "算力板0 禁用芯片过多",
         "ru": "Слот 0: отключено слишком много чипов",
     },
-    # 55x999 / 58x999 as static too (also covered by patterns)
+    # Real FW/WMOC codes (short title only). Full runtime reason may append
+    # chip list: "Slot2 chips been reset, U1-U2-U3-…" — that U-list is NOT
+    # in the static catalog; prefer the miner/WMOC cause string when present.
     "550999": {
         "en": "Slot0 chips been reset",
         "zh": "算力板0 芯片被复位",
@@ -371,61 +250,9 @@ def load_language(lang: str) -> dict[str, str]:
     return {k: v for k, v in out.items() if v}
 
 
-def parse_composite_code(code: str | int) -> dict[str, Any] | None:
-    """
-    Parse firmware 6-digit composite ``ABCXYZ`` (base slot family + chip/sub).
-
-    Returns ``None`` if not a recognized composite. Example::
-
-        parse_composite_code(552999)
-        # {"code": "552999", "base": "552", "slot": 2, "sub": 999, "family": "55"}
-    """
-    c = str(code).strip()
-    if not c.isdigit() or len(c) != 6:
-        return None
-    base = c[:3]
-    if base not in _SLOT_BY_BASE3:
-        return None
-    family = base[:2]
-    if family not in _COMPOSITE_FAMILY:
-        return None
-    return {
-        "code": c,
-        "base": base,
-        "slot": _SLOT_BY_BASE3[base],
-        "sub": int(c[3:]),
-        "family": family,
-    }
-
-
-def composite_message(code: str | int, *, lang: str = "en") -> str | None:
-    """
-    Human text for firmware composite codes (e.g. ``552999`` → Slot2 chips been reset).
-
-    Returns ``None`` if the code is not a known composite pattern.
-    """
-    info = parse_composite_code(code)
-    if not info:
-        return None
-    want = normalize_lang(lang)
-    fam = _COMPOSITE_FAMILY[info["family"]]
-    # lang → en fallback for templates
-    tmpl_set = fam.get(want) or fam.get("en") or {}
-    sub = int(info["sub"])
-    slot = int(info["slot"])
-    key = "999" if sub == 999 else "chip"
-    tmpl = tmpl_set.get(key) or (fam.get("en") or {}).get(key)
-    if not tmpl:
-        return None
-    return tmpl.format(slot=slot, chip=sub, Slot=f"Slot{slot}")
-
-
 def is_known_code(code: str | int) -> bool:
-    """True if code is in shipped tables or matches a composite pattern."""
-    c = str(code).strip()
-    if c in load_language("en"):
-        return True
-    return parse_composite_code(c) is not None
+    """True if code is in the shipped catalog (WMT JSON + static extras)."""
+    return str(code).strip() in load_language("en")
 
 
 def available_languages() -> list[str]:
@@ -462,13 +289,14 @@ def describe_error(
     default: str | None = None,
 ) -> str:
     """
-    Human-readable description for a miner error code.
+    Short catalog description for a miner error code.
 
-    Fallback chain:
-    1. exact entry in requested lang / meta fallback (usually ``en``)
-    2. firmware composite pattern (e.g. ``552999`` Slot2 chips been reset)
-    3. 3-digit base family for 6-digit codes (e.g. ``552`` have bad chips)
-    4. ``default`` or ``"Unknown error {code}"``
+    Lookup is **exact code only** (WMT JSON + known FW extras such as
+    ``552999``). No invented encoding / pattern expansion.
+
+    Note: WMOC/runtime cause may be longer than the catalog line, e.g.
+    ``Slot2 chips been reset, U1-U2-U3-…``. Prefer the live miner/WMOC
+    reason string when available; use this as fallback title only.
     """
     c = str(code).strip()
     want = normalize_lang(lang)
@@ -487,18 +315,6 @@ def describe_error(
         msg = load_language(stem).get(c)
         if msg:
             return msg
-    # composite patterns (55x999, 58xNNN, …)
-    for stem in chain:
-        msg = composite_message(c, lang=stem)
-        if msg:
-            return msg
-    # 6-digit → base 3-digit catalog (WMT short codes)
-    if c.isdigit() and len(c) == 6:
-        base = c[:3]
-        for stem in chain:
-            msg = load_language(stem).get(base)
-            if msg:
-                return msg
     if default is not None:
         return default
     return f"Unknown error {c}"
@@ -510,47 +326,55 @@ def resolve_error(
     lang: str = "en",
     timestamp: str | None = None,
     fallback: Iterable[str] | None = None,
+    cause: str | None = None,
 ) -> dict[str, Any]:
     """
     Structured error for API responses.
+
+    If ``cause`` is provided (native WMOC/firmware reason, possibly with
+    chip list ``U1-U2-…``), it is used as message/cause and ``known`` is
+    True. Otherwise falls back to the short catalog title.
 
     Returns::
 
         {
           "code": "110",
-          "lang": "zh",          # language actually used for message
+          "lang": "zh",
           "requested_lang": "zh",
-          "message": "...",      # same as cause (WMT has a single line)
+          "message": "...",
           "cause": "...",
           "known": true,
-          "timestamp": "..."     # optional, if provided
+          "timestamp": "..."     # optional
         }
     """
     c = str(code).strip()
     want = normalize_lang(lang)
-    message = describe_error(c, lang=want, fallback=fallback, default="")
-    if not message:
-        message = f"Unknown error {c}"
+    native = (str(cause).strip() if cause not in (None, "") else "")
+    # ignore useless placeholders
+    if native and native.lower() in (f"error code {c}".lower(), f"error {c}".lower()):
+        native = ""
+
+    if native:
+        message = native
         used = want
-        known = False
+        known = True
     else:
-        known = is_known_code(c) or (
-            bool(message) and not message.startswith("Unknown error ")
-        )
-        # detect which lang actually provided the text
-        used = want
-        if load_language(want).get(c) != message:
-            # composite in requested lang?
-            if composite_message(c, lang=want) == message:
-                used = want
-            else:
+        message = describe_error(c, lang=want, fallback=fallback, default="")
+        if not message:
+            message = f"Unknown error {c}"
+            used = want
+            known = False
+        else:
+            known = is_known_code(c)
+            used = want
+            if load_language(want).get(c) != message:
                 for stem in list(fallback or load_meta().get("fallback") or _DEFAULT_FALLBACK):
                     s = normalize_lang(stem)
-                    if load_language(s).get(c) == message or composite_message(c, lang=s) == message:
+                    if load_language(s).get(c) == message:
                         used = s
                         break
                 else:
-                    used = "en"
+                    used = "en" if known else want
     out: dict[str, Any] = {
         "code": c,
         "lang": used,
@@ -559,14 +383,10 @@ def resolve_error(
         "cause": message,
         "known": known,
     }
-    comp = parse_composite_code(c)
-    if comp:
-        out["base"] = comp["base"]
-        out["slot"] = comp["slot"]
-        out["chip"] = None if int(comp["sub"]) == 999 else int(comp["sub"])
-        out["sub"] = int(comp["sub"])
     if timestamp is not None:
         out["timestamp"] = timestamp
+    if native:
+        out["native_cause"] = True
     return out
 
 
@@ -614,7 +434,8 @@ def enrich_error_codes(
     - ``{"error_code": [{"110": "..."}, ...]}``
     - list/dict of codes
     """
-    items: list[tuple[str, str | None]] = []
+    # (code, timestamp, native_cause?)
+    items: list[tuple[str, str | None, str | None]] = []
     if isinstance(raw, dict) and "error_code" in raw:
         raw = raw["error_code"]
     if isinstance(raw, dict) and "Msg" in raw:
@@ -625,24 +446,55 @@ def enrich_error_codes(
         # may be {code: ts} or nested
         if all(str(k).isdigit() or str(k).isdecimal() for k in raw.keys()):
             for k, v in raw.items():
-                items.append((str(k), str(v) if v is not None else None))
+                if isinstance(v, dict):
+                    ts = v.get("time") or v.get("Time") or v.get("timestamp")
+                    cause = (
+                        v.get("cause")
+                        or v.get("Cause")
+                        or v.get("error_message")
+                        or v.get("reason")
+                    )
+                    items.append(
+                        (
+                            str(k),
+                            str(ts) if ts is not None else None,
+                            str(cause) if cause not in (None, "") else None,
+                        )
+                    )
+                else:
+                    items.append((str(k), str(v) if v is not None else None, None))
         elif "error_code" in raw:
             return enrich_error_codes(raw["error_code"], lang=lang)
     elif isinstance(raw, list):
         for el in raw:
             if isinstance(el, dict):
-                if "code" in el:
-                    items.append((str(el["code"]), el.get("timestamp") or el.get("time")))
+                if "code" in el or "ErrorCode" in el or "error_code" in el:
+                    code = el.get("code") or el.get("ErrorCode") or el.get("error_code")
+                    ts = el.get("timestamp") or el.get("time") or el.get("Time")
+                    cause = (
+                        el.get("cause")
+                        or el.get("Cause")
+                        or el.get("error_message")
+                        or el.get("reason")
+                    )
+                    items.append(
+                        (
+                            str(code),
+                            str(ts) if ts is not None else None,
+                            str(cause) if cause not in (None, "") else None,
+                        )
+                    )
                 else:
                     for k, v in el.items():
-                        items.append((str(k), str(v) if v is not None else None))
+                        items.append((str(k), str(v) if v is not None else None, None))
             else:
-                items.append((str(el), None))
+                items.append((str(el), None, None))
     else:
         return []
 
     return [
-        resolve_error(code, lang=lang, timestamp=ts) for code, ts in items
+        resolve_error(code, lang=lang, timestamp=ts, cause=cause)
+        for code, ts, cause in items
     ]
 
 
