@@ -38,6 +38,264 @@ _CH = re.compile(r"^ch=(.*)$")
 # Package data root (installed wheel / editable checkout)
 _I18N_DIR = Path(__file__).resolve().parent / "i18n" / "errors"
 
+# Firmware composite codes: ABCXYZ → base ABC (slot family) + sub XYZ (chip / special).
+# Observed on M6x logs (miner-state): e.g. 552999 = Slot2 chips been reset.
+_SLOT_BY_BASE3: dict[str, int] = {
+    # few / error / zero nonce, chip id / bad chips / balance / xfer / reset
+    "520": 0, "521": 1, "522": 2, "523": 3,
+    "530": 0, "531": 1, "532": 2, "533": 3,
+    "540": 0, "541": 1, "542": 2, "543": 3,
+    "550": 0, "551": 1, "552": 2, "553": 3,
+    "560": 0, "561": 1, "562": 2, "563": 3,
+    "570": 0, "571": 1, "572": 2, "573": 3,
+    "580": 0, "581": 1, "582": 2, "583": 3,
+}
+
+# Family prefix (first 2 of base3) → message templates per lang.
+# {slot} 0..3, {chip} int subcode, {Slot} "Slot0".."Slot3"
+_COMPOSITE_FAMILY: dict[str, dict[str, dict[str, str]]] = {
+    # 55x999 — mass chip reset after board re-init (not in WMT short list)
+    "55": {
+        "en": {
+            "999": "Slot{slot} chips been reset",
+            "chip": "Slot{slot} chip{chip} have bad chips",
+        },
+        "zh": {
+            "999": "算力板{slot} 芯片被复位",
+            "chip": "算力板{slot} 芯片{chip} 坏芯片",
+        },
+        "ru": {
+            "999": "Слот {slot}: чипы были сброшены (reset)",
+            "chip": "Слот {slot}: чип {chip} неисправен",
+        },
+    },
+    # 58xNNN — per-chip bad; 58x999 — too many bad chips
+    "58": {
+        "en": {
+            "999": "Slot{slot} too many chips error",
+            "chip": "Slot{slot} chip{chip} is bad",
+        },
+        "zh": {
+            "999": "算力板{slot} 坏芯片过多",
+            "chip": "算力板{slot} 芯片{chip} 损坏",
+        },
+        "ru": {
+            "999": "Слот {slot}: слишком много неисправных чипов",
+            "chip": "Слот {slot}: чип {chip} неисправен",
+        },
+    },
+    # 53xNNN — few nonce on chip N (WMT only lists chips 1–3)
+    "53": {
+        "en": {
+            "999": "Slot{slot} too many chips few nonce",
+            "chip": "Slot{slot} chip{chip} few nonce",
+        },
+        "zh": {
+            "999": "算力板{slot} 芯片nonce过少过多",
+            "chip": "算力板{slot} 芯片{chip} nonce过少",
+        },
+        "ru": {
+            "999": "Слот {slot}: слишком много чипов с малым nonce",
+            "chip": "Слот {slot}: чип {chip} — мало nonce",
+        },
+    },
+    # 56xNNN — zero nonce
+    "56": {
+        "en": {
+            "999": "Slot{slot} too many chips zero nonce",
+            "chip": "Slot{slot} chip{chip} zero nonce",
+        },
+        "zh": {
+            "999": "算力板{slot} 零nonce芯片过多",
+            "chip": "算力板{slot} 芯片{chip} 零nonce",
+        },
+        "ru": {
+            "999": "Слот {slot}: слишком много чипов с zero nonce",
+            "chip": "Слот {slot}: чип {chip} — zero nonce",
+        },
+    },
+    # 52xNNN — error nonce
+    "52": {
+        "en": {
+            "999": "Slot{slot} too many chips error nonce",
+            "chip": "Slot{slot} chip{chip} error nonce",
+        },
+        "zh": {
+            "999": "算力板{slot} 错误nonce芯片过多",
+            "chip": "算力板{slot} 芯片{chip} 错误nonce",
+        },
+        "ru": {
+            "999": "Слот {slot}: слишком много чипов с error nonce",
+            "chip": "Слот {slot}: чип {chip} — error nonce",
+        },
+    },
+    # 54xNNN — chip temp protect (extended beyond WMT 0–3)
+    "54": {
+        "en": {
+            "999": "Slot{slot} chip temp protected (many)",
+            "chip": "Slot{slot} chip{chip} temp protected",
+        },
+        "zh": {
+            "999": "算力板{slot} 多芯片温度保护",
+            "chip": "算力板{slot} 芯片{chip} 温度保护",
+        },
+        "ru": {
+            "999": "Слот {slot}: термозащита многих чипов",
+            "chip": "Слот {slot}: чип {chip} — термозащита",
+        },
+    },
+    # 57xNNN — xfer / crc style
+    "57": {
+        "en": {
+            "999": "Slot{slot} too many xfer/crc chip errors",
+            "chip": "Slot{slot} chip{chip} xfer error",
+        },
+        "zh": {
+            "999": "算力板{slot} 传输/CRC错误过多",
+            "chip": "算力板{slot} 芯片{chip} 传输错误",
+        },
+        "ru": {
+            "999": "Слот {slot}: слишком много xfer/CRC ошибок чипов",
+            "chip": "Слот {slot}: чип {chip} — xfer error",
+        },
+    },
+}
+
+# Extra short codes seen on modern FW but missing from WMT 9.2.4 short dump
+_EXTRA_STATIC: dict[str, dict[str, str]] = {
+    "2000": {
+        "en": "No pools config",
+        "zh": "未配置矿池",
+        "ru": "Пулы не настроены",
+    },
+    "330": {
+        "en": "Env temperature reading error",
+        "zh": "环境温度读取错误",
+        "ru": "Ошибка чтения температуры окружающей среды",
+    },
+    "335": {
+        "en": "Inlet temperature reading error",
+        "zh": "进液温度读取错误",
+        "ru": "Ошибка чтения температуры на входе",
+    },
+    "340": {
+        "en": "Slot 0 temperature limited",
+        "zh": "算力板0 温度限频",
+        "ru": "Слот 0: ограничение по температуре",
+    },
+    "341": {
+        "en": "Slot 1 temperature limited",
+        "zh": "算力板1 温度限频",
+        "ru": "Слот 1: ограничение по температуре",
+    },
+    "342": {
+        "en": "Slot 2 temperature limited",
+        "zh": "算力板2 温度限频",
+        "ru": "Слот 2: ограничение по температуре",
+    },
+    "343": {
+        "en": "Slot 3 temperature limited",
+        "zh": "算力板3 温度限频",
+        "ru": "Слот 3: ограничение по температуре",
+    },
+    "360": {
+        "en": "Board temperature overheat",
+        "zh": "算力板过热",
+        "ru": "Перегрев хешплаты",
+    },
+    "652": {
+        "en": "Liquid temperature unstable",
+        "zh": "液冷温度不稳定",
+        "ru": "Нестабильная температура жидкости",
+    },
+    "704": {
+        "en": "Control board cpu freq error",
+        "zh": "控制板CPU频率错误",
+        "ru": "Ошибка частоты CPU контрольной платы",
+    },
+    "5130": {
+        "en": "Slot 0 upfreq unstable",
+        "zh": "算力板0 升频不稳定",
+        "ru": "Слот 0: нестабильный разгон (upfreq)",
+    },
+    "5131": {
+        "en": "Slot 1 upfreq unstable",
+        "zh": "算力板1 升频不稳定",
+        "ru": "Слот 1: нестабильный разгон (upfreq)",
+    },
+    "5132": {
+        "en": "Slot 2 upfreq unstable",
+        "zh": "算力板2 升频不稳定",
+        "ru": "Слот 2: нестабильный разгон (upfreq)",
+    },
+    "5133": {
+        "en": "Slot 3 upfreq unstable",
+        "zh": "算力板3 升频不稳定",
+        "ru": "Слот 3: нестабильный разгон (upfreq)",
+    },
+    "5410": {
+        "en": "Slot 0 uart init error",
+        "zh": "算力板0 UART初始化错误",
+        "ru": "Слот 0: ошибка инициализации UART",
+    },
+    "5431": {
+        "en": "Slot 1 boot fail with no data",
+        "zh": "算力板1 启动失败无数据",
+        "ru": "Слот 1: сбой загрузки, нет данных",
+    },
+    "5720": {
+        "en": "Slot 0 crc error too much",
+        "zh": "算力板0 CRC错误过多",
+        "ru": "Слот 0: слишком много CRC-ошибок",
+    },
+    "6010": {
+        "en": "Slot 0 disable chips too many",
+        "zh": "算力板0 禁用芯片过多",
+        "ru": "Слот 0: отключено слишком много чипов",
+    },
+    # 55x999 / 58x999 as static too (also covered by patterns)
+    "550999": {
+        "en": "Slot0 chips been reset",
+        "zh": "算力板0 芯片被复位",
+        "ru": "Слот 0: чипы были сброшены (reset)",
+    },
+    "551999": {
+        "en": "Slot1 chips been reset",
+        "zh": "算力板1 芯片被复位",
+        "ru": "Слот 1: чипы были сброшены (reset)",
+    },
+    "552999": {
+        "en": "Slot2 chips been reset",
+        "zh": "算力板2 芯片被复位",
+        "ru": "Слот 2: чипы были сброшены (reset)",
+    },
+    "553999": {
+        "en": "Slot3 chips been reset",
+        "zh": "算力板3 芯片被复位",
+        "ru": "Слот 3: чипы были сброшены (reset)",
+    },
+    "580999": {
+        "en": "Slot0 too many chips error",
+        "zh": "算力板0 坏芯片过多",
+        "ru": "Слот 0: слишком много неисправных чипов",
+    },
+    "581999": {
+        "en": "Slot1 too many chips error",
+        "zh": "算力板1 坏芯片过多",
+        "ru": "Слот 1: слишком много неисправных чипов",
+    },
+    "582999": {
+        "en": "Slot2 too many chips error",
+        "zh": "算力板2 坏芯片过多",
+        "ru": "Слот 2: слишком много неисправных чипов",
+    },
+    "583999": {
+        "en": "Slot3 too many chips error",
+        "zh": "算力板3 坏芯片过多",
+        "ru": "Слот 3: слишком много неисправных чипов",
+    },
+}
+
 # Language aliases (BCP-47-ish → our file stem)
 _LANG_ALIASES: dict[str, str] = {
     "en": "en",
@@ -94,15 +352,80 @@ def load_meta() -> dict[str, Any]:
 
 @lru_cache(maxsize=16)
 def load_language(lang: str) -> dict[str, str]:
-    """Load ``{code: message}`` for a language file stem (en/zh/ru/…)."""
+    """Load ``{code: message}`` for a language file stem (en/zh/ru/…).
+
+    Merges static extras (modern FW codes not in WMT 9.2.4 short dump).
+    """
     stem = normalize_lang(lang)
     path = _I18N_DIR / f"{stem}.json"
-    if not path.is_file():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        return {}
-    return {str(k): str(v) for k, v in data.items()}
+    out: dict[str, str] = {}
+    if path.is_file():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            out = {str(k): str(v) for k, v in data.items()}
+    # overlay extras for this lang (en/zh/ru); prefer file if already present
+    lang_key = stem if stem in ("en", "zh", "ru") else "en"
+    for code, msgs in _EXTRA_STATIC.items():
+        if code not in out:
+            out[code] = msgs.get(lang_key) or msgs.get("en") or ""
+    return {k: v for k, v in out.items() if v}
+
+
+def parse_composite_code(code: str | int) -> dict[str, Any] | None:
+    """
+    Parse firmware 6-digit composite ``ABCXYZ`` (base slot family + chip/sub).
+
+    Returns ``None`` if not a recognized composite. Example::
+
+        parse_composite_code(552999)
+        # {"code": "552999", "base": "552", "slot": 2, "sub": 999, "family": "55"}
+    """
+    c = str(code).strip()
+    if not c.isdigit() or len(c) != 6:
+        return None
+    base = c[:3]
+    if base not in _SLOT_BY_BASE3:
+        return None
+    family = base[:2]
+    if family not in _COMPOSITE_FAMILY:
+        return None
+    return {
+        "code": c,
+        "base": base,
+        "slot": _SLOT_BY_BASE3[base],
+        "sub": int(c[3:]),
+        "family": family,
+    }
+
+
+def composite_message(code: str | int, *, lang: str = "en") -> str | None:
+    """
+    Human text for firmware composite codes (e.g. ``552999`` → Slot2 chips been reset).
+
+    Returns ``None`` if the code is not a known composite pattern.
+    """
+    info = parse_composite_code(code)
+    if not info:
+        return None
+    want = normalize_lang(lang)
+    fam = _COMPOSITE_FAMILY[info["family"]]
+    # lang → en fallback for templates
+    tmpl_set = fam.get(want) or fam.get("en") or {}
+    sub = int(info["sub"])
+    slot = int(info["slot"])
+    key = "999" if sub == 999 else "chip"
+    tmpl = tmpl_set.get(key) or (fam.get("en") or {}).get(key)
+    if not tmpl:
+        return None
+    return tmpl.format(slot=slot, chip=sub, Slot=f"Slot{slot}")
+
+
+def is_known_code(code: str | int) -> bool:
+    """True if code is in shipped tables or matches a composite pattern."""
+    c = str(code).strip()
+    if c in load_language("en"):
+        return True
+    return parse_composite_code(c) is not None
 
 
 def available_languages() -> list[str]:
@@ -141,8 +464,11 @@ def describe_error(
     """
     Human-readable description for a miner error code.
 
-    Fallback chain: requested lang → meta fallback (usually ``en``) →
-    ``default`` or ``"Unknown error {code}"``.
+    Fallback chain:
+    1. exact entry in requested lang / meta fallback (usually ``en``)
+    2. firmware composite pattern (e.g. ``552999`` Slot2 chips been reset)
+    3. 3-digit base family for 6-digit codes (e.g. ``552`` have bad chips)
+    4. ``default`` or ``"Unknown error {code}"``
     """
     c = str(code).strip()
     want = normalize_lang(lang)
@@ -161,6 +487,18 @@ def describe_error(
         msg = load_language(stem).get(c)
         if msg:
             return msg
+    # composite patterns (55x999, 58xNNN, …)
+    for stem in chain:
+        msg = composite_message(c, lang=stem)
+        if msg:
+            return msg
+    # 6-digit → base 3-digit catalog (WMT short codes)
+    if c.isdigit() and len(c) == 6:
+        base = c[:3]
+        for stem in chain:
+            msg = load_language(stem).get(base)
+            if msg:
+                return msg
     if default is not None:
         return default
     return f"Unknown error {c}"
@@ -191,29 +529,42 @@ def resolve_error(
     c = str(code).strip()
     want = normalize_lang(lang)
     message = describe_error(c, lang=want, fallback=fallback, default="")
-    known = bool(message)
-    if not known:
+    if not message:
         message = f"Unknown error {c}"
         used = want
+        known = False
     else:
+        known = is_known_code(c) or (
+            bool(message) and not message.startswith("Unknown error ")
+        )
         # detect which lang actually provided the text
         used = want
         if load_language(want).get(c) != message:
-            for stem in list(fallback or load_meta().get("fallback") or _DEFAULT_FALLBACK):
-                s = normalize_lang(stem)
-                if load_language(s).get(c) == message:
-                    used = s
-                    break
+            # composite in requested lang?
+            if composite_message(c, lang=want) == message:
+                used = want
             else:
-                used = "en"
+                for stem in list(fallback or load_meta().get("fallback") or _DEFAULT_FALLBACK):
+                    s = normalize_lang(stem)
+                    if load_language(s).get(c) == message or composite_message(c, lang=s) == message:
+                        used = s
+                        break
+                else:
+                    used = "en"
     out: dict[str, Any] = {
         "code": c,
         "lang": used,
         "requested_lang": want,
         "message": message,
         "cause": message,
-        "known": known and c in load_language("en"),
+        "known": known,
     }
+    comp = parse_composite_code(c)
+    if comp:
+        out["base"] = comp["base"]
+        out["slot"] = comp["slot"]
+        out["chip"] = None if int(comp["sub"]) == 999 else int(comp["sub"])
+        out["sub"] = int(comp["sub"])
     if timestamp is not None:
         out["timestamp"] = timestamp
     return out

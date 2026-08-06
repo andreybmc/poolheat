@@ -5918,9 +5918,20 @@ def _sm_slot_from_error(code: str | None, cause: str | None) -> int | None:
     m = re.search(r"\bSM\s*([0-3])\b", text, re.I)
     if m:
         return int(m.group(1))
+    m = re.search(r"\bSlot\s*([0-3])\b", text, re.I)
+    if m:
+        return int(m.group(1))
     c = str(code or "").strip().lstrip("0") or str(code or "").strip()
     if not c.isdigit():
         return None
+    # 6-digit composites: 55s999 / 58sNNN / 53sNNN … (base ABC, slot = last digit of base)
+    if len(c) == 6 and c[:2] in ("52", "53", "54", "55", "56", "57", "58"):
+        try:
+            d = int(c[2])
+            if 0 <= d <= 3:
+                return d
+        except ValueError:
+            pass
     # last digit = board index for SM* families
     families = (
         "300", "301", "302", "303",
@@ -5935,14 +5946,20 @@ def _sm_slot_from_error(code: str | None, cause: str | None) -> int | None:
         "540", "541", "542", "543",
         "550", "551", "552", "553",
         "560", "561", "562", "563",
+        "580", "581", "582", "583",
         "5110", "5111", "5112", "5113",
+        "5130", "5131", "5132", "5133",
     )
-    if c in families or any(c.startswith(p) and len(c) == len(p) for p in ("30", "32", "35", "41", "42", "43", "44", "51", "53", "54", "55", "56")):
+    if c in families or any(c.startswith(p) and len(c) == len(p) for p in ("30", "32", "35", "41", "42", "43", "44", "51", "53", "54", "55", "56", "58")):
         d = int(c[-1])
         if 0 <= d <= 3:
             return d
-    # 5110-5113 frequency up
+    # 5110-5113 frequency up / 5130-5133 upfreq unstable
     if c.startswith("511") and len(c) == 4:
+        d = int(c[-1])
+        if 0 <= d <= 3:
+            return d
+    if c.startswith("513") and len(c) == 4:
         d = int(c[-1])
         if 0 <= d <= 3:
             return d
@@ -9556,21 +9573,61 @@ _MINER_ERROR_CAUSES: dict[str, str] = {
     "8410": "Software version error (M2x miner with M3x firmware, or M3x with M2x firmware).",
     # hashrate — base string; 2320 may be expanded with live numbers
     "2320": "Hashrate too low",
+    # firmware composites (also in whatsminer-lib 0.6.1+)
+    "550999": "Slot0 chips been reset",
+    "551999": "Slot1 chips been reset",
+    "552999": "Slot2 chips been reset",
+    "553999": "Slot3 chips been reset",
+    "580999": "Slot0 too many chips error",
+    "581999": "Slot1 too many chips error",
+    "582999": "Slot2 too many chips error",
+    "583999": "Slot3 too many chips error",
+    "2000": "No pools config",
+    "340": "Slot0 temperature limited",
+    "341": "Slot1 temperature limited",
+    "342": "Slot2 temperature limited",
+    "343": "Slot3 temperature limited",
+    "5130": "Slot0 upfreq unstable",
+    "5131": "Slot1 upfreq unstable",
+    "5132": "Slot2 upfreq unstable",
+    "5133": "Slot3 upfreq unstable",
+    "5720": "Slot0 crc error too much",
 }
+
 
 # Typical J/TH when Factory GHS unavailable (~2990 W / ~172.7 TH on this M63)
 _DEFAULT_J_PER_TH = 17.31
 
 
 def _official_cause(code: str) -> str | None:
-    """Whatsminer web UI Cause (Reason) for error code, if known."""
+    """Whatsminer web UI Cause (Reason) for error code, if known.
+
+    Prefers vendored whatsminer-lib catalog (WMT + composite 55x999/58xNNN…).
+    Falls back to local web-UI phrasing map.
+    """
     c = str(code).strip()
+    c2 = c.lstrip("0") or "0"
+    # whatsminer-lib: full catalog + firmware composites (e.g. 552999)
+    try:
+        from whatsminer.support.error_codes import resolve_error  # type: ignore
+
+        for cand in (c, c2):
+            if not cand:
+                continue
+            r = resolve_error(cand, lang="en")
+            if r.get("known") and r.get("cause"):
+                return str(r["cause"])
+    except Exception:
+        pass
     if c in _MINER_ERROR_CAUSES:
         return _MINER_ERROR_CAUSES[c]
-    # some FW report with leading zeros
-    c2 = c.lstrip("0") or "0"
     if c2 in _MINER_ERROR_CAUSES:
         return _MINER_ERROR_CAUSES[c2]
+    # local map: also try 3-digit base of 6-digit composite
+    if c.isdigit() and len(c) == 6:
+        base = c[:3]
+        if base in _MINER_ERROR_CAUSES:
+            return _MINER_ERROR_CAUSES[base]
     return None
 
 

@@ -6,30 +6,8 @@ import base64
 import binascii
 import hashlib
 
-try:
-    from Crypto.Cipher import AES  # type: ignore
-except ImportError:  # Entware often ships pycryptodomex as Cryptodome
-    from Cryptodome.Cipher import AES  # type: ignore
-
-try:
-    from passlib.hash import md5_crypt
-except ImportError:  # pragma: no cover
-    md5_crypt = None  # type: ignore
-
-
-def _md5_crypt_hash_fallback(word: str, salt: str) -> str:
-    """Minimal $1$ MD5-crypt when passlib is unavailable (rare on Entware)."""
-    import struct
-
-    bare = salt
-    if salt.startswith("$1$"):
-        parts = salt.split("$")
-        bare = parts[2] if len(parts) > 2 else salt
-    # OpenSSL passwd -1 compatible via hashlib only is non-trivial;
-    # require passlib for writes that need get_token.
-    raise ImportError(
-        "passlib is required for Whatsminer API auth (opkg/pip install passlib)"
-    )
+from Crypto.Cipher import AES
+from passlib.hash import md5_crypt
 
 
 def md5_crypt_hash(word: str, salt: str) -> str:
@@ -38,8 +16,6 @@ def md5_crypt_hash(word: str, salt: str) -> str:
     if salt.startswith("$1$"):
         parts = salt.split("$")
         bare = parts[2]
-    if md5_crypt is None:
-        return _md5_crypt_hash_fallback(word, bare)
     full = md5_crypt.using(salt=bare).hash(word)
     # format: $1$salt$hash
     return full.split("$")[3]
