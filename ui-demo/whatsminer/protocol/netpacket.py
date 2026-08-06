@@ -516,7 +516,10 @@ class NetStatus(IntEnum):
     MISSING_PAYLOAD = 6  # live: cmd5 without "0"|"1"|"2"
     MINER_SYS_ERROR = 7
     NEED_CHANGE_PWD = 9
-    CHALLENGE = 0x11
+    # Live M63 (2026-08): handshake reply u16_a=0x10, u16_b=8, body=challenge+token
+    # Earlier notes used 0x11 — accept both in decode_response.
+    CHALLENGE = 0x10
+    CHALLENGE_ALT = 0x11
 
 
 STATUS_TEXT = {
@@ -530,6 +533,7 @@ STATUS_TEXT = {
     int(NetStatus.MINER_SYS_ERROR): "Miner Sys Error",
     int(NetStatus.NEED_CHANGE_PWD): "Need change pwd",
     int(NetStatus.CHALLENGE): "handshake challenge",
+    int(NetStatus.CHALLENGE_ALT): "handshake challenge",
 }
 
 
@@ -662,10 +666,17 @@ class NetPacket:
             out["status"] = 0
             out["status_text"] = "ok"
             out["ok"] = True
-        elif len(data) == 24 and a == int(NetStatus.CHALLENGE) and b == 8:
+        elif len(data) == 24 and b == 8 and a in (
+            int(NetStatus.CHALLENGE),
+            int(NetStatus.CHALLENGE_ALT),
+            0x10,
+            0x11,
+        ):
+            # handshake challenge: 4 B code + 4 B token
             out["challenge_code"] = struct.unpack_from("<I", body, 0)[0]
             out["token"] = body[4:8].hex()
-            out["status"] = int(NetStatus.CHALLENGE)
+            out["status"] = int(a)
+            out["status_text"] = "handshake challenge"
             out["ok"] = True
         elif len(data) >= 16 and a == 0 and cmd != 0:
             # short success ACK: e.g. 5a5a7f7f 0d000000 00000000 ffff0000
