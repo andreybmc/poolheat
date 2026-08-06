@@ -5715,11 +5715,14 @@ def apply_logs_cfg(req: dict | None = None) -> dict:
 # ─── Virtual / alias sensors (Peripherals) ────────────────────────────────────
 #
 # A sensor has a system ``alias`` (e.g. outdoor, pool_water) and optional
-# priority sources + transform:
-#   sources: [ {type:live|weather|sensor|const, …}, … ]  — first valid wins
-#   transform: none | offset | power_delta_table
-#     offset: value + offset
-#     power_delta_table: value − delta(power) from a W→Δ°C table
+# priority sources; each source may carry its own transform:
+#   sources: [ {type:live|weather|sensor|const, …, transform?: …}, … ]
+#     first valid source wins; its transform is applied
+#   transform (legacy, sensor-level): migrated onto first source on load/save
+#     none | offset | power_delta_table
+#     offset: value + offset  (Δ can be negative)
+#     power_delta_table: value + delta(power) from a W→Δ°C table
+#       positive Δ adds, negative Δ subtracts
 #
 DEFAULT_SENSORS_CFG: dict = {"version": 1, "sensors": []}
 
@@ -5759,28 +5762,37 @@ def _normalize_sensor_source(raw: dict | None) -> dict | None:
     if not isinstance(raw, dict):
         return None
     typ = str(raw.get("type") or "").strip().lower()
+    out: dict | None = None
     if typ in ("live", "miner", "asic"):
         field = str(raw.get("field") or "liquid").strip().lower()
         if field not in SENSOR_LIVE_FIELDS:
             field = "liquid"
-        return {"type": "live", "field": field}
-    if typ in ("weather", "wx", "outdoor_api"):
+        out = {"type": "live", "field": field}
+    elif typ in ("weather", "wx", "outdoor_api"):
         field = str(raw.get("field") or "temp_c").strip().lower()
         if field not in SENSOR_WEATHER_FIELDS:
             field = "temp_c"
-        return {"type": "weather", "field": field}
-    if typ in ("sensor", "alias", "ref"):
+        out = {"type": "weather", "field": field}
+    elif typ in ("sensor", "alias", "ref"):
         ref = str(raw.get("alias") or raw.get("ref") or "").strip().lower()
         if not _sensor_alias_ok(ref):
             return None
-        return {"type": "sensor", "alias": ref}
-    if typ in ("const", "constant", "fixed"):
+        out = {"type": "sensor", "alias": ref}
+    elif typ in ("const", "constant", "fixed"):
         try:
             v = float(raw.get("value"))
         except (TypeError, ValueError):
             return None
-        return {"type": "const", "value": v}
-    return None
+        out = {"type": "const", "value": v}
+    if out is None:
+        return None
+    # Per-source transform (optional). Legacy sensors may only have top-level transform.
+    xf = raw.get("transform")
+    if isinstance(xf, dict) and xf:
+        out["transform"] = _normalize_sensor_transform(xf)
+    else:
+        out["transform"] = {"type": "none"}
+    return out
 
 
 def _normalize_sensor_transform(raw: dict | None) -> dict:
@@ -5885,8 +5897,18 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
             sources.append(ns)
     if not sources:
         # default: live liquid (harmless placeholder)
-        sources = [{"type": "live", "field": "liquid"}]
-    transform = _normalize_sensor_transform(raw.get("transform"))
+        sources = [{"type": "live", "field": "liquid", "transform": {"type": "none"}}]
+    # Migrate legacy sensor-level transform onto first source if no source has one
+    legacy_xf = _normalize_sensor_transform(raw.get("transform"))
+    if legacy_xf.get("type") and legacy_xf.get("type") != "none":
+        has_src_xf = any(
+            isinstance(s.get("transform"), dict)
+            and (s.get("transform") or {}).get("type") not in (None, "", "none")
+            for s in sources
+        )
+        if not has_src_xf and sources:
+            sources[0] = dict(sources[0])
+            sources[0]["transform"] = legacy_xf
     return {
         "id": sid,
         "alias": alias,
@@ -5897,7 +5919,6 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
         "enabled": enabled,
         "show_in_status": show_in_status,
         "sources": sources,
-        "transform": transform,
         "note": str(raw.get("note") or "")[:500],
     }
 
@@ -6101,7 +6122,8 @@ def _apply_sensor_transform(
         )
         if delta is None:
             return None, "empty power table"
-        return value - float(delta), f"Δ={delta:g} @ {pw:.0f}W"
+        # positive Δ adds, negative Δ subtracts
+        return value + float(delta), f"Δ={float(delta):+g} @ {pw:.0f}W"
     return value, None
 
 
@@ -6183,7 +6205,12 @@ def evaluate_sensor(
         out["error"] = "no source"
         return out
 
-    transform = sensor.get("transform") or {"type": "none"}
+    # Transform belongs to the winning source; fall back to legacy sensor-level
+    transform = {"type": "none"}
+    if isinstance(source_used, dict) and isinstance(source_used.get("transform"), dict):
+        transform = source_used.get("transform") or {"type": "none"}
+    elif isinstance(sensor.get("transform"), dict):
+        transform = sensor.get("transform") or {"type": "none"}
     final, note = _apply_sensor_transform(raw_val, transform, live)
     if final is None or not math.isfinite(float(final)):
         out["error"] = note or "transform failed"
@@ -11804,16 +11831,18 @@ def _build_temp_sensors_catalog(
     mt = str(miner_type or "").upper()
     # Prefer model catalog cooling/sensors; fallback to legacy family names
     liquid_family = False
+    model_sens: dict = {}
     if resolve_miner_model is not None:
         try:
             mp = resolve_miner_model(miner_type)
-            sens = mp.get("sensors") or {}
+            model_sens = mp.get("sensors") if isinstance(mp.get("sensors"), dict) else {}
             liquid_family = bool(
-                sens.get("liquid_temp")
+                model_sens.get("liquid_temp")
                 or str(mp.get("cooling") or "").lower() == "liquid"
             )
         except Exception:
             liquid_family = False
+            model_sens = {}
     if not liquid_family:
         liquid_family = any(
             x in mt for x in ("M53", "M56", "M63", "M66", "M50S", "M30S++", "LIQUID")
@@ -11918,48 +11947,77 @@ def _build_temp_sensors_catalog(
             expect=True,
         )
 
+    # Per-slot PCB always expected for model board count (structural).
+    # Per-slot chip min/avg/max only when DEVS actually provides values —
+    # many models/FW never expose them (would show as n/a forever).
+    def _slot_chip_ok(v) -> bool:
+        fv = _f(v)
+        if fv is None:
+            return False
+        if fv <= 0.05 or fv > 150:
+            return False
+        return True
+
+    # Model profile: board_chip_temp=False → never list SM chip min/avg/max
+    # (M63 typically has no per-slot chip fields — only PCB). If True/None, list
+    # only slots that actually have data (no permanent n/a rows).
+    model_wants_board_chip = model_sens.get("board_chip_temp")
+    any_board_chip = any(
+        _slot_chip_ok(v)
+        for lst in (board_chip_min, board_chip_max, board_chip_avg)
+        for v in (lst or [])
+    )
+    show_board_chip = (
+        False
+        if model_wants_board_chip is False
+        else any_board_chip
+    )
+
     for i in range(max(0, int(n_boards or 0))):
         pcb = boards[i] if i < len(boards) else None
         cmin = board_chip_min[i] if i < len(board_chip_min) else None
         cmax = board_chip_max[i] if i < len(board_chip_max) else None
         cavg = board_chip_avg[i] if i < len(board_chip_avg) else None
-        _add(
-            f"sm{i}_pcb",
-            "board",
-            f"SM{i} PCB",
-            f"SM{i} PCB",
-            pcb,
-            "devs",
-            expect=True,
-        )
-        # always list per-slot chip sensors for this model board count
-        _add(
-            f"sm{i}_chip_min",
-            "board_chip",
-            f"SM{i} Chip Min",
-            f"SM{i} чип min",
-            cmin,
-            "devs",
-            expect=True,
-        )
-        _add(
-            f"sm{i}_chip_avg",
-            "board_chip",
-            f"SM{i} Chip Avg",
-            f"SM{i} чип avg",
-            cavg,
-            "devs",
-            expect=True,
-        )
-        _add(
-            f"sm{i}_chip_max",
-            "board_chip",
-            f"SM{i} Chip Max",
-            f"SM{i} чип max",
-            cmax,
-            "devs",
-            expect=True,
-        )
+        if model_sens.get("pcb_temp", True) is not False:
+            _add(
+                f"sm{i}_pcb",
+                "board",
+                f"SM{i} PCB",
+                f"SM{i} PCB",
+                pcb,
+                "devs",
+                expect=True,
+            )
+        if show_board_chip and (
+            _slot_chip_ok(cmin) or _slot_chip_ok(cavg) or _slot_chip_ok(cmax)
+        ):
+            _add(
+                f"sm{i}_chip_min",
+                "board_chip",
+                f"SM{i} Chip Min",
+                f"SM{i} чип min",
+                cmin,
+                "devs",
+                expect=False,
+            )
+            _add(
+                f"sm{i}_chip_avg",
+                "board_chip",
+                f"SM{i} Chip Avg",
+                f"SM{i} чип avg",
+                cavg,
+                "devs",
+                expect=False,
+            )
+            _add(
+                f"sm{i}_chip_max",
+                "board_chip",
+                f"SM{i} Chip Max",
+                f"SM{i} чип max",
+                cmax,
+                "devs",
+                expect=False,
+            )
 
     _add(
         "psu",
@@ -12333,9 +12391,14 @@ def fetch_live() -> dict:
 def _measured_work_state(live: dict) -> str:
     """
     Actual mining state from miner API (NOT last work_cmd).
-    Primary signals: status.mineroff + hashrate. Residual board power after
-    power_off is normal and must NOT look like Resume (avoids Suspend thrash).
-    sleep/suspend · resume/mining
+    Primary signals: status.mineroff + hashrate.
+
+    Important: ``mineroff=false`` means the miner claims ON (starting / tuning /
+    running) — even at low residual watts. Never treat that as Suspend or the
+    UI skips Suspend as «already suspend» and never shows «Останавливается».
+
+    Residual board power after power_off with mineroff=true is Suspend.
+    Returns sleep/suspend · resume/mining
     """
     mo = live.get("mineroff")
     mo_s = str(mo).strip().lower() if mo is not None else ""
@@ -12347,21 +12410,17 @@ def _measured_work_state(live: dict) -> str:
     if mo_s in ("true", "1", "yes"):
         return "resume" if hashing else "sleep"
 
+    # mineroff false / 0 / no → miner claims ON (warmup, upfreq, mining)
+    if mo_s in ("false", "0", "no"):
+        return "resume"
+
     mode = str(live.get("mode_norm") or live.get("mode") or "").lower()
     if "sleep" in mode or mode in ("off", "power_off"):
         return "resume" if hashing else "sleep"
 
-    # mineroff false / unknown: hashing or sustained power = mining
+    # no mineroff field — fall back to hash / power
     if hashing:
         return "resume"
-    if mo_s in ("false", "0", "no"):
-        # claimed on — residual <100 W after stop still common; use higher bar
-        if p is not None and p >= 200:
-            return "resume"
-        if p is not None and p < 80 and not hashing:
-            return "sleep"
-        return "resume"  # mineroff false default = mining path
-    # no mineroff field
     if p is not None and p >= 200:
         return "resume"
     if p is not None and p < 50 and not hashing:
@@ -12830,6 +12889,7 @@ def _live_power_limit_w(live: dict | None = None) -> float | None:
 
 
 def apply_set(action: str, value, password: str) -> dict:
+    global _cache, _cache_ts
     action = (action or "").strip().lower()
     password = password or DEFAULT_API_PASSWORD
 
@@ -12890,27 +12950,53 @@ def apply_set(action: str, value, password: str) -> dict:
             "resume": "power_on",
         }
         miner_cmd_name = cmd_map[stored]
-        # skip if already suspend/resume
+        # skip only when solidly already in target state (not mid-transition)
         try:
             live = fetch_live()
             have = str(live.get("work_measured") or _live_work(live) or "").lower()
             want = "suspend" if stored == "sleep" else "resume"
-            if have in ("sleep", "suspend") and want == "suspend":
-                return {
-                    "ok": True,
-                    "skipped": True,
-                    "action": "working",
-                    "value": stored,
-                    "msg": "already suspend",
-                }
-            if have in ("resume", "mining") and want == "resume":
-                return {
-                    "ok": True,
-                    "skipped": True,
-                    "action": "working",
-                    "value": stored,
-                    "msg": "already resume",
-                }
+            mo = str(live.get("mineroff") or "").strip().lower()
+            h = _f(live.get("hashrate_th"))
+            hashing = h is not None and h >= 1.0
+            # sticky command: if user commanded the opposite recently, do not skip
+            cmd = str(live.get("work_cmd") or "").strip().lower()
+            cmd_side = (
+                "suspend"
+                if cmd in ("sleep", "suspend", "power_off", "off")
+                else (
+                    "resume"
+                    if cmd in ("resume", "mining", "power_on", "on")
+                    else None
+                )
+            )
+            if want == "suspend":
+                # solid stop: API says off and no hash (not just measured label)
+                solid_off = mo in ("true", "1", "yes") and not hashing
+                # if commanded resume (starting) — always allow Suspend to cancel
+                if solid_off and cmd_side != "resume" and have in (
+                    "sleep",
+                    "suspend",
+                ):
+                    return {
+                        "ok": True,
+                        "skipped": True,
+                        "action": "working",
+                        "value": stored,
+                        "msg": "already suspend",
+                    }
+            elif want == "resume":
+                solid_on = hashing or mo in ("false", "0", "no")
+                if solid_on and cmd_side != "suspend" and have in (
+                    "resume",
+                    "mining",
+                ):
+                    return {
+                        "ok": True,
+                        "skipped": True,
+                        "action": "working",
+                        "value": stored,
+                        "msg": "already resume",
+                    }
         except Exception:
             pass
         resp = miner_write_cmd({"cmd": miner_cmd_name}, password)
@@ -12960,35 +13046,55 @@ def apply_set(action: str, value, password: str) -> dict:
         watts = int(value)
         if watts < 0 or watts > 20000:
             raise ValueError("power_limit out of range")
-        # skip if already at this limit — adjust_power_limit restarts mining
+        # skip if ASIC already reports this limit (prefer power_limit_set, not
+        # summary Power Limit which is often 0 in Suspend)
         try:
-            candidates: list[float] = []
-            cur = _live_power_limit_w()
-            if cur is not None:
-                candidates.append(float(cur))
-            cmd_lim = _f(_state.get("power_limit_cmd"))
-            if cmd_lim is not None:
-                candidates.append(float(cmd_lim))
-            for c in candidates:
-                if abs(int(round(float(c))) - int(watts)) <= 1:
-                    return {
-                        "ok": True,
-                        "skipped": True,
-                        "action": "power_limit",
-                        "value": watts,
-                        "msg": f"power_limit already {watts} W",
-                    }
+            live = fetch_live()
+            cur = _live_power_limit_w(live)
+            # do NOT skip based only on power_limit_cmd — user may re-apply after
+            # miner reset; only skip when live ASIC readback matches
+            if cur is not None and abs(int(round(float(cur))) - int(watts)) <= 1:
+                # still stamp cmd so UI form stays in sync
+                with _state_lock:
+                    _state["power_limit_cmd"] = watts
+                    _save_state()
+                return {
+                    "ok": True,
+                    "skipped": True,
+                    "action": "power_limit",
+                    "value": watts,
+                    "msg": f"power_limit already {watts} W",
+                }
         except Exception:
             pass
+        # Prefer WMT NetPacket first (PoolheatMiner); if netpacket acks but
+        # readback stays wrong, UniversalMiner still tried fallbacks.
         resp = miner_write_cmd(
             {"cmd": "adjust_power_limit", "power_limit": str(watts)}, password
         )
-        return _record_write(
+        out = _record_write(
             "power_limit",
             watts,
             resp,
             warning="adjust_power_limit may reboot / restart mining",
         )
+        # Best-effort verify / refresh limit into cache after write
+        try:
+            live2 = fetch_live()
+            got = _live_power_limit_w(live2 if isinstance(live2, dict) else None)
+            if got is not None:
+                out["power_limit_set"] = got
+                with _cache_lock:
+                    if isinstance(_cache, dict):
+                        _cache["power_limit_set"] = got
+                        _cache["power_limit_measured"] = got
+                        _cache["power_limit_cmd"] = watts
+            else:
+                # status may lag; still surface commanded watts in UI
+                out["power_limit_set"] = float(watts)
+        except Exception:
+            out["power_limit_set"] = float(watts)
+        return out
 
     # Full device reboot (Whatsminer privileged "reboot" · LuCI fallback)
     if action in ("reboot", "reboot_asic", "system_reboot"):
@@ -13101,7 +13207,6 @@ def apply_set(action: str, value, password: str) -> dict:
         except Exception:
             pass
         with _cache_lock:
-            global _cache, _cache_ts
             _cache = None
             _cache_ts = 0.0
         out = _record_write(

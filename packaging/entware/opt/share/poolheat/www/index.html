@@ -2244,21 +2244,87 @@
     }
     .drag-handle:hover { color: var(--text); background: rgba(255,255,255,0.04); }
     .drag-handle:active { cursor: grabbing; }
+    .sortable-item {
+      cursor: grab;
+    }
+    .sortable-item:active {
+      cursor: grabbing;
+    }
     .sortable-item.is-dragging {
-      opacity: 0.5;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      opacity: 0.35;
     }
-    .sortable-item.drag-over-top {
-      box-shadow: inset 0 2px 0 0 var(--accent);
+    .sortable-item.sortable-drag-hidden {
+      /* keep layout via placeholder; hide the real node in the list */
+      position: absolute !important;
+      left: -9999px !important;
+      top: 0 !important;
+      width: 1px !important;
+      height: 1px !important;
+      overflow: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
     }
-    .sortable-item.drag-over-bot {
-      box-shadow: inset 0 -2px 0 0 var(--accent);
+    .sortable-placeholder {
+      border: 1.5px dashed rgba(61, 156, 240, 0.65);
+      border-radius: var(--radius-sm);
+      background: rgba(61, 156, 240, 0.06);
+      box-sizing: border-box;
+      pointer-events: none;
+      min-height: 36px;
+      margin: 0;
+    }
+    #sensors-list > .sortable-placeholder,
+    #devices-list > .sortable-placeholder {
+      /* match compact card cards */
+      min-height: 52px;
     }
     .sensor-source-row.sortable-item {
       position: relative;
     }
     .sensor-source-row .drag-handle {
       align-self: center;
+      cursor: grab;
+    }
+    /* Per-source card with collapsible transform */
+    .sensor-source-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--panel2);
+      padding: 8px 10px;
+    }
+    .sensor-source-card .src-main {
+      display: grid;
+      grid-template-columns: auto 140px 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .sensor-source-card .src-xform-toggle {
+      background: none;
+      border: none;
+      padding: 0;
+      margin: 6px 0 0 28px;
+      color: var(--accent);
+      font: inherit;
+      font-size: 0.78rem;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .sensor-source-card .src-xform-toggle:hover {
+      color: var(--text);
+    }
+    .sensor-source-card .src-xform-panel {
+      margin: 8px 0 0 28px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.18);
+      border: 1px solid var(--border);
+    }
+    .sensor-source-card .src-xform-panel[hidden] {
+      display: none !important;
     }
     /* Compact cards in Sensors / Devices lists */
     #sensors-list .card .card-b.periph-item-body,
@@ -2983,6 +3049,8 @@
                 <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
                 · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
                 <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
+                · <span class="tip" data-tip-key="warmup" title="Upfreq Complete (all boards)">upfreq</span>
+                <span id="dash-upfreq" data-bind="upfreqOk">—</span>
               </div>
               <div class="pm-extra-line">
                 <span class="tip" data-tip-key="psu_temp">PSU</span>
@@ -3291,14 +3359,8 @@
                 </div>
               </div>
 
-              <div class="row" style="margin-top:14px;grid-template-columns:1fr auto;align-items:end;gap:14px">
-                <label class="check" style="padding-bottom:6px">
-                  <input type="checkbox" id="allow-writes" />
-                  <span>Allow write to miner
-                    <span class="desc">check to change modes</span>
-                  </span>
-                </label>
-                <button class="btn ghost" type="button" id="btn-refresh-pw" onclick="fetchLive(true)" data-i18n="btn.refresh_status">Refresh status</button>
+              <div class="row" style="margin-top:14px;grid-template-columns:1fr;align-items:end;gap:14px">
+                <button class="btn ghost" type="button" id="btn-refresh-pw" onclick="fetchLive(true)" data-i18n="btn.refresh_status" style="justify-self:end">Refresh status</button>
               </div>
               <div class="write-log" id="write-log">
                 <p id="write-status" class="write-status">last write: —</p>
@@ -4300,18 +4362,14 @@
             <div class="card-h">
               <div>
                 <h2 data-i18n="h2.sensors">Sensors</h2>
-                <div class="sub" data-i18n="sub.sensors_card">alias · priority sources · virtual rules</div>
+                <div class="sub" data-i18n="sub.sensors_card">Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.</div>
               </div>
               <div class="btn-row" style="gap:8px;flex-wrap:wrap">
                 <button class="btn" type="button" id="btn-sensors-refresh" data-i18n="btn.refresh">Refresh</button>
                 <button class="btn primary" type="button" id="btn-sensor-new" data-i18n="btn.sensor_new">New sensor</button>
               </div>
             </div>
-            <div class="card-b stack" style="gap:14px">
-              <p style="font-size:0.82rem;color:var(--muted);margin:0;line-height:1.5" data-i18n="periph.sensors_help">
-                Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins.
-                Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).
-              </p>
+            <div class="card-b stack" style="gap:10px">
               <div id="sensors-list" class="stack" style="gap:8px"></div>
               <p style="font-size:0.75rem;color:var(--dim);margin:0" id="sensors-status">—</p>
             </div>
@@ -4370,30 +4428,7 @@
                   </div>
                   <button class="btn" type="button" id="btn-sensor-source-add" data-i18n="btn.add_source">Add source</button>
                 </div>
-                <div id="sensor-sources" class="stack" style="gap:8px"></div>
-              </div>
-
-              <div>
-                <div style="font-weight:600;font-size:0.9rem;margin-bottom:8px" data-i18n="field.sensor_transform">Transform</div>
-                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
-                  <label class="field"><span data-i18n="field.transform_type">Rule</span>
-                    <select id="sensor-xform-type">
-                      <option value="none" data-i18n="opt.xform_none">none (as source)</option>
-                      <option value="offset" data-i18n="opt.xform_offset">offset (source + Δ)</option>
-                      <option value="power_delta_table" data-i18n="opt.xform_power">power table (source − Δ(P))</option>
-                    </select>
-                  </label>
-                  <label class="field" id="sensor-offset-wrap"><span data-i18n="field.offset_c">Offset Δ, °C</span>
-                    <input type="number" id="sensor-offset" value="0" step="0.1" />
-                  </label>
-                </div>
-                <div id="sensor-power-table-wrap" hidden style="margin-top:12px">
-                  <p style="font-size:0.78rem;color:var(--muted);margin:0 0 8px;line-height:1.45" data-i18n="hint.power_table">
-                    Points: power (kW) → delta °C. Result = source − delta. Interpolated between points.
-                  </p>
-                  <div id="sensor-power-table" class="stack" style="gap:6px"></div>
-                  <button class="btn" type="button" id="btn-sensor-pt-add" style="margin-top:8px" data-i18n="btn.add_point">Add point</button>
-                </div>
+                <div id="sensor-sources" class="stack" style="gap:10px"></div>
               </div>
 
               <label class="field"><span data-i18n="field.sensor_note">Note</span>
@@ -5433,10 +5468,10 @@
         "sub.devices": "Devices",
         "h2.sensors": "Sensors",
         "h2.devices": "Devices",
-        "sub.sensors_card": "alias · priority sources · virtual rules",
+        "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
         "sub.devices_card": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)",
         "periph.sensors_empty": "No sensors yet. Create an alias with priority sources and optional virtual rules.",
-        "periph.sensors_help": "Create a system alias (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules: fixed offset, or Δ from power table (e.g. chip_max − 10°C at 3.5 kW).",
+        "periph.sensors_help": "",
         "periph.devices_empty": "No devices yet. Create an actuator (Tapo, Webhook, …) with mining rules and optional bot button.",
         "periph.devices_help": "",
         "periph.count": "Connected",
@@ -5515,7 +5550,8 @@
         "toast.order_saved": "Order saved",
         "opt.xform_none": "none (as source)",
         "opt.xform_offset": "offset (source + Δ)",
-        "opt.xform_power": "power table (source − Δ(P))",
+        "opt.xform_power": "power table (source + Δ(P))",
+        "hint.power_table": "Points: power (kW) → Δ °C. Result = source + Δ (positive adds, negative subtracts). Interpolated.",
         "opt.src_live": "Miner live",
         "opt.src_weather": "Weather (Open-Meteo)",
         "opt.src_sensor": "Other sensor",
@@ -5868,10 +5904,10 @@
         "sub.devices": "Устройства",
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
-        "sub.sensors_card": "alias · источники по приоритету · виртуальные правила",
+        "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
         "sub.devices_card": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)",
         "periph.sensors_empty": "Датчиков пока нет. Создайте alias с источниками по приоритету и опциональным правилом.",
-        "periph.sensors_help": "Системный alias (например outdoor, pool_water). Источники по приоритету — берётся первый с данными. Правила: фиксированный offset или Δ из таблицы мощности (напр. chip_max − 10°C при 3.5 kW).",
+        "periph.sensors_help": "",
         "periph.devices_empty": "Устройств пока нет. Создайте актуатор (Tapo, Webhook, …) с правилами майнинга и опциональной кнопкой бота.",
         "periph.devices_help": "",
         "btn.device_new": "Новое устройство",
@@ -5950,7 +5986,8 @@
         "toast.order_saved": "Порядок сохранён",
         "opt.xform_none": "нет (как источник)",
         "opt.xform_offset": "offset (источник + Δ)",
-        "opt.xform_power": "таблица мощности (источник − Δ(P))",
+        "opt.xform_power": "таблица мощности (источник + Δ(P))",
+        "hint.power_table": "Точки: мощность (кВт) → Δ °C. Результат = источник + Δ (плюс — прибавить, минус — убавить). Интерполяция.",
         "opt.src_live": "Miner live",
         "opt.src_weather": "Погода (Open-Meteo)",
         "opt.src_sensor": "Другой датчик",
@@ -6638,7 +6675,7 @@
       },
       dry_run: {
         title: "Dry Run",
-        body: "Server flag (after Save).\nOn — zones ignored: miner mode “as is” (mode/limit/MC not touched).\nOnly Safety Critical (chip ≥ T_crit) writes to the ASIC.\nZones log DRY_RUN would … (preview).\nOff — auto zones write again.\nMiner manual buttons are separate — “Allow write”.",
+        body: "Server flag (after Save).\nOn — zones ignored: miner mode “as is” (mode/limit/MC not touched).\nOnly Safety Critical (chip ≥ T_crit) writes to the ASIC.\nZones log DRY_RUN would … (preview).\nOff — auto zones write again.\nManual miner buttons: open Power settings panel.",
       },
       warmup: {
         title: "Warmup / upfreq",
@@ -8980,6 +9017,22 @@
         setId("dash-asic-uptime", upStr);
         setText("[data-bind=asicElapsed]", elStr);
         setId("dash-asic-elapsed", elStr);
+        // upfreq: 1 if all boards Upfreq Complete, else 0
+        {
+          const upArr =
+            (r && Array.isArray(r.upfreq) && r.upfreq) ||
+            (typeof live !== "undefined" && live && Array.isArray(live.upfreq)
+              ? live.upfreq
+              : null);
+          let upfreqTxt = "—";
+          if (upArr && upArr.length) {
+            upfreqTxt = upArr.every((u) => Number(u) === 1) ? "1" : "0";
+          } else if (r && (r.upfreq_ok === 0 || r.upfreq_ok === 1)) {
+            upfreqTxt = String(r.upfreq_ok);
+          }
+          setText("[data-bind=upfreqOk]", upfreqTxt);
+          setId("dash-upfreq", upfreqTxt);
+        }
       }
       try {
         if (typeof updateWorkBadge === "function") updateWorkBadge(r);
@@ -9011,40 +9064,60 @@
       if (typeof syncForceSuspendBtn === "function") syncForceSuspendBtn(workKey);
 
       // Lifecycle status: starting / stopping / tuning / running / stopped
-      // (commanded work_cmd vs measured + upfreq)
+      // Prefer server run_status_ru/en; fallback from work_cmd vs measured.
       const runStatusLabel = (r) => {
+        const lang =
+          typeof getUiLang === "function" ? getUiLang() : "en";
+        if (lang === "ru" && r && r.run_status_ru) return r.run_status_ru;
+        if (lang !== "ru" && r && r.run_status_en) return r.run_status_en;
         if (r && r.run_status_ru) return r.run_status_ru;
+        if (r && r.run_status_en) return r.run_status_en;
         if (r && r.run_status) {
-          const map = {
+          const mapEn = {
             starting: "Starting",
             stopping: "Stopping",
             tuning: "Tuning",
             running: "Running",
             stopped: "Stopped",
           };
+          const mapRu = {
+            starting: "Запускается",
+            stopping: "Останавливается",
+            tuning: "Настройка",
+            running: "Майнинг",
+            stopped: "Остановлен",
+          };
+          const map = lang === "ru" ? mapRu : mapEn;
           if (map[r.run_status]) return map[r.run_status];
         }
         // client-side fallback when backend field missing
-        const meas = workKey === "suspend" || workKey === "sleep"
-          ? "suspend"
-          : workKey === "resume"
-            ? "resume"
-            : null;
+        // Prefer mineroff when work_measured is stale mid-transition
+        let meas = null;
+        const mo = String((r && r.mineroff) != null ? r.mineroff : "").toLowerCase();
+        if (mo === "false" || mo === "0" || mo === "no") meas = "resume";
+        else if (mo === "true" || mo === "1" || mo === "yes") {
+          const h = Number(r && r.hashrate_th);
+          meas = Number.isFinite(h) && h >= 1 ? "resume" : "suspend";
+        } else if (workKey === "suspend" || workKey === "sleep") meas = "suspend";
+        else if (workKey === "resume") meas = "resume";
         let cmd = null;
         const wc = String((r && r.work_cmd) || "").toLowerCase();
         if (["sleep", "suspend", "power_off", "off"].includes(wc)) cmd = "suspend";
         else if (["resume", "mining", "power_on", "on"].includes(wc)) cmd = "resume";
-        if (cmd === "resume" && meas === "suspend") return "Starting";
-        if (cmd === "suspend" && meas === "resume") return "Stopping";
+        if (cmd === "resume" && meas === "suspend")
+          return lang === "ru" ? "Запускается" : "Starting";
+        if (cmd === "suspend" && meas === "resume")
+          return lang === "ru" ? "Останавливается" : "Stopping";
         if (meas === "resume") {
           const up = (r && r.upfreq) || [];
           const tuning =
             Array.isArray(up) &&
             up.length > 0 &&
             up.some((u) => Number(u) !== 1);
-          return tuning ? "Tuning" : "Running";
+          if (tuning) return lang === "ru" ? "Настройка" : "Tuning";
+          return lang === "ru" ? "Майнинг" : "Running";
         }
-        if (meas === "suspend") return "Stopped";
+        if (meas === "suspend") return lang === "ru" ? "Остановлен" : "Stopped";
         return "—";
       };
       setId("wk-run-status", runStatusLabel(src));
@@ -9133,20 +9206,12 @@
      * @param {string} action
      * @param {*} value
      * @param {{ force?: boolean, quiet?: boolean, source?: string }} [opts]
-     * force=true — auto Safety / auto zone (no allow-writes checkbox)
+     * Power settings are collapsed by default — no separate allow-writes gate.
      */
     async function applyPower(action, value, opts) {
       opts = opts || {};
-      const force = !!opts.force;
       const quiet = !!opts.quiet;
       const source = opts.source || "manual";
-      const allow = document.getElementById("allow-writes");
-      if (!force) {
-        if (!allow || !allow.checked) {
-          toastWarn("Enable “Allow write to miner”");
-          return { ok: false, error: "writes disabled" };
-        }
-      }
       if (!useLive.checked) {
         if (!quiet) toastWarn("Enable Live from miner");
         return { ok: false, error: "live off" };
@@ -13467,19 +13532,19 @@
       if (v == null || !Number.isFinite(Number(v))) return "—";
       return Number(v).toFixed(1);
     }
-    /** 2026-08-03T13:45 → 03.08.2026 13:45 */
+    /** 2026-08-03T13:45 → 13:45 (time only) */
     function fmtWxObserved(s) {
       if (s == null || s === "") return "";
       const m = String(s).trim().match(
         /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/
       );
       if (m) {
-        return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5];
+        return m[4] + ":" + m[5];
       }
       return String(s);
     }
 
-    /** Live weather one-liner: now: 21.3 °C · ясно · 07.08.2026 00:15 */
+    /** Live weather one-liner: now: 21.3 °C · ясно · 02:45 */
     function formatWxNowLine(w) {
       if (!w || w.enabled === false) {
         return t("wx.off", "weather off · Pool → Weather");
@@ -17418,9 +17483,9 @@
     }
 
     /**
-     * HTML5 drag-reorder for a list of .sortable-item children.
-     * Handle: .drag-handle (or whole item if none).
-     * onDrop(idsFromDom) after drop; getId(el) returns id string.
+     * HTML5 drag-reorder: drag whole .sortable-item; leave a dashed
+     * placeholder contour where the item left (and as drop target moves).
+     * Interactive children (button/input/select) do not start drag.
      */
     function bindSortableList(container, opts) {
       opts = opts || {};
@@ -17430,51 +17495,97 @@
         opts.getId ||
         ((el) => el.getAttribute("data-id") || el.dataset.id || "");
       let dragEl = null;
+      let placeholder = null;
 
-      const clearMarks = () => {
+      const cleanup = () => {
+        if (placeholder && placeholder.parentNode) {
+          placeholder.parentNode.removeChild(placeholder);
+        }
+        placeholder = null;
+        if (dragEl) {
+          dragEl.classList.remove("is-dragging", "sortable-drag-hidden");
+        }
+        dragEl = null;
         container.querySelectorAll(itemSel).forEach((el) => {
-          el.classList.remove("drag-over-top", "drag-over-bot", "is-dragging");
+          el.classList.remove("is-dragging", "sortable-drag-hidden");
         });
       };
 
+      const movePlaceholder = (target, clientY) => {
+        if (!placeholder || !target || target === dragEl) return;
+        if (target === placeholder) return;
+        const rect = target.getBoundingClientRect();
+        const before = clientY < rect.top + rect.height / 2;
+        if (before) {
+          if (placeholder.nextSibling !== target)
+            container.insertBefore(placeholder, target);
+        } else {
+          if (target.nextSibling !== placeholder)
+            container.insertBefore(placeholder, target.nextSibling);
+        }
+      };
+
       container.querySelectorAll(itemSel).forEach((el) => {
-        const handle = el.querySelector(".drag-handle") || el;
-        handle.setAttribute("draggable", "true");
-        handle.addEventListener("dragstart", (e) => {
+        el.setAttribute("draggable", "true");
+        el.addEventListener("dragstart", (e) => {
+          // don't drag when interacting with controls
+          if (
+            e.target &&
+            e.target.closest &&
+            e.target.closest("button, input, select, textarea, a, label.field")
+          ) {
+            e.preventDefault();
+            return;
+          }
           dragEl = el;
-          el.classList.add("is-dragging");
+          const rect = el.getBoundingClientRect();
+          placeholder = document.createElement("div");
+          placeholder.className = "sortable-placeholder";
+          placeholder.style.height = Math.max(36, Math.round(rect.height)) + "px";
+          // capture drag ghost before hiding
           try {
             e.dataTransfer.effectAllowed = "move";
             e.dataTransfer.setData("text/plain", getId(el) || "x");
+            if (e.dataTransfer.setDragImage) {
+              e.dataTransfer.setDragImage(
+                el,
+                Math.min(40, rect.width / 4),
+                Math.min(20, rect.height / 3)
+              );
+            }
           } catch (_) { /* ignore */ }
+          el.classList.add("is-dragging");
+          // insert dashed slot after the item, then hide the real node
+          if (el.parentNode) {
+            el.parentNode.insertBefore(placeholder, el.nextSibling);
+          }
+          requestAnimationFrame(() => {
+            if (dragEl === el) el.classList.add("sortable-drag-hidden");
+          });
         });
-        handle.addEventListener("dragend", () => {
-          clearMarks();
-          dragEl = null;
+        el.addEventListener("dragend", () => {
+          // if drop didn't fire, put item back at placeholder
+          if (dragEl && placeholder && placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(dragEl, placeholder);
+          }
+          cleanup();
         });
         el.addEventListener("dragover", (e) => {
           e.preventDefault();
-          if (!dragEl || dragEl === el) return;
+          if (!dragEl || !placeholder) return;
           try {
             e.dataTransfer.dropEffect = "move";
           } catch (_) { /* ignore */ }
-          const rect = el.getBoundingClientRect();
-          const before = e.clientY < rect.top + rect.height / 2;
-          el.classList.toggle("drag-over-top", before);
-          el.classList.toggle("drag-over-bot", !before);
-          if (before) {
-            if (el.previousSibling !== dragEl) container.insertBefore(dragEl, el);
-          } else {
-            if (el.nextSibling !== dragEl)
-              container.insertBefore(dragEl, el.nextSibling);
-          }
-        });
-        el.addEventListener("dragleave", () => {
-          el.classList.remove("drag-over-top", "drag-over-bot");
+          movePlaceholder(el, e.clientY);
         });
         el.addEventListener("drop", (e) => {
           e.preventDefault();
-          clearMarks();
+          e.stopPropagation();
+          if (!dragEl || !placeholder) return;
+          if (placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(dragEl, placeholder);
+          }
+          cleanup();
           if (typeof opts.onDrop === "function") {
             const ids = Array.from(container.querySelectorAll(itemSel)).map(
               (node) => getId(node)
@@ -17482,6 +17593,31 @@
             opts.onDrop(ids);
           }
         });
+      });
+      // allow drop on empty gaps / container
+      container.addEventListener("dragover", (e) => {
+        if (!dragEl || !placeholder) return;
+        e.preventDefault();
+        const overItem = e.target && e.target.closest
+          ? e.target.closest(itemSel)
+          : null;
+        if (overItem && container.contains(overItem)) {
+          movePlaceholder(overItem, e.clientY);
+        }
+      });
+      container.addEventListener("drop", (e) => {
+        if (!dragEl || !placeholder) return;
+        e.preventDefault();
+        if (placeholder.parentNode) {
+          placeholder.parentNode.insertBefore(dragEl, placeholder);
+        }
+        cleanup();
+        if (typeof opts.onDrop === "function") {
+          const ids = Array.from(container.querySelectorAll(itemSel)).map(
+            (node) => getId(node)
+          );
+          opts.onDrop(ids);
+        }
       });
     }
 
@@ -17607,8 +17743,49 @@
       await persistSensorOrder(next.map((s) => s.id));
     }
 
+    function defaultPowerTable() {
+      return [
+        { power_w: 2500, delta: 2 },
+        { power_w: 3500, delta: 4 },
+        { power_w: 7000, delta: 6 },
+      ];
+    }
+
+    function normalizeSourceXform(xf) {
+      xf = xf && typeof xf === "object" ? xf : { type: "none" };
+      const typ = xf.type || "none";
+      if (typ === "offset") {
+        return { type: "offset", offset: Number(xf.offset) || 0 };
+      }
+      if (typ === "power_delta_table") {
+        return {
+          type: "power_delta_table",
+          table:
+            Array.isArray(xf.table) && xf.table.length
+              ? xf.table
+              : defaultPowerTable(),
+          interpolate: xf.interpolate !== false,
+        };
+      }
+      return { type: "none" };
+    }
+
+    function xformSummary(xf) {
+      xf = normalizeSourceXform(xf);
+      if (xf.type === "offset") {
+        const o = Number(xf.offset) || 0;
+        return "offset " + (o >= 0 ? "+" : "") + o;
+      }
+      if (xf.type === "power_delta_table") {
+        return "power table · " + ((xf.table && xf.table.length) || 0) + " pts";
+      }
+      return "";
+    }
+
     function sourceRowHtml(src, idx) {
-      src = src || { type: "live", field: "liquid" };
+      src = src || { type: "live", field: "liquid", transform: { type: "none" } };
+      const xf = normalizeSourceXform(src.transform);
+      const open = !!src._xformOpen;
       const liveOpts = (sensorsCatalog.live_fields || ["liquid", "env", "chip_max", "power"])
         .map(
           (f) =>
@@ -17647,10 +17824,22 @@
             "</option>"
         )
         .join("");
+      const sum = xformSummary(xf);
+      const toggleLabel = open
+        ? t("link.xform_hide", "Hide transform")
+        : t("link.xform_show", "Transform") + (sum ? " · " + sum : "");
+      const pts =
+        xf.type === "power_delta_table" && xf.table && xf.table.length
+          ? xf.table
+          : defaultPowerTable();
+      const ptHtml = pts.map(powerTableRowHtml).join("");
       return (
-        '<div class="sensor-source-row sortable-item row" data-src-idx="' +
+        '<div class="sensor-source-row sensor-source-card sortable-item" data-src-idx="' +
         idx +
-        '" style="grid-template-columns:auto 140px 1fr auto;gap:8px;align-items:end">' +
+        '" data-xform-open="' +
+        (open ? "1" : "0") +
+        '">' +
+        '<div class="src-main">' +
         '<span class="drag-handle" title="' +
         t("btn.drag_reorder", "Drag to reorder") +
         '" aria-label="Drag">⋮⋮</span>' +
@@ -17696,6 +17885,60 @@
                 "</select></label>") +
         "</div>" +
         '<button class="btn danger ghost src-remove" type="button" title="Remove">×</button>' +
+        "</div>" +
+        '<button type="button" class="src-xform-toggle" aria-expanded="' +
+        (open ? "true" : "false") +
+        '">' +
+        toggleLabel +
+        "</button>" +
+        '<div class="src-xform-panel"' +
+        (open ? "" : " hidden") +
+        ">" +
+        '<div class="row" style="grid-template-columns:1fr 1fr;gap:10px;align-items:start">' +
+        '<label class="field" style="margin:0"><span>' +
+        t("field.transform_type", "Rule") +
+        '</span><select class="src-xform-type">' +
+        '<option value="none"' +
+        (xf.type === "none" ? " selected" : "") +
+        ">" +
+        t("opt.xform_none", "none (as source)") +
+        "</option>" +
+        '<option value="offset"' +
+        (xf.type === "offset" ? " selected" : "") +
+        ">" +
+        t("opt.xform_offset", "offset (source + Δ)") +
+        "</option>" +
+        '<option value="power_delta_table"' +
+        (xf.type === "power_delta_table" ? " selected" : "") +
+        ">" +
+        t("opt.xform_power", "power table (source + Δ(P))") +
+        "</option>" +
+        "</select></label>" +
+        '<label class="field src-offset-wrap" style="margin:0;' +
+        (xf.type === "offset" ? "" : "display:none") +
+        '"><span>' +
+        t("field.offset_c", "Offset Δ, °C") +
+        '</span><input type="number" class="src-offset" step="0.1" value="' +
+        (xf.offset != null ? xf.offset : 0) +
+        '" /></label>' +
+        "</div>" +
+        '<div class="src-pt-wrap" style="margin-top:10px;' +
+        (xf.type === "power_delta_table" ? "" : "display:none") +
+        '">' +
+        '<p style="font-size:0.75rem;color:var(--muted);margin:0 0 8px;line-height:1.4">' +
+        t(
+          "hint.power_table",
+          "Points: power (kW) → Δ °C. Result = source + Δ (positive adds, negative subtracts). Interpolated."
+        ) +
+        "</p>" +
+        '<div class="src-power-table stack" style="gap:6px">' +
+        ptHtml +
+        "</div>" +
+        '<button class="btn src-pt-add" type="button" style="margin-top:8px">' +
+        t("btn.add_point", "Add point") +
+        "</button>" +
+        "</div>" +
+        "</div>" +
         "</div>"
       );
     }
@@ -17710,13 +17953,66 @@
       });
     }
 
+    function collectPowerTableFrom(box) {
+      if (!box) return [];
+      const out = [];
+      box.querySelectorAll(".pt-row").forEach((row) => {
+        const kw = Number(row.querySelector(".pt-kw")?.value);
+        const delta = Number(row.querySelector(".pt-delta")?.value);
+        if (!Number.isFinite(kw) || !Number.isFinite(delta)) return;
+        out.push({ power_w: kw * 1000, delta });
+      });
+      return out;
+    }
+
+    function collectTransformFromRow(row) {
+      if (!row) return { type: "none" };
+      const typ = row.querySelector(".src-xform-type")?.value || "none";
+      if (typ === "offset") {
+        return {
+          type: "offset",
+          offset: Number(row.querySelector(".src-offset")?.value) || 0,
+        };
+      }
+      if (typ === "power_delta_table") {
+        return {
+          type: "power_delta_table",
+          table: collectPowerTableFrom(row.querySelector(".src-power-table")),
+          interpolate: true,
+        };
+      }
+      return { type: "none" };
+    }
+
+    function syncSourceXformPanel(row) {
+      if (!row) return;
+      const typ = row.querySelector(".src-xform-type")?.value || "none";
+      const off = row.querySelector(".src-offset-wrap");
+      const pt = row.querySelector(".src-pt-wrap");
+      if (off) off.style.display = typ === "offset" ? "" : "none";
+      if (pt) pt.style.display = typ === "power_delta_table" ? "" : "none";
+      // refresh toggle summary when collapsed
+      const open = row.getAttribute("data-xform-open") === "1";
+      const btn = row.querySelector(".src-xform-toggle");
+      if (btn && !open) {
+        const xf = collectTransformFromRow(row);
+        const sum = xformSummary(xf);
+        btn.textContent =
+          t("link.xform_show", "Transform") + (sum ? " · " + sum : "");
+      }
+    }
+
     function bindSourceRows() {
       const box = document.getElementById("sensor-sources");
       if (!box) return;
       box.querySelectorAll(".src-type").forEach((sel) => {
         sel.onchange = () => {
           const sources = collectSourcesFromDom();
-          // re-render keeping types
+          // keep open state from DOM
+          box.querySelectorAll(".sensor-source-row").forEach((row, i) => {
+            if (sources[i])
+              sources[i]._xformOpen = row.getAttribute("data-xform-open") === "1";
+          });
           box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
           bindSourceRows();
         };
@@ -17725,12 +18021,61 @@
         btn.onclick = () => {
           const row = btn.closest(".sensor-source-row");
           if (row) row.remove();
-          // reindex
           const sources = collectSourcesFromDom();
-          if (!sources.length) sources.push({ type: "live", field: "liquid" });
+          if (!sources.length)
+            sources.push({
+              type: "live",
+              field: "liquid",
+              transform: { type: "none" },
+            });
           box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
           bindSourceRows();
         };
+      });
+      box.querySelectorAll(".src-xform-toggle").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const row = btn.closest(".sensor-source-row");
+          if (!row) return;
+          const open = row.getAttribute("data-xform-open") === "1";
+          const next = !open;
+          row.setAttribute("data-xform-open", next ? "1" : "0");
+          const panel = row.querySelector(".src-xform-panel");
+          if (panel) panel.hidden = !next;
+          btn.setAttribute("aria-expanded", next ? "true" : "false");
+          if (next) {
+            btn.textContent = t("link.xform_hide", "Hide transform");
+          } else {
+            const xf = collectTransformFromRow(row);
+            const sum = xformSummary(xf);
+            btn.textContent =
+              t("link.xform_show", "Transform") + (sum ? " · " + sum : "");
+          }
+        };
+      });
+      box.querySelectorAll(".src-xform-type").forEach((sel) => {
+        sel.onchange = () => {
+          const row = sel.closest(".sensor-source-row");
+          syncSourceXformPanel(row);
+        };
+      });
+      box.querySelectorAll(".src-pt-add").forEach((btn) => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const row = btn.closest(".sensor-source-row");
+          const ptBox = row && row.querySelector(".src-power-table");
+          if (!ptBox) return;
+          ptBox.insertAdjacentHTML(
+            "beforeend",
+            powerTableRowHtml({ power_w: 4000, delta: 0 })
+          );
+          bindPowerTableIn(ptBox);
+        };
+      });
+      box.querySelectorAll(".src-power-table").forEach((ptBox) => {
+        bindPowerTableIn(ptBox);
       });
       bindSortableList(box, {
         itemSelector: ".sensor-source-row",
@@ -17747,33 +18092,39 @@
       const out = [];
       box.querySelectorAll(".sensor-source-row").forEach((row) => {
         const typ = row.querySelector(".src-type")?.value || "live";
+        const transform = collectTransformFromRow(row);
+        const open = row.getAttribute("data-xform-open") === "1";
+        let item;
         if (typ === "weather") {
-          out.push({
+          item = {
             type: "weather",
             field: row.querySelector(".src-field")?.value || "temp_c",
-          });
+          };
         } else if (typ === "sensor") {
-          out.push({
+          item = {
             type: "sensor",
             alias: row.querySelector(".src-alias")?.value || "",
-          });
+          };
         } else if (typ === "const") {
-          out.push({
+          item = {
             type: "const",
             value: Number(row.querySelector(".src-const")?.value),
-          });
+          };
         } else {
-          out.push({
+          item = {
             type: "live",
             field: row.querySelector(".src-field")?.value || "liquid",
-          });
+          };
         }
+        item.transform = transform;
+        item._xformOpen = open;
+        out.push(item);
       });
       return out;
     }
 
     function powerTableRowHtml(pt) {
-      pt = pt || { power_w: 3500, delta: 10 };
+      pt = pt || { power_w: 3500, delta: 0 };
       const kw = Number(pt.power_w) / 1000;
       return (
         '<div class="pt-row row" style="grid-template-columns:1fr 1fr auto;gap:8px;align-items:end">' +
@@ -17785,42 +18136,22 @@
         '<label class="field" style="margin:0"><span>' +
         t("field.delta_c", "Δ, °C") +
         '</span><input type="number" class="pt-delta" step="0.1" value="' +
-        (pt.delta != null ? pt.delta : 10) +
+        (pt.delta != null ? pt.delta : 0) +
         '" /></label>' +
         '<button class="btn danger ghost pt-remove" type="button">×</button>' +
         "</div>"
       );
     }
 
-    function bindPowerTable() {
-      const box = document.getElementById("sensor-power-table");
+    function bindPowerTableIn(box) {
       if (!box) return;
       box.querySelectorAll(".pt-remove").forEach((btn) => {
-        btn.onclick = () => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
           btn.closest(".pt-row")?.remove();
         };
       });
-    }
-
-    function collectPowerTable() {
-      const box = document.getElementById("sensor-power-table");
-      if (!box) return [];
-      const out = [];
-      box.querySelectorAll(".pt-row").forEach((row) => {
-        const kw = Number(row.querySelector(".pt-kw")?.value);
-        const delta = Number(row.querySelector(".pt-delta")?.value);
-        if (!Number.isFinite(kw) || !Number.isFinite(delta)) return;
-        out.push({ power_w: kw * 1000, delta });
-      });
-      return out;
-    }
-
-    function syncXformUi() {
-      const typ = document.getElementById("sensor-xform-type")?.value || "none";
-      const off = document.getElementById("sensor-offset-wrap");
-      const pt = document.getElementById("sensor-power-table-wrap");
-      if (off) off.style.display = typ === "offset" ? "" : "none";
-      if (pt) pt.hidden = typ !== "power_delta_table";
     }
 
     function openSensorEditor(sensor) {
@@ -17836,8 +18167,7 @@
         unit: "°C",
         enabled: true,
         show_in_status: false,
-        sources: [{ type: "live", field: "liquid" }],
-        transform: { type: "none" },
+        sources: [{ type: "live", field: "liquid", transform: { type: "none" } }],
       };
       document.getElementById("sensor-id").value = s.id || "";
       document.getElementById("sensor-alias").value = s.alias || "";
@@ -17853,30 +18183,37 @@
       const showSt = document.getElementById("sensor-show-status");
       if (showSt) showSt.checked = !!s.show_in_status;
       document.getElementById("sensor-note").value = s.note || "";
-      const sources = s.sources && s.sources.length ? s.sources : [{ type: "live", field: "liquid" }];
+      // migrate legacy sensor-level transform onto first source for editor
+      let sources =
+        s.sources && s.sources.length
+          ? s.sources.map((x) => Object.assign({}, x))
+          : [{ type: "live", field: "liquid", transform: { type: "none" } }];
+      const legacyXf = s.transform && s.transform.type && s.transform.type !== "none"
+        ? s.transform
+        : null;
+      if (legacyXf) {
+        const hasSrc = sources.some(
+          (x) => x.transform && x.transform.type && x.transform.type !== "none"
+        );
+        if (!hasSrc && sources[0]) {
+          sources[0] = Object.assign({}, sources[0], { transform: legacyXf });
+        }
+      }
+      sources = sources.map((x) =>
+        Object.assign({}, x, {
+          transform: normalizeSourceXform(x.transform),
+          _xformOpen: !!(
+            x.transform &&
+            x.transform.type &&
+            x.transform.type !== "none"
+          ),
+        })
+      );
       const sbox = document.getElementById("sensor-sources");
       if (sbox) {
         sbox.innerHTML = sources.map((x, i) => sourceRowHtml(x, i)).join("");
         bindSourceRows();
       }
-      const xf = s.transform || { type: "none" };
-      const xt = document.getElementById("sensor-xform-type");
-      if (xt) xt.value = xf.type || "none";
-      const offEl = document.getElementById("sensor-offset");
-      if (offEl) offEl.value = xf.offset != null ? xf.offset : 0;
-      const ptBox = document.getElementById("sensor-power-table");
-      if (ptBox) {
-        const pts =
-          xf.type === "power_delta_table" && xf.table && xf.table.length
-            ? xf.table
-            : [
-                { power_w: 3500, delta: 10 },
-                { power_w: 2500, delta: 7 },
-              ];
-        ptBox.innerHTML = pts.map(powerTableRowHtml).join("");
-        bindPowerTable();
-      }
-      syncXformUi();
       const prev = document.getElementById("sensor-editor-preview");
       if (prev && s.alias && sensorsValues[s.alias]) {
         const ev = sensorsValues[s.alias];
@@ -17924,6 +18261,12 @@
       let name_ru = (sensorNameBi.ru || "").trim();
       if (name_en && !name_ru) name_ru = name_en;
       if (name_ru && !name_en) name_en = name_ru;
+      const sources = collectSourcesFromDom().map((s) => {
+        const out = Object.assign({}, s);
+        delete out._xformOpen;
+        out.transform = normalizeSourceXform(out.transform);
+        return out;
+      });
       const payload = {
         id: document.getElementById("sensor-id")?.value || undefined,
         alias: (document.getElementById("sensor-alias")?.value || "").trim().toLowerCase(),
@@ -17934,17 +18277,9 @@
         enabled: !!document.getElementById("sensor-enabled")?.checked,
         show_in_status: !!document.getElementById("sensor-show-status")?.checked,
         note: document.getElementById("sensor-note")?.value || "",
-        sources: collectSourcesFromDom(),
-        transform: { type: document.getElementById("sensor-xform-type")?.value || "none" },
+        sources,
       };
       if (!payload.id) delete payload.id;
-      if (payload.transform.type === "offset") {
-        payload.transform.offset = Number(document.getElementById("sensor-offset")?.value) || 0;
-      }
-      if (payload.transform.type === "power_delta_table") {
-        payload.transform.table = collectPowerTable();
-        payload.transform.interpolate = true;
-      }
       try {
         const res = await fetch("/api/sensors", {
           method: "POST",
@@ -18009,19 +18344,17 @@
     });
     document.getElementById("btn-sensor-source-add")?.addEventListener("click", () => {
       const sources = collectSourcesFromDom();
-      sources.push({ type: "live", field: "env" });
+      sources.push({
+        type: "live",
+        field: "env",
+        transform: { type: "none" },
+        _xformOpen: false,
+      });
       const box = document.getElementById("sensor-sources");
       if (box) {
         box.innerHTML = sources.map((s, i) => sourceRowHtml(s, i)).join("");
         bindSourceRows();
       }
-    });
-    document.getElementById("sensor-xform-type")?.addEventListener("change", syncXformUi);
-    document.getElementById("btn-sensor-pt-add")?.addEventListener("click", () => {
-      const box = document.getElementById("sensor-power-table");
-      if (!box) return;
-      box.insertAdjacentHTML("beforeend", powerTableRowHtml({ power_w: 2000, delta: 5 }));
-      bindPowerTable();
     });
 
     // ── Peripherals · Devices ─────────────────────────────────────────────
