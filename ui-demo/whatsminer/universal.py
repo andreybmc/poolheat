@@ -772,12 +772,52 @@ class UniversalMiner:
             netpacket=lambda: self.wmt.set_heat_mode(mode),
         )
 
-    def factory_reset(self) -> dict[str, Any]:
+    def factory_reset(self, *, netpacket_only: bool = True) -> dict[str, Any]:
+        """
+        Factory restore.
+
+        Default **netpacket_only=True** (WhatsMinerTool path on :8889). Public
+        API factory_reset is unreliable / token-limited; only used when
+        ``netpacket_only=False`` and NetPacket is unavailable.
+        """
+        if netpacket_only:
+            raw = self.wmt.factory_reset()
+            return _wrap_result(raw, transport="netpacket", action="factory_reset")
         return self._dispatch_write(
             "factory_reset",
             public=lambda: self.public().factory_reset(),
             netpacket=lambda: self.wmt.factory_reset(),
         )
+
+    def update_firmware(
+        self,
+        image: bytes,
+        *,
+        poll_status: bool = True,
+        poll_attempts: int = 30,
+        wait_upload: float = 600.0,
+        progress: Any = None,
+        netpacket_only: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Firmware upgrade via **NetPacket :8889** (WhatsMinerTool cmd 7 + status 21).
+
+        Public TCP ``update_firmware`` is not used by default (``netpacket_only``).
+        ``progress`` is forwarded to :meth:`NetPacketClient.update_firmware`.
+        """
+        if not image:
+            raise ValueError("firmware image is empty")
+        if not netpacket_only:
+            # reserved for future public fallback — still prefer NetPacket first
+            pass
+        raw = self.wmt.update_firmware(
+            image,
+            poll_status=poll_status,
+            poll_attempts=poll_attempts,
+            wait_upload=wait_upload,
+            progress=progress,
+        )
+        return _wrap_result(raw, transport="netpacket", action="update_firmware")
 
     def restart_mining(self) -> dict[str, Any]:
         def _pub():

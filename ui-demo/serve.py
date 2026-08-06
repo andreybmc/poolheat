@@ -37,6 +37,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 try:
@@ -135,6 +136,7 @@ SNIFFER_CFG_FILE = DATA / "sniffer_config.json"
 TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Virtual / alias sensors (Peripherals → Sensors)
 SENSORS_CFG_FILE = DATA / "sensors_config.json"
+FIRMWARE_CFG_FILE = DATA / "firmware_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
 # Defaults; live limits come from logs_config.json (Advanced settings)
@@ -4125,6 +4127,19 @@ def apply_miner_settings(
     with _cache_lock:
         _cache = None
         _cache_ts = 0.0
+    # invalidate identity / error caches when target host changes
+    if host is not None:
+        try:
+            global _IDENT_CACHE
+            _IDENT_CACHE = {"ts": 0.0, "data": None}
+        except Exception:
+            pass
+        try:
+            with _state_lock:
+                _state["miner_error_cache"] = {}
+                _save_state()
+        except Exception:
+            pass
     return settings
 
 
@@ -6615,6 +6630,60 @@ def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
         return _miner_cmd_unlocked(cmd, timeout=timeout)
 
 
+def _extract_miner_payload(
+    raw: Any,
+    *section_keys: str,
+) -> dict:
+    """
+    Normalize miner TCP reply to a flat dict of fields.
+
+    Whatsminer secure/API style::
+        {"STATUS": "S", "Msg": { ...fields... }}
+
+    Classic cgminer multi-section (seen after factory_reset / some FW)::
+        {"STATUS": [{"STATUS":"S","Msg":"Summary"}], "SUMMARY": [{ ...fields... }]}
+
+    Never raises KeyError on missing ``Msg`` — returns {}.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    msg = raw.get("Msg")
+    if isinstance(msg, dict):
+        return msg
+    # prefer explicit sections (SUMMARY, DEVS already handled elsewhere)
+    keys = section_keys or (
+        "SUMMARY",
+        "summary",
+        "STATUS",
+        "status",
+        "INFO",
+        "info",
+    )
+    for key in keys:
+        sec = raw.get(key)
+        if isinstance(sec, list) and sec:
+            first = sec[0]
+            if isinstance(first, dict):
+                # skip pure status-only rows like {"STATUS":"S","Msg":"Summary"}
+                if set(first.keys()) <= {
+                    "STATUS",
+                    "Status",
+                    "Msg",
+                    "msg",
+                    "Code",
+                    "When",
+                    "Description",
+                    "id",
+                    "ID",
+                }:
+                    continue
+                return first
+        if isinstance(sec, dict) and sec:
+            return sec
+    # last resort: if Msg is a non-empty string only, no fields
+    return {}
+
+
 def _read_text_file(path: str, max_len: int = 4096) -> str | None:
     try:
         p = Path(path)
@@ -6645,9 +6714,15 @@ def _disk_usage_entry(path: str | Path, label: str | None = None) -> dict | None
         p = Path(path)
         if not p.exists():
             return None
-        u = shutil.disk_usage(str(p))
+        # resolve symlinks so USB-backed /opt/var/poolheat reports the stick, not UBI
+        try:
+            real = p.resolve()
+        except Exception:
+            real = p
+        u = shutil.disk_usage(str(real if real.exists() else p))
         return {
             "path": str(p),
+            "real_path": str(real),
             "label": label or str(p),
             "total_b": int(u.total),
             "used_b": int(u.used),
@@ -6656,6 +6731,763 @@ def _disk_usage_entry(path: str | Path, label: str | None = None) -> dict | None
         }
     except Exception:
         return None
+
+
+def _is_usb_path(path: str | Path | None) -> bool:
+    """True if path lives on Keenetic USB mount (/tmp/mnt/…)."""
+    if not path:
+        return False
+    s = str(path).replace("\\", "/")
+    return "/tmp/mnt/" in s or s.startswith("/mnt/")
+
+
+# ── Firmware repository (optional, prefers USB stick) ───────────────────────
+
+_FW_LOCK = threading.Lock()
+_FW_MAX_UPLOAD_B = 256 * 1024 * 1024  # 256 MiB
+_FW_DEFAULT_MODELS = [
+    "M30S",
+    "M30S+",
+    "M31S",
+    "M33S",
+    "M36S",
+    "M50",
+    "M50S",
+    "M53",
+    "M56",
+    "M60",
+    "M60S",
+    "M63",
+    "M63S",
+    "M63S+",
+    "M66",
+    "M66S",
+]
+
+
+def _fw_cfg_load() -> dict:
+    cfg = {"enabled": False}
+    try:
+        if FIRMWARE_CFG_FILE.is_file():
+            raw = json.loads(FIRMWARE_CFG_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                cfg["enabled"] = bool(raw.get("enabled"))
+    except Exception:
+        pass
+    return cfg
+
+
+def _fw_cfg_save(cfg: dict) -> dict:
+    out = {"enabled": bool(cfg.get("enabled"))}
+    try:
+        FIRMWARE_CFG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        FIRMWARE_CFG_FILE.write_text(
+            json.dumps(out, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception as e:
+        raise RuntimeError(f"cannot save firmware config: {e}") from e
+    return out
+
+
+def _fw_usb_root() -> Path | None:
+    """USB poolheat root if migrated, else None."""
+    info = _poolheat_usb_info()
+    if not info:
+        return None
+    root = info.get("usb_root") or info.get("real_path") or info.get("path")
+    if not root:
+        return None
+    p = Path(str(root))
+    return p if p.exists() else None
+
+
+def _fw_storage_root() -> Path:
+    """
+    Firmware files live on USB when available (…/poolheat/firmware),
+    else under DATA/firmware (internal flash — not recommended).
+    """
+    usb = _fw_usb_root()
+    if usb is not None:
+        return usb / "firmware"
+    return DATA / "firmware"
+
+
+def _fw_files_dir() -> Path:
+    return _fw_storage_root() / "files"
+
+
+def _fw_catalog_path() -> Path:
+    return _fw_storage_root() / "catalog.json"
+
+
+def _fw_ensure_dirs() -> None:
+    _fw_files_dir().mkdir(parents=True, exist_ok=True)
+
+
+def _fw_safe_name(name: str) -> str:
+    base = Path(str(name or "firmware.bin")).name
+    base = re.sub(r"[^\w.\-+()\[\] ]+", "_", base, flags=re.UNICODE).strip(" ._")
+    if not base:
+        base = "firmware.bin"
+    if len(base) > 180:
+        stem = Path(base).stem[:160]
+        suf = Path(base).suffix[:20] or ".bin"
+        base = stem + suf
+    return base
+
+
+def _fw_load_catalog() -> dict:
+    path = _fw_catalog_path()
+    empty = {"version": 1, "items": []}
+    try:
+        if path.is_file():
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and isinstance(raw.get("items"), list):
+                return raw
+    except Exception:
+        pass
+    return empty
+
+
+def _fw_save_catalog(cat: dict) -> None:
+    _fw_ensure_dirs()
+    path = _fw_catalog_path()
+    path.write_text(
+        json.dumps(cat, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _fw_normalize_models(models) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    if models is None:
+        return out
+    if isinstance(models, str):
+        parts = re.split(r"[,;\n|/]+", models)
+    elif isinstance(models, (list, tuple)):
+        parts = [str(x) for x in models]
+    else:
+        parts = [str(models)]
+    for p in parts:
+        m = str(p).strip()
+        if not m:
+            continue
+        key = m.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(m)
+    return out
+
+
+def _fw_item_public(it: dict, *, files_dir: Path) -> dict:
+    stored = str(it.get("stored_as") or "")
+    fpath = files_dir / Path(stored).name if stored else None
+    size = it.get("size")
+    exists = bool(fpath and fpath.is_file())
+    if exists and fpath is not None:
+        try:
+            size = fpath.stat().st_size
+        except Exception:
+            pass
+    return {
+        "id": it.get("id"),
+        "filename": it.get("filename") or (fpath.name if fpath else ""),
+        "stored_as": stored,
+        "size": size,
+        "sha256": it.get("sha256"),
+        "models": list(it.get("models") or []),
+        "note": it.get("note") or "",
+        "uploaded_at": it.get("uploaded_at"),
+        "updated_at": it.get("updated_at"),
+        "exists": exists,
+    }
+
+
+def get_firmware_status() -> dict:
+    """Config + storage path + free space + catalog summary."""
+    cfg = _fw_cfg_load()
+    root = _fw_storage_root()
+    on_usb = _is_usb_path(root)
+    usage = _disk_usage_entry(root if root.exists() else root.parent, "firmware storage")
+    cat = _fw_load_catalog()
+    items = cat.get("items") or []
+    return {
+        "ok": True,
+        "enabled": bool(cfg.get("enabled")),
+        "on_usb": on_usb,
+        "storage_path": str(root),
+        "catalog_path": str(_fw_catalog_path()),
+        "files_dir": str(_fw_files_dir()),
+        "disk": usage,
+        "count": len(items),
+        "suggested_models": list(_FW_DEFAULT_MODELS),
+        "max_upload_b": _FW_MAX_UPLOAD_B,
+        "warning": (
+            None
+            if on_usb
+            else "Firmware repo is not on USB — large files will use internal flash/data path"
+        ),
+    }
+
+
+def list_firmware() -> dict:
+    st = get_firmware_status()
+    if not st.get("enabled"):
+        return {**st, "items": [], "disabled": True}
+    cat = _fw_load_catalog()
+    files_dir = _fw_files_dir()
+    items = [
+        _fw_item_public(it, files_dir=files_dir)
+        for it in (cat.get("items") or [])
+        if isinstance(it, dict)
+    ]
+    # newest first
+    items.sort(key=lambda x: str(x.get("uploaded_at") or ""), reverse=True)
+    return {**st, "items": items, "disabled": False}
+
+
+def apply_firmware_config(req: dict) -> dict:
+    cfg = _fw_cfg_load()
+    if "enabled" in req:
+        cfg["enabled"] = bool(req.get("enabled"))
+    saved = _fw_cfg_save(cfg)
+    if saved.get("enabled"):
+        try:
+            _fw_ensure_dirs()
+            if not _fw_catalog_path().is_file():
+                _fw_save_catalog({"version": 1, "items": []})
+        except Exception as e:
+            raise RuntimeError(f"cannot init firmware storage: {e}") from e
+    return get_firmware_status()
+
+
+def firmware_add_file(
+    *,
+    filename: str,
+    data: bytes,
+    models: list[str] | str | None = None,
+    note: str = "",
+) -> dict:
+    if not _fw_cfg_load().get("enabled"):
+        raise RuntimeError("firmware repository is disabled — enable in Settings → Firmware")
+    if not data:
+        raise ValueError("empty file")
+    if len(data) > _FW_MAX_UPLOAD_B:
+        raise ValueError(f"file too large (max {_FW_MAX_UPLOAD_B // (1024*1024)} MiB)")
+    safe = _fw_safe_name(filename)
+    fid = uuid.uuid4().hex[:12]
+    stored_name = f"{fid}_{safe}"
+    with _FW_LOCK:
+        _fw_ensure_dirs()
+        fpath = _fw_files_dir() / stored_name
+        fpath.write_bytes(data)
+        sha = hashlib.sha256(data).hexdigest()
+        now = datetime.now().isoformat(timespec="seconds")
+        cat = _fw_load_catalog()
+        item = {
+            "id": fid,
+            "filename": safe,
+            "stored_as": stored_name,
+            "size": len(data),
+            "sha256": sha,
+            "models": _fw_normalize_models(models),
+            "note": str(note or "")[:500],
+            "uploaded_at": now,
+            "updated_at": now,
+        }
+        items = [it for it in (cat.get("items") or []) if isinstance(it, dict)]
+        items.append(item)
+        cat["items"] = items
+        cat["version"] = 1
+        _fw_save_catalog(cat)
+    return {
+        "ok": True,
+        "item": _fw_item_public(item, files_dir=_fw_files_dir()),
+        **get_firmware_status(),
+    }
+
+
+def firmware_update_item(req: dict) -> dict:
+    if not _fw_cfg_load().get("enabled"):
+        raise RuntimeError("firmware repository is disabled")
+    fid = str(req.get("id") or "").strip()
+    if not fid:
+        raise ValueError("id required")
+    with _FW_LOCK:
+        cat = _fw_load_catalog()
+        items = cat.get("items") or []
+        found = None
+        for it in items:
+            if isinstance(it, dict) and str(it.get("id")) == fid:
+                found = it
+                break
+        if not found:
+            raise ValueError(f"firmware id not found: {fid}")
+        if "models" in req:
+            found["models"] = _fw_normalize_models(req.get("models"))
+        if "note" in req:
+            found["note"] = str(req.get("note") or "")[:500]
+        if "filename" in req and str(req.get("filename") or "").strip():
+            found["filename"] = _fw_safe_name(str(req.get("filename")))
+        found["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        _fw_save_catalog(cat)
+        item = found
+    return {
+        "ok": True,
+        "item": _fw_item_public(item, files_dir=_fw_files_dir()),
+    }
+
+
+def firmware_delete_item(fid: str) -> dict:
+    if not _fw_cfg_load().get("enabled"):
+        raise RuntimeError("firmware repository is disabled")
+    fid = str(fid or "").strip()
+    if not fid:
+        raise ValueError("id required")
+    with _FW_LOCK:
+        cat = _fw_load_catalog()
+        items = [it for it in (cat.get("items") or []) if isinstance(it, dict)]
+        found = None
+        rest = []
+        for it in items:
+            if str(it.get("id")) == fid:
+                found = it
+            else:
+                rest.append(it)
+        if not found:
+            raise ValueError(f"firmware id not found: {fid}")
+        stored = str(found.get("stored_as") or "")
+        if stored:
+            try:
+                p = _fw_files_dir() / Path(stored).name
+                if p.is_file():
+                    p.unlink()
+            except Exception as e:
+                print(f"[firmware] unlink {stored}: {e}")
+        cat["items"] = rest
+        _fw_save_catalog(cat)
+    return {"ok": True, "deleted": fid, **get_firmware_status()}
+
+
+def firmware_file_path(fid: str) -> Path | None:
+    cat = _fw_load_catalog()
+    for it in cat.get("items") or []:
+        if isinstance(it, dict) and str(it.get("id")) == fid:
+            stored = str(it.get("stored_as") or "")
+            if not stored:
+                return None
+            p = _fw_files_dir() / Path(stored).name
+            return p if p.is_file() else None
+    return None
+
+
+def firmware_item_by_id(fid: str) -> dict | None:
+    cat = _fw_load_catalog()
+    for it in cat.get("items") or []:
+        if isinstance(it, dict) and str(it.get("id")) == str(fid).strip():
+            return it
+    return None
+
+
+def _miner_model_keys(miner_type: str | None) -> set[str]:
+    """Normalize model tags: M63_VK2A → {M63_VK2A, M63VK2A, M63}."""
+    t = str(miner_type or "").upper().strip()
+    if not t:
+        return set()
+    keys = {t, re.sub(r"[^A-Z0-9+]", "", t)}
+    base = t.split("_")[0].split("-")[0]
+    keys.add(base)
+    keys.add(base.replace("+", ""))
+    return {k for k in keys if k}
+
+
+def firmware_model_matches(miner_type: str | None, models: list | None) -> bool:
+    """True if catalog models list is empty (any) or intersects miner type keys."""
+    ml = list(models or [])
+    if not ml:
+        return True
+    mk = _miner_model_keys(miner_type)
+    if not mk:
+        return True
+    for m in ml:
+        if mk & _miner_model_keys(str(m)):
+            return True
+    return False
+
+
+def list_firmware_compatible(miner_type: str | None = None) -> dict:
+    """Library items filtered for miner model (empty models list = show)."""
+    st = list_firmware()
+    if st.get("disabled") or not st.get("enabled"):
+        return {**st, "compatible": [], "miner_type": miner_type}
+    mt = miner_type
+    if not mt:
+        try:
+            ident = get_miner_identity_cached(force=False)
+            if isinstance(ident, dict):
+                mt = str(ident.get("miner_type") or "").strip() or None
+        except Exception:
+            mt = None
+    items = st.get("items") or []
+    compatible = [
+        it
+        for it in items
+        if isinstance(it, dict)
+        and it.get("exists") is not False
+        and firmware_model_matches(mt, it.get("models"))
+    ]
+    other = [
+        it
+        for it in items
+        if isinstance(it, dict)
+        and it.get("exists") is not False
+        and it not in compatible
+    ]
+    return {
+        **st,
+        "miner_type": mt,
+        "compatible": compatible,
+        "other": other,
+        "count_compatible": len(compatible),
+    }
+
+
+_FW_FLASH_LOCK = threading.Lock()
+_FW_FLASH_STATE: dict[str, Any] = {
+    "busy": False,
+    "pct": 0,
+    "stage": "idle",
+    "error": None,
+    "result": None,
+    "firmware_id": None,
+    "filename": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
+
+def get_firmware_flash_status() -> dict:
+    with _FW_FLASH_LOCK:
+        return dict(_FW_FLASH_STATE)
+
+
+def _fw_flash_set(**kwargs: Any) -> None:
+    with _FW_FLASH_LOCK:
+        _FW_FLASH_STATE.update(kwargs)
+
+
+def _prepare_firmware_image(data: bytes, miner_type: str | None = None) -> tuple[bytes, dict]:
+    """Optionally slice multi-platform Whatsminer-all package for H616/etc."""
+    meta: dict[str, Any] = {"source": "raw", "size": len(data)}
+    try:
+        from whatsminer.protocol.netpacket import extract_firmware_image  # type: ignore
+
+        platform = "h616"
+        # crude platform guess from identity / version cache
+        try:
+            ident = get_miner_identity_cached(force=False)
+            plat = ""
+            if isinstance(ident, dict):
+                plat = str(ident.get("platform") or ident.get("chip") or "").lower()
+            if "h3" in plat:
+                platform = "h3"
+            elif "h6" in plat and "h616" not in plat:
+                platform = "h6os"
+        except Exception:
+            pass
+        img, m = extract_firmware_image(data, platform=platform)
+        if img:
+            meta = dict(m or {})
+            meta["platform"] = platform
+            return img, meta
+    except Exception as e:
+        meta["extract_note"] = str(e)
+    return data, meta
+
+
+def _netpacket_client(
+    password: str | None = None,
+    *,
+    timeout: float = 20.0,
+):
+    """
+    WhatsMinerTool NetPacket client (:8889).
+
+    Tries WMT default ``super``/``super`` first, then miner API password.
+    """
+    from whatsminer.protocol.netpacket import NetPacketClient  # type: ignore
+
+    candidates: list[str] = []
+    for pw in (
+        "super",
+        password if password not in (None, "") else None,
+        DEFAULT_API_PASSWORD,
+        "admin",
+    ):
+        if pw and str(pw) not in candidates:
+            candidates.append(str(pw))
+    last: Exception | None = None
+    for pw in candidates:
+        try:
+            np = NetPacketClient(
+                HOST_MINER,
+                account="super",
+                password=pw,
+                timeout=timeout,
+            )
+            # validate auth early
+            np.ensure_token()
+            return np
+        except Exception as e:
+            last = e
+            continue
+    raise RuntimeError(f"NetPacket :8889 auth failed: {last}")
+
+
+def flash_firmware_to_miner(
+    firmware_id: str,
+    *,
+    password: str | None = None,
+    confirm: str = "",
+    allow_incompatible: bool = False,
+) -> dict:
+    """
+    Push a library firmware image via **NetPacket :8889 only** (WhatsMinerTool).
+
+    Progress is mirrored into :func:`get_firmware_flash_status` for UI polling.
+    """
+    conf = str(confirm or "").strip().lower()
+    if conf not in ("yes", "confirm", "flash", "1", "go"):
+        raise ValueError("confirm required (yes) — double-check in UI")
+    if not _fw_cfg_load().get("enabled"):
+        raise RuntimeError("firmware repository is disabled")
+
+    with _FW_FLASH_LOCK:
+        if _FW_FLASH_STATE.get("busy"):
+            raise RuntimeError("firmware flash already in progress")
+        _FW_FLASH_STATE.update(
+            {
+                "busy": True,
+                "pct": 0,
+                "stage": "prepare",
+                "error": None,
+                "result": None,
+                "status_text": None,
+                "status_log": [],
+                "firmware_id": str(firmware_id),
+                "filename": None,
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "finished_at": None,
+            }
+        )
+
+    def _on_progress(ev: dict) -> None:
+        stage = str(ev.get("stage") or "upload")
+        pct = ev.get("pct")
+        st_txt = ev.get("status_text")
+        kwargs: dict[str, Any] = {"stage": stage}
+        if pct is not None:
+            try:
+                kwargs["pct"] = float(pct)
+            except (TypeError, ValueError):
+                pass
+        if st_txt:
+            kwargs["status_text"] = str(st_txt)[:240]
+            with _FW_FLASH_LOCK:
+                log = list(_FW_FLASH_STATE.get("status_log") or [])
+                log.append(str(st_txt)[:240])
+                _FW_FLASH_STATE["status_log"] = log[-40:]
+        _fw_flash_set(**kwargs)
+
+    try:
+        item = firmware_item_by_id(firmware_id)
+        if not item:
+            raise ValueError(f"firmware id not found: {firmware_id}")
+        fpath = firmware_file_path(str(item.get("id")))
+        if not fpath or not fpath.is_file():
+            raise ValueError("firmware file missing on disk")
+
+        miner_type = None
+        try:
+            ident = get_miner_identity_cached(force=False)
+            if isinstance(ident, dict):
+                miner_type = str(ident.get("miner_type") or "").strip() or None
+        except Exception:
+            pass
+        models = list(item.get("models") or [])
+        if (
+            models
+            and miner_type
+            and not firmware_model_matches(miner_type, models)
+            and not allow_incompatible
+        ):
+            raise ValueError(
+                f"firmware models {models} not compatible with miner {miner_type} "
+                f"(pass allow_incompatible=true to force)"
+            )
+
+        _fw_flash_set(
+            stage="read",
+            filename=str(item.get("filename") or fpath.name),
+            pct=1,
+        )
+        data = fpath.read_bytes()
+        if not data:
+            raise ValueError("empty firmware file")
+        _fw_flash_set(stage="extract", pct=3)
+        image, extract_meta = _prepare_firmware_image(data, miner_type)
+
+        pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
+        _fw_flash_set(stage="auth", pct=4)
+        # NetPacket only — WhatsMinerTool path (not public API update_firmware)
+        with _miner_io_lock:
+            np = _netpacket_client(str(pw), timeout=30.0)
+            np.timeout = max(float(getattr(np, "timeout", 5) or 5), 30.0)
+            resp = np.update_firmware(
+                image,
+                poll_status=True,
+                poll_attempts=45,
+                wait_upload=600.0,
+                progress=_on_progress,
+                poll_interval=1.0,
+            )
+
+        ok = bool(isinstance(resp, dict) and resp.get("ok"))
+        upgrade = (resp or {}).get("upgrade") if isinstance(resp, dict) else None
+        _fw_flash_set(
+            stage="success" if ok and upgrade == "success" else ("done" if ok else "error"),
+            pct=100 if ok else float(_FW_FLASH_STATE.get("pct") or 90),
+            result=resp if isinstance(resp, dict) else {"raw": resp},
+            status_text=str(upgrade or ""),
+        )
+        out = {
+            "ok": ok,
+            "transport": "netpacket",
+            "firmware_id": str(item.get("id")),
+            "filename": item.get("filename"),
+            "bytes": len(image),
+            "source_bytes": len(data),
+            "extract": extract_meta,
+            "miner_type": miner_type,
+            "models": models,
+            "host": f"{HOST_MINER}:8889",
+            "upgrade": upgrade,
+            "status_log": list((_FW_FLASH_STATE.get("status_log") or []))[-20:],
+            "response": resp,
+            "warning": (
+                "Firmware via NetPacket · ASIC may reboot · "
+                "verify Firmware Version after reconnect"
+            ),
+        }
+        if not ok:
+            out["error"] = (
+                (resp or {}).get("error")
+                if isinstance(resp, dict)
+                else "firmware upload failed"
+            )
+
+        try:
+            _policy_log(
+                "warn" if ok else "err",
+                f"FIRMWARE netpacket · {item.get('filename')} · {len(image)} B → {HOST_MINER} · {upgrade}",
+            )
+        except Exception:
+            pass
+        try:
+            _token_cache_clear()
+        except Exception:
+            pass
+        with _cache_lock:
+            global _cache, _cache_ts
+            _cache = None
+            _cache_ts = 0.0
+        _fw_flash_set(
+            busy=False,
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+            error=None if ok else out.get("error"),
+        )
+        if not ok:
+            raise RuntimeError(str(out.get("error") or "firmware flash failed"))
+        return out
+    except Exception as e:
+        _fw_flash_set(
+            busy=False,
+            stage="error",
+            error=str(e),
+            finished_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        raise
+
+
+def _poolheat_usb_info() -> dict | None:
+    """
+    If poolheat data/lib is on USB (symlink migration), return usage + paths.
+    Marker file: DATA/USB_ROOT or /opt/etc/poolheat/USB_ROOT (may itself be on USB).
+    """
+    candidates: list[Path] = []
+    try:
+        candidates.append(Path(DATA))
+    except Exception:
+        pass
+    for p in (
+        Path("/opt/var/poolheat"),
+        Path("/opt/lib/poolheat"),
+        Path("/opt/etc/poolheat"),
+        Path("/opt/share/poolheat"),
+    ):
+        candidates.append(p)
+
+    usb_root: str | None = None
+    for base in candidates:
+        try:
+            marker = base / "USB_ROOT" if base.is_dir() else None
+            if marker and marker.is_file():
+                txt = marker.read_text(encoding="utf-8", errors="replace").strip()
+                if txt:
+                    usb_root = txt
+                    break
+        except Exception:
+            pass
+        try:
+            if base.is_symlink() and _is_usb_path(os.path.realpath(str(base))):
+                # parent of lib/var on stick is …/poolheat
+                rp = Path(os.path.realpath(str(base)))
+                usb_root = str(rp.parent if rp.name in ("lib", "var", "etc", "share") else rp)
+                break
+        except Exception:
+            pass
+
+    measure_path: Path | None = None
+    if usb_root:
+        measure_path = Path(usb_root)
+    else:
+        try:
+            data_real = Path(os.path.realpath(str(DATA)))
+            if _is_usb_path(data_real):
+                measure_path = data_real
+        except Exception:
+            measure_path = None
+
+    if not measure_path or not measure_path.exists():
+        return None
+    if not _is_usb_path(measure_path) and not (usb_root and _is_usb_path(usb_root)):
+        # only report as USB install when on stick
+        if not _is_usb_path(measure_path):
+            return None
+
+    ent = _disk_usage_entry(measure_path, "USB · poolheat")
+    if not ent:
+        return None
+    ent["on_usb"] = True
+    ent["usb_root"] = usb_root or str(measure_path)
+    try:
+        ent["data_real"] = os.path.realpath(str(DATA))
+    except Exception:
+        ent["data_real"] = str(DATA)
+    return ent
 
 
 def _host_memory() -> dict | None:
@@ -7226,21 +8058,39 @@ def collect_system_info() -> dict:
     """Router + miner identity + host resources for Info tab."""
     disks: list[dict] = []
     seen: set[str] = set()
-    # skip rootfs (always full) and poolheat data (same FS as /opt on Peak)
+
+    def _add_disk(ent: dict | None) -> None:
+        if not ent:
+            return
+        key = f"{ent['total_b']}:{ent['free_b']}:{ent.get('used_b')}"
+        if key in seen:
+            return
+        seen.add(key)
+        disks.append(ent)
+
+    # USB first when poolheat lives on the stick (symlinks under /opt → /tmp/mnt/…)
+    usb_info = _poolheat_usb_info()
+    if usb_info:
+        _add_disk(usb_info)
+
+    # resolved DATA FS (may be same as USB — de-duped)
+    try:
+        data_real = Path(os.path.realpath(str(DATA)))
+        if data_real.exists():
+            lab = "poolheat data"
+            if _is_usb_path(data_real):
+                lab = "USB · poolheat data"
+            _add_disk(_disk_usage_entry(data_real, lab))
+    except Exception:
+        pass
+
+    # skip rootfs (always full)
     for path, label in (
         ("/opt", "/opt (Entware)"),
         ("/storage", "/storage"),
         ("/tmp", "/tmp"),
     ):
-        ent = _disk_usage_entry(path, label)
-        if not ent:
-            continue
-        # de-dupe by total+free fingerprint (bind-mounts)
-        key = f"{ent['total_b']}:{ent['free_b']}:{ent.get('used_b')}"
-        if key in seen:
-            continue
-        seen.add(key)
-        disks.append(ent)
+        _add_disk(_disk_usage_entry(path, label))
 
     db_size = None
     try:
@@ -7248,6 +8098,12 @@ def collect_system_info() -> dict:
             db_size = DB_FILE.stat().st_size
     except Exception:
         pass
+
+    data_real_s = None
+    try:
+        data_real_s = os.path.realpath(str(DATA))
+    except Exception:
+        data_real_s = str(DATA)
 
     miner = get_miner_identity_cached(force=True)
     router = _collect_router_info()
@@ -7263,7 +8119,10 @@ def collect_system_info() -> dict:
             "history_db_b": db_size,
             "history_db_path": str(DB_FILE),
             "data_path": str(DATA),
+            "data_real_path": data_real_s,
             "www_path": str(ROOT),
+            "on_usb": bool(usb_info),
+            "usb": usb_info,
         },
         "poolheat": {
             **get_version_info(),
@@ -7271,6 +8130,8 @@ def collect_system_info() -> dict:
             "poll_interval_sec": int(POLL_INTERVAL_SEC),
             "dry_run": bool(DRY_RUN),
             "miner_host": f"{HOST_MINER}:{PORT_MINER}",
+            "on_usb": bool(usb_info),
+            "usb_root": (usb_info or {}).get("usb_root") if usb_info else None,
         },
     }
     # full Info snapshot for instant UI (models/versions/boards/resources)
@@ -8777,7 +9638,8 @@ class PoolheatMiner:
         if cname in ("resume", "power_on", "wakeup"):
             return self._m.power_on()
         if cname in ("factory_reset", "factory"):
-            return self._m.factory_reset()
+            # NetPacket-only (WhatsMinerTool) — see UniversalMiner.factory_reset
+            return self._m.factory_reset(netpacket_only=True)
         if cname in ("update_pools", "set_pools"):
             pools = cmd.get("pools") or []
             ct = cmd.get("coin_type") or cmd.get("coin")
@@ -9945,20 +10807,54 @@ def _normalize_psu_iin(raw) -> float | None:
 
 
 def fetch_live() -> dict:
-    summary = miner_cmd({"cmd": "summary"})["Msg"]
-    if not isinstance(summary, dict):
+    # summary/status: support both Msg-dict and classic SUMMARY/STATUS sections
+    try:
+        summary_raw = miner_cmd({"cmd": "summary"})
+    except Exception as e:
+        raise RuntimeError(f"summary: {e}") from e
+    summary = _extract_miner_payload(summary_raw, "SUMMARY", "summary")
+    if not summary and isinstance(summary_raw, dict):
+        # still nothing usable
         summary = {}
-    status = miner_cmd({"cmd": "status"})["Msg"]
+
+    try:
+        status_raw = miner_cmd({"cmd": "status"})
+    except Exception as e:
+        # status missing on some FW — non-fatal
+        print(f"[live] status: {e}")
+        status_raw = {}
+    status = _extract_miner_payload(status_raw, "STATUS", "status")
     if not isinstance(status, dict):
         status = {}
+
+    # classic SUMMARY uses "Temperature" instead of Chip Temp *
+    if summary.get("Chip Temp Max") in (None, "") and summary.get("Temperature") not in (
+        None,
+        "",
+    ):
+        try:
+            t = float(summary.get("Temperature"))
+            summary.setdefault("Chip Temp Max", t)
+            summary.setdefault("Chip Temp Avg", t)
+            summary.setdefault("Chip Temp Min", t)
+        except (TypeError, ValueError):
+            pass
+
     # devs may return error object while miner is suspended — non-fatal
     devs: list = []
     try:
         devs_raw = miner_cmd({"cmd": "devs"})
         if isinstance(devs_raw, dict):
-            d = devs_raw.get("DEVS")
+            d = devs_raw.get("DEVS") or devs_raw.get("devs")
             if isinstance(d, list):
                 devs = d
+            elif not d:
+                # some FW nest under Msg
+                msg = devs_raw.get("Msg")
+                if isinstance(msg, dict):
+                    d2 = msg.get("DEVS") or msg.get("devs")
+                    if isinstance(d2, list):
+                        devs = d2
     except Exception as e:
         print(f"[live] devs: {e}")
     raw_errors = _fetch_miner_errors_raw()
@@ -9972,9 +10868,11 @@ def fetch_live() -> dict:
     psu_model = None
     psu: dict = {}
     try:
-        psu_raw = miner_cmd({"cmd": "get_psu"}, timeout=3).get("Msg") or {}
-        if isinstance(psu_raw, dict):
-            psu = psu_raw
+        psu_raw = miner_cmd({"cmd": "get_psu"}, timeout=3)
+        psu = _extract_miner_payload(psu_raw, "PSU", "psu")
+        if not psu and isinstance(psu_raw, dict):
+            psu = psu_raw.get("Msg") if isinstance(psu_raw.get("Msg"), dict) else {}
+        if isinstance(psu, dict) and psu:
             psu_temp = _f(psu.get("temp0"))
             psu_fan = _f(psu.get("fan_speed"))
             psu_pin = _f(psu.get("pin"))  # often watts as string
@@ -10934,53 +11832,55 @@ def apply_set(action: str, value, password: str) -> dict:
             pass
         return out
 
-    # Factory reset (Whatsminer privileged "factory_reset")
-    # Restores network, admin password, power mode/limit, pools-related settings.
-    # API does NOT guarantee log wipe — documented as settings restore only.
+    # Factory reset — NetPacket :8889 only (WhatsMinerTool cmd 10).
+    # Public API factory_reset is unreliable / burns get_token slots.
     if action in (
         "factory_reset",
         "factory",
         "restore_factory",
         "reset_factory",
     ):
-        # require explicit confirm value from UI
         conf = str(value or "").strip().lower()
         if conf not in ("yes", "confirm", "factory", "1", "go"):
             raise ValueError(
                 "factory_reset requires value=yes (double confirm in UI)"
             )
         try:
-            _policy_log("warn", "FACTORY_RESET sent · settings → defaults")
+            _policy_log("warn", "FACTORY_RESET via NetPacket · settings → defaults")
         except Exception:
             pass
         try:
-            # Few attempts: each get_token burns a 30‑min slot (max ~100).
-            resp = privileged_cmd(
-                {"cmd": "factory_reset"}, password, token_attempts=3
-            )
-        except RuntimeError as e:
+            with _miner_io_lock:
+                np = _netpacket_client(password, timeout=15.0)
+                resp = np.factory_reset()
+        except Exception as e:
             err = str(e)
-            if "over max" in err.lower() and "лимит" not in err.lower():
-                raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
-            raise
+            # optional: if caller insists on public API when write is on — still prefer NP
+            raise RuntimeError(f"factory_reset NetPacket failed: {err}") from e
         try:
-            _policy_log("ok", "FACTORY_RESET · ASIC will reboot / reconfigure")
+            _policy_log("ok", "FACTORY_RESET NetPacket · ASIC will reboot / reconfigure")
         except Exception:
             pass
-        # drop token cache — password/network may change after factory
         try:
             _token_cache_clear()
         except Exception:
             pass
-        return _record_write(
+        with _cache_lock:
+            global _cache, _cache_ts
+            _cache = None
+            _cache_ts = 0.0
+        out = _record_write(
             "factory_reset",
             "asic",
-            resp,
+            resp if isinstance(resp, dict) else {"result": resp},
             warning=(
-                "Factory reset sent · ASIC reboot / defaults. "
+                "Factory reset via NetPacket · ASIC reboot / defaults. "
                 "IP may change (DHCP)."
             ),
         )
+        if isinstance(out, dict):
+            out["transport"] = "netpacket"
+        return out
 
     raise ValueError(f"unknown action: {action}")
 
@@ -17689,6 +18589,40 @@ class Handler(SimpleHTTPRequestHandler):
                     )
                 else:
                     self._json_response(500, {"ok": False, "error": str(e)})
+                return
+            return
+        if path in (
+            "/api/firmware",
+            "/api/firmware/list",
+            "/api/firmwares",
+        ):
+            try:
+                self._json_response(200, list_firmware())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/firmware/compatible",
+            "/api/firmware/for_miner",
+        ):
+            try:
+                qs = parse_qs(urlparse(self.path).query)
+                mt = str((qs.get("model") or qs.get("miner_type") or [""])[0]).strip() or None
+                self._json_response(200, list_firmware_compatible(mt))
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/firmware/config", "/api/firmware/status"):
+            try:
+                self._json_response(200, get_firmware_status())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/firmware/flash/status", "/api/firmware/flash-status"):
+            self._json_response(200, {"ok": True, **get_firmware_flash_status()})
+            return
+        if path.startswith("/api/firmware/download/"):
+            self._api_firmware_download()
             return
         if path in ("/api/version", "/api/update/status"):
             self._json_response(
@@ -17788,6 +18722,57 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/filtration/test":
             self._api_filtration_test()
+            return
+        if path in ("/api/firmware/config", "/api/firmware/status"):
+            try:
+                req = self._read_json_body() or {}
+                body = apply_firmware_config(req if isinstance(req, dict) else {})
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/firmware/upload", "/api/firmware/add"):
+            self._api_firmware_upload()
+            return
+        if path in ("/api/firmware/update", "/api/firmware/edit"):
+            try:
+                req = self._read_json_body() or {}
+                body = firmware_update_item(req if isinstance(req, dict) else {})
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/firmware/delete", "/api/firmware/remove"):
+            try:
+                req = self._read_json_body() or {}
+                fid = str((req or {}).get("id") or "")
+                body = firmware_delete_item(fid)
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/firmware/flash", "/api/firmware/apply", "/api/firmware/upgrade"):
+            try:
+                req = self._read_json_body() or {}
+                if not isinstance(req, dict):
+                    req = {}
+                fid = str(req.get("id") or req.get("firmware_id") or "").strip()
+                conf = str(req.get("confirm") or req.get("value") or "")
+                allow = bool(
+                    req.get("allow_incompatible")
+                    or req.get("force")
+                    or req.get("force_incompatible")
+                )
+                pw = req.get("password") or req.get("api_password")
+                body = flash_firmware_to_miner(
+                    fid,
+                    password=str(pw) if pw not in (None, "") else None,
+                    confirm=conf,
+                    allow_incompatible=allow,
+                )
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
             return
         if path in ("/api/chipmap/config",):
             try:
@@ -18008,6 +18993,88 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b"{}"
         return json.loads(raw.decode("utf-8") or "{}")
+
+    def _read_raw_body(self, max_b: int | None = None) -> bytes:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length <= 0:
+            return b""
+        if max_b is not None and length > max_b:
+            raise ValueError(f"body too large ({length} > {max_b})")
+        return self.rfile.read(length)
+
+    def _api_firmware_upload(self) -> None:
+        """
+        POST /api/firmware/upload
+        - application/octet-stream (or any binary): body = file bytes
+          Headers: X-Filename, X-Models (comma-separated), X-Note
+          Query: ?filename=&models=&note=
+        - application/json: {filename, models, note, data_base64}
+        """
+        try:
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            qs = parse_qs(urlparse(self.path).query)
+            if ctype in ("application/json", "text/json"):
+                req = self._read_json_body() or {}
+                filename = str(req.get("filename") or "firmware.bin")
+                models = req.get("models")
+                note = str(req.get("note") or "")
+                b64 = req.get("data_base64") or req.get("data") or ""
+                if not b64:
+                    raise ValueError("data_base64 required for JSON upload")
+                raw = base64.b64decode(b64)
+            else:
+                filename = (
+                    self.headers.get("X-Filename")
+                    or self.headers.get("X-File-Name")
+                    or (qs.get("filename") or ["firmware.bin"])[0]
+                )
+                models = (
+                    self.headers.get("X-Models")
+                    or (qs.get("models") or [""])[0]
+                )
+                note = self.headers.get("X-Note") or (qs.get("note") or [""])[0]
+                raw = self._read_raw_body(max_b=_FW_MAX_UPLOAD_B)
+            body = firmware_add_file(
+                filename=str(filename),
+                data=raw,
+                models=models,
+                note=str(note or ""),
+            )
+            self._json_response(200, body)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_firmware_download(self) -> None:
+        """GET /api/firmware/download/<id>"""
+        path = urlparse(self.path).path
+        fid = path.rstrip("/").split("/")[-1]
+        fpath = firmware_file_path(fid)
+        if not fpath:
+            self._json_response(404, {"ok": False, "error": "file not found"})
+            return
+        try:
+            data = fpath.read_bytes()
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        # display name from catalog
+        name = fpath.name
+        try:
+            for it in (_fw_load_catalog().get("items") or []):
+                if isinstance(it, dict) and str(it.get("id")) == fid:
+                    name = str(it.get("filename") or name)
+                    break
+        except Exception:
+            pass
+        safe = _fw_safe_name(name)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header(
+            "Content-Disposition", f'attachment; filename="{safe}"'
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _json_response(self, code: int, body: dict) -> None:
         data = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")

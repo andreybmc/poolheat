@@ -1237,6 +1237,155 @@
     .card.errors-card .card-h h2 {
       color: var(--danger);
     }
+
+    /* —— Firmware library (compact list) —— */
+    .fw-lib {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: min(60vh, 520px);
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .fw-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--panel2);
+      padding: 8px 10px;
+    }
+    .fw-item-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .fw-icon {
+      flex: 0 0 auto;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: rgba(61, 156, 240, 0.12);
+      color: var(--accent);
+      border: 1px solid rgba(61, 156, 240, 0.22);
+    }
+    .fw-icon svg { width: 18px; height: 18px; display: block; }
+    .fw-icon.is-missing {
+      background: var(--danger-bg);
+      color: var(--danger);
+      border-color: rgba(240, 113, 120, 0.35);
+    }
+    .fw-item-body {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .fw-item-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      line-height: 1.25;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fw-item-meta {
+      margin-top: 2px;
+      font-size: 0.7rem;
+      color: var(--dim);
+      font-family: var(--mono);
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fw-models-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 5px;
+      align-items: center;
+    }
+    .fw-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 0.68rem;
+      font-weight: 550;
+      line-height: 1.4;
+      color: var(--accent);
+      background: rgba(61, 156, 240, 0.1);
+      border: 1px solid rgba(61, 156, 240, 0.2);
+    }
+    .fw-tag.is-empty {
+      color: var(--dim);
+      background: transparent;
+      border-color: var(--border);
+      font-weight: 450;
+    }
+    .fw-item-note {
+      margin-top: 3px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fw-item-actions {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .fw-item-actions .btn {
+      padding: 4px 8px;
+      font-size: 0.72rem;
+      min-height: 0;
+      line-height: 1.2;
+    }
+    .fw-item-actions .btn.icon-only {
+      width: 30px;
+      height: 28px;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+    }
+    .fw-item-actions .btn.icon-only svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+    }
+    .fw-item-edit {
+      display: none;
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .fw-item.is-open .fw-item-edit {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .fw-item-edit .field { margin: 0; }
+    .fw-item-edit .field > span,
+    .fw-item-edit label.field > span {
+      font-size: 0.68rem;
+      color: var(--dim);
+      margin-bottom: 3px;
+      display: block;
+    }
+    .fw-item-edit input {
+      font-size: 0.78rem;
+      padding: 6px 8px;
+    }
+    @media (max-width: 720px) {
+      .fw-item.is-open .fw-item-edit { grid-template-columns: 1fr; }
+      .fw-item-main { flex-wrap: wrap; }
+      .fw-item-actions { width: 100%; justify-content: flex-end; }
+    }
+
     .err-table {
       width: 100%;
       border-collapse: collapse;
@@ -3088,6 +3237,47 @@
           </div>
         </div>
 
+        <div class="card" id="panel-miner-fw-flash">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.fw_flash">Firmware update</h2>
+              <div class="sub" data-i18n="sub.fw_flash">from USB library · compatible models only</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn" type="button" id="btn-fw-flash-refresh" data-i18n="btn.refresh">Refresh</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <p id="fw-flash-hint" style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">—</p>
+            <label class="field">
+              <span data-i18n="fw.flash_select">Compatible firmware</span>
+              <select id="fw-flash-select" style="width:100%">
+                <option value="">—</option>
+              </select>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="fw-flash-force" />
+              <span data-i18n="fw.flash_force">Allow incompatible (not in model map)</span>
+            </label>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn danger" type="button" id="btn-fw-flash" data-i18n="fw.flash_btn">Flash to miner</button>
+              <span id="fw-flash-status" style="font-size:0.78rem;color:var(--muted)"></span>
+            </div>
+            <div id="fw-flash-progress-wrap" style="display:none">
+              <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-bottom:4px">
+                <span id="fw-flash-stage">—</span>
+                <span id="fw-flash-pct">0%</span>
+              </div>
+              <div style="height:8px;border-radius:4px;background:var(--border);overflow:hidden">
+                <div id="fw-flash-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.15s linear"></div>
+              </div>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="fw.flash_warn">
+              Destructive: miner reboots. Use only files for this model. Keep power and network stable.
+            </p>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-h">
             <div>
@@ -3970,6 +4160,7 @@
     <section class="view" id="view-settings">
       <nav class="subtabs" role="tablist" aria-label="Settings">
         <button type="button" class="active" data-subtab="main" data-i18n="sub.main">General</button>
+        <button type="button" data-subtab="firmware" data-i18n="sub.firmware">Firmware</button>
         <button type="button" data-subtab="advanced" data-i18n="sub.advanced">Advanced</button>
       </nav>
       <div class="subview active" id="subview-settings-main">
@@ -4083,18 +4274,18 @@
               <div class="sub" data-i18n="sub.filtration">outlet / webhook · auto ON while mining</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-filt-test">Test</button>
-              <button class="btn primary" type="button" id="btn-filt-save">Save</button>
+              <button class="btn" type="button" id="btn-filt-test" data-i18n="filt.btn_test">Test</button>
+              <button class="btn primary" type="button" id="btn-filt-save" data-i18n="filt.btn_save">Save</button>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
             <label class="check">
               <input type="checkbox" id="filt-enabled" />
-              <span>Enable filtration control
-                <span class="desc">policy + manual buttons</span>
+              <span><span data-i18n="filt.enable">Enable filtration control</span>
+                <span class="desc" data-i18n="filt.enable_desc">policy + manual buttons</span>
               </span>
             </label>
-            <label class="field">Control type
+            <label class="field"><span data-i18n="filt.control_type">Control type</span>
               <select id="filt-backend">
                 <option value="tapo">Tapo P100 / P110</option>
                 <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
@@ -4108,13 +4299,13 @@
             <!-- Tapo -->
             <div class="filt-be" data-be="tapo" style="display:none">
               <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <label class="field">Outlet IP
+                <label class="field"><span data-i18n="filt.outlet_ip">Outlet IP</span>
                   <input type="text" id="filt-ip" placeholder="192.168.1.50" autocomplete="off" />
                 </label>
-                <label class="field">Tapo email
+                <label class="field"><span data-i18n="filt.tapo_email">Tapo email</span>
                   <input type="text" id="filt-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
                 </label>
-                <label class="field">Tapo password
+                <label class="field"><span data-i18n="filt.tapo_password">Tapo password</span>
                   <span class="pw-wrap">
                     <input type="password" id="filt-password" placeholder="••••" autocomplete="off" />
                     <button type="button" class="pw-eye" data-pw-for="filt-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
@@ -4126,17 +4317,17 @@
             <!-- eWeLink DIY -->
             <div class="filt-be" data-be="ewelink" style="display:none">
               <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <label class="field">Device IP
+                <label class="field"><span data-i18n="filt.device_ip">Device IP</span>
                   <input type="text" id="filt-ewelink-ip" placeholder="192.168.1.60" autocomplete="off" />
                 </label>
-                <label class="field">deviceid (DIY)
+                <label class="field"><span data-i18n="filt.device_id">deviceid (DIY)</span>
                   <input type="text" id="filt-device-id" placeholder="1000xxxxxx" autocomplete="off" />
                 </label>
-                <label class="field">Port DIY
+                <label class="field"><span data-i18n="filt.port_diy">Port DIY</span>
                   <input type="number" id="filt-ewelink-port" value="8081" min="1" max="65535" />
                 </label>
               </div>
-              <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0">
+              <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0" data-i18n-html="filt.ewelink_note">
                 Sonoff in <strong>DIY mode</strong> (LAN) required. eWeLink cloud without DIY — use Webhook / HA.
               </p>
             </div>
@@ -4144,28 +4335,28 @@
             <!-- Webhook -->
             <div class="filt-be" data-be="webhook" style="display:none">
               <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
-                <label class="field">URL ON
+                <label class="field"><span data-i18n="filt.url_on">URL ON</span>
                   <input type="text" id="filt-wh-on" placeholder="http://…/on" autocomplete="off" />
                 </label>
-                <label class="field">URL OFF
+                <label class="field"><span data-i18n="filt.url_off">URL OFF</span>
                   <input type="text" id="filt-wh-off" placeholder="http://…/off" autocomplete="off" />
                 </label>
               </div>
               <div class="row" style="grid-template-columns:120px 1fr 1fr;gap:12px;margin-top:10px">
-                <label class="field">Method
+                <label class="field"><span data-i18n="filt.method">Method</span>
                   <select id="filt-wh-method">
                     <option value="GET">GET</option>
                     <option value="POST">POST</option>
                   </select>
                 </label>
-                <label class="field">Body ON (POST)
+                <label class="field"><span data-i18n="filt.body_on">Body ON (POST)</span>
                   <input type="text" id="filt-wh-body-on" placeholder='{"state":"on"}' autocomplete="off" />
                 </label>
-                <label class="field">Body OFF (POST)
+                <label class="field"><span data-i18n="filt.body_off">Body OFF (POST)</span>
                   <input type="text" id="filt-wh-body-off" placeholder='{"state":"off"}' autocomplete="off" />
                 </label>
               </div>
-              <label class="field" style="margin-top:10px">Headers JSON (opt.)
+              <label class="field" style="margin-top:10px"><span data-i18n="filt.headers">Headers JSON (opt.)</span>
                 <input type="text" id="filt-wh-headers" placeholder='{"Authorization":"Bearer …"}' autocomplete="off" />
               </label>
             </div>
@@ -4173,13 +4364,13 @@
             <!-- Shelly -->
             <div class="filt-be" data-be="shelly" style="display:none">
               <div class="row" style="grid-template-columns:1fr 100px 120px;gap:12px">
-                <label class="field">IP Shelly
+                <label class="field"><span data-i18n="filt.shelly_ip">IP Shelly</span>
                   <input type="text" id="filt-shelly-ip" placeholder="192.168.1.70" autocomplete="off" />
                 </label>
-                <label class="field">Channel
+                <label class="field"><span data-i18n="filt.channel">Channel</span>
                   <input type="number" id="filt-shelly-ch" value="0" min="0" max="3" />
                 </label>
-                <label class="field">Gen
+                <label class="field"><span data-i18n="filt.gen">Gen</span>
                   <select id="filt-shelly-gen">
                     <option value="auto">auto</option>
                     <option value="1">Gen1</option>
@@ -4192,14 +4383,14 @@
             <!-- Home Assistant -->
             <div class="filt-be" data-be="homeassistant" style="display:none">
               <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
-                <label class="field">HA URL
+                <label class="field"><span data-i18n="filt.ha_url">HA URL</span>
                   <input type="text" id="filt-ha-url" placeholder="http://192.168.1.20:8123" autocomplete="off" />
                 </label>
-                <label class="field">Entity ID
+                <label class="field"><span data-i18n="filt.entity_id">Entity ID</span>
                   <input type="text" id="filt-ha-entity" placeholder="switch.filtration" autocomplete="off" />
                 </label>
               </div>
-              <label class="field" style="margin-top:10px">Long-lived token
+              <label class="field" style="margin-top:10px"><span data-i18n="filt.ha_token">Long-lived token</span>
                 <span class="pw-wrap">
                   <input type="password" id="filt-ha-token" placeholder="••••" autocomplete="off" />
                   <button type="button" class="pw-eye" data-pw-for="filt-ha-token" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
@@ -4210,29 +4401,29 @@
             <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
               <label class="check">
                 <input type="checkbox" id="filt-auto-mining" checked />
-                <span>Auto ON while mining
-                  <span class="desc">MC Resume → pump ON</span>
+                <span><span data-i18n="filt.auto_on_mining">Auto ON while mining</span>
+                  <span class="desc" data-i18n="filt.auto_on_mining_desc">MC Resume → pump ON</span>
                 </span>
               </label>
               <label class="check">
                 <input type="checkbox" id="filt-auto-suspend" />
-                <span>Auto OFF on Suspend
-                  <span class="desc">Suspend → pump OFF</span>
+                <span><span data-i18n="filt.auto_off_suspend">Auto OFF on Suspend</span>
+                  <span class="desc" data-i18n="filt.auto_off_suspend_desc">Suspend → pump OFF</span>
                 </span>
               </label>
               <label class="check">
                 <input type="checkbox" id="filt-allow-off-mining" />
-                <span>Allow OFF while mining
-                  <span class="desc">do not block pump stop while mining</span>
+                <span><span data-i18n="filt.allow_off_mining">Allow OFF while mining</span>
+                  <span class="desc" data-i18n="filt.allow_off_mining_desc">do not block pump stop while mining</span>
                 </span>
               </label>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
-              <button class="btn primary" type="button" id="btn-filt-on">Turn pump ON</button>
-              <button class="btn danger" type="button" id="btn-filt-off">Turn pump OFF</button>
+              <button class="btn primary" type="button" id="btn-filt-on" data-i18n="filt.btn_on">Turn pump ON</button>
+              <button class="btn danger" type="button" id="btn-filt-off" data-i18n="filt.btn_off">Turn pump OFF</button>
               <span id="filt-status" style="font-size:0.78rem;color:var(--muted)">status: —</span>
             </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" id="filt-off-hint">
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" id="filt-off-hint" data-i18n="filt.off_hint">
               Without “Allow OFF while mining” — Off is blocked during Resume.
               With option + Auto ON — policy may turn the pump back on.
             </p>
@@ -4389,6 +4580,76 @@
 
       </div>
       </div><!-- /subview-settings-main -->
+
+      <div class="subview" id="subview-settings-firmware">
+      <div class="stack">
+        <div class="card" id="panel-firmware-repo">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.firmware">Firmware repository</h2>
+              <div class="sub" data-i18n="sub.firmware_card">USB storage · compatible models map</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-fw-refresh" data-i18n="btn.refresh">Refresh</button>
+              <button class="btn primary" type="button" id="btn-fw-cfg-save" data-i18n="btn.save">Save</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <label class="check">
+              <input type="checkbox" id="fw-enabled" />
+              <span><span data-i18n="fw.enable">Enable firmware repository</span>
+                <span class="desc" data-i18n="fw.enable_desc">store .bin on USB · optional</span>
+              </span>
+            </label>
+            <p id="fw-storage-hint" style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">—</p>
+            <div id="fw-repo-body" class="stack" style="display:none;gap:14px">
+              <div class="card" style="box-shadow:none;margin:0;border:1px solid var(--border,rgba(255,255,255,0.08))">
+                <div class="card-h" style="padding-bottom:8px">
+                  <div>
+                    <h2 style="font-size:0.9rem" data-i18n="fw.upload_title">Upload firmware</h2>
+                    <div class="sub" data-i18n="fw.upload_sub">.bin / .ima · map models after upload</div>
+                  </div>
+                </div>
+                <div class="card-b stack" style="gap:10px">
+                  <label class="field">
+                    <span data-i18n="fw.file">File</span>
+                    <input type="file" id="fw-file" accept=".bin,.ima,.img,.zip,application/octet-stream" />
+                  </label>
+                  <label class="field">
+                    <span data-i18n="fw.models">Compatible models</span>
+                    <input type="text" id="fw-models" placeholder="M63, M63S, M60S" autocomplete="off" />
+                  </label>
+                  <div id="fw-model-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+                  <label class="field">
+                    <span data-i18n="fw.note">Note</span>
+                    <input type="text" id="fw-note" placeholder="" autocomplete="off" maxlength="500" />
+                  </label>
+                  <div class="btn-row" style="gap:8px;align-items:center;flex-wrap:wrap">
+                    <button class="btn primary" type="button" id="btn-fw-upload" data-i18n="fw.btn_upload">Upload</button>
+                    <span id="fw-upload-status" style="font-size:0.78rem;color:var(--muted)"></span>
+                  </div>
+                  <div id="fw-upload-progress-wrap" style="display:none;margin-top:4px">
+                    <div style="display:flex;justify-content:space-between;gap:8px;font-size:0.78rem;color:var(--muted);margin-bottom:4px">
+                      <span id="fw-upload-progress-label" data-i18n="fw.uploading">Uploading…</span>
+                      <span id="fw-upload-pct">0%</span>
+                    </div>
+                    <div style="height:8px;border-radius:4px;background:var(--border,rgba(255,255,255,0.08));overflow:hidden">
+                      <div id="fw-upload-bar" style="height:100%;width:0%;background:var(--accent,#3b82f6);transition:width 0.12s linear"></div>
+                    </div>
+                    <div id="fw-upload-bytes" style="font-size:0.72rem;color:var(--dim);margin-top:4px"></div>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px;letter-spacing:0.01em" data-i18n="fw.library">Library</div>
+                <div id="fw-list" class="fw-lib"></div>
+                <p id="fw-empty" style="font-size:0.75rem;color:var(--dim);margin:6px 0 0;display:none" data-i18n="fw.empty">No firmware files yet</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-settings-firmware -->
 
       <div class="subview" id="subview-settings-advanced">
       <div class="stack">
@@ -4688,7 +4949,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.resources">Resources</h2>
-              <div class="sub">disk · RAM · uptime · history.db</div>
+              <div class="sub" data-i18n="sub.resources">disk · RAM · uptime · history.db</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:14px">
@@ -4707,6 +4968,15 @@
                 <label>history.db</label>
                 <div class="val" style="font-size:1.05rem" id="info-db-size">—</div>
                 <div class="hint" id="info-db-path">—</div>
+              </div>
+            </div>
+            <!-- USB free space when install is on stick -->
+            <div class="metric" id="info-usb-wrap" style="display:none;margin:0">
+              <label id="info-usb-label" data-i18n="info.usb_free">USB · free</label>
+              <div class="val" style="font-size:1.15rem" id="info-usb-free">—</div>
+              <div class="hint" id="info-usb-hint">—</div>
+              <div style="height:6px;border-radius:4px;background:var(--border,rgba(255,255,255,0.08));margin-top:8px;overflow:hidden">
+                <div id="info-usb-bar" style="height:100%;width:0;background:var(--ok)"></div>
               </div>
             </div>
             <div id="info-disks" class="stack" style="gap:8px"></div>
@@ -5018,6 +5288,10 @@
         "h2.access": "Access settings",
         "h2.software": "poolheat_WM · software",
         "h2.resources": "Resources",
+        "sub.resources": "disk · RAM · uptime · history.db",
+        "info.usb_free": "USB · free",
+        "info.usb_of": "free {free} / {total} · {pct}% used",
+        "info.usb_path": "poolheat on USB",
         "h2.error_log": "Miner error log",
         "h2.errors": "Errors",
         "h2.action_log": "Action log",
@@ -5042,6 +5316,86 @@
         "sub.backup": "download / restore all settings (JSON)",
         "sub.connection": "TCP · saved to config.json · applied immediately",
         "sub.filtration": "outlet / webhook · auto ON while mining",
+        "sub.firmware": "Firmware",
+        "h2.firmware": "Firmware repository",
+        "sub.firmware_card": "USB storage · compatible models map",
+        "fw.enable": "Enable firmware repository",
+        "fw.enable_desc": "store .bin on USB · optional",
+        "fw.upload_title": "Upload firmware",
+        "fw.upload_sub": ".bin / .ima · map models after upload",
+        "fw.file": "File",
+        "fw.models": "Compatible models",
+        "fw.note": "Note",
+        "fw.btn_upload": "Upload",
+        "fw.library": "Library",
+        "fw.empty": "No firmware files yet",
+        "fw.edit": "Edit models",
+        "fw.save_item": "Save",
+        "fw.delete": "Delete",
+        "fw.download": "Download",
+        "fw.models_hint": "Comma-separated, e.g. M63, M63S",
+        "fw.storage_usb": "Storage: USB · free {free} / {total}",
+        "fw.storage_data": "Storage: data path (not USB) · free {free}",
+        "fw.disabled_hint": "Enable the repository to upload and manage firmware files.",
+        "fw.uploading": "Uploading…",
+        "fw.progress": "Uploading… {pct}%",
+        "fw.progress_bytes": "{sent} / {total}",
+        "fw.processing": "Processing on server…",
+        "fw.uploaded": "Uploaded",
+        "fw.deleted": "Deleted",
+        "fw.saved": "Saved",
+        "h2.fw_flash": "Firmware update",
+        "sub.fw_flash": "from USB library · compatible models only",
+        "fw.flash_select": "Compatible firmware",
+        "fw.flash_force": "Allow incompatible (not in model map)",
+        "fw.flash_btn": "Flash to miner",
+        "fw.flash_warn": "Destructive: miner reboots. Use only files for this model. Keep power and network stable.",
+        "fw.flash_none": "No compatible firmware in library (or repo disabled)",
+        "fw.flash_repo_off": "Enable Settings → Firmware repository first",
+        "fw.flash_confirm1": "Flash firmware to the miner?",
+        "fw.flash_confirm2": "Last chance: send firmware image and reboot ASIC?",
+        "fw.flash_ok": "Firmware sent · miner may reboot",
+        "fw.flash_busy": "Flashing…",
+        "fw.flash_pick": "Select a firmware file",
+        "filt.btn_test": "Test",
+        "filt.btn_save": "Save",
+        "filt.enable": "Enable filtration control",
+        "filt.enable_desc": "policy + manual buttons",
+        "filt.control_type": "Control type",
+        "filt.outlet_ip": "Outlet IP",
+        "filt.tapo_email": "Tapo email",
+        "filt.tapo_password": "Tapo password",
+        "filt.device_ip": "Device IP",
+        "filt.device_id": "deviceid (DIY)",
+        "filt.port_diy": "Port DIY",
+        "filt.ewelink_note": "Sonoff in <strong>DIY mode</strong> (LAN) required. eWeLink cloud without DIY — use Webhook / HA.",
+        "filt.url_on": "URL ON",
+        "filt.url_off": "URL OFF",
+        "filt.method": "Method",
+        "filt.body_on": "Body ON (POST)",
+        "filt.body_off": "Body OFF (POST)",
+        "filt.headers": "Headers JSON (opt.)",
+        "filt.shelly_ip": "IP Shelly",
+        "filt.channel": "Channel",
+        "filt.gen": "Gen",
+        "filt.ha_url": "HA URL",
+        "filt.entity_id": "Entity ID",
+        "filt.ha_token": "Long-lived token",
+        "filt.auto_on_mining": "Auto ON while mining",
+        "filt.auto_on_mining_desc": "MC Resume → pump ON",
+        "filt.auto_off_suspend": "Auto OFF on Suspend",
+        "filt.auto_off_suspend_desc": "Suspend → pump OFF",
+        "filt.allow_off_mining": "Allow OFF while mining",
+        "filt.allow_off_mining_desc": "do not block pump stop while mining",
+        "filt.btn_on": "Turn pump ON",
+        "filt.btn_off": "Turn pump OFF",
+        "filt.off_hint": "Without “Allow OFF while mining” — Off is blocked during Resume. With option + Auto ON — policy may turn the pump back on.",
+        "filt.hint_tapo": "LAN · Tapo account email/password · P100/P110 IP",
+        "filt.hint_ewelink": "LAN DIY mode · IP + deviceid (eWeLink cloud — Webhook/HA)",
+        "filt.hint_webhook": "URL on/off · IFTTT, n8n, Node-RED, eWeLink scene, …",
+        "filt.hint_shelly": "LAN HTTP · Gen1 /relay or Gen2 /rpc",
+        "filt.hint_ha": "REST · long-lived token · switch.entity",
+        "filt.off_blocked_title": "Cannot turn off while mining — enable “Allow OFF while mining”",
         "sub.telegram": "policy notifications · /status commands",
         "sub.policy": "dwell · settle · streak · saved with zone map",
         "sub.warmup": "until ready — no point raising the profile",
@@ -5303,6 +5657,10 @@
         "h2.access": "Настройки доступа",
         "h2.software": "poolheat_WM · ПО",
         "h2.resources": "Ресурсы",
+        "sub.resources": "диск · RAM · uptime · history.db",
+        "info.usb_free": "USB · свободно",
+        "info.usb_of": "свободно {free} / {total} · занято {pct}%",
+        "info.usb_path": "poolheat на USB",
         "h2.error_log": "Журнал ошибок майнера",
         "h2.errors": "Ошибки",
         "h2.action_log": "Журнал действий",
@@ -5327,6 +5685,86 @@
         "sub.backup": "скачать / восстановить все настройки (JSON)",
         "sub.connection": "TCP · сохраняется в config.json · применяется сразу",
         "sub.filtration": "розетка / webhook · auto ON при майнинге",
+        "sub.firmware": "Прошивки",
+        "h2.firmware": "Репозиторий прошивок",
+        "sub.firmware_card": "USB · карта совместимых моделей",
+        "fw.enable": "Включить репозиторий прошивок",
+        "fw.enable_desc": "хранить .bin на USB · опционально",
+        "fw.upload_title": "Загрузить прошивку",
+        "fw.upload_sub": ".bin / .ima · укажите модели",
+        "fw.file": "Файл",
+        "fw.models": "Совместимые модели",
+        "fw.note": "Заметка",
+        "fw.btn_upload": "Загрузить",
+        "fw.library": "Библиотека",
+        "fw.empty": "Файлов прошивок пока нет",
+        "fw.edit": "Править модели",
+        "fw.save_item": "Сохранить",
+        "fw.delete": "Удалить",
+        "fw.download": "Скачать",
+        "fw.models_hint": "Через запятую, напр. M63, M63S",
+        "fw.storage_usb": "Хранилище: USB · свободно {free} / {total}",
+        "fw.storage_data": "Хранилище: data (не USB) · свободно {free}",
+        "fw.disabled_hint": "Включите репозиторий, чтобы загружать и управлять прошивками.",
+        "fw.uploading": "Загрузка…",
+        "fw.progress": "Загрузка… {pct}%",
+        "fw.progress_bytes": "{sent} / {total}",
+        "fw.processing": "Обработка на сервере…",
+        "fw.uploaded": "Загружено",
+        "fw.deleted": "Удалено",
+        "fw.saved": "Сохранено",
+        "h2.fw_flash": "Обновление прошивки",
+        "sub.fw_flash": "из USB-библиотеки · только совместимые модели",
+        "fw.flash_select": "Совместимая прошивка",
+        "fw.flash_force": "Разрешить несовместимую (нет в карте моделей)",
+        "fw.flash_btn": "Прошить майнер",
+        "fw.flash_warn": "Опасно: майнер перезагрузится. Только файлы для этой модели. Не отключайте питание и сеть.",
+        "fw.flash_none": "В библиотеке нет совместимых прошивок (или репозиторий выключен)",
+        "fw.flash_repo_off": "Сначала включите Настройки → Прошивки",
+        "fw.flash_confirm1": "Прошить майнер выбранным файлом?",
+        "fw.flash_confirm2": "Последнее подтверждение: отправить образ и перезагрузить ASIC?",
+        "fw.flash_ok": "Прошивка отправлена · майнер может перезагрузиться",
+        "fw.flash_busy": "Прошивка…",
+        "fw.flash_pick": "Выберите файл прошивки",
+        "filt.btn_test": "Проверить",
+        "filt.btn_save": "Сохранить",
+        "filt.enable": "Включить управление фильтрацией",
+        "filt.enable_desc": "policy + ручные кнопки",
+        "filt.control_type": "Тип управления",
+        "filt.outlet_ip": "IP розетки",
+        "filt.tapo_email": "Tapo email",
+        "filt.tapo_password": "Пароль Tapo",
+        "filt.device_ip": "IP устройства",
+        "filt.device_id": "deviceid (DIY)",
+        "filt.port_diy": "Порт DIY",
+        "filt.ewelink_note": "Нужен Sonoff в <strong>DIY mode</strong> (LAN). eWeLink cloud без DIY — Webhook / HA.",
+        "filt.url_on": "URL ON",
+        "filt.url_off": "URL OFF",
+        "filt.method": "Метод",
+        "filt.body_on": "Body ON (POST)",
+        "filt.body_off": "Body OFF (POST)",
+        "filt.headers": "Headers JSON (опц.)",
+        "filt.shelly_ip": "IP Shelly",
+        "filt.channel": "Канал",
+        "filt.gen": "Gen",
+        "filt.ha_url": "HA URL",
+        "filt.entity_id": "Entity ID",
+        "filt.ha_token": "Long-lived token",
+        "filt.auto_on_mining": "Auto ON при майнинге",
+        "filt.auto_on_mining_desc": "MC Resume → насос ON",
+        "filt.auto_off_suspend": "Auto OFF при Suspend",
+        "filt.auto_off_suspend_desc": "Suspend → насос OFF",
+        "filt.allow_off_mining": "Разрешить OFF при майнинге",
+        "filt.allow_off_mining_desc": "не блокировать останов насоса при майнинге",
+        "filt.btn_on": "Включить насос",
+        "filt.btn_off": "Выключить насос",
+        "filt.off_hint": "Без «Разрешить OFF при майнинге» — Off при Resume заблокирован. С опцией + Auto ON policy может снова включить насос.",
+        "filt.hint_tapo": "LAN · email/пароль аккаунта Tapo · IP P100/P110",
+        "filt.hint_ewelink": "LAN DIY · IP + deviceid (облако eWeLink — Webhook/HA)",
+        "filt.hint_webhook": "URL on/off · IFTTT, n8n, Node-RED, сцена eWeLink, …",
+        "filt.hint_shelly": "LAN HTTP · Gen1 /relay или Gen2 /rpc",
+        "filt.hint_ha": "REST · long-lived token · switch.entity",
+        "filt.off_blocked_title": "Нельзя выключить при майнинге — включите «Разрешить OFF при майнинге»",
         "sub.telegram": "уведомления policy · команды /status",
         "sub.policy": "dwell · settle · streak · сохраняется с картой зон",
         "sub.warmup": "пока не ready — нет смысла повышать профиль",
@@ -5556,6 +5994,9 @@
       } catch (_) {}
       try {
         if (typeof updateWouldApplyLabels === "function") updateWouldApplyLabels();
+      } catch (_) {}
+      try {
+        if (typeof syncFiltBackendPanels === "function") syncFiltBackendPanels();
       } catch (_) {}
       return lang;
     }
@@ -5973,6 +6414,7 @@
       "devices",
       "settings",
       "advanced",
+      "firmware",
       "info",
       "logs",
     ];
@@ -6001,6 +6443,10 @@
       config: "settings",
       "settings-advanced": "advanced",
       "settings-adv": "advanced",
+      firmware: "firmware",
+      firmwares: "firmware",
+      proshivki: "firmware",
+      "settings-firmware": "firmware",
       about: "info",
       log: "logs",
       errors: "logs",
@@ -6029,7 +6475,8 @@
     }
 
     function setSettingsSubtab(subId) {
-      const sub = subId === "advanced" ? "advanced" : "main";
+      const allowed = { main: 1, advanced: 1, firmware: 1 };
+      const sub = allowed[subId] ? subId : "main";
       document.querySelectorAll("#view-settings nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
       });
@@ -6039,6 +6486,9 @@
           v.id === "subview-settings-" + sub
         );
       });
+      if (sub === "firmware" && typeof loadFirmwarePanel === "function") {
+        void loadFirmwarePanel();
+      }
       return sub;
     }
 
@@ -6182,6 +6632,9 @@
       } else if (tabId === "advanced") {
         mainTab = "settings";
         settingsSub = "advanced";
+      } else if (tabId === "firmware") {
+        mainTab = "settings";
+        settingsSub = "firmware";
       } else if (tabId === "sensors") {
         mainTab = "periph";
         periphSub = "sensors";
@@ -6226,6 +6679,9 @@
       // Whatsminer identity under Miner → Info
       if (mainTab === "miner" && minerSub === "info" && typeof loadSystemInfo === "function") {
         loadSystemInfo({ forceLive: true });
+        if (typeof loadMinerFirmwareFlashOptions === "function") {
+          setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
+        }
       }
       if (mainTab === "miner" && minerSub === "pools") {
         if (typeof loadMiningPools === "function") loadMiningPools(false);
@@ -6241,6 +6697,9 @@
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadLuciProxyConfig === "function") loadLuciProxyConfig();
         if (typeof loadSnifferConfig === "function") loadSnifferConfig();
+      }
+      if (mainTab === "settings" && settingsSub === "firmware") {
+        if (typeof loadFirmwarePanel === "function") void loadFirmwarePanel();
       }
       if (mainTab === "periph" && periphSub === "sensors") {
         if (typeof loadSensors === "function") loadSensors();
@@ -6268,7 +6727,9 @@
     document.querySelectorAll("#view-settings nav.subtabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         const s = btn.dataset.subtab;
-        activateTab(s === "advanced" ? "advanced" : "settings");
+        if (s === "advanced") activateTab("advanced");
+        else if (s === "firmware") activateTab("firmware");
+        else activateTab("settings");
       });
     });
     document.querySelectorAll("#view-miner nav.subtabs button").forEach((btn) => {
@@ -11756,6 +12217,55 @@
         setTxt("info-db-path", resrc.history_db_path || "—");
       }
 
+      // USB free (only when poolheat install is on the stick)
+      const usbWrap = document.getElementById("info-usb-wrap");
+      const usb = resrc.usb || (resrc.on_usb ? null : null);
+      const usbEnt =
+        resrc.usb ||
+        (Array.isArray(resrc.disks)
+          ? resrc.disks.find((d) => d && d.on_usb)
+          : null);
+      if (usbWrap) {
+        if (resrc.on_usb && usbEnt && usbEnt.free_b != null) {
+          usbWrap.style.display = "";
+          const free = fmtBytes(usbEnt.free_b);
+          const total = fmtBytes(usbEnt.total_b);
+          const pct =
+            usbEnt.used_pct != null ? Number(usbEnt.used_pct) : null;
+          setTxt("info-usb-free", free);
+          const hintEl = document.getElementById("info-usb-hint");
+          if (hintEl) {
+            const line = tf(
+              "info.usb_of",
+              {
+                free: free,
+                total: total,
+                pct: pct != null ? pct : "—",
+              },
+              "free {free} / {total} · {pct}% used"
+            );
+            const root = usbEnt.usb_root || usbEnt.real_path || usbEnt.path || "";
+            hintEl.textContent =
+              line + (root ? " · " + root : "");
+          }
+          const barEl = document.getElementById("info-usb-bar");
+          if (barEl && pct != null) {
+            const bar = Math.max(0, Math.min(100, pct));
+            barEl.style.width = bar + "%";
+            barEl.style.background =
+              bar >= 90
+                ? "var(--danger, #e55)"
+                : bar >= 75
+                  ? "var(--warn)"
+                  : "var(--ok)";
+          }
+          const lab = document.getElementById("info-usb-label");
+          if (lab) lab.textContent = t("info.usb_free", "USB · free");
+        } else if (!fromCache) {
+          usbWrap.style.display = "none";
+        }
+      }
+
       const disksEl = document.getElementById("info-disks");
       if (disksEl) {
         const disks = Array.isArray(resrc.disks) ? resrc.disks : [];
@@ -11775,10 +12285,14 @@
                   : bar >= 75
                     ? "var(--warn)"
                     : "var(--ok)";
+              const lab = d.label || d.path;
+              const pathHint = d.real_path && d.real_path !== d.path
+                ? d.path + " → " + d.real_path
+                : d.real_path || d.path || "";
               return (
                 '<div class="metric" style="margin:0">' +
                 "<label>" +
-                (d.label || d.path) +
+                lab +
                 " · free " +
                 free +
                 " / " +
@@ -11793,7 +12307,7 @@
                 color +
                 '"></div></div>' +
                 '<div class="hint" style="margin-top:4px">' +
-                (d.path || "") +
+                pathHint +
                 "</div></div>"
               );
             })
@@ -13292,13 +13806,17 @@
     loadZonePresets();
 
     /* ── Filtration · multi-backend ───────────────────────────────── */
-    const FILT_HINTS = {
-      tapo: "LAN · Tapo account email/password · P100/P110 IP",
-      ewelink: "LAN DIY mode · IP + deviceid (eWeLink cloud — Webhook/HA)",
-      webhook: "URL on/off · IFTTT, n8n, Node-RED, eWeLink scene, …",
-      shelly: "LAN HTTP · Gen1 /relay or Gen2 /rpc",
-      homeassistant: "REST · long-lived token · switch.entity",
-    };
+    function filtHintFor(be) {
+      const map = {
+        tapo: "filt.hint_tapo",
+        ewelink: "filt.hint_ewelink",
+        webhook: "filt.hint_webhook",
+        shelly: "filt.hint_shelly",
+        homeassistant: "filt.hint_ha",
+      };
+      const key = map[be];
+      return key ? t(key) : "";
+    }
 
     /** Don't overwrite form while user is editing (periodic poll was unchecking enabled). */
     let filtFormDirty = false;
@@ -13331,7 +13849,7 @@
         el.hidden = !match;
       });
       const hint = document.getElementById("filt-backend-hint");
-      if (hint) hint.textContent = FILT_HINTS[be] || "";
+      if (hint) hint.textContent = filtHintFor(be);
     }
 
     async function loadFiltrationConfig(opts) {
@@ -13415,8 +13933,8 @@
         offBtn.disabled = body.can_turn_off === false;
         offBtn.title =
           body.can_turn_off === false
-            ? "Cannot turn off while mining — enable “Allow OFF while mining”"
-            : "Turn pump OFF";
+            ? t("filt.off_blocked_title")
+            : t("filt.btn_off");
       }
     }
 
@@ -13576,6 +14094,704 @@
         void loadFiltrationConfig();
       }
     }, 15000);
+
+    /* ── Firmware repository (USB) ─────────────────────────────────── */
+    let _fwState = null;
+    let _fwSuggested = [];
+
+    function _fwFmtBytes(n) {
+      if (typeof fmtBytes === "function") return fmtBytes(n);
+      const x = Number(n) || 0;
+      if (x < 1024) return x + " B";
+      if (x < 1048576) return (x / 1024).toFixed(1) + " KB";
+      if (x < 1073741824) return (x / 1048576).toFixed(1) + " MB";
+      return (x / 1073741824).toFixed(2) + " GB";
+    }
+
+    function _fwEscape(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderFwModelChips() {
+      const wrap = document.getElementById("fw-model-chips");
+      if (!wrap) return;
+      const models = _fwSuggested.length
+        ? _fwSuggested
+        : ["M60", "M60S", "M63", "M63S", "M63S+", "M66", "M66S"];
+      wrap.innerHTML = models
+        .map(
+          (m) =>
+            '<button type="button" class="btn ghost" style="padding:4px 10px;font-size:0.75rem" data-fw-model="' +
+            _fwEscape(m) +
+            '">' +
+            _fwEscape(m) +
+            "</button>"
+        )
+        .join("");
+      wrap.querySelectorAll("[data-fw-model]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const m = btn.getAttribute("data-fw-model") || "";
+          const inp = document.getElementById("fw-models");
+          if (!inp || !m) return;
+          const cur = (inp.value || "")
+            .split(/[,;|]+/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+          const up = cur.map((x) => x.toUpperCase());
+          if (!up.includes(m.toUpperCase())) cur.push(m);
+          inp.value = cur.join(", ");
+        });
+      });
+    }
+
+    function _fwFileIconSvg() {
+      // compact "bin / package" glyph
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+        '<path d="M14 2v6h6"/>' +
+        '<path d="M8 13h8M8 17h5"/>' +
+        "</svg>"
+      );
+    }
+    function _fwActionIcon(kind) {
+      if (kind === "dl") {
+        return (
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/>' +
+          "</svg>"
+        );
+      }
+      if (kind === "edit") {
+        return (
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>' +
+          "</svg>"
+        );
+      }
+      // del
+      return (
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/>' +
+        "</svg>"
+      );
+    }
+
+    function renderFirmwareList(items) {
+      const list = document.getElementById("fw-list");
+      const empty = document.getElementById("fw-empty");
+      if (!list) return;
+      const arr = Array.isArray(items) ? items : [];
+      if (!arr.length) {
+        list.innerHTML = "";
+        if (empty) empty.style.display = "";
+        return;
+      }
+      if (empty) empty.style.display = "none";
+      list.innerHTML = arr
+        .map((it) => {
+          const id = _fwEscape(it.id || "");
+          const name = _fwEscape(it.filename || it.id || "?");
+          const size = _fwFmtBytes(it.size);
+          const modelArr = Array.isArray(it.models) ? it.models : [];
+          const modelsVal = modelArr.join(", ");
+          const note = _fwEscape(it.note || "");
+          const sha = it.sha256 ? String(it.sha256).slice(0, 10) : "";
+          const missing = it.exists === false;
+          const date = it.uploaded_at
+            ? String(it.uploaded_at).replace("T", " ").slice(0, 16)
+            : "";
+          const tags =
+            modelArr.length > 0
+              ? modelArr
+                  .slice(0, 8)
+                  .map((m) => '<span class="fw-tag">' + _fwEscape(m) + "</span>")
+                  .join("") +
+                (modelArr.length > 8
+                  ? '<span class="fw-tag is-empty">+' +
+                    (modelArr.length - 8) +
+                    "</span>"
+                  : "")
+              : '<span class="fw-tag is-empty">—</span>';
+          const metaParts = [size];
+          if (sha) metaParts.push(sha);
+          if (date) metaParts.push(date);
+          if (missing) metaParts.push("missing");
+          return (
+            '<div class="fw-item" data-fw-id="' +
+            id +
+            '">' +
+            '<div class="fw-item-main">' +
+            '<div class="fw-icon' +
+            (missing ? " is-missing" : "") +
+            '" title="' +
+            (missing ? "missing" : "firmware") +
+            '">' +
+            _fwFileIconSvg() +
+            "</div>" +
+            '<div class="fw-item-body">' +
+            '<div class="fw-item-title" title="' +
+            name +
+            '">' +
+            name +
+            "</div>" +
+            '<div class="fw-item-meta">' +
+            _fwEscape(metaParts.join(" · ")) +
+            "</div>" +
+            '<div class="fw-models-row">' +
+            tags +
+            "</div>" +
+            (note
+              ? '<div class="fw-item-note" title="' + note + '">' + note + "</div>"
+              : "") +
+            "</div>" +
+            '<div class="fw-item-actions">' +
+            '<a class="btn ghost icon-only" href="/api/firmware/download/' +
+            id +
+            '" download title="' +
+            _fwEscape(t("fw.download", "Download")) +
+            '" aria-label="' +
+            _fwEscape(t("fw.download", "Download")) +
+            '">' +
+            _fwActionIcon("dl") +
+            "</a>" +
+            '<button type="button" class="btn ghost icon-only" data-fw-toggle="' +
+            id +
+            '" title="' +
+            _fwEscape(t("fw.edit", "Edit models")) +
+            '" aria-label="' +
+            _fwEscape(t("fw.edit", "Edit models")) +
+            '">' +
+            _fwActionIcon("edit") +
+            "</button>" +
+            '<button type="button" class="btn danger ghost icon-only" data-fw-del="' +
+            id +
+            '" title="' +
+            _fwEscape(t("fw.delete", "Delete")) +
+            '" aria-label="' +
+            _fwEscape(t("fw.delete", "Delete")) +
+            '">' +
+            _fwActionIcon("del") +
+            "</button>" +
+            "</div></div>" +
+            '<div class="fw-item-edit">' +
+            '<label class="field"><span>' +
+            t("fw.models", "Compatible models") +
+            '</span><input type="text" data-fw-models="' +
+            id +
+            '" value="' +
+            _fwEscape(modelsVal) +
+            '" placeholder="' +
+            _fwEscape(t("fw.models_hint", "M63, M63S")) +
+            '" /></label>' +
+            '<label class="field"><span>' +
+            t("fw.note", "Note") +
+            '</span><input type="text" data-fw-note="' +
+            id +
+            '" value="' +
+            note +
+            '" maxlength="500" /></label>' +
+            '<button type="button" class="btn primary" data-fw-save="' +
+            id +
+            '" style="padding:6px 12px;font-size:0.75rem">' +
+            t("fw.save_item", "Save") +
+            "</button>" +
+            "</div></div>"
+          );
+        })
+        .join("");
+
+      list.querySelectorAll("[data-fw-toggle]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-fw-toggle");
+          const row = list.querySelector('.fw-item[data-fw-id="' + id + '"]');
+          if (!row) return;
+          const open = row.classList.contains("is-open");
+          list.querySelectorAll(".fw-item.is-open").forEach((el) => {
+            el.classList.remove("is-open");
+          });
+          if (!open) row.classList.add("is-open");
+        });
+      });
+      list.querySelectorAll("[data-fw-del]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-fw-del");
+          if (!id) return;
+          const name =
+            list.querySelector('.fw-item[data-fw-id="' + id + '"] .fw-item-title')
+              ?.textContent || id;
+          if (!confirm(t("fw.delete", "Delete") + ": " + name + "?")) return;
+          void firmwareDelete(id);
+        });
+      });
+      list.querySelectorAll("[data-fw-save]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-fw-save");
+          if (!id) return;
+          const models =
+            list.querySelector('input[data-fw-models="' + id + '"]')?.value || "";
+          const note =
+            list.querySelector('input[data-fw-note="' + id + '"]')?.value || "";
+          void firmwareSaveItem(id, models, note);
+        });
+      });
+    }
+
+    async function loadFirmwarePanel() {
+      const stEl = document.getElementById("fw-storage-hint");
+      const body = document.getElementById("fw-repo-body");
+      const enEl = document.getElementById("fw-enabled");
+      try {
+        const res = await fetch("/api/firmware", { cache: "no-store" });
+        const data = await res.json();
+        if (data.ok === false) throw new Error(data.error || "fail");
+        _fwState = data;
+        _fwSuggested = Array.isArray(data.suggested_models)
+          ? data.suggested_models
+          : [];
+        if (enEl) enEl.checked = !!data.enabled;
+        const disk = data.disk || {};
+        const free = _fwFmtBytes(disk.free_b);
+        const total = _fwFmtBytes(disk.total_b);
+        if (stEl) {
+          let line = data.on_usb
+            ? tf("fw.storage_usb", { free: free, total: total }, "USB free {free} / {total}")
+            : tf("fw.storage_data", { free: free }, "data free {free}");
+          if (data.storage_path) line += " · " + data.storage_path;
+          if (data.warning) line += " · ⚠ " + data.warning;
+          stEl.textContent = line;
+          stEl.style.color = data.on_usb ? "var(--muted)" : "var(--warn)";
+        }
+        if (body) body.style.display = data.enabled ? "" : "none";
+        if (!data.enabled) {
+          if (stEl && !data.warning) {
+            stEl.textContent =
+              (stEl.textContent || "") +
+              " — " +
+              t("fw.disabled_hint", "Enable to manage files");
+          }
+          renderFirmwareList([]);
+        } else {
+          renderFwModelChips();
+          renderFirmwareList(data.items || []);
+        }
+      } catch (e) {
+        if (stEl) stEl.textContent = "error: " + (e.message || e);
+        if (typeof toastError === "function")
+          toastError("Firmware: " + (e.message || e));
+      }
+    }
+
+    async function saveFirmwareConfig() {
+      const en = !!document.getElementById("fw-enabled")?.checked;
+      try {
+        const res = await fetch("/api/firmware/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: en }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false)
+          throw new Error(data.error || "HTTP " + res.status);
+        if (typeof toastSuccess === "function")
+          toastSuccess(t("fw.saved", "Saved"));
+        await loadFirmwarePanel();
+      } catch (e) {
+        if (typeof toastError === "function")
+          toastError("Firmware config: " + (e.message || e));
+      }
+    }
+
+    function _fwSetUploadProgress(pct, sent, total, phase) {
+      const wrap = document.getElementById("fw-upload-progress-wrap");
+      const bar = document.getElementById("fw-upload-bar");
+      const pctEl = document.getElementById("fw-upload-pct");
+      const lab = document.getElementById("fw-upload-progress-label");
+      const bytesEl = document.getElementById("fw-upload-bytes");
+      const st = document.getElementById("fw-upload-status");
+      const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      if (wrap) wrap.style.display = "";
+      if (bar) bar.style.width = p + "%";
+      if (pctEl) pctEl.textContent = p + "%";
+      if (lab) {
+        lab.textContent =
+          phase === "processing"
+            ? t("fw.processing", "Processing on server…")
+            : tf("fw.progress", { pct: p }, "Uploading… {pct}%");
+      }
+      if (bytesEl && sent != null && total != null && total > 0) {
+        bytesEl.textContent = tf(
+          "fw.progress_bytes",
+          { sent: _fwFmtBytes(sent), total: _fwFmtBytes(total) },
+          "{sent} / {total}"
+        );
+      } else if (bytesEl && phase === "processing") {
+        bytesEl.textContent = "";
+      }
+      if (st) {
+        st.textContent =
+          phase === "processing"
+            ? t("fw.processing", "Processing on server…")
+            : tf("fw.progress", { pct: p }, "Uploading… {pct}%");
+      }
+    }
+
+    function _fwHideUploadProgress() {
+      const wrap = document.getElementById("fw-upload-progress-wrap");
+      if (wrap) wrap.style.display = "none";
+      const bar = document.getElementById("fw-upload-bar");
+      if (bar) bar.style.width = "0%";
+    }
+
+    function firmwareUpload() {
+      const fileEl = document.getElementById("fw-file");
+      const file = fileEl && fileEl.files && fileEl.files[0];
+      const st = document.getElementById("fw-upload-status");
+      const btn = document.getElementById("btn-fw-upload");
+      if (!file) {
+        if (typeof toastWarn === "function") toastWarn(t("fw.file", "File") + "?");
+        return;
+      }
+      const models = document.getElementById("fw-models")?.value || "";
+      const note = document.getElementById("fw-note")?.value || "";
+      if (btn) btn.disabled = true;
+      _fwSetUploadProgress(0, 0, file.size, "upload");
+
+      const url =
+        "/api/firmware/upload?filename=" +
+        encodeURIComponent(file.name) +
+        "&models=" +
+        encodeURIComponent(models) +
+        "&note=" +
+        encodeURIComponent(note);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.setRequestHeader("X-Filename", file.name);
+      xhr.setRequestHeader("X-Models", models);
+      xhr.setRequestHeader("X-Note", note);
+      xhr.responseType = "text";
+
+      xhr.upload.onprogress = (ev) => {
+        if (!ev.lengthComputable && !file.size) return;
+        const total = ev.lengthComputable ? ev.total : file.size;
+        const loaded = ev.loaded || 0;
+        const pct = total > 0 ? (100 * loaded) / total : 0;
+        _fwSetUploadProgress(pct, loaded, total, "upload");
+      };
+      xhr.upload.onload = () => {
+        // bytes sent; server still writing/catalog
+        _fwSetUploadProgress(100, file.size, file.size, "processing");
+      };
+
+      xhr.onload = () => {
+        if (btn) btn.disabled = false;
+        let data = null;
+        try {
+          data = JSON.parse(xhr.responseText || "{}");
+        } catch (_) {
+          data = null;
+        }
+        if (xhr.status < 200 || xhr.status >= 300 || (data && data.ok === false)) {
+          const err =
+            (data && data.error) ||
+            "HTTP " + xhr.status +
+            (xhr.responseText ? ": " + String(xhr.responseText).slice(0, 120) : "");
+          if (st) st.textContent = String(err);
+          _fwHideUploadProgress();
+          if (typeof toastError === "function") toastError("Upload: " + err);
+          return;
+        }
+        if (st) st.textContent = t("fw.uploaded", "Uploaded") + " · 100%";
+        const pctEl = document.getElementById("fw-upload-pct");
+        if (pctEl) pctEl.textContent = "100%";
+        const lab = document.getElementById("fw-upload-progress-label");
+        if (lab) lab.textContent = t("fw.uploaded", "Uploaded");
+        if (typeof toastSuccess === "function")
+          toastSuccess(t("fw.uploaded", "Uploaded") + " · " + file.name);
+        if (fileEl) fileEl.value = "";
+        setTimeout(() => _fwHideUploadProgress(), 1200);
+        void loadFirmwarePanel();
+      };
+      xhr.onerror = () => {
+        if (btn) btn.disabled = false;
+        _fwHideUploadProgress();
+        if (st) st.textContent = "network error";
+        if (typeof toastError === "function") toastError("Upload: network error");
+      };
+      xhr.onabort = () => {
+        if (btn) btn.disabled = false;
+        _fwHideUploadProgress();
+        if (st) st.textContent = "aborted";
+      };
+
+      // send File/Blob directly — progress events fire while streaming
+      xhr.send(file);
+    }
+
+    async function firmwareSaveItem(id, models, note) {
+      try {
+        const res = await fetch("/api/firmware/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: id, models: models, note: note }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false)
+          throw new Error(data.error || "HTTP " + res.status);
+        if (typeof toastSuccess === "function")
+          toastSuccess(t("fw.saved", "Saved"));
+        await loadFirmwarePanel();
+      } catch (e) {
+        if (typeof toastError === "function")
+          toastError("Firmware: " + (e.message || e));
+      }
+    }
+
+    async function firmwareDelete(id) {
+      try {
+        const res = await fetch("/api/firmware/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: id }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false)
+          throw new Error(data.error || "HTTP " + res.status);
+        if (typeof toastSuccess === "function")
+          toastSuccess(t("fw.deleted", "Deleted"));
+        await loadFirmwarePanel();
+      } catch (e) {
+        if (typeof toastError === "function")
+          toastError("Delete: " + (e.message || e));
+      }
+    }
+
+    document.getElementById("btn-fw-cfg-save")?.addEventListener("click", () => {
+      void saveFirmwareConfig();
+    });
+    document.getElementById("btn-fw-refresh")?.addEventListener("click", () => {
+      void loadFirmwarePanel();
+    });
+    document.getElementById("btn-fw-upload")?.addEventListener("click", () => {
+      void firmwareUpload();
+    });
+    document.getElementById("fw-enabled")?.addEventListener("change", () => {
+      // preview body visibility; persists only on Save
+      const body = document.getElementById("fw-repo-body");
+      if (body)
+        body.style.display = document.getElementById("fw-enabled")?.checked
+          ? ""
+          : "none";
+    });
+
+    /* ── Flash firmware to miner (Miner → Info) ───────────────────── */
+    let _fwFlashPoll = null;
+
+    function _fwFlashSetUi(stage, pct, msg) {
+      const wrap = document.getElementById("fw-flash-progress-wrap");
+      const bar = document.getElementById("fw-flash-bar");
+      const pctEl = document.getElementById("fw-flash-pct");
+      const stg = document.getElementById("fw-flash-stage");
+      const st = document.getElementById("fw-flash-status");
+      if (wrap) wrap.style.display = "";
+      const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+      if (bar) bar.style.width = p + "%";
+      if (pctEl) pctEl.textContent = p + "%";
+      if (stg) stg.textContent = stage || "—";
+      if (st && msg != null) st.textContent = msg;
+    }
+
+    async function loadMinerFirmwareFlashOptions() {
+      const sel = document.getElementById("fw-flash-select");
+      const hint = document.getElementById("fw-flash-hint");
+      const forceEl = document.getElementById("fw-flash-force");
+      if (!sel) return;
+      const force = !!(forceEl && forceEl.checked);
+      let minerType =
+        (document.getElementById("info-miner-type")?.textContent || "")
+          .split("·")[0]
+          .trim() || "";
+      if (!minerType || minerType === "—") {
+        try {
+          const live = window.__lastLive || null;
+          // identity may be in info cache
+        } catch (_) {}
+      }
+      try {
+        const q = minerType
+          ? "?model=" + encodeURIComponent(minerType)
+          : "";
+        const res = await fetch("/api/firmware/compatible" + q, {
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (data.ok === false) throw new Error(data.error || "fail");
+        if (!data.enabled) {
+          sel.innerHTML =
+            '<option value="">' +
+            _fwEscape(t("fw.flash_repo_off", "Enable repo first")) +
+            "</option>";
+          if (hint)
+            hint.textContent = t(
+              "fw.flash_repo_off",
+              "Enable Settings → Firmware repository first"
+            );
+          return;
+        }
+        const mt = data.miner_type || minerType || "—";
+        const list = force
+          ? [].concat(data.compatible || [], data.other || [])
+          : data.compatible || [];
+        // de-dupe by id
+        const seen = {};
+        const items = [];
+        list.forEach((it) => {
+          if (!it || !it.id || seen[it.id]) return;
+          seen[it.id] = 1;
+          items.push(it);
+        });
+        if (!items.length) {
+          sel.innerHTML =
+            '<option value="">' +
+            _fwEscape(t("fw.flash_none", "No compatible firmware")) +
+            "</option>";
+        } else {
+          sel.innerHTML =
+            '<option value="">—</option>' +
+            items
+              .map((it) => {
+                const models = (it.models || []).join(", ") || "any";
+                const label =
+                  (it.filename || it.id) +
+                  " · " +
+                  _fwFmtBytes(it.size) +
+                  " · " +
+                  models;
+                return (
+                  '<option value="' +
+                  _fwEscape(it.id) +
+                  '">' +
+                  _fwEscape(label) +
+                  "</option>"
+                );
+              })
+              .join("");
+        }
+        if (hint) {
+          hint.textContent =
+            (mt && mt !== "—" ? mt + " · " : "") +
+            (data.on_usb ? "USB · " : "") +
+            items.length +
+            " " +
+            (force ? "file(s)" : "compatible") +
+            (data.storage_path ? " · " + data.storage_path : "");
+        }
+      } catch (e) {
+        if (hint) hint.textContent = "error: " + (e.message || e);
+        sel.innerHTML = '<option value="">—</option>';
+      }
+    }
+
+    async function flashFirmwareToMiner() {
+      const sel = document.getElementById("fw-flash-select");
+      const id = (sel && sel.value) || "";
+      const st = document.getElementById("fw-flash-status");
+      const btn = document.getElementById("btn-fw-flash");
+      const force = !!document.getElementById("fw-flash-force")?.checked;
+      if (!id) {
+        if (typeof toastWarn === "function")
+          toastWarn(t("fw.flash_pick", "Select a firmware file"));
+        return;
+      }
+      const optLabel = sel.options[sel.selectedIndex]?.text || id;
+      if (
+        !confirm(
+          t("fw.flash_confirm1", "Flash firmware to the miner?") +
+            "\n\n" +
+            optLabel
+        )
+      )
+        return;
+      if (
+        !confirm(t("fw.flash_confirm2", "Last chance: send firmware and reboot?"))
+      )
+        return;
+      if (btn) btn.disabled = true;
+      _fwFlashSetUi(t("fw.flash_busy", "Flashing…"), 5, t("fw.flash_busy", "Flashing…"));
+      // poll flash status while request runs (stages from server when available)
+      if (_fwFlashPoll) clearInterval(_fwFlashPoll);
+      _fwFlashPoll = setInterval(async () => {
+        try {
+          const r = await fetch("/api/firmware/flash/status", {
+            cache: "no-store",
+          });
+          const d = await r.json();
+          if (d && (d.busy || d.stage)) {
+            const stLine = d.status_text
+              ? String(d.status_text)
+              : t("fw.flash_busy", "Flashing…") +
+                (d.filename ? " · " + d.filename : "");
+            const stageLine =
+              (d.stage || "…") +
+              (d.status_text ? " · " + String(d.status_text).slice(0, 80) : "");
+            _fwFlashSetUi(stageLine, d.pct != null ? d.pct : 10, stLine);
+          }
+        } catch (_) {}
+      }, 500);
+      try {
+        const res = await fetch("/api/firmware/flash", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: id,
+            confirm: "yes",
+            allow_incompatible: force,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false)
+          throw new Error(data.error || "HTTP " + res.status);
+        _fwFlashSetUi("done", 100, t("fw.flash_ok", "Firmware sent"));
+        if (typeof toastSuccess === "function")
+          toastSuccess(
+            t("fw.flash_ok", "Firmware sent") +
+              (data.filename ? " · " + data.filename : "") +
+              (data.transport ? " · " + data.transport : "")
+          );
+        if (typeof toastWarn === "function" && data.warning)
+          toastWarn(String(data.warning), 8000);
+      } catch (e) {
+        _fwFlashSetUi("error", 0, String(e.message || e));
+        if (typeof toastError === "function")
+          toastError("Flash: " + (e.message || e));
+      } finally {
+        if (_fwFlashPoll) {
+          clearInterval(_fwFlashPoll);
+          _fwFlashPoll = null;
+        }
+        if (btn) btn.disabled = false;
+        setTimeout(() => {
+          const wrap = document.getElementById("fw-flash-progress-wrap");
+          if (wrap) wrap.style.display = "none";
+        }, 4000);
+      }
+    }
+
+    document
+      .getElementById("btn-fw-flash-refresh")
+      ?.addEventListener("click", () => void loadMinerFirmwareFlashOptions());
+    document
+      .getElementById("btn-fw-flash")
+      ?.addEventListener("click", () => void flashFirmwareToMiner());
+    document
+      .getElementById("fw-flash-force")
+      ?.addEventListener("change", () => void loadMinerFirmwareFlashOptions());
 
     /* ── Chip map (LuCI scrape) ───────────────────────────────────── */
 

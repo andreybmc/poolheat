@@ -100,7 +100,7 @@ import time
 import zlib
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Optional, Union
+from typing import Any, Callable, Optional, Union
 
 from Crypto.Cipher import AES
 
@@ -1561,8 +1561,11 @@ class NetPacketClient:
         image: bytes,
         *,
         poll_status: bool = True,
-        poll_attempts: int = 8,
-        wait_upload: float = 120.0,
+        poll_attempts: int = 30,
+        wait_upload: float = 600.0,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+        chunk_size: int = 65536,
+        poll_interval: float = 1.0,
     ) -> dict[str, Any]:
         """
         WMT **firmware upgrade** (lab Peak 2026-08-05).
@@ -1571,8 +1574,14 @@ class NetPacketClient:
 
             1. AES NetPacket KEY1 **cmd=7**, empty binary, auth text (+token)
             2. raw little-endian ``u32`` size + ``size`` bytes of image container
+               (sent in chunks so ``progress`` can report upload %)
             3. plain response cmd=7 (``lt=0`` ok; lab incomplete transfer had ``lt=1``)
             4. optional: new sessions **cmd=21** until body contains ``upgrade=success``
+
+        ``progress`` is called with dicts like::
+
+            {"stage": "upload", "pct": 42, "sent": n, "total": m}
+            {"stage": "status", "pct": 80, "status_text": "upgrade=…", "poll": 3}
 
         The image is the tool's signed/encrypted container (not raw rootfs);
         lab success blob ~12 627 688 bytes, md5 ``01f4d79a905e33a35467900b004e3fa6``.
@@ -1581,6 +1590,20 @@ class NetPacketClient:
         """
         if not image:
             raise ValueError("firmware image is empty")
+
+        def _prog(stage: str, pct: float | None = None, **extra: Any) -> None:
+            if progress is None:
+                return
+            try:
+                payload: dict[str, Any] = {"stage": stage}
+                if pct is not None:
+                    payload["pct"] = float(pct)
+                payload.update(extra)
+                progress(payload)
+            except Exception:
+                pass
+
+        _prog("auth", 0)
         token = self.ensure_token()
         text_s = build_auth_text(
             self.miner_ip, self.account, self.password, token=token
@@ -1592,6 +1615,8 @@ class NetPacketClient:
             binary=b"",
         ).encode(encrypt_key=k)
         stream = struct.pack("<I", len(image)) + image
+        total = len(stream)
+        cs = max(4096, int(chunk_size or 65536))
 
         def _recv_n(sock: socket.socket, n: int) -> bytes:
             buf = bytearray()
@@ -1603,11 +1628,29 @@ class NetPacketClient:
             return bytes(buf)
 
         # Dedicated socket so the binary stream is not interleaved with pollers.
-        sock = socket.create_connection((self.host, self.port), timeout=max(30.0, self.timeout))
+        _prog("connect", 1)
+        sock = socket.create_connection(
+            (self.host, self.port), timeout=max(30.0, self.timeout)
+        )
         try:
             sock.settimeout(wait_upload)
+            _prog("cmd7", 2)
             sock.sendall(frame)
-            sock.sendall(stream)
+            sent = 0
+            while sent < total:
+                n = min(cs, total - sent)
+                sock.sendall(stream[sent : sent + n])
+                sent += n
+                # 3–75% reserved for wire upload
+                pct = 3.0 + (72.0 * sent / total) if total else 75.0
+                _prog(
+                    "upload",
+                    pct,
+                    sent=sent,
+                    total=total,
+                    image_bytes=len(image),
+                )
+            _prog("ack", 76)
             hdr = _recv_n(sock, 16)
             if len(hdr) < 16 or struct.unpack_from("<I", hdr, 0)[0] != MAGIC:
                 return {
@@ -1629,6 +1672,7 @@ class NetPacketClient:
                 "status_word": status_word,
                 "body": body,
                 "uploaded": len(image),
+                "transport": "netpacket",
             }
         finally:
             try:
@@ -1637,23 +1681,63 @@ class NetPacketClient:
                 pass
 
         if not poll_status:
+            _prog("done", 100 if upload_resp.get("ok") else 76)
             return upload_resp
+
         last: dict[str, Any] = {}
-        for _ in range(max(1, poll_attempts)):
+        polls = max(1, int(poll_attempts))
+        interval = max(0.2, float(poll_interval or 1.0))
+        status_log: list[str] = []
+        for i in range(polls):
             last = self.firmware_status()
             body = last.get("body") or last.get("binary") or last.get("text") or b""
             if isinstance(body, str):
                 body_b = body.encode("utf-8", "replace")
             else:
-                body_b = bytes(body)
-            if b"upgrade=success" in body_b:
+                body_b = bytes(body or b"")
+            text = body_b.decode("utf-8", "replace").strip()
+            if text:
+                status_log.append(text)
+            # 76–98% during status polls
+            pct = 76.0 + (22.0 * (i + 1) / polls)
+            _prog(
+                "status",
+                pct,
+                poll=i + 1,
+                polls=polls,
+                status_text=text[:200],
+                status_raw=body_b[:200],
+            )
+            low = text.lower()
+            if b"upgrade=success" in body_b or "upgrade=success" in low:
                 upload_resp["upgrade"] = "success"
                 upload_resp["status_poll"] = last
+                upload_resp["status_log"] = status_log[-20:]
                 upload_resp["ok"] = True
+                _prog("success", 100, status_text=text[:200])
                 return upload_resp
-            time.sleep(1.0)
+            if (
+                b"upgrade=fail" in body_b
+                or b"upgrade=failed" in body_b
+                or "upgrade=fail" in low
+                or "upgrade=error" in low
+            ):
+                upload_resp["upgrade"] = "fail"
+                upload_resp["status_poll"] = last
+                upload_resp["status_log"] = status_log[-20:]
+                upload_resp["ok"] = False
+                upload_resp["error"] = text or "upgrade=fail"
+                _prog("fail", pct, status_text=text[:200])
+                return upload_resp
+            time.sleep(interval)
         upload_resp["status_poll"] = last
+        upload_resp["status_log"] = status_log[-20:]
         upload_resp["upgrade"] = "unknown"
+        _prog(
+            "unknown",
+            99,
+            status_text=(status_log[-1] if status_log else ""),
+        )
         return upload_resp
 
     def restore_dhcp(self) -> dict[str, Any]:
