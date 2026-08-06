@@ -10806,6 +10806,203 @@ def _normalize_psu_iin(raw) -> float | None:
     return round(i, 3)
 
 
+def _build_temp_sensors_catalog(
+    *,
+    summary: dict,
+    status: dict,
+    liquid: float | None,
+    liquid_source: str | None,
+    boards: list,
+    board_chip_min: list,
+    board_chip_max: list,
+    board_chip_avg: list,
+    psu_temp: float | None,
+    miner_type: str | None,
+    n_boards: int,
+) -> list[dict]:
+    """
+    All temperature points available from this miner poll, for UI catalog.
+
+    Each item: {id, group, label, label_ru, value, unit, source, available}.
+    ``available`` is False when the field is not present for this model/FW
+    (still listed when the model family typically has it — e.g. liquid on M63).
+    """
+    out: list[dict] = []
+    mt = str(miner_type or "").upper()
+    # Liquid coolers: M53/M56/M63/M66 families often expose liquid_temp
+    liquid_family = any(
+        x in mt for x in ("M53", "M56", "M63", "M66", "M50S", "M30S++", "LIQUID")
+    )
+
+    def _add(
+        sid: str,
+        group: str,
+        label: str,
+        label_ru: str,
+        value,
+        source: str,
+        *,
+        expect: bool = True,
+        reject_zero: bool = True,
+    ) -> None:
+        v = _f(value)
+        # FW often reports 0 / null for missing sensors
+        if v is not None and reject_zero and (v <= 0.05 or v > 150):
+            v = None
+        available = v is not None
+        # keep expected-but-missing for model (e.g. liquid on hydro) as listed null
+        if not available and not expect:
+            return
+        out.append(
+            {
+                "id": sid,
+                "group": group,
+                "label": label,
+                "label_ru": label_ru,
+                "value": round(v, 2) if v is not None else None,
+                "unit": "°C",
+                "source": source,
+                "available": available,
+            }
+        )
+
+    _add(
+        "env",
+        "ambient",
+        "Env Temp",
+        "Окружающая (Env)",
+        summary.get("Env Temp"),
+        "summary",
+        expect=True,
+    )
+    _add(
+        "liquid",
+        "coolant",
+        "Liquid / coolant",
+        "Жидкость / теплоноситель",
+        liquid,
+        liquid_source or "—",
+        expect=liquid_family or liquid is not None,
+    )
+    # inlet/outlet if ever present
+    for key, sid, lab, lab_ru in (
+        ("Inlet Temp", "inlet", "Inlet Temp", "Вход (Inlet)"),
+        ("Outlet Temp", "outlet", "Outlet Temp", "Выход (Outlet)"),
+        ("inlet_temp", "inlet", "Inlet Temp", "Вход (Inlet)"),
+        ("outlet_temp", "outlet", "Outlet Temp", "Выход (Outlet)"),
+    ):
+        raw = summary.get(key)
+        if raw is None and isinstance(status, dict):
+            raw = status.get(key)
+        if raw is not None:
+            _add(sid, "coolant", lab, lab_ru, raw, "summary/status", expect=True)
+
+    _add(
+        "chip_min",
+        "chip",
+        "Chip Temp Min",
+        "Чипы min",
+        summary.get("Chip Temp Min"),
+        "summary",
+    )
+    _add(
+        "chip_avg",
+        "chip",
+        "Chip Temp Avg",
+        "Чипы avg",
+        summary.get("Chip Temp Avg"),
+        "summary",
+    )
+    _add(
+        "chip_max",
+        "chip",
+        "Chip Temp Max",
+        "Чипы max",
+        summary.get("Chip Temp Max"),
+        "summary",
+    )
+    # legacy single "Temperature" on some FW (often PCB/case)
+    if summary.get("Temperature") not in (None, ""):
+        _add(
+            "summary_temp",
+            "board",
+            "Temperature (summary)",
+            "Temperature (summary)",
+            summary.get("Temperature"),
+            "summary",
+            expect=True,
+        )
+
+    for i in range(max(0, int(n_boards or 0))):
+        pcb = boards[i] if i < len(boards) else None
+        cmin = board_chip_min[i] if i < len(board_chip_min) else None
+        cmax = board_chip_max[i] if i < len(board_chip_max) else None
+        cavg = board_chip_avg[i] if i < len(board_chip_avg) else None
+        _add(
+            f"sm{i}_pcb",
+            "board",
+            f"SM{i} PCB",
+            f"SM{i} PCB",
+            pcb,
+            "devs",
+            expect=True,
+        )
+        # always list per-slot chip sensors for this model board count
+        _add(
+            f"sm{i}_chip_min",
+            "board_chip",
+            f"SM{i} Chip Min",
+            f"SM{i} чип min",
+            cmin,
+            "devs",
+            expect=True,
+        )
+        _add(
+            f"sm{i}_chip_avg",
+            "board_chip",
+            f"SM{i} Chip Avg",
+            f"SM{i} чип avg",
+            cavg,
+            "devs",
+            expect=True,
+        )
+        _add(
+            f"sm{i}_chip_max",
+            "board_chip",
+            f"SM{i} Chip Max",
+            f"SM{i} чип max",
+            cmax,
+            "devs",
+            expect=True,
+        )
+
+    _add(
+        "psu",
+        "psu",
+        "PSU temp0",
+        "БП temp0",
+        psu_temp,
+        "get_psu",
+        expect=True,
+    )
+
+    # board max/min/avg derived
+    pcb_vals = [v for v in boards if isinstance(v, (int, float)) and v is not None]
+    if pcb_vals:
+        _add("board_max", "board", "Boards max (PCB)", "Платы max (PCB)", max(pcb_vals), "derived")
+        _add("board_min", "board", "Boards min (PCB)", "Платы min (PCB)", min(pcb_vals), "derived")
+        _add(
+            "board_avg",
+            "board",
+            "Boards avg (PCB)",
+            "Платы avg (PCB)",
+            sum(pcb_vals) / len(pcb_vals),
+            "derived",
+        )
+
+    return out
+
+
 def fetch_live() -> dict:
     # summary/status: support both Msg-dict and classic SUMMARY/STATUS sections
     try:
@@ -10938,6 +11135,9 @@ def fetch_live() -> dict:
     n_boards = int(hb_layout.get("boards") or 4)
 
     boards: list[float | None] = []
+    board_chip_min: list[float | None] = []
+    board_chip_max: list[float | None] = []
+    board_chip_avg: list[float | None] = []
     upfreq: list[int] = []
     factory_parts: list[float] = []
     for i in range(n_boards):
@@ -10948,6 +11148,9 @@ def fetch_live() -> dict:
                 boards.append(t)
             except (TypeError, ValueError):
                 boards.append(None)
+            board_chip_min.append(_f(devs[i].get("Chip Temp Min")))
+            board_chip_max.append(_f(devs[i].get("Chip Temp Max")))
+            board_chip_avg.append(_f(devs[i].get("Chip Temp Avg")))
             try:
                 upfreq.append(int(devs[i].get("Upfreq Complete", 0) or 0))
             except (TypeError, ValueError):
@@ -10961,6 +11164,9 @@ def fetch_live() -> dict:
         else:
             # layout slot without DEVS row (suspend) — null, not fake 0 pad
             boards.append(None)
+            board_chip_min.append(None)
+            board_chip_max.append(None)
+            board_chip_avg.append(None)
             upfreq.append(0)
 
     mode = summary.get("Power Mode") or status.get("power_mode")
@@ -11010,6 +11216,27 @@ def fetch_live() -> dict:
         factory_ghs=factory_ghs,
     )
 
+    # Catalog of all temperature sensors available for this miner / model
+    temps = _build_temp_sensors_catalog(
+        summary=summary,
+        status=status,
+        liquid=liquid,
+        liquid_source=(
+            "v3"
+            if liquid is not None
+            and status.get("liquid_temp") in (None, "")
+            and summary.get("Liquid Temp") in (None, "")
+            else ("status" if status.get("liquid_temp") not in (None, "") else "summary")
+        ),
+        boards=boards,
+        board_chip_min=board_chip_min,
+        board_chip_max=board_chip_max,
+        board_chip_avg=board_chip_avg,
+        psu_temp=psu_temp,
+        miner_type=miner_type_s,
+        n_boards=n_boards,
+    )
+
     body = {
         "ok": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -11027,6 +11254,10 @@ def fetch_live() -> dict:
         "chip_avg": summary.get("Chip Temp Avg"),
         "chip_max": summary.get("Chip Temp Max"),
         "boards": boards,
+        "board_chip_min": board_chip_min,
+        "board_chip_max": board_chip_max,
+        "board_chip_avg": board_chip_avg,
+        "temps": temps,
         "upfreq": upfreq,
         "board_count": n_boards,
         "board_chart_slots": list(hb_layout.get("chart") or [0, 2]),

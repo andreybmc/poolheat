@@ -1386,6 +1386,30 @@
       .fw-item-actions { width: 100%; justify-content: flex-end; }
     }
 
+    .temps-table th,
+    .temps-table td {
+      text-align: left;
+      font-variant-numeric: tabular-nums;
+    }
+    .temps-table .col-val {
+      font-weight: 600;
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+    .temps-table .col-src {
+      color: var(--dim);
+      font-size: 0.72rem;
+      font-family: var(--mono);
+    }
+    .temps-table .is-na {
+      color: var(--dim);
+      font-weight: 450;
+    }
+    .temps-table .grp-chip { color: var(--silicon); }
+    .temps-table .grp-board { color: var(--alum); }
+    .temps-table .grp-coolant { color: var(--accent); }
+    .temps-table .grp-psu { color: var(--warn); }
+
     .err-table {
       width: 100%;
       border-collapse: collapse;
@@ -2881,6 +2905,75 @@
           </div>
         </div>
 
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2 data-i18n="h2.layers">Decision layers</h2>
+                <div class="sub" data-i18n="sub.layers">priority top to bottom</div>
+              </div>
+            </div>
+            <div class="card-b layers" id="layers">
+              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (chip)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="force_stop"><span class="n">2</span><span class="tip" data-tip-key="force_stop">Force Stop (Suspend)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="override"><span class="n">3</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
+              <div class="layer on block" data-layer="warmup"><span class="n">4</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
+              <div class="layer" data-layer="map"><span class="n">5</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
+              <div class="layer" data-layer="fail"><span class="n">6</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2 id="would-apply-title" data-i18n="h2.would_apply">What would apply now</h2>
+                <div class="sub" id="would-apply-sub" data-i18n="sub.would_apply">preview · dry_run</div>
+              </div>
+            </div>
+            <div class="card-b">
+              <div class="grid-3" style="margin-bottom:12px">
+                <div class="metric">
+                  <label>working_mode</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevMode">— hold</div>
+                </div>
+                <div class="metric">
+                  <label>power_limit</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevLim" data-i18n="label.skip">— skip</div>
+                </div>
+                <div class="metric">
+                  <label>power_pct</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevPct" data-i18n="label.skip">— skip</div>
+                </div>
+              </div>
+              <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
+                Warmup: upward (→ Z0) blocked. Map: Z0 / Z1 / Z2 by liquid.
+              </p>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn" type="button" id="btn-override" title="Override 30m · click again to clear">
+                  Override 30m
+                </button>
+                <button class="btn danger" type="button" id="btn-force-suspend" title="Force Stop: sticky Suspend (ignore zones and Dry Run)">
+                  Force Stop
+                </button>
+                <button class="btn danger" type="button" id="btn-reboot-asic" title="Whatsminer reboot — full ASIC reboot">
+                  Reboot ASIC
+                </button>
+                <button class="btn" type="button" id="btn-restart-miner" title="restart_btminer — mining process only">
+                  Restart miner
+                </button>
+                <button
+                  class="btn danger"
+                  type="button"
+                  id="btn-factory-reset-miner"
+                  title="Whatsminer factory_reset — full settings reset"
+                >
+                  Factory reset
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Miner mode / power controls -->
         <div class="card">
           <div class="card-h">
@@ -3003,71 +3096,30 @@
           </div>
         </div>
 
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-h">
-              <div>
-                <h2 data-i18n="h2.layers">Decision layers</h2>
-                <div class="sub" data-i18n="sub.layers">priority top to bottom</div>
-              </div>
+        <div class="card" id="panel-miner-temps">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.temps_catalog">Temperature sensors</h2>
+              <div class="sub" data-i18n="sub.temps_catalog">all points available for this model · live</div>
             </div>
-            <div class="card-b layers" id="layers">
-              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (chip)</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="force_stop"><span class="n">2</span><span class="tip" data-tip-key="force_stop">Force Stop (Suspend)</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="override"><span class="n">3</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
-              <div class="layer on block" data-layer="warmup"><span class="n">4</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
-              <div class="layer" data-layer="map"><span class="n">5</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
-              <div class="layer" data-layer="fail"><span class="n">6</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
-            </div>
+            <span class="pill" id="pill-temps-count" style="display:none"><span class="dot"></span> 0</span>
           </div>
-
-          <div class="card">
-            <div class="card-h">
-              <div>
-                <h2 id="would-apply-title" data-i18n="h2.would_apply">What would apply now</h2>
-                <div class="sub" id="would-apply-sub" data-i18n="sub.would_apply">preview · dry_run</div>
-              </div>
-            </div>
-            <div class="card-b">
-              <div class="grid-3" style="margin-bottom:12px">
-                <div class="metric">
-                  <label>working_mode</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevMode">— hold</div>
-                </div>
-                <div class="metric">
-                  <label>power_limit</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevLim" data-i18n="label.skip">— skip</div>
-                </div>
-                <div class="metric">
-                  <label>power_pct</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevPct" data-i18n="label.skip">— skip</div>
-                </div>
-              </div>
-              <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
-                Warmup: upward (→ Z0) blocked. Map: Z0 / Z1 / Z2 by liquid.
-              </p>
-              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-                <button class="btn" type="button" id="btn-override" title="Override 30m · click again to clear">
-                  Override 30m
-                </button>
-                <button class="btn danger" type="button" id="btn-force-suspend" title="Force Stop: sticky Suspend (ignore zones and Dry Run)">
-                  Force Stop
-                </button>
-                <button class="btn danger" type="button" id="btn-reboot-asic" title="Whatsminer reboot — full ASIC reboot">
-                  Reboot ASIC
-                </button>
-                <button class="btn" type="button" id="btn-restart-miner" title="restart_btminer — mining process only">
-                  Restart miner
-                </button>
-                <button
-                  class="btn danger"
-                  type="button"
-                  id="btn-factory-reset-miner"
-                  title="Whatsminer factory_reset — full settings reset"
-                >
-                  Factory reset
-                </button>
-              </div>
+          <div class="card-b" style="padding-top:10px;padding-bottom:8px">
+            <p id="temps-catalog-hint" style="font-size:0.75rem;color:var(--dim);margin:0 0 8px">—</p>
+            <div style="max-height:min(50vh,420px);overflow:auto">
+              <table class="err-table temps-table" id="temps-catalog-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="temps.col_sensor">Sensor</th>
+                    <th data-i18n="temps.col_value">°C</th>
+                    <th data-i18n="temps.col_group">Group</th>
+                    <th data-i18n="temps.col_source">Source</th>
+                  </tr>
+                </thead>
+                <tbody id="temps-catalog-body">
+                  <tr><td colspan="4" style="color:var(--dim);text-align:center;padding:12px">—</td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -5195,6 +5247,19 @@
         "h2.power": "Power · Hashrate · J/T",
         "h2.mode": "Miner mode",
         "h2.boards": "Boards (PCB) · hashboard",
+        "h2.temps_catalog": "Temperature sensors",
+        "sub.temps_catalog": "all points available for this model · live",
+        "temps.col_sensor": "Sensor",
+        "temps.col_value": "°C",
+        "temps.col_group": "Group",
+        "temps.col_source": "Source",
+        "temps.na": "n/a",
+        "temps.group.ambient": "ambient",
+        "temps.group.coolant": "coolant",
+        "temps.group.chip": "chip",
+        "temps.group.board": "board",
+        "temps.group.board_chip": "board chip",
+        "temps.group.psu": "PSU",
         "h2.layers": "Decision layers",
         "sub.layers": "priority top to bottom",
         "h2.would_apply": "What would apply now",
@@ -5564,6 +5629,19 @@
         "h2.power": "Мощность · Хешрейт · J/T",
         "h2.mode": "Режим майнера",
         "h2.boards": "Платы (PCB) · hashboard",
+        "h2.temps_catalog": "Датчики температуры",
+        "sub.temps_catalog": "все точки для этой модели · live",
+        "temps.col_sensor": "Датчик",
+        "temps.col_value": "°C",
+        "temps.col_group": "Группа",
+        "temps.col_source": "Источник",
+        "temps.na": "н/д",
+        "temps.group.ambient": "окружение",
+        "temps.group.coolant": "теплоноситель",
+        "temps.group.chip": "чипы",
+        "temps.group.board": "платы",
+        "temps.group.board_chip": "плата · чипы",
+        "temps.group.psu": "БП",
         "h2.layers": "Слои решения",
         "sub.layers": "приоритет сверху вниз",
         "h2.would_apply": "Что применили бы сейчас",
@@ -7860,6 +7938,9 @@
           hash_stable: !notStable,
           dry: !!(dryRunEl && dryRunEl.checked),
           source: "live",
+          temps: Array.isArray(live.temps) ? live.temps : [],
+          board_count: live.board_count,
+          board_layout_note: live.board_layout_note,
           online: true,
           host: live.host || minerHostLabel(),
           miner_type: live.miner_type || window.__poolheatMinerType || null,
@@ -8257,6 +8338,106 @@
     }
     let rLastBoardNote = "devs[].Temperature · Upfreq Complete";
 
+    function renderTempsCatalog(liveObj) {
+      const body = document.getElementById("temps-catalog-body");
+      const hint = document.getElementById("temps-catalog-hint");
+      const pill = document.getElementById("pill-temps-count");
+      if (!body) return;
+      const list = Array.isArray(liveObj && liveObj.temps) ? liveObj.temps : [];
+      const ru = typeof getUiLang === "function" && getUiLang() === "ru";
+      const avail = list.filter((x) => x && x.available && x.value != null);
+      if (pill) {
+        pill.style.display = list.length ? "inline-flex" : "none";
+        pill.innerHTML =
+          '<span class="dot"></span> ' +
+          avail.length +
+          (list.length && avail.length !== list.length
+            ? "/" + list.length
+            : "");
+      }
+      if (hint) {
+        const mt =
+          (liveObj && (liveObj.miner_type || liveObj.model)) ||
+          (rLastBoardNote && rLastBoardNote.includes("·")
+            ? ""
+            : "") ||
+          "—";
+        const model =
+          (liveObj && liveObj.miner_type) ||
+          (typeof live !== "undefined" && live && live.miner_type) ||
+          "—";
+        hint.textContent =
+          (model && model !== "—" ? model + " · " : "") +
+          avail.length +
+          " " +
+          (ru ? "с данными" : "with data") +
+          (list.length > avail.length
+            ? " · " + (list.length - avail.length) + (ru ? " н/д" : " n/a")
+            : "");
+      }
+      if (!list.length) {
+        body.innerHTML =
+          '<tr><td colspan="4" style="color:var(--dim);text-align:center;padding:12px">' +
+          (ru ? "нет данных" : "no data") +
+          "</td></tr>";
+        return;
+      }
+      const esc = (s) =>
+        String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      body.innerHTML = list
+        .map((it) => {
+          const lab = ru
+            ? it.label_ru || it.label || it.id
+            : it.label || it.id;
+          const grpKey = "temps.group." + (it.group || "");
+          const grp =
+            typeof t === "function"
+              ? t(grpKey, it.group || "—")
+              : it.group || "—";
+          const val =
+            it.available && it.value != null
+              ? Number(it.value).toFixed(2)
+              : typeof t === "function"
+                ? t("temps.na", "n/a")
+                : "n/a";
+          const na = !(it.available && it.value != null);
+          const grpClass =
+            it.group === "chip" || it.group === "board_chip"
+              ? "grp-chip"
+              : it.group === "board"
+                ? "grp-board"
+                : it.group === "coolant"
+                  ? "grp-coolant"
+                  : it.group === "psu"
+                    ? "grp-psu"
+                    : "";
+          return (
+            "<tr>" +
+            "<td>" +
+            esc(lab) +
+            "</td>" +
+            '<td class="col-val' +
+            (na ? " is-na" : "") +
+            '">' +
+            esc(val) +
+            "</td>" +
+            '<td class="' +
+            grpClass +
+            '">' +
+            esc(grp) +
+            "</td>" +
+            '<td class="col-src">' +
+            esc(it.source || "—") +
+            "</td>" +
+            "</tr>"
+          );
+        })
+        .join("");
+    }
+
     function updateTempDisplay(r) {
       const nB = resolveBoardCount(r);
       if (r && r.board_layout_note) {
@@ -8269,6 +8450,14 @@
           "devs[].Temperature · Upfreq Complete · " + r.miner_type;
       }
       ensureBoardsGrid(nB);
+      // full sensor catalog from live.temps (model-aware)
+      try {
+        if (typeof live !== "undefined" && live && Array.isArray(live.temps)) {
+          renderTempsCatalog(live);
+        } else if (r && Array.isArray(r.temps)) {
+          renderTempsCatalog(r);
+        }
+      } catch (_) { /* ignore */ }
       const title = document.getElementById("boards-pcb-title");
       if (title) {
         title.textContent = "Boards (PCB) · " + nB + " hashboard";
