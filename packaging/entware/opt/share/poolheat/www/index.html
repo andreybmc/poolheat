@@ -1895,12 +1895,13 @@
       margin-right: 8px;
       color: rgba(255, 255, 255, 0.4);
     }
-    /* next to temperature (top of content row), not card header */
+    /* next to temperature — pulled up to sit closer to card top / temp row */
     .wx-widget .wx-icon-wrap {
       flex-shrink: 0;
       width: 72px;
       height: 72px;
-      margin-top: -2px; /* slightly above temp baseline */
+      margin-top: -18px; /* higher: align with top of big temperature */
+      align-self: flex-start;
       display: grid;
       place-items: center;
       filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));
@@ -1914,6 +1915,7 @@
       object-fit: contain;
       user-select: none;
       pointer-events: none;
+      transform: translateY(-4px);
     }
     .wx-widget .wx-meta {
       display: flex;
@@ -3878,13 +3880,24 @@
                 <label class="field"><span data-i18n="field.sensor_alias">System alias</span>
                   <input type="text" id="sensor-alias" placeholder="outdoor" autocomplete="off" pattern="[a-z][a-z0-9_]*" />
                 </label>
-                <label class="field"><span data-i18n="field.sensor_name">Display name</span>
-                  <input type="text" id="sensor-name" placeholder="Outdoor" autocomplete="off" />
+                <label class="field" style="grid-column:span 1">
+                  <span id="sensor-name-primary-label" data-i18n="field.sensor_name">Display name</span>
+                  <input type="text" id="sensor-name-primary" placeholder="Outdoor" autocomplete="off" />
+                  <button type="button" class="linkish" id="btn-sensor-name-other" style="margin-top:6px;background:none;border:none;padding:0;color:var(--accent);font-size:0.75rem;cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2px">
+                    + English name
+                  </button>
                 </label>
                 <label class="field"><span data-i18n="field.sensor_unit">Unit</span>
                   <input type="text" id="sensor-unit" value="°C" autocomplete="off" />
                 </label>
               </div>
+              <label class="field" id="sensor-name-other-wrap" hidden style="max-width:420px">
+                <span id="sensor-name-other-label">English name</span>
+                <input type="text" id="sensor-name-other" placeholder="" autocomplete="off" />
+                <span class="desc" style="display:block;margin-top:4px;font-size:0.72rem;color:var(--dim)" data-i18n="hint.sensor_name_bilingual">
+                  If left empty, the other language is copied from the primary name on save.
+                </span>
+              </label>
               <label class="check">
                 <input type="checkbox" id="sensor-enabled" checked />
                 <span data-i18n="check.sensor_enabled">Enabled</span>
@@ -4829,6 +4842,12 @@
         "btn.add_point": "Add point",
         "field.sensor_alias": "System alias",
         "field.sensor_name": "Display name",
+        "field.sensor_name_en": "English name",
+        "field.sensor_name_ru": "Russian name",
+        "link.sensor_name_other_en": "+ English name",
+        "link.sensor_name_other_ru": "+ Russian name",
+        "link.sensor_name_hide": "Hide other language",
+        "hint.sensor_name_bilingual": "If left empty, the other language is copied from the primary name on save.",
         "field.sensor_unit": "Unit",
         "field.sensor_sources": "Sources (priority top → bottom)",
         "field.sensor_transform": "Transform",
@@ -5103,6 +5122,12 @@
         "btn.add_point": "Добавить точку",
         "field.sensor_alias": "Системный alias",
         "field.sensor_name": "Название",
+        "field.sensor_name_en": "Название (EN)",
+        "field.sensor_name_ru": "Название (RU)",
+        "link.sensor_name_other_en": "+ название на English",
+        "link.sensor_name_other_ru": "+ название на русском",
+        "link.sensor_name_hide": "Скрыть другой язык",
+        "hint.sensor_name_bilingual": "Если второе поле пустое — при сохранении скопируется из основного.",
         "field.sensor_unit": "Единица",
         "field.sensor_sources": "Источники (приоритет сверху вниз)",
         "field.sensor_transform": "Преобразование",
@@ -15357,11 +15382,53 @@
     let sensorsValues = {};
     let sensorsCatalog = { live_fields: [], weather_fields: [] };
     let sensorEditorOpen = false;
+    let sensorNameOtherOpen = false;
 
     function fmtSensorVal(v) {
       if (v == null || v === "" || !Number.isFinite(Number(v))) return "—";
       const n = Number(v);
       return Math.abs(n) >= 100 ? n.toFixed(0) : n.toFixed(1);
+    }
+
+    function sensorDisplayName(s) {
+      if (!s) return "—";
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      if (lang === "ru") {
+        return s.name_ru || s.name || s.name_en || s.alias || s.id || "—";
+      }
+      return s.name_en || s.name || s.name_ru || s.alias || s.id || "—";
+    }
+
+    function syncSensorNameLabels() {
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const primaryIsRu = lang === "ru";
+      const pLab = document.getElementById("sensor-name-primary-label");
+      const oLab = document.getElementById("sensor-name-other-label");
+      const link = document.getElementById("btn-sensor-name-other");
+      if (pLab) {
+        pLab.textContent = primaryIsRu
+          ? t("field.sensor_name_ru", "Russian name")
+          : t("field.sensor_name_en", "English name");
+      }
+      if (oLab) {
+        oLab.textContent = primaryIsRu
+          ? t("field.sensor_name_en", "English name")
+          : t("field.sensor_name_ru", "Russian name");
+      }
+      if (link && !sensorNameOtherOpen) {
+        link.textContent = primaryIsRu
+          ? t("link.sensor_name_other_en", "+ English name")
+          : t("link.sensor_name_other_ru", "+ Russian name");
+      } else if (link && sensorNameOtherOpen) {
+        link.textContent = t("link.sensor_name_hide", "Hide other language");
+      }
+    }
+
+    function setSensorNameOtherOpen(open) {
+      sensorNameOtherOpen = !!open;
+      const wrap = document.getElementById("sensor-name-other-wrap");
+      if (wrap) wrap.hidden = !sensorNameOtherOpen;
+      syncSensorNameLabels();
     }
 
     function describeSource(src) {
@@ -15398,13 +15465,14 @@
             : ev.error || "—";
           const note = ev.note ? " · " + ev.note : "";
           const en = s.enabled !== false;
+          const title = sensorDisplayName(s);
           return (
             '<div class="card" style="margin:0;background:var(--panel2)">' +
             '<div class="card-b" style="padding:12px 14px">' +
             '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">' +
             "<div>" +
             '<div style="font-weight:650;font-size:0.95rem">' +
-            (s.name || alias) +
+            title +
             ' <span style="color:var(--dim);font-weight:500;font-size:0.8rem">· ' +
             alias +
             "</span></div>" +
@@ -15645,6 +15713,8 @@
         id: "",
         alias: "",
         name: "",
+        name_en: "",
+        name_ru: "",
         unit: "°C",
         enabled: true,
         sources: [{ type: "live", field: "liquid" }],
@@ -15652,7 +15722,23 @@
       };
       document.getElementById("sensor-id").value = s.id || "";
       document.getElementById("sensor-alias").value = s.alias || "";
-      document.getElementById("sensor-name").value = s.name || "";
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const nameEn = s.name_en || s.name || "";
+      const nameRu = s.name_ru || s.name || "";
+      const primary = document.getElementById("sensor-name-primary");
+      const other = document.getElementById("sensor-name-other");
+      if (lang === "ru") {
+        if (primary) primary.value = nameRu;
+        if (other) other.value = nameEn;
+      } else {
+        if (primary) primary.value = nameEn;
+        if (other) other.value = nameRu;
+      }
+      // expand other lang if it differs from primary
+      const showOther =
+        !!(nameEn && nameRu && nameEn !== nameRu) ||
+        !!(nameEn && nameRu && nameEn.trim() !== nameRu.trim());
+      setSensorNameOtherOpen(showOther);
       document.getElementById("sensor-unit").value = s.unit || "°C";
       document.getElementById("sensor-enabled").checked = s.enabled !== false;
       document.getElementById("sensor-note").value = s.note || "";
@@ -15692,6 +15778,7 @@
 
     function closeSensorEditor() {
       sensorEditorOpen = false;
+      setSensorNameOtherOpen(false);
       const panel = document.getElementById("panel-sensor-editor");
       if (panel) panel.hidden = true;
     }
@@ -15712,10 +15799,26 @@
     }
 
     async function saveSensorFromEditor() {
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const primary = (document.getElementById("sensor-name-primary")?.value || "").trim();
+      let other = (document.getElementById("sensor-name-other")?.value || "").trim();
+      // if other empty or panel closed — auto-copy from primary
+      if (!other) other = primary;
+      let name_en = "";
+      let name_ru = "";
+      if (lang === "ru") {
+        name_ru = primary;
+        name_en = other || primary;
+      } else {
+        name_en = primary;
+        name_ru = other || primary;
+      }
       const payload = {
         id: document.getElementById("sensor-id")?.value || undefined,
         alias: (document.getElementById("sensor-alias")?.value || "").trim().toLowerCase(),
-        name: (document.getElementById("sensor-name")?.value || "").trim(),
+        name_en: name_en,
+        name_ru: name_ru,
+        name: name_en || name_ru,
         unit: (document.getElementById("sensor-unit")?.value || "°C").trim(),
         enabled: !!document.getElementById("sensor-enabled")?.checked,
         note: document.getElementById("sensor-note")?.value || "",
@@ -15781,6 +15884,13 @@
     document.getElementById("btn-sensor-cancel")?.addEventListener("click", closeSensorEditor);
     document.getElementById("btn-sensor-save")?.addEventListener("click", saveSensorFromEditor);
     document.getElementById("btn-sensor-delete")?.addEventListener("click", deleteSensorFromEditor);
+    document.getElementById("btn-sensor-name-other")?.addEventListener("click", () => {
+      setSensorNameOtherOpen(!sensorNameOtherOpen);
+    });
+    // keep bilingual labels in sync when language changes while editor open
+    document.addEventListener("poolheat:lang", () => {
+      if (sensorEditorOpen) syncSensorNameLabels();
+    });
     document.getElementById("btn-sensor-source-add")?.addEventListener("click", () => {
       const sources = collectSourcesFromDom();
       sources.push({ type: "live", field: "env" });

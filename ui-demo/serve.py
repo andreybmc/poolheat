@@ -5011,6 +5011,34 @@ def _normalize_sensor_transform(raw: dict | None) -> dict:
     return {"type": "none"}
 
 
+def _normalize_sensor_names(raw: dict, alias: str) -> tuple[str, str, str]:
+    """
+    Bilingual display names.
+
+    Accepts ``name_en`` / ``name_ru`` and legacy ``name``.
+    If only one language is set, the other is auto-filled from it.
+    Returns (name_en, name_ru, name) where ``name`` is a default fallback
+    (EN preferred, then RU, then alias).
+    """
+    en = str(raw.get("name_en") or "").strip()
+    ru = str(raw.get("name_ru") or "").strip()
+    legacy = str(raw.get("name") or "").strip()
+    if not en and not ru:
+        if legacy:
+            en = ru = legacy
+        else:
+            en = ru = alias
+    elif en and not ru:
+        ru = en
+    elif ru and not en:
+        en = ru
+    # keep lengths sane
+    en = (en or alias)[:80]
+    ru = (ru or en or alias)[:80]
+    name = en or ru or alias
+    return en, ru, name
+
+
 def _normalize_sensor(raw: dict | None) -> dict | None:
     if not isinstance(raw, dict):
         return None
@@ -5018,7 +5046,7 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
     if not _sensor_alias_ok(alias):
         return None
     sid = str(raw.get("id") or "").strip() or _new_sensor_id()
-    name = str(raw.get("name") or alias).strip() or alias
+    name_en, name_ru, name = _normalize_sensor_names(raw, alias)
     unit = str(raw.get("unit") or "°C").strip() or "°C"
     enabled = bool(raw.get("enabled", True))
     sources_raw = raw.get("sources")
@@ -5042,6 +5070,8 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
         "id": sid,
         "alias": alias,
         "name": name,
+        "name_en": name_en,
+        "name_ru": name_ru,
         "unit": unit,
         "enabled": enabled,
         "sources": sources,
@@ -5248,6 +5278,8 @@ def evaluate_sensor(
         "alias": alias,
         "id": sensor.get("id"),
         "name": sensor.get("name") or alias,
+        "name_en": sensor.get("name_en") or sensor.get("name") or alias,
+        "name_ru": sensor.get("name_ru") or sensor.get("name") or alias,
         "enabled": bool(sensor.get("enabled", True)),
         "source_used": None,
         "note": None,
