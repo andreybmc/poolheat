@@ -34,6 +34,7 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -7135,6 +7136,15 @@ _cache: dict | None = None
 _cache_ts = 0.0
 _cache_lock = threading.Lock()
 CACHE_TTL = 2.0
+# How long HTTP /api/live may wait on a fresh miner poll before returning last-good.
+# Prevents UI "service dead" when ASIC is rebooting / slow (factory reset, upfreq).
+LIVE_HTTP_WAIT_SEC = 3.5
+# Stale-but-ok cache still preferred over hard error up to this age.
+LIVE_STALE_MAX_SEC = 120.0
+# Single-flight live fetch so concurrent UI tabs share one miner poll.
+_live_fetch_lock = threading.Lock()
+_live_fetch_future = None  # concurrent.futures.Future | None
+_live_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-poll")
 # Serialize TCP 4028 access so live poll / collector / privileged writes
 # do not race and exhaust Whatsminer "over max connect" sessions.
 _miner_io_lock = threading.RLock()
@@ -22307,11 +22317,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _json_response(self, code: int, body: dict) -> None:
         data = json.dumps(body, ensure_ascii=False, default=str).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Client navigated away / closed tab mid-response — not a service crash
+            return
 
     def _api_sniffer_download(self) -> None:
         """GET /api/sniffer/download — current (or named) pcap file."""
@@ -22404,28 +22418,85 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_live(self) -> None:
-        global _cache, _cache_ts
+        """
+        Live snapshot for the UI.
+
+        Critical: never hold ``_cache_lock`` across ``fetch_live()`` (miner I/O
+        can take many seconds). Concurrent clients share a single in-flight
+        poll; if it is slow, return last-good cache quickly so the UI does not
+        look like the service is down.
+        """
+        global _cache, _cache_ts, _live_fetch_future
         now = time.time()
+        body: dict | None = None
+        stale: dict | None = None
+        stale_age = 0.0
+
         with _cache_lock:
-            use_cache = (
+            if (
                 _cache is not None
                 and (now - _cache_ts) < CACHE_TTL
                 and _cache.get("ok")
-            )
-            if use_cache:
+            ):
                 body = dict(_cache)
-            else:
-                try:
-                    body = fetch_live()
-                    _cache = body
-                    _cache_ts = now
-                except Exception as e:
+            elif _cache is not None:
+                stale = dict(_cache)
+                stale_age = max(0.0, now - float(_cache_ts or 0))
+
+        if body is None:
+            # Single-flight: one worker polls miner; others wait briefly or take stale
+            with _live_fetch_lock:
+                fut = _live_fetch_future
+                if fut is None or fut.done():
+
+                    def _do_fetch() -> dict:
+                        global _cache, _cache_ts
+                        snap = fetch_live()
+                        with _cache_lock:
+                            _cache = snap
+                            _cache_ts = time.time()
+                        return snap
+
+                    fut = _live_executor.submit(_do_fetch)
+                    _live_fetch_future = fut
+            try:
+                body = fut.result(timeout=LIVE_HTTP_WAIT_SEC)
+            except FuturesTimeout:
+                # Poll continues in background; prefer last-good for responsiveness
+                if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
+                    body = dict(stale)
+                    body["stale"] = True
+                    body["error"] = "miner poll slow · last good snapshot"
+                    body["stale_age_sec"] = round(stale_age, 1)
+                else:
+                    body = {
+                        "ok": False,
+                        "error": "miner poll timeout",
+                        "ts": datetime.now().isoformat(timespec="seconds"),
+                        "host": f"{HOST_MINER}:{PORT_MINER}",
+                    }
+            except Exception as e:
+                if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
+                    body = dict(stale)
+                    body["stale"] = True
+                    body["error"] = str(e)
+                    body["stale_age_sec"] = round(stale_age, 1)
+                else:
                     body = {
                         "ok": False,
                         "error": str(e),
                         "ts": datetime.now().isoformat(timespec="seconds"),
                         "host": f"{HOST_MINER}:{PORT_MINER}",
                     }
+
+        if not isinstance(body, dict):
+            body = {
+                "ok": False,
+                "error": "no live data",
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "host": f"{HOST_MINER}:{PORT_MINER}",
+            }
+
         with _state_lock:
             body["power_pct_cmd"] = _state.get("power_pct_cmd")
             body["power_limit_cmd"] = _state.get("power_limit_cmd")
