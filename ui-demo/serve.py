@@ -250,7 +250,8 @@ _policy_ctrl: dict = {
     "schedule_until_ts": None,
 }
 
-# Sensors usable as T_ctrl for heat-zone map (not Safety / chip Critical).
+# Built-in miner fields usable as T_ctrl for heat-zone map (not Safety / chip Critical).
+# Peripheral virtual sensors use id ``sensor:<alias>`` (Peripherals → Sensors).
 T_CTRL_SENSORS: tuple[str, ...] = (
     "liquid",
     "env",
@@ -261,7 +262,24 @@ T_CTRL_SENSORS: tuple[str, ...] = (
 
 
 def _normalize_t_ctrl_sensor(v) -> str:
-    s = str(v or "liquid").strip().lower().replace("-", "_").replace(" ", "_")
+    """
+    Zone-map T_ctrl source:
+      - built-in miner fields: liquid | env | chip_avg | chip_max | board_max
+      - peripheral virtual sensors: sensor:<alias>  (Peripherals → Sensors)
+    """
+    raw = str(v or "liquid").strip()
+    s = raw.lower().replace("-", "_").replace(" ", "_")
+    for pref in ("sensor:", "sensors:", "alias:", "virt:", "virtual:"):
+        if s.startswith(pref):
+            alias = s.split(":", 1)[1].strip().lower()
+            # _sensor_alias_ok is defined later; fall back to simple check if needed
+            try:
+                ok = _sensor_alias_ok(alias)
+            except NameError:
+                ok = bool(alias) and alias.replace("_", "").isalnum()
+            if ok:
+                return f"sensor:{alias}"
+            return "liquid"
     aliases = {
         "liquid_temp": "liquid",
         "coolant": "liquid",
@@ -277,15 +295,49 @@ def _normalize_t_ctrl_sensor(v) -> str:
         "pcb_max": "board_max",
     }
     s = aliases.get(s, s)
-    return s if s in T_CTRL_SENSORS else "liquid"
+    if s in T_CTRL_SENSORS:
+        return s
+    # bare alias of a configured peripheral sensor
+    try:
+        if _sensor_alias_ok(s) and get_sensor_by_alias(s) is not None:
+            return f"sensor:{s}"
+    except Exception:
+        pass
+    try:
+        if _sensor_alias_ok(s):
+            # allow storing alias even if sensors not loaded yet (backup restore)
+            return f"sensor:{s}"
+    except Exception:
+        pass
+    return "liquid"
 
 
 def resolve_t_ctrl(
     live: dict | None, sensor: str | None = None
 ) -> tuple[float | None, str]:
-    """Return (T_ctrl °C, normalized sensor id) from a live snapshot."""
+    """Return (T_ctrl °C, normalized sensor id) from live snapshot and/or virtual sensors."""
+    if sensor is None:
+        try:
+            sensor = (get_zone_cfg() or {}).get("t_ctrl_sensor") or "liquid"
+        except Exception:
+            sensor = "liquid"
     sens = _normalize_t_ctrl_sensor(sensor)
     live = live if isinstance(live, dict) else {}
+    if sens.startswith("sensor:"):
+        alias = sens.split(":", 1)[1]
+        try:
+            sdef = get_sensor_by_alias(alias)
+        except Exception:
+            sdef = None
+        if not sdef or sdef.get("enabled") is False:
+            return None, sens
+        try:
+            ev = evaluate_sensor(sdef, live=live)
+            if ev.get("ok"):
+                return _f(ev.get("value")), sens
+        except Exception:
+            pass
+        return None, sens
     if sens == "liquid":
         return _f(live.get("liquid")), sens
     if sens == "env":
@@ -303,6 +355,25 @@ def resolve_t_ctrl(
                 vals.append(fb)
         return (max(vals) if vals else None), sens
     return _f(live.get("liquid")), "liquid"
+
+
+def list_t_ctrl_sensor_options() -> list[dict]:
+    """Options for Zone map T_ctrl select: miner live fields + virtual sensors."""
+    # Same catalog as pool water (built-ins + Peripherals → Sensors)
+    try:
+        return list_pool_water_sensor_options()
+    except Exception:
+        out: list[dict] = []
+        labels = {
+            "liquid": "liquid — ASIC liquid_temp (coolant)",
+            "env": "env — Env Temp (ambient)",
+            "chip_avg": "chip avg",
+            "chip_max": "chip max",
+            "board_max": "board max (PCB)",
+        }
+        for sid in T_CTRL_SENSORS:
+            out.append({"id": sid, "group": "miner", "label": labels.get(sid, sid)})
+        return out
 
 
 DEFAULT_ZONE_CFG: dict = {
@@ -1936,10 +2007,15 @@ FILTRATION_BACKENDS: list[dict] = [
         "label": "Tuya / Smart Life (LAN)",
         "hint": "LAN TCP:6668 · email/password app → local_key · IP розетки",
     },
+    {
+        "id": "xiaomi",
+        "label": "Xiaomi / Mi Home (LAN)",
+        "hint": "LAN miIO UDP:54321 · IP + token (32 hex) · Smart Plug / switch",
+    },
 ]
 _FILTRATION_BACKEND_IDS = {b["id"] for b in FILTRATION_BACKENDS}
-# Devices also accept smartlife alias for tuya
-_DEVICE_BACKEND_EXTRA = {"smartlife", "smart_life"}
+# Devices also accept smartlife alias for tuya; mi / mihome → xiaomi
+_DEVICE_BACKEND_EXTRA = {"smartlife", "smart_life", "mi", "mihome", "mi_home", "miio"}
 
 DEFAULT_FILTRATION_CFG: dict = {
     "enabled": False,
@@ -2786,6 +2862,100 @@ def _filtration_http(
         return int(resp.status), resp.read().decode("utf-8", errors="replace")
 
 
+def _actuator_error_reason(
+    exc: BaseException,
+    *,
+    backend: str | None = None,
+    lang: str = "ru",
+) -> str:
+    """Shared reason line for filtration / device errors (no head)."""
+    en = str(lang or "ru").lower().startswith("en")
+    raw = str(exc or "").strip()
+    low = raw.lower()
+    be = str(backend or "").strip().lower()
+
+    if be == "tapo" or "tapo" in low:
+        if (
+            "email/password empty" in low
+            or "email empty" in low
+            or "password empty" in low
+            or ("email" in low and "password" in low and "empty" in low)
+            or "не настроен" in low
+        ):
+            return (
+                "Tapo email/password not configured"
+                if en
+                else "Tapo email/password не настроен"
+            )
+        if (
+            "bad email/password" in low
+            or "auth mismatch" in low
+            or "login error" in low
+            or "login_device" in low
+            or "invalid" in low
+            or "unauthorized" in low
+            or "error_code=-1501" in low
+            or "error_code= -1501" in low
+            or "не действитель" in low
+        ):
+            return (
+                "Tapo email/password invalid"
+                if en
+                else "Tapo email/password не действительны"
+            )
+        if "1003" in low or ("klap" in low and ("handshake" in low or "auth" in low)):
+            return (
+                "Tapo KLAP auth failed (email/password?)"
+                if en
+                else "Tapo KLAP: email/password не действительны"
+            )
+        if "ip empty" in low or ("ip" in low and "empty" in low):
+            return "Tapo IP not configured" if en else "Tapo IP не настроен"
+        if (
+            "timed out" in low
+            or "timeout" in low
+            or "unreachable" in low
+            or "no route" in low
+            or "network is unreachable" in low
+            or "connection refused" in low
+            or "reset by peer" in low
+            or "name or service not known" in low
+            or "nodename nor servname" in low
+            or "failed to resolve" in low
+        ):
+            return (
+                "Tapo device unreachable"
+                if en
+                else "Tapo устройство недоступно"
+            )
+        if "handshake" in low or "decrypt" in low or "1003" in low:
+            return (
+                "Tapo protocol/auth failed (KLAP / password)"
+                if en
+                else "Tapo: ошибка протокола/пароля (KLAP)"
+            )
+        if "server" in low or "cloud" in low or "api.tapo" in low:
+            return (
+                "Tapo server unavailable"
+                if en
+                else "Tapo сервер недоступен"
+            )
+        return (
+            "Tapo device unreachable"
+            if en
+            else "Tapo устройство недоступно"
+        )
+    if "disabled" in low or "отключ" in low:
+        return (
+            "device disabled"
+            if en
+            else "устройство отключено"
+        )
+    if "майнинг" in low or "mining" in low or "suspend" in low:
+        return raw[:120] if raw else ("blocked" if en else "запрещено")
+    return raw[:120] if raw else ("unknown error" if en else "неизвестная ошибка")
+
+
 def _filtration_user_error(
     exc: BaseException,
     *,
@@ -2800,10 +2970,6 @@ def _filtration_user_error(
     Tapo email/password не настроен
     """
     en = str(lang or "ru").lower().startswith("en")
-    raw = str(exc or "").strip()
-    low = raw.lower()
-    be = str(backend or "").strip().lower()
-
     if en:
         head_on = "Could not enable filtration:"
         head_off = "Could not disable filtration:"
@@ -2812,110 +2978,71 @@ def _filtration_user_error(
         head_on = "Не удалось активировать фильтрацию:"
         head_off = "Не удалось выключить фильтрацию:"
         head_test = "Не удалось проверить фильтрацию:"
-
     if on is True:
         head = head_on
     elif on is False:
         head = head_off
     else:
         head = head_test
-
-    # --- classify ---
-    reason = None
-    if be == "tapo" or "tapo" in low:
-        if (
-            "email/password empty" in low
-            or "email empty" in low
-            or "password empty" in low
-            or ("email" in low and "password" in low and "empty" in low)
-            or "не настроен" in low
-        ):
-            reason = (
-                "Tapo email/password not configured"
-                if en
-                else "Tapo email/password не настроен"
-            )
-        elif (
-            "bad email/password" in low
-            or "auth mismatch" in low
-            or "login error" in low
-            or "login_device" in low
-            or "invalid" in low
-            or "unauthorized" in low
-            or "error_code=-1501" in low
-            or "error_code= -1501" in low
-            or "не действитель" in low
-        ):
-            reason = (
-                "Tapo email/password invalid"
-                if en
-                else "Tapo email/password не действительны"
-            )
-        elif "1003" in low or ("klap" in low and ("handshake" in low or "auth" in low)):
-            reason = (
-                "Tapo KLAP auth failed (email/password?)"
-                if en
-                else "Tapo KLAP: email/password не действительны"
-            )
-        elif "ip empty" in low or ("ip" in low and "empty" in low):
-            reason = "Tapo IP not configured" if en else "Tapo IP не настроен"
-        elif (
-            "timed out" in low
-            or "timeout" in low
-            or "unreachable" in low
-            or "no route" in low
-            or "network is unreachable" in low
-        ):
-            # local plug first (handshake is LAN)
-            reason = (
-                "Tapo device unreachable"
-                if en
-                else "Tapo устройство недоступно"
-            )
-        elif (
-            "connection refused" in low
-            or "reset by peer" in low
-            or "name or service not known" in low
-            or "nodename nor servname" in low
-            or "failed to resolve" in low
-        ):
-            reason = (
-                "Tapo device unreachable"
-                if en
-                else "Tapo устройство недоступно"
-            )
-        elif "handshake" in low or "decrypt" in low or "1003" in low:
-            # often new FW (KLAP) or wrong protocol — not pure LAN timeout
-            reason = (
-                "Tapo protocol/auth failed (KLAP / password)"
-                if en
-                else "Tapo: ошибка протокола/пароля (KLAP)"
-            )
-        elif "server" in low or "cloud" in low or "api.tapo" in low:
-            reason = (
-                "Tapo server unavailable"
-                if en
-                else "Tapo сервер недоступен"
-            )
-        else:
-            reason = (
-                "Tapo device unreachable"
-                if en
-                else "Tapo устройство недоступно"
-            )
-    elif "disabled" in low or "отключ" in low:
-        reason = (
-            "filtration disabled in settings"
-            if en
-            else "фильтрация отключена в настройках"
-        )
-    elif "майнинг" in low or "mining" in low:
-        reason = raw  # already laconic RU
-    else:
-        # generic backends — keep short
-        reason = raw[:120] if raw else ("unknown error" if en else "неизвестная ошибка")
-
+    reason = _actuator_error_reason(exc, backend=backend, lang=lang)
     return f"{head}\n{reason}"
+
+
+def _device_user_error(
+    exc: BaseException,
+    *,
+    on: bool | None = None,
+    backend: str | None = None,
+    lang: str = "ru",
+) -> str:
+    """
+    Laconic peripheral device errors (not filtration wording).
+
+    RU: Не удалось выключить: Tapo устройство недоступно
+    EN: Could not turn off: Tapo device unreachable
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    if en:
+        if on is True:
+            head = "Could not turn on"
+        elif on is False:
+            head = "Could not turn off"
+        else:
+            head = "Device check failed"
+    else:
+        if on is True:
+            head = "Не удалось включить"
+        elif on is False:
+            head = "Не удалось выключить"
+        else:
+            head = "Не удалось проверить"
+    reason = _actuator_error_reason(exc, backend=backend, lang=lang)
+    return f"{head}: {reason}"
+
+
+def device_state_phrase(on: bool | None, lang: str = "ru") -> str:
+    """Short on/off label for TG/UI by language."""
+    en = str(lang or "ru").lower().startswith("en")
+    if on is True:
+        return "on" if en else "вкл."
+    if on is False:
+        return "off" if en else "выкл."
+    return "—" if en else "—"
+
+
+def device_notify_line(d: dict, on: bool | None, lang: str = "ru") -> str:
+    """
+    Language-aware device state line for Telegram.
+    Example: 🌀 Pump: on  /  🌀 Насос: вкл.
+    """
+    icon = str((d or {}).get("icon") or "").strip()
+    name = device_display_name(d or {}, lang) or str(
+        (d or {}).get("alias") or "device"
+    )
+    st = device_state_phrase(on, lang)
+    if icon:
+        return f"{icon} {name}: {st}"
+    return f"{name}: {st}"
 
 
 def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
@@ -3546,21 +3673,21 @@ DEVICE_ALIAS_RESERVED: frozenset[str] = frozenset(
 )
 
 DEVICE_ICON_DEFAULTS: tuple[str, ...] = (
-    "🔌",
-    "💡",
-    "💧",
-    "🔥",
-    "🌀",
-    "⚙️",
-    "🔆",
+    "💧",  # drop
+    "🌀",  # hose / coil
+    "🚿",  # shower
+    "🏊",  # swimmer
+    "🔆",  # sun
+    "💡",  # bulb
+    "🔌",  # plug
+    "⚡",  # lightning
+    "⚙️",  # gear
+    "🛠️",  # tools
+    "🌡️",  # thermometer
+    "🔥",  # fire
     "🧊",
-    "🚿",
     "🪴",
-    "🔋",
-    "🛠️",
     "🏠",
-    "⚡",
-    "🌡️",
     "🔔",
 )
 
@@ -3589,6 +3716,8 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
     be = str(raw.get("backend") or "tapo").strip().lower()
     if be in ("smartlife", "smart_life"):
         be = "tuya"
+    if be in ("mi", "mihome", "mi_home", "miio", "mijia"):
+        be = "xiaomi"
     if be not in _FILTRATION_BACKEND_IDS and be not in _DEVICE_BACKEND_EXTRA:
         be = "tapo"
     out: dict = {
@@ -3618,13 +3747,22 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         "tuya_local_key": str(raw.get("tuya_local_key") or raw.get("local_key") or ""),
         "tuya_version": 3.4,
         "tuya_switch_dps": 1,
+        # Xiaomi / Mi Home (LAN miIO; token once)
+        "xiaomi_token": str(
+            raw.get("xiaomi_token") or raw.get("miio_token") or raw.get("token") or ""
+        ).strip(),
+        "xiaomi_model": str(raw.get("xiaomi_model") or raw.get("model") or "").strip()[
+            :64
+        ],
     }
     eco = str(raw.get("tuya_ecosystem") or raw.get("ecosystem") or "smartlife").strip().lower()
     if eco in ("smart_life", "sl"):
         eco = "smartlife"
     if eco in ("tuya_smart", "tuyasmart", "793"):
         eco = "tuya"
-    if eco not in ("smartlife", "tuya", "classic"):
+    if eco in ("dns", "dns_houself", "dns-houself", "houseelf"):
+        eco = "houself"
+    if eco not in ("smartlife", "tuya", "classic", "houself"):
         eco = "smartlife"
     out["tuya_ecosystem"] = eco
     out["tuya_country"] = str(raw.get("tuya_country") or raw.get("country") or "7").strip()[:8] or "7"
@@ -3652,6 +3790,11 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         out["shelly_gen"] = "1"
     if out["shelly_gen"] == "gen2":
         out["shelly_gen"] = "2"
+    # Xiaomi token: keep 32 hex only
+    xt = "".join(c for c in out["xiaomi_token"] if c.isalnum()).lower()
+    if xt.startswith("0x"):
+        xt = xt[2:]
+    out["xiaomi_token"] = xt[:64]
     return out
 
 
@@ -3768,12 +3911,15 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
             d["password_set"] = bool(d.get("password"))
             d["ha_token_set"] = bool(d.get("ha_token"))
             d["tuya_local_key_set"] = bool(d.get("tuya_local_key"))
+            d["xiaomi_token_set"] = bool(d.get("xiaomi_token"))
             if d.get("password"):
                 d["password"] = ""
             if d.get("ha_token"):
                 d["ha_token"] = ""
             if d.get("tuya_local_key"):
                 d["tuya_local_key"] = ""
+            if d.get("xiaomi_token"):
+                d["xiaomi_token"] = ""
     return {
         "version": 1,
         "devices": devices,
@@ -3784,6 +3930,7 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
             {"id": "smartlife", "label": "Smart Life"},
             {"id": "tuya", "label": "Tuya Smart"},
             {"id": "classic", "label": "Tuya Smart (classic)"},
+            {"id": "houself", "label": "DNS Houself"},
         ],
     }
 
@@ -3857,6 +4004,9 @@ def upsert_device(raw: dict) -> dict:
         tlk = merged.get("tuya_local_key") or merged.get("local_key")
         if tlk is None or str(tlk).strip() in ("", "••••", "****", "***"):
             merged["tuya_local_key"] = existing.get("tuya_local_key") or ""
+        xtk = merged.get("xiaomi_token") or merged.get("miio_token") or merged.get("token")
+        if xtk is None or str(xtk).strip() in ("", "••••", "****", "***"):
+            merged["xiaomi_token"] = existing.get("xiaomi_token") or ""
         # preserve runtime unless explicitly provided
         for rk in (
             "last_on",
@@ -3950,6 +4100,8 @@ def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
     be = str(cfg.get("backend") or "tapo").lower()
     if be in ("smartlife", "smart_life"):
         be = "tuya"
+    if be in ("mi", "mihome", "mi_home", "miio", "mijia"):
+        be = "xiaomi"
     if be == "tapo":
         return _filtration_backend_tapo(on, cfg)
     if be in ("ewelink", "sonoff", "sonoff_diy"):
@@ -3962,6 +4114,8 @@ def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
         return _filtration_backend_ha(on, cfg)
     if be == "tuya":
         return _device_backend_tuya(on, cfg)
+    if be == "xiaomi":
+        return _device_backend_xiaomi(on, cfg)
     raise ValueError(f"unknown backend: {be}")
 
 
@@ -4138,6 +4292,8 @@ def _device_ready(cfg: dict) -> bool:
     be = str(cfg.get("backend") or "tapo").lower()
     if be in ("smartlife", "smart_life"):
         be = "tuya"
+    if be in ("mi", "mihome", "mi_home", "miio", "mijia"):
+        be = "xiaomi"
     if be == "tapo":
         return bool(str(cfg.get("ip") or "").strip())
     if be == "ewelink":
@@ -4168,7 +4324,61 @@ def _device_ready(cfg: dict) -> bool:
                 )
             )
         )
+    if be == "xiaomi":
+        return bool(
+            str(cfg.get("ip") or "").strip()
+            and str(cfg.get("xiaomi_token") or "").strip()
+        )
     return False
+
+
+# ── Xiaomi / Mi Home LAN (miIO UDP 54321) ─────────────────────────────────────
+
+def _device_backend_xiaomi(on: bool | None, cfg: dict) -> dict:
+    """
+    LAN control via miIO (UDP 54321). Needs IP + 32-hex token.
+    Token once (extractor / HA / cloud tools) — no ongoing cloud dependency.
+    """
+    ip = str(cfg.get("ip") or "").strip()
+    if not ip:
+        raise RuntimeError("Xiaomi IP не настроен")
+    token = str(cfg.get("xiaomi_token") or "").strip()
+    if not token:
+        raise RuntimeError(
+            "Xiaomi token пуст (32 hex) — token extractor / HA / cloud tools"
+        )
+    try:
+        from xiaomi_miio import control as xiaomi_control  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "xiaomi_miio module missing — reinstall poolheat package"
+        ) from e
+    try:
+        out = xiaomi_control(ip, token, on, timeout=6.0)
+    except ValueError as e:
+        raise RuntimeError(str(e)) from e
+    except Exception as e:
+        low = str(e).lower()
+        if "token" in low or "decrypt" in low:
+            raise RuntimeError(f"Xiaomi token/ключ: {e}") from e
+        if "timeout" in low or "timed out" in low:
+            raise RuntimeError(f"Xiaomi недоступен ({ip}:54321): {e}") from e
+        raise RuntimeError(f"Xiaomi: {e}") from e
+    # cache model if discovered
+    model = out.get("model")
+    if model and not cfg.get("xiaomi_model"):
+        did = str(cfg.get("id") or "")
+        if did:
+            def _mut(d, m=model):
+                d["xiaomi_model"] = m
+
+            try:
+                _device_update_in_store(did, _mut)
+            except Exception:
+                pass
+        cfg["xiaomi_model"] = model
+        out["xiaomi_model"] = model
+    return out
 
 
 # ── Tuya / Smart Life LAN (tinytuya + mobile login for local_key) ────────────
@@ -4491,7 +4701,7 @@ def device_test(did: str) -> dict:
             ret["power"] = power
         return ret
     except Exception as e:
-        pretty = _filtration_user_error(e, on=None, backend=be, lang="ru")
+        pretty = _device_user_error(e, on=None, backend=be, lang="ru")
         def _mut_err(d):
             d["last_error"] = pretty
             d["last_action"] = "test_fail"
@@ -4506,6 +4716,7 @@ def device_set(
     *,
     source: str = "manual",
     force: bool = False,
+    error_lang: str = "ru",
 ) -> dict:
     """
     Set device logical ON/OFF.
@@ -4513,11 +4724,18 @@ def device_set(
     Inverted devices flip physical polarity.
     """
     on = bool(on)
+    el = str(error_lang or "ru").lower().startswith("en")
     cfg = _device_cfg_snapshot(did)
     if not cfg:
-        return {"ok": False, "error": "device not found"}
+        return {
+            "ok": False,
+            "error": "device not found" if el else "устройство не найдено",
+        }
     if not cfg.get("enabled") and not force:
-        return {"ok": False, "error": "device disabled"}
+        return {
+            "ok": False,
+            "error": "device disabled" if el else "устройство отключено",
+        }
     be = str(cfg.get("backend") or "tapo")
     inverted = bool(cfg.get("inverted"))
     work = _mining_work_state()
@@ -4527,7 +4745,11 @@ def device_set(
         ):
             return {
                 "ok": False,
-                "error": "нельзя выключить при майнинге (разрешите OFF при майнинге)",
+                "error": (
+                    "cannot turn off while mining (allow OFF while mining)"
+                    if el
+                    else "нельзя выключить при майнинге (разрешите OFF при майнинге)"
+                ),
                 "id": did,
             }
         if on and work in ("suspend", "sleep") and not bool(
@@ -4535,7 +4757,11 @@ def device_set(
         ):
             return {
                 "ok": False,
-                "error": "нельзя включить при Suspend (разрешите ON при suspend)",
+                "error": (
+                    "cannot turn on while Suspend (allow ON while suspend)"
+                    if el
+                    else "нельзя включить при Suspend (разрешите ON при suspend)"
+                ),
                 "id": did,
             }
     physical = _device_logical_to_physical(on, inverted)
@@ -4596,10 +4822,12 @@ def device_set(
             ret["power"] = power
         return ret
     except Exception as e:
-        pretty = _filtration_user_error(e, on=on, backend=be, lang="ru")
+        # Store RU for UI; return line in requested language for TG/API
+        pretty_store = _device_user_error(e, on=on, backend=be, lang="ru")
+        pretty = _device_user_error(e, on=on, backend=be, lang=error_lang)
 
         def _mut_err(d):
-            d["last_error"] = pretty
+            d["last_error"] = pretty_store
             d["last_action"] = f"{source}_fail"
 
         _device_update_in_store(did, _mut_err)
@@ -7133,6 +7361,7 @@ SENSOR_WEATHER_FIELDS: tuple[str, ...] = (
     "feels_like_c",
     "humidity",
     "wind_ms",
+    "pressure_hpa",
 )
 
 _sensors_cfg_lock = threading.Lock()
@@ -8077,7 +8306,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
                 "longitude": lon,
                 "current": (
                     "temperature_2m,relative_humidity_2m,weather_code,"
-                    "wind_speed_10m,is_day,apparent_temperature"
+                    "wind_speed_10m,is_day,apparent_temperature,surface_pressure"
                 ),
                 "timezone": tz,
                 "wind_speed_unit": "ms",
@@ -8097,6 +8326,10 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             is_day = bool(int(is_day_raw)) if is_day_raw is not None else True
         except (TypeError, ValueError):
             is_day = True
+        # surface_pressure is already hPa on Open-Meteo
+        p_hpa = _f(cur.get("surface_pressure"))
+        if p_hpa is not None:
+            p_hpa = round(p_hpa, 1)
         body = {
             "ok": True,
             "enabled": True,
@@ -8110,6 +8343,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             "feels_like_c": cur.get("apparent_temperature"),
             "humidity": cur.get("relative_humidity_2m"),
             "wind_ms": cur.get("wind_speed_10m"),
+            "pressure_hpa": p_hpa,
             "weather_code": code_i,
             "weather_text": _wmo_text(code_i, "ru"),
             "weather_text_en": _wmo_text(code_i, "en"),
@@ -16856,21 +17090,25 @@ def _tg_t_ctrl_sensor_label(sensor: str, lang: str = "ru") -> str:
     """Short sensor name for Telegram (status Liquid / T_ctrl line)."""
     en = str(lang or "ru").lower().startswith("en")
     s = _normalize_t_ctrl_sensor(sensor)
-    if en:
-        return {
-            "liquid": "liquid",
-            "env": "env",
-            "chip_avg": "chip avg",
-            "chip_max": "chip max",
-            "board_max": "board max",
-        }.get(s, s)
-    return {
+    if s.startswith("sensor:"):
+        alias = s.split(":", 1)[1]
+        try:
+            sdef = get_sensor_by_alias(alias)
+        except Exception:
+            sdef = None
+        if isinstance(sdef, dict):
+            if en:
+                return str(sdef.get("name_en") or sdef.get("name") or alias)
+            return str(sdef.get("name_ru") or sdef.get("name") or alias)
+        return alias
+    labels = {
         "liquid": "liquid",
         "env": "env",
         "chip_avg": "chip avg",
         "chip_max": "chip max",
         "board_max": "board max",
-    }.get(s, s)
+    }
+    return labels.get(s, s)
 
 
 def _tg_t_ctrl_from_live(live: dict | None = None) -> tuple[float | None, str]:
@@ -19859,36 +20097,37 @@ def _tg_handle_command(
                 bool(onoff),
                 source="telegram",
                 force=False,
+                error_lang="en" if en else "ru",
             )
             if not out.get("ok"):
+                err = str(out.get("error") or ("fail" if en else "ошибка"))
                 tg_send_message(
                     chat_id,
-                    f"❌ {out.get('error') or 'fail'}",
+                    f"❌ {err}",
                     reply_markup=_tg_main_keyboard(lang, chat_id),
                 )
                 return
             got = out.get("on")
             if got is None:
                 got = onoff
-            icon = out.get("icon") or _dev.get("icon") or "🔌"
-            name = out.get("name") or _dev.get("name") or _dev.get("alias")
-            if en:
-                msg = f"{icon} {name} is on" if got else f"{icon} {name} is off"
-            else:
-                msg = (
-                    f"{icon} {name} включено"
-                    if got
-                    else f"{icon} {name} выключено"
-                )
+            # merge labels from live device (name_en/name_ru) for chat language
+            d_msg = dict(_dev)
+            if out.get("icon"):
+                d_msg["icon"] = out.get("icon")
+            msg = device_notify_line(d_msg, bool(got), lang="en" if en else "ru")
             tg_send_message(
                 chat_id,
                 msg,
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
         except Exception as e:
+            be = str(_dev.get("backend") or "")
+            pretty = _device_user_error(
+                e, on=onoff, backend=be, lang="en" if en else "ru"
+            )
             tg_send_message(
                 chat_id,
-                f"❌ {e}",
+                f"❌ {pretty}",
                 reply_markup=_tg_main_keyboard(lang, chat_id),
             )
         return
@@ -20760,6 +20999,7 @@ def get_policy_status() -> dict:
             "t_crit_clear": zc.get("t_crit_clear"),
             "t_ctrl_sensor": _normalize_t_ctrl_sensor(zc.get("t_ctrl_sensor")),
             "t_ctrl_sensors": list(T_CTRL_SENSORS),
+            "t_ctrl_sensor_options": list_t_ctrl_sensor_options(),
             "dwell_sec": zc.get("dwell_sec"),
             "settle_sec": zc.get("settle_sec"),
             "streak": zc.get("streak"),
@@ -22202,6 +22442,13 @@ class Handler(SimpleHTTPRequestHandler):
                 } or {"raw_keys": list(lwr.keys())[:12]}
             else:
                 body["last_write_result"] = lwr
+        # Resolved zone-map T_ctrl (supports Peripherals → Sensors aliases)
+        try:
+            t_val, t_sens = resolve_t_ctrl(body if isinstance(body, dict) else {})
+            body["t_ctrl"] = t_val
+            body["t_ctrl_sensor"] = t_sens
+        except Exception:
+            pass
         self._json_response(200 if body.get("ok") else 502, body)
 
     def _api_set(self) -> None:
@@ -22947,7 +23194,14 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_zone_config_get(self) -> None:
-        self._json_response(200, {"ok": True, "config": get_zone_cfg()})
+        self._json_response(
+            200,
+            {
+                "ok": True,
+                "config": get_zone_cfg(),
+                "t_ctrl_sensor_options": list_t_ctrl_sensor_options(),
+            },
+        )
 
     def _api_zone_config_post(self) -> None:
         try:

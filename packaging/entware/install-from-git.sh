@@ -24,6 +24,10 @@ fi
 if [ -f "$ROOT/ui-demo/tuya_mobile.py" ]; then
   cp -f "$ROOT/ui-demo/tuya_mobile.py" /opt/lib/poolheat/tuya_mobile.py
 fi
+# Xiaomi / Mi Home miIO LAN client (UDP 54321 · token)
+if [ -f "$ROOT/ui-demo/xiaomi_miio.py" ]; then
+  cp -f "$ROOT/ui-demo/xiaomi_miio.py" /opt/lib/poolheat/xiaomi_miio.py
+fi
 # whatsminer-lib (vendored package)
 if [ -d "$ROOT/ui-demo/whatsminer" ]; then
   rm -rf /opt/lib/poolheat/whatsminer

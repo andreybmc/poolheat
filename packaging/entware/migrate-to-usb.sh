@@ -105,34 +105,8 @@ echo "$ROOT" >"$ROOT/etc/USB_ROOT"
 echo "$USB_MNT" >"$ROOT/etc/USB_MOUNT"
 date >"$ROOT/etc/USB_MIGRATED" 2>/dev/null || true
 
-# USB-aware launcher (idempotent)
-if [ -f /opt/bin/poolheatd ]; then
-  cat >/opt/bin/poolheatd <<'EOF'
-#!/bin/sh
-export PATH=/opt/bin:/opt/sbin:$PATH
-export POOLHEAT_WWW=/opt/share/poolheat/www
-export POOLHEAT_DATA=/opt/var/poolheat
-export POOLHEAT_CONFIG=/opt/etc/poolheat/config.json
-export PYTHONPATH=/opt/lib/poolheat:/opt/lib/python3.13/site-packages:/opt/lib/python3.11/site-packages:/opt/lib/python3.10/site-packages:/opt/lib/python3.9/site-packages:$PYTHONPATH
-PY=/opt/bin/python3
-[ -x "$PY" ] || PY=python3
-wait_paths() {
-  i=0
-  while [ $i -lt 60 ]; do
-    [ -f /opt/lib/poolheat/serve.py ] && [ -d /opt/var/poolheat ] && return 0
-    i=$((i + 1)); sleep 1
-  done
-  return 1
-}
-LOG=/tmp/poolheat-serve.boot.log
-if ! wait_paths; then
-  echo "poolheatd: USB/storage not ready after 60s" >>"$LOG"
-  exit 1
-fi
-mkdir -p /opt/var/poolheat 2>/dev/null || true
-LOG=/opt/var/poolheat/serve.boot.log
-exec "$PY" /opt/lib/poolheat/serve.py >>"$LOG" 2>&1
-EOF
+# Keep packaged poolheatd (USB wait + auto-respawn). Do not overwrite with a bare exec.
+if [ -x /opt/bin/poolheatd ]; then
   chmod 755 /opt/bin/poolheatd
 fi
 

@@ -26,6 +26,9 @@ SMART_LIFE = {
     "secret2": "jfg5rs5kkmrj5mxahugvucrsvw43t48x",
     "cert": "0F:C3:61:99:9C:C0:C3:5B:A8:AC:A5:7D:AA:55:93:A2:0C:F5:57:27:70:2E:A8:5A:D7:B3:22:89:49:F8:88:FE",
     "ttid": "smart_life",
+    "app_version": "7.9.3",
+    "app_rn_version": "5.11",
+    "user_agent": "TY-App/7.9.3 (Android 10; okhttp/3.12.0)",
 }
 
 # Tuya Smart 7.9.3 (from APK)
@@ -36,6 +39,9 @@ TUYA_SMART_793 = {
     "secret2": "f3hd7pet4p83kemjdf5wqsa5tavrv579",
     "cert": "93:21:9F:C2:73:E2:20:0F:4A:DE:E5:F7:19:1D:C6:56:BA:2A:2D:7B:2F:F5:D2:4C:D5:5C:4B:61:55:00:1E:40",
     "ttid": "tuyaSmart",
+    "app_version": "7.9.3",
+    "app_rn_version": "5.11",
+    "user_agent": "TY-App/7.9.3 (Android 10; okhttp/3.12.0)",
 }
 
 # Older Tuya Smart
@@ -46,6 +52,23 @@ TUYA_SMART_CLASSIC = {
     "secret2": "vay9g59g9g99qf3rtqptmc3emhkanwkx",
     "cert": "93:21:9F:C2:73:E2:20:0F:4A:DE:E5:F7:19:1D:C6:56:BA:2A:2D:7B:2F:F5:D2:4C:D5:5C:4B:61:55:00:1E:40",
     "ttid": "tuya",
+    "app_version": "3.28.0",
+    "app_rn_version": "5.11",
+    "user_agent": "TY-App/3.28.0 (Android 10; okhttp/3.12.0)",
+}
+
+# DNS Shop Houself OEM (com.dexp01.reoka01.com v1.0.2) — keys from APK RE
+# secret2 = appEncryptSecretCvProdV2; cert = signing cert SHA-256
+HOUSELF = {
+    "name": "DNS Houself",
+    "key": "5acwmjsgevycmjtmsxdw",
+    "secret": "8uvnwymmwwajg3ys8gaq5ffpj4fdcxdh",
+    "secret2": "59hdrg8mvrg8qr5yhdvwckk54cxcxgcd",
+    "cert": "8B:DD:43:3A:54:C0:61:E7:88:DB:AC:AE:B9:7B:49:01:9C:41:BF:A2:C9:FC:FB:2D:90:79:9A:83:5F:40:8A:DC",
+    "ttid": "dexp01reoka01com",
+    "app_version": "1.0.2",
+    "app_rn_version": "5.1",
+    "user_agent": "Thing-UA=APP/Android/1.0.2",
 }
 
 KEYSETS: dict[str, dict] = {
@@ -53,6 +76,9 @@ KEYSETS: dict[str, dict] = {
     "tuya": TUYA_SMART_793,
     "793": TUYA_SMART_793,
     "classic": TUYA_SMART_CLASSIC,
+    "houself": HOUSELF,
+    "dns": HOUSELF,
+    "dns_houself": HOUSELF,
 }
 
 REGIONS: dict[str, str] = {
@@ -88,6 +114,7 @@ def _http_json(
     method: str = "GET",
     form: dict | None = None,
     timeout: float = 30.0,
+    user_agent: str | None = None,
 ) -> dict:
     """
     Tuya mobile endpoints: CloudFront often returns HTML 403 for long GET
@@ -97,7 +124,8 @@ def _http_json(
     data = None
     headers = {
         # App-like UA; some edges reject empty / generic agents
-        "User-Agent": "TY-App/7.9.3 (Android 10; okhttp/3.12.0)",
+        "User-Agent": user_agent
+        or "TY-App/7.9.3 (Android 10; okhttp/3.12.0)",
         "Accept": "application/json",
     }
     if form is not None:
@@ -170,6 +198,12 @@ class TuyaMobileAPI:
     ) -> dict:
         if requires_sid and not (sid or self.sid):
             raise RuntimeError("sid required — login first")
+        app_ver = str(self.keys.get("app_version") or "7.9.3")
+        app_rn = str(self.keys.get("app_rn_version") or "5.11")
+        ua = str(
+            self.keys.get("user_agent")
+            or f"TY-App/{app_ver} (Android 10; okhttp/3.12.0)"
+        )
         params: dict = {
             "a": action,
             "deviceId": "android_" + uuid.uuid4().hex[:16],
@@ -180,8 +214,8 @@ class TuyaMobileAPI:
             "time": str(int(__import__("time").time())),
             "et": "0.0.1",
             "ttid": self.keys["ttid"],
-            "appVersion": "7.9.3",
-            "appRnVersion": "5.11",
+            "appVersion": app_ver,
+            "appRnVersion": app_rn,
             "platform": "Android",
             "requestId": str(uuid.uuid4()),
         }
@@ -194,7 +228,9 @@ class TuyaMobileAPI:
             params["gid"] = str(gid)
         params["sign"] = self._sign(params)
         # POST form body — GET with long signed query is blocked by CloudFront (HTML 403)
-        return _http_json(self.endpoint, form=params, timeout=self.timeout)
+        return _http_json(
+            self.endpoint, form=params, timeout=self.timeout, user_agent=ua
+        )
 
     def login(self, email: str, password: str, country_code: str) -> dict:
         tok = self.request(
@@ -202,8 +238,18 @@ class TuyaMobileAPI:
             {"countryCode": str(country_code), "email": email},
         )
         if not tok.get("success"):
+            code = str(tok.get("errorCode") or "")
+            msg = str(tok.get("errorMsg") or "")
+            eco = str(self.keys.get("name") or self.keys.get("ttid") or "")
+            if code in ("ILLEGAL_CLIENT_ID",) or "Invalid client" in msg:
+                raise RuntimeError(
+                    f"token.create failed: {code} {msg} "
+                    f"({eco}: app keys rejected by Tuya cloud — "
+                    "try Smart Life ecosystem if the device is there, "
+                    "or paste local_key manually)"
+                )
             raise RuntimeError(
-                f"token.create failed: {tok.get('errorCode')} {tok.get('errorMsg')}"
+                f"token.create failed: {code} {msg}"
             )
         res = tok["result"]
         enc = rsa_encrypt_no_padding(
@@ -280,6 +326,8 @@ def fetch_devices_with_keys(
         eco = "smartlife"
     if eco in ("tuya_smart", "tuyasmart"):
         eco = "tuya"
+    if eco in ("dns", "dns_houself", "dns-houself", "houseelf"):
+        eco = "houself"
     keys = KEYSETS.get(eco) or KEYSETS["smartlife"]
     reg = str(region or "eu").strip().lower()
     if reg not in REGIONS:
@@ -311,4 +359,5 @@ def ecosystems() -> list[dict]:
         {"id": "smartlife", "label": "Smart Life", "name": SMART_LIFE["name"]},
         {"id": "tuya", "label": "Tuya Smart", "name": TUYA_SMART_793["name"]},
         {"id": "classic", "label": "Tuya Smart (classic)", "name": TUYA_SMART_CLASSIC["name"]},
+        {"id": "houself", "label": "DNS Houself", "name": HOUSELF["name"]},
     ]

@@ -1,6 +1,9 @@
 #!/bin/sh
-# poolheat daemon launcher (Entware / Keenetic) — USB-aware
+# poolheat daemon launcher (Entware / Keenetic) — USB-aware + auto-respawn
 # Standard paths under /opt may be symlinks to USB storage.
+#
+# Supervises serve.py: on crash restarts with backoff (max 5 fast restarts /
+# 10 min, then 5 min cooldown). Touch STOPFILE to exit without restart.
 export PATH=/opt/bin:/opt/sbin:$PATH
 
 export POOLHEAT_WWW=/opt/share/poolheat/www
@@ -15,17 +18,26 @@ if [ ! -x "$PY" ]; then
   PY=python3
 fi
 
+STOPFILE=/opt/var/run/poolheatd.stop
+SERVE_PIDFILE=/opt/var/run/poolheat-serve.pid
+RUNDIR=/opt/var/run
+DATADIR=/opt/var/poolheat
+
 # Wait for USB-backed paths (disk often mounts after Entware starts)
 wait_paths() {
   i=0
   while [ $i -lt 60 ]; do
-    if [ -f /opt/lib/poolheat/serve.py ] && [ -d /opt/var/poolheat ]; then
+    if [ -f /opt/lib/poolheat/serve.py ] && [ -d "$DATADIR" ]; then
       return 0
     fi
     i=$((i + 1))
     sleep 1
   done
   return 1
+}
+
+ts() {
+  date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?'
 }
 
 LOG=/tmp/poolheat-serve.boot.log
@@ -35,6 +47,111 @@ if ! wait_paths; then
   exit 1
 fi
 
-mkdir -p /opt/var/poolheat 2>/dev/null || true
-LOG=/opt/var/poolheat/serve.boot.log
-exec "$PY" /opt/lib/poolheat/serve.py >>"$LOG" 2>&1
+mkdir -p "$DATADIR" "$RUNDIR" 2>/dev/null || true
+LOG="$DATADIR/serve.boot.log"
+RESPAWN_LOG="$DATADIR/poolheat.log"
+
+rm -f "$STOPFILE"
+
+CHILD=""
+cleanup() {
+  # graceful stop path (init.d stop / SIGTERM)
+  touch "$STOPFILE" 2>/dev/null || true
+  if [ -n "$CHILD" ] && kill -0 "$CHILD" 2>/dev/null; then
+    kill "$CHILD" 2>/dev/null || true
+    # wait up to ~5s for clean exit
+    n=0
+    while [ $n -lt 10 ] && kill -0 "$CHILD" 2>/dev/null; do
+      sleep 0.5 2>/dev/null || sleep 1
+      n=$((n + 1))
+    done
+    kill -9 "$CHILD" 2>/dev/null || true
+  fi
+  for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}'); do
+    kill "$p" 2>/dev/null || true
+  done
+  rm -f "$SERVE_PIDFILE"
+  exit 0
+}
+trap cleanup TERM INT HUP
+
+failures=0
+window_start=$(date +%s 2>/dev/null || echo 0)
+
+while true; do
+  if [ -f "$STOPFILE" ]; then
+    rm -f "$STOPFILE"
+    echo "[$(ts)] poolheatd: stop requested, exiting" >>"$RESPAWN_LOG"
+    exit 0
+  fi
+
+  started=$(date +%s 2>/dev/null || echo 0)
+  echo "[$(ts)] poolheatd: starting serve.py" >>"$RESPAWN_LOG"
+
+  "$PY" /opt/lib/poolheat/serve.py >>"$LOG" 2>&1 &
+  CHILD=$!
+  echo "$CHILD" >"$SERVE_PIDFILE"
+  wait "$CHILD"
+  code=$?
+  CHILD=""
+  rm -f "$SERVE_PIDFILE"
+
+  if [ -f "$STOPFILE" ]; then
+    rm -f "$STOPFILE"
+    echo "[$(ts)] poolheatd: stop requested after exit=$code, not restarting" >>"$RESPAWN_LOG"
+    exit 0
+  fi
+
+  ended=$(date +%s 2>/dev/null || echo 0)
+  runtime=$((ended - started))
+  if [ "$runtime" -lt 0 ]; then
+    runtime=0
+  fi
+
+  # Process lived long enough → treat as healthy, reset crash counter
+  if [ "$runtime" -ge 120 ]; then
+    failures=0
+    window_start=$ended
+  else
+    failures=$((failures + 1))
+  fi
+
+  # Sliding window: if 10 min passed since window start, reset
+  if [ $((ended - window_start)) -ge 600 ]; then
+    failures=1
+    window_start=$ended
+  fi
+
+  # 143 = 128+15 SIGTERM — normal for deploy / init.d restart / OTA (not a crash)
+  why="exit=$code"
+  if [ "$code" -eq 143 ] 2>/dev/null || [ "$code" = "143" ]; then
+    why="SIGTERM(143) · deploy/restart/stop — not a crash"
+  elif [ "$code" -eq 137 ] 2>/dev/null || [ "$code" = "137" ]; then
+    why="SIGKILL(137) · OOM or kill -9"
+  fi
+
+  if [ "$failures" -ge 5 ]; then
+    # Crash loop protection (design: max 5 / 10 min → long cooldown)
+    delay=300
+    echo "[$(ts)] poolheatd: crash loop ($why runtime=${runtime}s), cooldown ${delay}s" >>"$RESPAWN_LOG"
+    failures=0
+    window_start=$(date +%s 2>/dev/null || echo 0)
+  else
+    # backoff: 2, 4, 6, 8 … capped at 30s
+    delay=$((2 * failures))
+    if [ "$delay" -lt 2 ]; then delay=2; fi
+    if [ "$delay" -gt 30 ]; then delay=30; fi
+    echo "[$(ts)] poolheatd: serve.py $why runtime=${runtime}s · restart #${failures} in ${delay}s" >>"$RESPAWN_LOG"
+  fi
+
+  i=0
+  while [ $i -lt "$delay" ]; do
+    if [ -f "$STOPFILE" ]; then
+      rm -f "$STOPFILE"
+      echo "[$(ts)] poolheatd: stop during backoff, exiting" >>"$RESPAWN_LOG"
+      exit 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+done

@@ -1,71 +1,160 @@
 #!/bin/sh
 # Fallback start/stop without Entware rc.func / nohup
-# Usage: S99poolheat {start|stop|restart|status}
+# Usage: S99poolheat-standalone {start|stop|restart|status|watchdog}
+#
+# poolheatd supervises serve.py (auto-respawn on crash).
+# `watchdog` restarts the whole service if nothing is running
+# (optional: call from cron every minute).
 
 PIDFILE=/opt/var/run/poolheatd.pid
+SERVE_PIDFILE=/opt/var/run/poolheat-serve.pid
+STOPFILE=/opt/var/run/poolheatd.stop
 BIN=/opt/bin/poolheatd
 LOG=/opt/var/poolheat/poolheat.log
 export PATH=/opt/bin:/opt/sbin:$PATH
 
-start() {
-  mkdir -p /opt/var/poolheat /opt/var/run
+is_alive() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null
+}
+
+serve_pids() {
+  ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}'
+}
+
+# True only for the launcher process (not random shells that mention the path).
+# Matches: "sh /opt/bin/poolheatd" or "/bin/sh /opt/bin/poolheatd"
+supervisor_from_ps() {
+  ps w 2>/dev/null | grep -E '[[:space:]](/bin/)?sh[[:space:]]+/opt/bin/poolheatd([[:space:]]|$)' | awk '{print $1}' | head -1
+}
+
+supervisor_pid() {
   if [ -f "$PIDFILE" ]; then
-    old=$(cat "$PIDFILE" 2>/dev/null)
-    if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
-      echo "poolheat already running pid=$old"
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    if is_alive "$pid"; then
+      echo "$pid"
       return 0
     fi
-    rm -f "$PIDFILE"
   fi
-  # also kill any leftover python serve
-  for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}'); do
+  supervisor_from_ps
+}
+
+start() {
+  mkdir -p /opt/var/poolheat /opt/var/run
+  rm -f "$STOPFILE"
+
+  sup=$(supervisor_pid)
+  if [ -n "$sup" ] && is_alive "$sup"; then
+    # already supervised
+    sp=$(serve_pids | head -1)
+    if [ -n "$sp" ]; then
+      echo "poolheat already running supervisor=$sup serve=$sp"
+      echo "$sup" >"$PIDFILE"
+      return 0
+    fi
+    # supervisor alive but serve not yet — wait briefly
+    sleep 2
+    sp=$(serve_pids | head -1)
+    if [ -n "$sp" ]; then
+      echo "poolheat already running supervisor=$sup serve=$sp"
+      echo "$sup" >"$PIDFILE"
+      return 0
+    fi
+  fi
+
+  # orphan serve without our supervisor
+  for p in $(serve_pids); do
     kill "$p" 2>/dev/null || true
   done
+  sleep 1
+  for p in $(serve_pids); do
+    kill -9 "$p" 2>/dev/null || true
+  done
+
   echo "starting poolheat..."
-  # busybox: redirect + background, no nohup needed under init
   "$BIN" >>"$LOG" 2>&1 &
   echo $! >"$PIDFILE"
-  sleep 1
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    echo "started pid=$(cat "$PIDFILE") log=$LOG"
-  else
-    echo "FAILED to start — see $LOG"
-    tail -20 "$LOG" 2>/dev/null
-    return 1
+  # wait for serve.py to appear (import + boot can take a few seconds)
+  i=0
+  while [ $i -lt 15 ]; do
+    if is_alive "$(cat "$PIDFILE" 2>/dev/null)" && [ -n "$(serve_pids | head -1)" ]; then
+      echo "started supervisor=$(cat "$PIDFILE") serve=$(serve_pids | head -1) log=$LOG (auto-respawn on)"
+      return 0
+    fi
+    sleep 1
+    i=$((i + 1))
+  done
+
+  if is_alive "$(cat "$PIDFILE" 2>/dev/null)"; then
+    echo "started supervisor=$(cat "$PIDFILE") (serve still booting) log=$LOG"
+    return 0
   fi
+
+  echo "FAILED to start — see $LOG and /opt/var/poolheat/serve.boot.log"
+  tail -30 /opt/var/poolheat/serve.boot.log 2>/dev/null
+  tail -15 "$LOG" 2>/dev/null
+  return 1
 }
 
 stop() {
+  touch "$STOPFILE" 2>/dev/null || true
+
+  sup=""
   if [ -f "$PIDFILE" ]; then
-    pid=$(cat "$PIDFILE")
-    kill "$pid" 2>/dev/null
-    # also kill child python if wrapper already exited
-    for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}'); do
-      kill "$p" 2>/dev/null || true
-    done
-    rm -f "$PIDFILE"
-    echo "stopped $pid"
-  else
-    for p in $(ps w 2>/dev/null | grep -E '[p]oolheatd|[s]erve.py' | awk '{print $1}'); do
-      kill "$p" 2>/dev/null || true
-    done
-    echo "stopped"
+    sup=$(cat "$PIDFILE" 2>/dev/null)
   fi
+  if ! is_alive "$sup"; then
+    sup=$(supervisor_from_ps)
+  fi
+
+  if is_alive "$sup"; then
+    kill "$sup" 2>/dev/null || true
+  fi
+
+  if [ -f "$SERVE_PIDFILE" ]; then
+    kill "$(cat "$SERVE_PIDFILE" 2>/dev/null)" 2>/dev/null || true
+  fi
+  for p in $(serve_pids); do
+    kill "$p" 2>/dev/null || true
+  done
+
+  sleep 1
+  if is_alive "$sup"; then
+    kill -9 "$sup" 2>/dev/null || true
+  fi
+  for p in $(serve_pids); do
+    kill -9 "$p" 2>/dev/null || true
+  done
+
+  rm -f "$PIDFILE" "$SERVE_PIDFILE" "$STOPFILE"
+  echo "stopped ${sup:-}"
 }
 
 status() {
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    echo "running pid=$(cat "$PIDFILE")"
-  else
-    # check python process
-    p=$(ps w 2>/dev/null | grep '[s]erve.py' | awk '{print $1}' | head -1)
-    if [ -n "$p" ]; then
-      echo "running pid=$p (no pidfile)"
+  sup=$(supervisor_pid)
+  sp=$(serve_pids | head -1)
+  if [ -n "$sup" ] && is_alive "$sup"; then
+    if [ -n "$sp" ]; then
+      echo "running supervisor=$sup serve=$sp (respawn on)"
     else
-      echo "stopped"
-      return 1
+      echo "running supervisor=$sup (serve starting/restarting)"
     fi
+    return 0
   fi
+  if [ -n "$sp" ]; then
+    echo "running serve=$sp (no supervisor — no auto-respawn)"
+    return 0
+  fi
+  echo "stopped"
+  return 1
+}
+
+watchdog() {
+  if status >/dev/null 2>&1; then
+    return 0
+  fi
+  ts=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')
+  echo "[$ts] poolheat watchdog: service down, starting" >>"$LOG"
+  start
 }
 
 case "$1" in
@@ -73,5 +162,6 @@ case "$1" in
   stop) stop ;;
   restart) stop; sleep 1; start ;;
   status) status ;;
-  *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+  watchdog) watchdog ;;
+  *) echo "Usage: $0 {start|stop|restart|status|watchdog}"; exit 1 ;;
 esac

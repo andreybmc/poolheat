@@ -134,19 +134,178 @@
     .pill.accent .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 
     /* —— tabs —— */
+    /* Mobile: arrows + no scrollbar; soft shadow under the ribbon */
+    .tab-strip {
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      margin-bottom: 20px;
+      position: relative;
+    }
+    .tab-strip--sub {
+      margin-bottom: 16px;
+      max-width: 480px;
+    }
+    .tab-strip-track {
+      flex: 1;
+      min-width: 0;
+      position: relative;
+      border-radius: var(--radius);
+      /* ribbon shadow (replaces the ugly scrollbar gutter) */
+      box-shadow:
+        0 4px 14px rgba(0, 0, 0, 0.28),
+        0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    }
+    .tab-strip--sub .tab-strip-track {
+      border-radius: var(--radius-sm);
+      box-shadow:
+        0 3px 10px rgba(0, 0, 0, 0.22),
+        0 1px 0 rgba(255, 255, 255, 0.03) inset;
+    }
+    .tab-strip-scroll {
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE/legacy */
+      border-radius: inherit;
+    }
+    .tab-strip-scroll::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
+    /* Edge fade when more tabs off-screen */
+    .tab-strip-track::before,
+    .tab-strip-track::after {
+      content: "";
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      width: 18px;
+      z-index: 2;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      border-radius: inherit;
+    }
+    .tab-strip-track::before {
+      left: 0;
+      background: linear-gradient(90deg, var(--bg2) 0%, transparent 100%);
+    }
+    .tab-strip-track::after {
+      right: 0;
+      background: linear-gradient(270deg, var(--bg2) 0%, transparent 100%);
+    }
+    .tab-strip.can-left .tab-strip-track::before { opacity: 1; }
+    .tab-strip.can-right .tab-strip-track::after { opacity: 1; }
+
+    .tab-strip-btn {
+      display: none;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      min-width: 28px;
+      margin: 0;
+      padding: 0;
+      /* same chrome as nav.tabs / tab ribbon */
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      color: var(--muted);
+      font: inherit;
+      font-size: 1.05rem;
+      font-weight: 400;
+      line-height: 1;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.12s ease, background 0.12s ease;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .tab-strip-btn.prev {
+      border-radius: var(--radius) 0 0 var(--radius);
+      border-right: none;
+    }
+    .tab-strip-btn.next {
+      border-radius: 0 var(--radius) var(--radius) 0;
+      border-left: none;
+    }
+    .tab-strip--sub .tab-strip-btn.prev {
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    }
+    .tab-strip--sub .tab-strip-btn.next {
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+    .tab-strip-btn:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--panel2);
+      /* keep outline identical to tab ribbon */
+      border-color: var(--border);
+    }
+    .tab-strip-btn:focus,
+    .tab-strip-btn:focus-visible {
+      outline: none;
+      border-color: var(--border);
+    }
+    /* at edge: dim only the chevron — never the border (matches tab strip) */
+    .tab-strip-btn:disabled,
+    .tab-strip-btn:disabled:hover {
+      opacity: 1;
+      cursor: default;
+      color: var(--dim);
+      background: var(--bg2);
+      border-color: var(--border);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22);
+    }
+    /* When arrows visible, track joins them (no double outer radius clash) */
+    .tab-strip.has-arrows .tab-strip-track {
+      border-radius: 0;
+      box-shadow:
+        0 4px 14px rgba(0, 0, 0, 0.28),
+        0 1px 0 rgba(255, 255, 255, 0.04) inset;
+    }
+    .tab-strip.has-arrows .tab-strip-scroll,
+    .tab-strip.has-arrows nav.tabs,
+    .tab-strip.has-arrows nav.subtabs {
+      border-radius: 0;
+    }
+    .tab-strip.has-arrows nav.tabs,
+    .tab-strip.has-arrows nav.subtabs {
+      border-left: none;
+      border-right: none;
+    }
+
+    @media (max-width: 720px) {
+      .tab-strip-btn {
+        display: inline-flex;
+      }
+      .tab-strip.has-arrows {
+        /* only show arrow chrome when overflow exists (class set by JS) */
+      }
+      /* hide arrows when strip fits (no overflow) */
+      .tab-strip:not(.has-arrows) .tab-strip-btn {
+        display: none;
+      }
+    }
+
     nav.tabs {
       display: flex;
       gap: 4px;
-      margin-bottom: 20px;
+      margin-bottom: 0;
       padding: 4px;
       background: var(--bg2);
       border-radius: var(--radius);
       border: 1px solid var(--border);
-      overflow-x: auto;
+      overflow: visible;
+      width: max-content;
+      min-width: 100%;
+      box-sizing: border-box;
     }
 
     nav.tabs button {
-      flex: 1;
+      flex: 1 0 auto;
       min-width: max-content;
       border: none;
       background: transparent;
@@ -158,6 +317,7 @@
       font-weight: 550;
       cursor: pointer;
       transition: 0.15s ease;
+      white-space: nowrap;
     }
 
     nav.tabs button:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
@@ -170,16 +330,20 @@
     nav.subtabs {
       display: flex;
       gap: 4px;
-      margin-bottom: 16px;
+      margin-bottom: 0;
       padding: 3px;
       background: var(--bg2);
       border-radius: var(--radius-sm);
       border: 1px solid var(--border);
-      max-width: 480px;
+      overflow: visible;
+      width: max-content;
+      min-width: 100%;
+      box-sizing: border-box;
     }
 
     nav.subtabs button {
-      flex: 1;
+      flex: 1 0 auto;
+      min-width: max-content;
       border: none;
       background: transparent;
       color: var(--muted);
@@ -190,6 +354,7 @@
       font-weight: 550;
       cursor: pointer;
       transition: 0.15s ease;
+      white-space: nowrap;
     }
 
     nav.subtabs button:hover { color: var(--text); background: rgba(255, 255, 255, 0.03); }
@@ -197,6 +362,25 @@
       color: var(--text);
       background: var(--panel2);
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    /* Desktop wide: tabs share space evenly, no arrow chrome */
+    @media (min-width: 721px) {
+      .tab-strip-btn { display: none !important; }
+      .tab-strip-track {
+        box-shadow:
+          0 3px 12px rgba(0, 0, 0, 0.2),
+          0 1px 0 rgba(255, 255, 255, 0.04) inset;
+      }
+      nav.tabs,
+      nav.subtabs {
+        width: 100%;
+      }
+      nav.tabs button,
+      nav.subtabs button {
+        flex: 1 1 0;
+        min-width: 0;
+      }
     }
 
     .view { display: none; }
@@ -693,6 +877,7 @@
     }
     .chip-tip.show { display: block; }
 
+    /* Expand/collapse link — one style for all secondary option groups */
     .collapse-toggle {
       display: inline-flex;
       align-items: center;
@@ -700,18 +885,21 @@
       border: none;
       background: none;
       padding: 0;
-      margin: 0 0 12px;
+      margin: 10px 0 8px;
       font: inherit;
-      font-size: 0.85rem;
-      font-weight: 550;
-      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      color: var(--muted);
       cursor: pointer;
       text-decoration: none;
+      line-height: 1.3;
     }
-    .collapse-toggle:hover { color: var(--accent2); }
+    .collapse-toggle:hover { color: var(--text); }
     .collapse-toggle .chev {
       display: inline-block;
-      font-size: 0.7rem;
+      font-size: 0.62rem;
+      opacity: 0.7;
       transition: transform 0.15s ease;
       text-decoration: none !important;
       border-bottom: none !important;
@@ -719,10 +907,21 @@
     .collapse-toggle .collapse-label {
       text-decoration: underline;
       text-decoration-style: dashed;
+      text-decoration-color: rgba(232, 238, 246, 0.28);
       text-underline-offset: 3px;
+    }
+    .collapse-toggle:hover .collapse-label {
+      text-decoration-color: rgba(232, 238, 246, 0.5);
+    }
+    .collapse-toggle[aria-expanded="true"] {
+      color: var(--text);
     }
     .collapse-toggle[aria-expanded="true"] .chev {
       transform: rotate(90deg);
+      opacity: 0.85;
+    }
+    .collapse-toggle[aria-expanded="true"] .collapse-label {
+      text-decoration-color: rgba(232, 238, 246, 0.4);
     }
     .collapse-panel {
       display: block;
@@ -781,6 +980,15 @@
       color: var(--muted);
     }
 
+    label.field > .desc {
+      display: block;
+      font-size: 0.72rem;
+      color: var(--dim);
+      line-height: 1.35;
+      font-weight: 400;
+      margin: 0;
+    }
+
     label.field span.req::after {
       content: " *";
       color: var(--danger);
@@ -802,6 +1010,20 @@
       font-size: 0.9rem;
       outline: none;
       transition: border-color 0.15s;
+    }
+
+    /* custom chevron — slightly inset from the field edge */
+    select {
+      -webkit-appearance: none;
+      appearance: none;
+      padding-right: 2rem;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9bb0' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.7rem center;
+      background-size: 12px 12px;
+    }
+    select:disabled {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235c6b7e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     }
 
     /* password + eye toggle */
@@ -2041,7 +2263,7 @@
       border-color: rgba(240, 180, 41, 0.5);
       background: rgba(240, 180, 41, 0.12);
     }
-    /* CSS ring — true geometric center (Unicode ⟳ sits off-center in most fonts) */
+    /* Ring icon while upfreq incomplete; spin only with .is-spinning (resume + upfreq 0) */
     .pm-badge.pm-upfreq.is-tuning .pm-uf-ico {
       width: 0.85em;
       height: 0.85em;
@@ -2051,8 +2273,11 @@
       border-right-color: #f0b429;
       border-radius: 50%;
       box-sizing: border-box;
-      animation: pm-uf-spin 0.9s linear infinite;
+      animation: none;
       transform-origin: 50% 50%;
+    }
+    .pm-badge.pm-upfreq.is-tuning.is-spinning .pm-uf-ico {
+      animation: pm-uf-spin 0.9s linear infinite;
     }
     .pm-badge.pm-upfreq.is-tuned {
       color: #3ecf8e;
@@ -2077,7 +2302,7 @@
       to { transform: rotate(360deg); }
     }
     @media (prefers-reduced-motion: reduce) {
-      .pm-badge.pm-upfreq.is-tuning .pm-uf-ico {
+      .pm-badge.pm-upfreq.is-tuning.is-spinning .pm-uf-ico {
         animation: none;
         border-color: #f0b429;
       }
@@ -2204,6 +2429,74 @@
       background:
         radial-gradient(ellipse 50% 45% at 82% 18%, rgba(240, 240, 255, 0.2), transparent 45%),
         linear-gradient(160deg, #0b1224 0%, #1a2744 55%, #2a3a62 100%);
+    }
+    /* Clear night + moon: laconic star twinkle (only this theme) */
+    .wx-widget .wx-stars {
+      display: none;
+      position: absolute;
+      /* keep clear of temperature / condition text on the left */
+      left: 48%;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+      border-radius: 0 inherit inherit 0;
+    }
+    .wx-widget.wx-clear-night .wx-stars {
+      display: block;
+    }
+    .wx-widget .wx-stars i {
+      position: absolute;
+      width: 1.5px;
+      height: 1.5px;
+      margin: 0;
+      padding: 0;
+      border-radius: 50%;
+      background: rgba(245, 248, 255, 0.95);
+      box-shadow: 0 0 2px 0.4px rgba(200, 215, 255, 0.4);
+      opacity: 0.22;
+      animation: wx-star-twinkle var(--wx-star-dur, 5.5s) cubic-bezier(0.4, 0, 0.2, 1) infinite;
+      animation-delay: var(--wx-star-delay, 0s);
+    }
+    .wx-widget .wx-stars i.wx-star-dim {
+      width: 1px;
+      height: 1px;
+      box-shadow: 0 0 1.5px rgba(200, 215, 255, 0.35);
+    }
+    /* a couple of slightly brighter “primary” stars */
+    .wx-widget .wx-stars i.wx-star-bright {
+      width: 2.5px;
+      height: 2.5px;
+      background: rgba(255, 255, 255, 1);
+      box-shadow:
+        0 0 3px 1px rgba(220, 230, 255, 0.55),
+        0 0 8px 1px rgba(160, 190, 255, 0.2);
+    }
+    /* slow, soft pulse — not a sharp blink */
+    @keyframes wx-star-twinkle {
+      0%, 100% { opacity: 0.1; transform: scale(0.7); }
+      20% { opacity: 0.28; transform: scale(0.85); }
+      45% { opacity: 0.72; transform: scale(1); }
+      55% { opacity: 0.85; transform: scale(1.05); }
+      75% { opacity: 0.35; transform: scale(0.9); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .wx-widget .wx-stars i {
+        animation: none;
+        opacity: 0.4;
+      }
+    }
+    /* content above star field */
+    .wx-widget.wx-clear-night > .tc-label,
+    .wx-widget.wx-clear-night > .wx-top,
+    .wx-widget.wx-clear-night > .wx-meta {
+      position: relative;
+      z-index: 1;
+    }
+    .wx-widget.wx-clear-night::before {
+      z-index: 2;
     }
     .temp-card.outdoor.wx-widget.wx-cloud {
       background:
@@ -2427,24 +2720,26 @@
     .drag-handle::before {
       content: "";
       display: block;
-      width: 2px;
-      height: min(42%, 22px);
-      min-height: 12px;
+      /* two columns of dots · same row positions (side by side) */
+      width: 5px;
+      height: min(72%, 40px);
+      min-height: 22px;
       border-radius: 1px;
-      opacity: 0.4;
-      background: repeating-linear-gradient(
-        to bottom,
-        var(--dim) 0 1.5px,
-        transparent 1.5px 3.5px
-      );
+      opacity: 0.5;
+      background-image:
+        radial-gradient(circle, var(--dim) 0.9px, transparent 1px),
+        radial-gradient(circle, var(--dim) 0.9px, transparent 1px);
+      background-size: 5px 5px, 5px 5px;
+      background-position: 0 0, 3px 0;
+      background-repeat: repeat-y;
       transition: opacity 0.15s, height 0.15s;
     }
     .drag-handle:hover {
       background: rgba(61, 156, 240, 0.06);
     }
     .drag-handle:hover::before {
-      opacity: 0.85;
-      height: min(55%, 28px);
+      opacity: 0.9;
+      height: min(82%, 48px);
     }
     .drag-handle:active { cursor: grabbing; }
     .sortable-item {
@@ -2509,9 +2804,58 @@
     }
     .sensor-source-card .src-main {
       display: grid;
-      grid-template-columns: auto 140px 1fr auto;
+      /* type | field (compact) | remove — match input height */
+      grid-template-columns: minmax(120px, 150px) minmax(110px, 160px) auto;
       gap: 8px;
       align-items: end;
+      justify-content: start;
+    }
+    .sensor-source-card .src-main > .field {
+      min-width: 0;
+    }
+    .sensor-source-card .src-params {
+      min-width: 0;
+      max-width: 160px;
+    }
+    .sensor-source-card .src-params .field {
+      width: 100%;
+      min-width: 0;
+      max-width: 160px;
+    }
+    /* × same height as select/input (~40px: 9+9 pad + line + border) */
+    .sensor-source-card .src-remove {
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+      max-width: 40px;
+      padding: 0;
+      margin: 0;
+      flex: 0 0 40px;
+      border-radius: var(--radius-sm);
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      align-self: end;
+      box-sizing: border-box;
+    }
+    .sensor-source-card .pt-remove,
+    .pt-row .pt-remove {
+      width: 40px;
+      height: 40px;
+      min-width: 40px;
+      max-width: 40px;
+      padding: 0;
+      flex: 0 0 40px;
+      border-radius: var(--radius-sm);
+      font-size: 1.05rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
     }
     .sensor-source-card .src-xform-toggle {
       background: none;
@@ -2559,7 +2903,7 @@
       padding: 0;
       margin: 0;
     }
-    /* Device list ON/OFF slider (optimistic) */
+    /* Device list ON/OFF slider (optimistic) — previous inset style */
     .dev-switch {
       position: relative;
       display: inline-flex;
@@ -2581,10 +2925,14 @@
       width: 48px;
       height: 28px;
       border-radius: 999px;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       transition: background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
-      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+      box-shadow:
+        inset 0 2px 4px rgba(0, 0, 0, 0.45),
+        inset 0 1px 1px rgba(0, 0, 0, 0.35),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+        0 0 0 1px rgba(0, 0, 0, 0.2);
     }
     .dev-switch-thumb {
       position: absolute;
@@ -2593,22 +2941,33 @@
       width: 22px;
       height: 22px;
       border-radius: 50%;
-      background: linear-gradient(180deg, #f4f6f8, #c8cdd4);
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      background: linear-gradient(180deg, #f7f8fa 0%, #d5dae0 100%);
+      box-shadow:
+        0 1px 3px rgba(0, 0, 0, 0.4),
+        0 0 0 0.5px rgba(0, 0, 0, 0.12),
+        inset 0 1px 0 rgba(255, 255, 255, 0.85);
       transition: transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
-        background 0.22s ease;
+        background 0.22s ease, box-shadow 0.22s ease;
     }
     .dev-switch.is-on .dev-switch-track,
     .dev-switch:has(input:checked) .dev-switch-track {
-      background: linear-gradient(180deg, #4aa8f5, var(--accent2, #3d9cf0));
-      border-color: transparent;
-      box-shadow: 0 0 0 1px rgba(61, 156, 240, 0.25),
-        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+      background: linear-gradient(180deg, #4aa8f5 0%, var(--accent2, #2b7fc9) 100%);
+      border-color: rgba(61, 156, 240, 0.35);
+      box-shadow:
+        inset 0 2px 5px rgba(0, 40, 80, 0.45),
+        inset 0 1px 2px rgba(0, 0, 0, 0.28),
+        inset 0 -1px 0 rgba(255, 255, 255, 0.22),
+        0 0 0 1px rgba(61, 156, 240, 0.35),
+        0 0 10px rgba(61, 156, 240, 0.18);
     }
     .dev-switch.is-on .dev-switch-thumb,
     .dev-switch:has(input:checked) .dev-switch-thumb {
       transform: translateX(20px);
-      background: linear-gradient(180deg, #fff, #e8f2fc);
+      background: linear-gradient(180deg, #ffffff 0%, #e8f2fc 100%);
+      box-shadow:
+        0 1px 4px rgba(0, 30, 60, 0.35),
+        0 0 0 0.5px rgba(255, 255, 255, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.95);
     }
     .dev-switch.is-pending .dev-switch-track {
       animation: dev-sw-pulse 0.9s ease-in-out infinite;
@@ -2642,8 +3001,34 @@
     #devices-list .dev-actions {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-shrink: 0;
+    }
+    /* Compact edit — same family as list .btn, not a glass circle */
+    .dev-edit-btn {
+      width: 28px;
+      height: 28px;
+      min-width: 28px;
+      padding: 0;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .dev-edit-btn:hover {
+      border-color: var(--accent);
+      background: rgba(61, 156, 240, 0.1);
+      color: var(--accent2, #3d9cf0);
+    }
+    .dev-edit-btn svg {
+      width: 15px;
+      height: 15px;
+      display: block;
     }
     .temp-card.board-chip .tc-pcb {
       color: var(--alum);
@@ -2663,7 +3048,17 @@
     .temp-card.board-chip .tc-extra .tc-chip-line {
       color: var(--silicon-dim);
     }
-    .temp-card.heat-loss::before { background: var(--warn); }
+    /* Heat loss — warm amber/orange left bookmark gradient */
+    .temp-card.heat-loss::before {
+      width: 4px;
+      background: linear-gradient(
+        180deg,
+        #f0c14a 0%,
+        #f0b429 28%,
+        #e08a2a 62%,
+        #d46b1f 100%
+      );
+    }
     /* Power measured: energy gradient on left tab */
     .temp-card.power-meas::before {
       width: 4px;
@@ -2710,9 +3105,34 @@
         background-size: 100% 100%;
       }
     }
-    .temp-card.heat-balance::before { background: var(--accent); }
-    .temp-card.heat-balance.hb-up::before { background: var(--ok); }
-    .temp-card.heat-balance.hb-down::before { background: var(--danger); }
+    /* Heat / cool-down — left bookmark gradient (neutral / heating / cooling) */
+    .temp-card.heat-balance::before {
+      width: 4px;
+      background: linear-gradient(
+        180deg,
+        #6bb8f0 0%,
+        var(--accent) 40%,
+        #2b7fc9 100%
+      );
+    }
+    .temp-card.heat-balance.hb-up::before {
+      background: linear-gradient(
+        180deg,
+        #6ee7b0 0%,
+        var(--ok) 35%,
+        #2bb0a0 70%,
+        #1a9a6a 100%
+      );
+    }
+    .temp-card.heat-balance.hb-down::before {
+      background: linear-gradient(
+        180deg,
+        #f0a0a5 0%,
+        var(--danger) 35%,
+        #d45a70 70%,
+        #b04058 100%
+      );
+    }
     .temp-card.heat-loss .tc-val,
     .temp-card.power-meas .tc-val,
     .temp-card.heat-balance .tc-val {
@@ -3120,22 +3540,24 @@
     .dash-item-tools .dash-grip::before {
       content: "";
       display: block;
-      width: 2px;
-      height: min(40%, 24px);
-      min-height: 12px;
+      width: 5px;
+      height: min(72%, 40px);
+      min-height: 22px;
       border-radius: 1px;
-      opacity: 0.45;
-      background: repeating-linear-gradient(
-        to bottom,
-        var(--dim) 0 1.5px,
-        transparent 1.5px 3.5px
-      );
+      opacity: 0.5;
+      background-image:
+        radial-gradient(circle, var(--dim) 0.9px, transparent 1px),
+        radial-gradient(circle, var(--dim) 0.9px, transparent 1px);
+      background-size: 5px 5px, 5px 5px;
+      background-position: 0 0, 3px 0;
+      background-repeat: repeat-y;
     }
     .dash-item-tools .dash-grip:hover {
       background: rgba(61, 156, 240, 0.06);
     }
     .dash-item-tools .dash-grip:hover::before {
       opacity: 0.9;
+      height: min(82%, 48px);
     }
     .dash-item-tools .dash-hide-btn:hover {
       color: #f87171;
@@ -3474,7 +3896,7 @@
       <button class="btn ghost" type="button" id="btn-refresh" onclick="fetchLive(true)" data-i18n="btn.refresh">Refresh</button>
       <label class="check" style="margin:0 0 0 auto">
         <input type="checkbox" id="use-live" checked />
-        <span data-i18n="check.live">Live from miner</span>
+        <span data-i18n="check.live">Live</span>
       </label>
     </div>
 
@@ -3560,6 +3982,25 @@
 
           <div class="dash-item" data-dash-id="weather">
             <div class="temp-card outdoor wx-widget wx-cloud" id="card-weather" data-wx-theme="cloud">
+              <!-- stars: visible only with .wx-clear-night (CSS) -->
+              <div class="wx-stars" aria-hidden="true">
+                <!-- right half only; loose clusters around / left of moon -->
+                <i class="wx-star-dim" style="left:6%;top:18%;--wx-star-dur:6.2s;--wx-star-delay:0s"></i>
+                <i style="left:14%;top:8%;--wx-star-dur:5.4s;--wx-star-delay:1.8s"></i>
+                <i class="wx-star-bright" style="left:22%;top:22%;--wx-star-dur:7.1s;--wx-star-delay:0.6s"></i>
+                <i class="wx-star-dim" style="left:31%;top:14%;--wx-star-dur:5.8s;--wx-star-delay:3.2s"></i>
+                <i style="left:9%;top:36%;--wx-star-dur:6.8s;--wx-star-delay:2.4s"></i>
+                <i style="left:38%;top:6%;--wx-star-dur:5.1s;--wx-star-delay:4.1s"></i>
+                <i class="wx-star-bright" style="left:48%;top:19%;--wx-star-dur:6.5s;--wx-star-delay:1.1s"></i>
+                <i class="wx-star-dim" style="left:55%;top:11%;--wx-star-dur:7.4s;--wx-star-delay:2.9s"></i>
+                <i style="left:63%;top:28%;--wx-star-dur:5.6s;--wx-star-delay:0.3s"></i>
+                <i class="wx-star-dim" style="left:71%;top:9%;--wx-star-dur:6s;--wx-star-delay:3.7s"></i>
+                <i style="left:79%;top:21%;--wx-star-dur:7.8s;--wx-star-delay:1.5s"></i>
+                <i class="wx-star-dim" style="left:18%;top:48%;--wx-star-dur:5.9s;--wx-star-delay:4.8s"></i>
+                <i style="left:42%;top:41%;--wx-star-dur:6.9s;--wx-star-delay:2.1s"></i>
+                <i class="wx-star-dim" style="left:68%;top:44%;--wx-star-dur:5.3s;--wx-star-delay:0.9s"></i>
+                <i style="left:86%;top:38%;--wx-star-dur:7.2s;--wx-star-delay:3.4s"></i>
+              </div>
               <div class="tc-label wx-label">
                 <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
                 <span class="wx-label-sep" aria-hidden="true"> · </span>
@@ -3586,8 +4027,18 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 12h15a3 3 0 1 1-3 3"/><path d="M3 16h8a2.5 2.5 0 1 1-2.5 2.5"/></svg>
                   <span id="wx-wind">—</span>
                 </span>
-                <span class="wx-meta-item" id="wx-meta-src">
-                  <span id="wx-src-label">Open-Meteo</span>
+                <span class="wx-meta-item" id="wx-meta-pressure" hidden title="atmospheric pressure">
+                  <!-- barometer / mercury column -->
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M8 4h4a2 2 0 0 1 2 2v10a4 4 0 1 1-8 0V6a2 2 0 0 1 2-2z"/>
+                    <path d="M10 16v-6"/>
+                    <circle cx="10" cy="16" r="1.2" fill="currentColor" stroke="none"/>
+                    <path d="M16 7h3M16 11h2M16 15h3"/>
+                  </svg>
+                  <span id="wx-pressure">—</span>
+                </span>
+                <span class="wx-meta-item" id="wx-meta-src" hidden>
+                  <span id="wx-src-label"></span>
                 </span>
               </div>
             </div>
@@ -3634,8 +4085,6 @@
                   <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
                   · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
                   <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
-                  · <span class="tip" data-tip-key="warmup" title="Upfreq Complete (all boards)">upfreq</span>
-                  <span id="dash-upfreq" data-bind="upfreqOk">—</span>
                 </div>
                 <div class="pm-extra-line">
                   <span class="tip" data-tip-key="psu_temp">PSU</span>
@@ -3651,9 +4100,9 @@
           <div class="dash-item" data-dash-id="boards">
             <div class="temp-card board-chip" id="card-board-chip">
               <div class="tc-label">
-                <span class="tip" data-tip-key="pcb">Boards (max)</span>
+                <span class="tip" data-tip-key="pcb" data-i18n="dash.hashboards">Hashboards</span>
                 <span style="color:var(--dim)"> / </span>
-                <span class="tip" data-tip-key="chip_max">Chips (max)</span>
+                <span class="tip" data-tip-key="chip_max" data-i18n="dash.chips">Chips</span>
               </div>
               <div class="tc-val tc-val-dual">
                 <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
@@ -3662,7 +4111,7 @@
               </div>
               <div class="tc-extra">
                 <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
-                <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">Critical</span> <span id="t-chip-crit">—</span></div>
+                <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">crit</span> <span id="t-chip-crit">—</span></div>
               </div>
             </div>
           </div>
@@ -3901,7 +4350,7 @@
             <button type="button" class="collapse-toggle" id="btn-toggle-pw-settings"
               aria-expanded="false" aria-controls="pw-settings-panel">
               <span class="chev" aria-hidden="true">▶</span>
-              <span class="collapse-label" id="pw-settings-toggle-label">power settings</span>
+              <span class="collapse-label" id="pw-settings-toggle-label" data-i18n="pw.settings">Power settings</span>
             </button>
 
             <div class="collapse-panel is-collapsed" id="pw-settings-panel" hidden>
@@ -3967,7 +4416,7 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2 id="boards-pcb-title" data-i18n="h2.boards">Boards (PCB) · hashboard</h2>
+              <h2 id="boards-pcb-title" data-i18n="h2.boards">Hashboards</h2>
               <div class="sub" id="boards-pcb-sub">devs[].Temperature · Upfreq Complete</div>
             </div>
           </div>
@@ -4446,11 +4895,15 @@
                 <div class="thr-fields">
                   <label class="field"><span class="tip" data-tip-key="t_ctrl_sensor">T_ctrl</span> · sensor
                     <select id="thr-tctrl-sensor">
-                      <option value="liquid">liquid (coolant)</option>
-                      <option value="env">env (ambient)</option>
-                      <option value="chip_avg">chip avg</option>
-                      <option value="chip_max">chip max</option>
-                      <option value="board_max">board max (PCB)</option>
+                      <optgroup label="Miner" data-i18n-label="pool.ws.group_miner">
+                        <option value="liquid">liquid (coolant)</option>
+                        <option value="env">env (ambient)</option>
+                        <option value="chip_avg">chip avg</option>
+                        <option value="chip_max">chip max</option>
+                        <option value="board_max">board max (PCB)</option>
+                      </optgroup>
+                      <!-- virtual sensors from Peripherals → Sensors filled by JS -->
+                      <optgroup id="thr-tctrl-sensors-group" label="Sensors" data-i18n-label="pool.ws.group_sensors" hidden></optgroup>
                     </select>
                   </label>
                   <label class="field"><span class="tip" data-tip-key="t0">T0</span> · Z0↔Z1
@@ -5311,6 +5764,7 @@
                 <select id="device-backend">
                   <option value="tapo">Tapo P100 / P110</option>
                   <option value="tuya">Tuya / Smart Life (LAN)</option>
+                  <option value="xiaomi">Xiaomi / Mi Home (LAN)</option>
                   <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
                   <option value="webhook">Webhook (HTTP)</option>
                   <option value="shelly">Shelly</option>
@@ -5343,6 +5797,7 @@
                   <label class="field"><span data-i18n="dev.tuya_eco">Ecosystem (app)</span>
                     <select id="dev-tuya-eco">
                       <option value="smartlife">Smart Life</option>
+                      <option value="houself">DNS Houself</option>
                       <option value="tuya">Tuya Smart</option>
                       <option value="classic">Tuya Smart (classic)</option>
                     </select>
@@ -5362,9 +5817,40 @@
                     </span>
                   </label>
                 </div>
-                <div class="row" style="grid-template-columns:100px 100px 1fr auto;gap:12px;margin-top:10px;align-items:end">
+                <div class="row" style="grid-template-columns:minmax(160px,1.2fr) 100px 1fr auto;gap:12px;margin-top:10px;align-items:end">
                   <label class="field"><span data-i18n="dev.tuya_country">Country</span>
-                    <input type="text" id="dev-tuya-country" value="7" placeholder="7" autocomplete="off" />
+                    <select id="dev-tuya-country">
+                      <option value="7">7 — RU / KZ · Россия / Казахстан</option>
+                      <option value="375">375 — BY · Беларусь</option>
+                      <option value="380">380 — UA · Украина</option>
+                      <option value="1">1 — US / CA · США / Канада</option>
+                      <option value="44">44 — UK · Великобритания</option>
+                      <option value="49">49 — DE · Германия</option>
+                      <option value="33">33 — FR · Франция</option>
+                      <option value="48">48 — PL · Польша</option>
+                      <option value="371">371 — LV · Латвия</option>
+                      <option value="372">372 — EE · Эстония</option>
+                      <option value="370">370 — LT · Литва</option>
+                      <option value="420">420 — CZ · Чехия</option>
+                      <option value="36">36 — HU · Венгрия</option>
+                      <option value="40">40 — RO · Румыния</option>
+                      <option value="359">359 — BG · Болгария</option>
+                      <option value="90">90 — TR · Турция</option>
+                      <option value="86">86 — CN · Китай</option>
+                      <option value="81">81 — JP · Япония</option>
+                      <option value="82">82 — KR · Корея</option>
+                      <option value="61">61 — AU · Австралия</option>
+                      <option value="91">91 — IN · Индия</option>
+                      <option value="55">55 — BR · Бразилия</option>
+                      <option value="52">52 — MX · Мексика</option>
+                      <option value="971">971 — AE · ОАЭ</option>
+                      <option value="966">966 — SA · Саудовская Аравия</option>
+                      <option value="972">972 — IL · Израиль</option>
+                      <option value="65">65 — SG · Сингапур</option>
+                      <option value="66">66 — TH · Таиланд</option>
+                      <option value="62">62 — ID · Индонезия</option>
+                      <option value="84">84 — VN · Вьетнам</option>
+                    </select>
                   </label>
                   <label class="field"><span data-i18n="dev.tuya_region">Region</span>
                     <select id="dev-tuya-region">
@@ -5379,19 +5865,59 @@
                   </label>
                   <button type="button" class="btn" id="btn-tuya-fetch-keys" data-i18n="dev.tuya_fetch">Get keys</button>
                 </div>
-                <div class="row" style="grid-template-columns:1fr 100px 100px;gap:12px;margin-top:10px">
+                <div class="row" style="grid-template-columns:1fr;gap:12px;margin-top:10px">
                   <label class="field"><span data-i18n="dev.tuya_local_key">local_key</span>
                     <input type="text" id="dev-tuya-local-key" placeholder="auto after Get keys" autocomplete="off" />
                   </label>
-                  <label class="field"><span data-i18n="dev.tuya_version">Version</span>
-                    <input type="text" id="dev-tuya-version" value="3.4" placeholder="3.4" />
+                </div>
+                <!-- defaults; edit in LAN advanced (rarely needed) -->
+                <input type="hidden" id="dev-tuya-version" value="3.4" />
+                <input type="hidden" id="dev-tuya-dps" value="1" />
+                <p id="dev-tuya-status" style="font-size:0.75rem;color:var(--dim);margin:8px 0 0">—</p>
+                <button type="button" class="collapse-toggle" id="btn-tuya-lan-adv"
+                  aria-expanded="false" aria-controls="dev-tuya-lan-adv-panel">
+                  <span class="chev" aria-hidden="true">▶</span>
+                  <span class="collapse-label" data-i18n="dev.tuya_lan_adv">LAN advanced</span>
+                </button>
+                <div id="dev-tuya-lan-adv-panel" class="collapse-panel is-collapsed" hidden style="margin-top:4px">
+                  <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                    <label class="field"><span data-i18n="dev.tuya_version">LAN protocol</span>
+                      <select id="dev-tuya-version-sel">
+                        <option value="3.3">3.3</option>
+                        <option value="3.4" selected>3.4 (typical)</option>
+                        <option value="3.5">3.5</option>
+                      </select>
+                      <span class="desc" data-i18n="dev.tuya_version_hint">Tuya TCP:6668 encryption. Almost always 3.4; 3.3 only on Err 914.</span>
+                    </label>
+                    <label class="field"><span data-i18n="dev.tuya_dps">Switch DPS</span>
+                      <input type="number" id="dev-tuya-dps-vis" value="1" min="1" max="255" />
+                      <span class="desc" data-i18n="dev.tuya_dps_hint">Relay datapoint number (usually 1). Change only for multi-gang / odd firmwares.</span>
+                    </label>
+                  </div>
+                </div>
+                <select id="dev-tuya-pick" style="display:none;width:100%;margin-top:8px" size="4"></select>
+              </div>
+
+              <!-- Xiaomi / Mi Home miIO -->
+              <div class="dev-be" data-be="xiaomi" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                  <label class="field"><span data-i18n="filt.outlet_ip">Outlet IP</span>
+                    <input type="text" id="dev-xiaomi-ip" placeholder="192.168.1.55" autocomplete="off" />
                   </label>
-                  <label class="field"><span data-i18n="dev.tuya_dps">Switch DPS</span>
-                    <input type="number" id="dev-tuya-dps" value="1" min="1" max="255" />
+                  <label class="field"><span data-i18n="dev.xiaomi_model">Model (opt.)</span>
+                    <input type="text" id="dev-xiaomi-model" placeholder="chuangmi.plug.…" autocomplete="off" />
                   </label>
                 </div>
-                <p id="dev-tuya-status" style="font-size:0.75rem;color:var(--dim);margin:8px 0 0">—</p>
-                <select id="dev-tuya-pick" style="display:none;width:100%;margin-top:8px" size="4"></select>
+                <label class="field" style="margin-top:10px"><span data-i18n="dev.xiaomi_token">Token (32 hex)</span>
+                  <span class="pw-wrap">
+                    <input type="password" id="dev-xiaomi-token" placeholder="auto from extractor / HA" autocomplete="off" spellcheck="false" />
+                    <button type="button" class="pw-eye" data-pw-for="dev-xiaomi-token" title="Show token" aria-label="Show token" aria-pressed="false">👁</button>
+                  </span>
+                </label>
+                <p id="dev-xiaomi-status" style="font-size:0.75rem;color:var(--dim);margin:8px 0 0"
+                   data-i18n="dev.xiaomi_hint">
+                  LAN miIO · UDP 54321 · token once (extractor / Home Assistant / cloud tools). No ongoing cloud.
+                </p>
               </div>
 
               <!-- eWeLink DIY -->
@@ -5561,8 +6087,8 @@
             </div>
           </div>
           <div class="card-b">
-            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">
-              Included: miner connection, dry_run, zone map & presets,
+            <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45" data-i18n-html="backup.include_desc">
+              Included: miner connection, dry_run, zone map &amp; presets,
               <strong>pool presets</strong>, pool, weather, history,
               <strong>sensors &amp; devices</strong>, chipmap,
               luci_proxy, Telegram
@@ -5583,36 +6109,36 @@
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" id="btn-test-conn" data-i18n="btn.test">Test</button>
-              <button class="btn" type="button" id="btn-write-api-check" title="Miner API Switch / write status">Write API</button>
-              <button class="btn primary" type="button" id="btn-write-api-enable" title="Try enable + password cycle">Enable Write</button>
+              <button class="btn" type="button" id="btn-write-api-check" data-i18n="btn.write_api" data-i18n-title="btn.write_api_title" title="Miner API Switch / write status">Write API</button>
+              <button class="btn primary" type="button" id="btn-write-api-enable" data-i18n="btn.enable_write" data-i18n-title="btn.enable_write_title" title="Try enable + password cycle">Enable Write</button>
               <button class="btn primary" type="button" id="btn-save-miner" data-i18n="btn.save">Save</button>
             </div>
           </div>
           <div class="card-b">
             <div class="row">
-              <label class="field">Project name
+              <label class="field"><span data-i18n="field.project_name">Project name</span>
                 <input type="text" id="settings-project-name" value="poolheat_WM" maxlength="64" autocomplete="off" placeholder="poolheat_WM" />
               </label>
             </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:4px 0 10px">
+            <p style="font-size:0.72rem;color:var(--dim);margin:4px 0 10px" data-i18n="field.project_name_hint">
               In UI header and Telegram (/status). Default poolheat_WM.
             </p>
             <div class="row">
-              <label class="field"><span class="req">IP / host</span>
+              <label class="field"><span class="req" data-i18n="field.ip_host">IP / host</span>
                 <input type="text" id="settings-miner-host" value="192.168.1.10" autocomplete="off" />
               </label>
-              <label class="field">Port
+              <label class="field"><span data-i18n="field.port">Port</span>
                 <input type="number" id="settings-miner-port" value="4028" min="1" max="65535" step="1" />
               </label>
             </div>
             <div class="row" style="margin-top:12px">
-              <label class="field">API password
+              <label class="field"><span data-i18n="field.api_password">API password</span>
                 <span class="pw-wrap">
                   <input type="password" id="settings-api-password" value="admin" autocomplete="off" />
                   <button type="button" class="pw-eye" data-pw-for="settings-api-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
                 </span>
               </label>
-              <label class="field"><span class="tip" data-tip-key="poll">Poll interval, sec</span>
+              <label class="field"><span class="tip" data-tip-key="poll" data-i18n="field.poll_interval">Poll interval, sec</span>
                 <input type="number" id="settings-poll-interval" value="5" min="2" max="300" step="1" />
               </label>
             </div>
@@ -5622,7 +6148,7 @@
             <div id="write-api-status" style="font-size:0.78rem;color:var(--dim);margin:10px 0 0;line-height:1.45;white-space:pre-wrap">
               Write API: —
             </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.45">
+            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.45" data-i18n-html="write.enable_desc">
               <b>Enable Write</b> opens write via LuCI (<code>open_by_api</code>) —
               like Tools → Miner API Switch, without changing the password.
               Then: Suspend/Resume, Power Mode, Power Limit on :4028/:4433.
@@ -6317,8 +6843,18 @@
         "dev.tuya_device_id": "Device ID",
         "dev.tuya_fetch": "Get keys",
         "dev.tuya_local_key": "local_key",
-        "dev.tuya_version": "Version",
+        "dev.tuya_version": "LAN protocol version",
         "dev.tuya_dps": "Switch DPS",
+        "dev.tuya_version_hint": "Tuya TCP:6668 encryption. Almost always 3.4; 3.3 only on Err 914.",
+        "dev.tuya_dps_hint": "Relay datapoint number (usually 1). Change only for multi-gang / odd firmwares.",
+        "dev.tuya_lan_adv": "Advanced settings",
+        "dev.tuya_status_ready": "local_key: saved · LAN ready",
+        "dev.tuya_status_need": "local_key: not set — press Get keys",
+        "dev.xiaomi_token": "Token (32 hex)",
+        "dev.xiaomi_model": "Model (opt.)",
+        "dev.xiaomi_hint": "LAN miIO · UDP 54321 · token once (extractor / Home Assistant / cloud tools). No ongoing cloud.",
+        "dev.xiaomi_ready": "token: saved · LAN ready",
+        "dev.xiaomi_need_token": "token not set — 32 hex from extractor / HA",
         "dev.icon": "Icon",
         "dev.name": "Name",
         "dev.alias": "Alias",
@@ -6373,6 +6909,9 @@
         "link.sensor_name_hide": "Hide other language",
         "hint.sensor_name_bilingual": "If left empty, the other language is copied from the primary name on save.",
         "field.sensor_unit": "Unit",
+        "field.src_field": "Field",
+        "field.src_alias": "Alias",
+        "field.src_value": "Value",
         "field.sensor_sources": "Sources (priority top → bottom)",
         "field.sensor_sources_drag": "drag ⋮⋮ to change priority",
         "btn.drag_reorder": "Drag to reorder",
@@ -6392,6 +6931,10 @@
         "opt.xform_none": "none (as source)",
         "opt.xform_offset": "offset (source + Δ)",
         "opt.xform_power": "power table (source + Δ(P))",
+        "link.xform_show": "Transform",
+        "link.xform_hide": "Hide transform",
+        "xform.sum_offset": "offset {v}",
+        "xform.sum_power": "power table · {n} pts",
         "hint.power_table": "Points: power (kW) → Δ °C. Result = source + Δ (positive adds, negative subtracts). Interpolated.",
         "opt.src_live": "Miner live",
         "opt.src_weather": "Weather (Open-Meteo)",
@@ -6429,7 +6972,7 @@
         "btn.uninstall": "Uninstall",
         "btn.sniffer_install": "Install",
         "btn.sniffer_uninstall": "Uninstall",
-        "check.live": "Live from miner",
+        "check.live": "Live",
         "check.hist_enabled": "Data collection",
         "check.hist_desc": "write samples to history.db",
         "check.chip_cache": "Save chip map cache",
@@ -6457,7 +7000,11 @@
         "h2.temps": "Temperatures °C",
         "h2.power": "Power · Hashrate · J/T",
         "h2.mode": "Miner mode",
-        "h2.boards": "Boards (PCB) · hashboard",
+        "h2.boards": "Hashboards",
+        "boards.title_n": "Hashboards · {n}",
+        "boards.cell": "SM{n}",
+        "pw.settings": "Power settings",
+        "pw.settings_hide": "Hide power settings",
         "h2.temps_catalog": "Temperature sensors",
         "sub.temps_catalog": "all points available for this model · live",
         "temps.col_sensor": "Sensor",
@@ -6596,9 +7143,12 @@
         "wx.stale": "stale",
         "wx.humidity": "RH {v}%",
         "wx.wind": "{v} m/s",
+        "wx.pressure": "{v} mmHg",
         "dash.heat_loss": "Heat loss",
         "dash.heat_balance": "Heat / cool-down",
         "dash.power_measured": "Power measured",
+        "dash.hashboards": "Hashboards",
+        "dash.chips": "Chips",
         "dash.edit": "Edit layout",
         "dash.edit_done": "Done",
         "dash.add_block": "Show hidden block",
@@ -6608,7 +7158,7 @@
         "dash.widget.weather": "Outdoor",
         "dash.widget.heat_loss": "Heat loss",
         "dash.widget.power": "Power measured",
-        "dash.widget.boards": "Boards / Chips",
+        "dash.widget.boards": "Hashboards / Chips",
         "dash.widget.heat_balance": "Heat / cool-down",
         "dash.widget.errors": "Errors",
         "dash.widget.history": "History & charts",
@@ -6654,6 +7204,18 @@
         "sub.desc.luci": "miner web UI via the router",
         "sub.desc.sniffer": "optional · download from GitHub · tcpdump on router",
         "sub.backup": "download / restore all settings (JSON)",
+        "backup.include_desc": "Included: miner connection, dry_run, zone map &amp; presets, <strong>pool presets</strong>, pool, weather, history, <strong>sensors &amp; devices</strong>, chipmap, luci_proxy, Telegram <strong>(including passwords and bot token)</strong>, plus <strong>meta</strong> — app version, Keenetic, hostname, paths (meta is rewritten on each service start on this router). Excluded: history.db, caches, event log.",
+        "write.enable_desc": "<b>Enable Write</b> opens write via LuCI (<code>open_by_api</code>) — like Tools → Miner API Switch, without changing the password. Then: Suspend/Resume, Power Mode, Power Limit on :4028/:4433. Mode/reboot also via LuCI if write is still closed. Auto-enable on the first write command if the switch was off.",
+        "btn.write_api": "Write API",
+        "btn.write_api_title": "Miner API Switch / write status",
+        "btn.enable_write": "Enable Write",
+        "btn.enable_write_title": "Open write via LuCI open_by_api",
+        "field.project_name": "Project name",
+        "field.project_name_hint": "In UI header and Telegram (/status). Default poolheat_WM.",
+        "field.ip_host": "IP / host",
+        "field.port": "Port",
+        "field.api_password": "API password",
+        "field.poll_interval": "Poll interval, sec",
         "sub.connection": "TCP · saved to config.json · applied immediately",
         "sub.filtration": "outlet / webhook · auto ON while mining",
         "sub.firmware": "Firmware",
@@ -6806,7 +7368,7 @@
         "sub.devices": "Устройства",
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
-        "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
+        "sub.sensors_card": "Создавайте пользовательские датчики (например outdoor, pool_water). Источники опрашиваются по приоритету — побеждает первый с данными. Виртуальные правила.",
         "sub.devices_card": "Создайте актуаторы (Tapo, Tuya/Smart Life, Webhook, Shelly, HA)",
         "periph.sensors_empty": "Датчиков пока нет. Создайте alias с источниками по приоритету и опциональным правилом.",
         "periph.sensors_help": "",
@@ -6823,8 +7385,18 @@
         "dev.tuya_device_id": "Device ID",
         "dev.tuya_fetch": "Получить keys",
         "dev.tuya_local_key": "local_key",
-        "dev.tuya_version": "Version",
+        "dev.tuya_version": "Версия LAN-протокола",
         "dev.tuya_dps": "Switch DPS",
+        "dev.tuya_version_hint": "Шифрование Tuya TCP:6668. Почти всегда 3.4; 3.3 только при Err 914.",
+        "dev.tuya_dps_hint": "Номер datapoint реле (обычно 1). Меняйте только для многокнопочных / странных прошивок.",
+        "dev.tuya_lan_adv": "Расширенные настройки",
+        "dev.tuya_status_ready": "local_key: сохранён · LAN ready",
+        "dev.tuya_status_need": "local_key: не задан — нажмите Get keys",
+        "dev.xiaomi_token": "Token (32 hex)",
+        "dev.xiaomi_model": "Модель (опц.)",
+        "dev.xiaomi_hint": "LAN miIO · UDP 54321 · token один раз (extractor / Home Assistant / cloud). Без постоянного облака.",
+        "dev.xiaomi_ready": "token: сохранён · LAN ready",
+        "dev.xiaomi_need_token": "token не задан — 32 hex из extractor / HA",
         "dev.icon": "Иконка",
         "dev.name": "Название",
         "dev.alias": "Alias",
@@ -6880,6 +7452,9 @@
         "link.sensor_name_hide": "Скрыть другой язык",
         "hint.sensor_name_bilingual": "Если второе поле пустое — при сохранении скопируется из основного.",
         "field.sensor_unit": "Единица",
+        "field.src_field": "Поле",
+        "field.src_alias": "Alias",
+        "field.src_value": "Значение",
         "field.sensor_sources": "Источники (приоритет сверху вниз)",
         "field.sensor_sources_drag": "перетащите ⋮⋮ чтобы изменить приоритет",
         "btn.drag_reorder": "Перетащить",
@@ -6899,6 +7474,10 @@
         "opt.xform_none": "нет (как источник)",
         "opt.xform_offset": "offset (источник + Δ)",
         "opt.xform_power": "таблица мощности (источник + Δ(P))",
+        "link.xform_show": "Преобразование",
+        "link.xform_hide": "Скрыть преобразование",
+        "xform.sum_offset": "offset {v}",
+        "xform.sum_power": "таблица мощности · {n} тчк",
         "hint.power_table": "Точки: мощность (кВт) → Δ °C. Результат = источник + Δ (плюс — прибавить, минус — убавить). Интерполяция.",
         "opt.src_live": "Miner live",
         "opt.src_weather": "Погода (Open-Meteo)",
@@ -6936,7 +7515,7 @@
         "btn.uninstall": "Удалить",
         "btn.sniffer_install": "Установить",
         "btn.sniffer_uninstall": "Удалить",
-        "check.live": "Live с майнера",
+        "check.live": "Live",
         "check.hist_enabled": "Сбор данных",
         "check.hist_desc": "писать samples в history.db",
         "check.chip_cache": "Сохранять кеш карты чипов",
@@ -6964,7 +7543,11 @@
         "h2.temps": "Температуры °C",
         "h2.power": "Мощность · Хешрейт · J/T",
         "h2.mode": "Режим майнера",
-        "h2.boards": "Платы (PCB) · hashboard",
+        "h2.boards": "Хешплаты",
+        "boards.title_n": "Хешплаты · {n}",
+        "boards.cell": "SM{n}",
+        "pw.settings": "Настройки питания",
+        "pw.settings_hide": "Скрыть настройки питания",
         "h2.temps_catalog": "Датчики температуры",
         "sub.temps_catalog": "все точки для этой модели · live",
         "temps.col_sensor": "Датчик",
@@ -7103,9 +7686,12 @@
         "wx.stale": "устарело",
         "wx.humidity": "RH {v}%",
         "wx.wind": "{v} м/с",
+        "wx.pressure": "{v} мм рт.ст.",
         "dash.heat_loss": "Теплопотери",
         "dash.heat_balance": "Нагрев / остывание",
         "dash.power_measured": "Мощность",
+        "dash.hashboards": "Хешплаты",
+        "dash.chips": "Чипы",
         "dash.edit": "Редактировать",
         "dash.edit_done": "Готово",
         "dash.add_block": "Показать скрытый блок",
@@ -7115,7 +7701,7 @@
         "dash.widget.weather": "Улица",
         "dash.widget.heat_loss": "Теплопотери",
         "dash.widget.power": "Мощность",
-        "dash.widget.boards": "Платы / Чипы",
+        "dash.widget.boards": "Хешплаты / Чипы",
         "dash.widget.heat_balance": "Нагрев / остывание",
         "dash.widget.errors": "Ошибки",
         "dash.widget.history": "История и графики",
@@ -7161,6 +7747,18 @@
         "sub.desc.luci": "web-UI майнера через роутер",
         "sub.desc.sniffer": "опционально · скачать с GitHub · tcpdump на роутере",
         "sub.backup": "скачать / восстановить все настройки (JSON)",
+        "backup.include_desc": "Включено: подключение майнера, dry_run, карта зон и пресеты, <strong>пресеты бассейна</strong>, бассейн, погода, история, <strong>датчики и устройства</strong>, chipmap, luci_proxy, Telegram <strong>(включая пароли и токен бота)</strong>, плюс <strong>meta</strong> — версия приложения, Keenetic, hostname, пути (meta перезаписывается при каждом старте сервиса на этом роутере). Исключено: history.db, кэши, event log.",
+        "write.enable_desc": "<b>Включить Write</b> открывает запись через LuCI (<code>open_by_api</code>) — как Tools → Miner API Switch, без смены пароля. Далее: Suspend/Resume, Power Mode, Power Limit на :4028/:4433. Mode/reboot также через LuCI, если write ещё закрыт. Авто-включение при первой write-команде, если переключатель был выключен.",
+        "btn.write_api": "Write API",
+        "btn.write_api_title": "Miner API Switch / статус write",
+        "btn.enable_write": "Включить Write",
+        "btn.enable_write_title": "Открыть write через LuCI open_by_api",
+        "field.project_name": "Имя проекта",
+        "field.project_name_hint": "В шапке UI и Telegram (/status). По умолчанию poolheat_WM.",
+        "field.ip_host": "IP / host",
+        "field.port": "Порт",
+        "field.api_password": "Пароль API",
+        "field.poll_interval": "Интервал опроса, сек",
         "sub.connection": "TCP · сохраняется в config.json · применяется сразу",
         "sub.filtration": "розетка / webhook · auto ON при майнинге",
         "sub.firmware": "Прошивки",
@@ -7510,11 +8108,11 @@
     const TIPS = {
       t_ctrl: {
         title: "T_ctrl · zone map sensor",
-        body: "Temperature for heat zones Z0–Z3 (not Safety).\nSource is selected in Thresholds: liquid · env · chip avg/max · board max.\nThresholds T0 · T1 · T2 · h. Safety Critical always uses chip max.",
+        body: "Temperature for heat zones Z0–Z3 (not Safety).\nSource is selected in Thresholds: liquid · env · chip avg/max · board max · or a sensor from Peripherals → Sensors.\nThresholds T0 · T1 · T2 · h. Safety Critical always uses chip max.",
       },
       t_ctrl_sensor: {
         title: "T_ctrl · sensor select",
-        body: "Which live API field is T_ctrl for heat zones.\n• liquid — liquid_temp (hydro, if ASIC provides it)\n• env — Env Temp (ambient)\n• chip avg / max — chip temperatures\n• board max — max PCB °C across slots\nT_safe / Critical always uses chip max.",
+        body: "Which source is T_ctrl for heat zones.\n• liquid — liquid_temp (hydro, if ASIC provides it)\n• env — Env Temp (ambient)\n• chip avg / max — chip temperatures\n• board max — max PCB °C across slots\n• Sensors — aliases from Peripherals → Sensors (sensor:alias)\nT_safe / Critical always uses chip max.",
       },
       t_safe: {
         title: "T_safe",
@@ -7561,11 +8159,11 @@
         body: "Ambient temperature from summary (sensor/estimate from miner).\nInformational; not the main control lever in MVP.",
       },
       pcb: {
-        title: "Boards (max)",
+        title: "Hashboards",
         body: "Max PCB °C across hashboards.",
       },
       chip_max: {
-        title: "Chips (max)",
+        title: "Chips",
         body: "Max chip °C · safety / Critical.",
       },
       power_mode: {
@@ -7856,6 +8454,72 @@
         telegram: {
           title: "Telegram bot",
           body: "Profile (/profile): language + notify + Cmd.\n/lang_en · /notify_zone · /notify_all.",
+        },
+      },
+      ru: {
+        pcb: {
+          title: "Хешплаты",
+          body: "Макс. °C PCB по хешплатам.",
+        },
+        chip_max: {
+          title: "Чипы",
+          body: "Макс. °C чипов · safety / Critical.",
+        },
+        heat_loss: {
+          title: "Теплопотери",
+          body: "Q = U · S · max(0, t_бассейн − t_улица)\nU ≈ 25 W/(m²·K).\nЕдиница: kW — мощность (верно).\nkW·h — энергия; kW/h — неверно.\n1.29 kW постоянно ≈ 1.29 kWh за час.\n°C/h = Q / (m·c) — скорость остывания.",
+        },
+        heat_balance: {
+          title: "Нагрев / остывание",
+          body: "Баланс: Q_net = Q_in − Q_loss.\nQ_in = измеренная мощность майнера.\n+°C/h — нагрев, −°C/h — остывание.\nИзбыток/дефицит kW — насколько мощность выше/ниже нужной, чтобы держать текущую t°.",
+        },
+        power_measured: {
+          title: "Мощность",
+          body: "Измеренная мощность (W) и хешрейт (TH/s) с ASIC.\nСправа: freq · J/T.\nСтрока 1: mode · uptime · mining.\nСтрока 2: PSU · rpm · V · A.",
+        },
+        weather: {
+          title: "Улица · погода",
+          body: "Температура на улице для выбранного города.\nИсточник: Open-Meteo (без API-ключа).\nГород: вкладка Бассейн → Погода.",
+        },
+        env: {
+          title: "Env · окружающая",
+          body: "Температура окружения из summary (датчик/оценка майнера).\nИнформативно; не главный рычаг зон в MVP.",
+        },
+        critical: {
+          title: "Critical (crit)",
+          body: "Аварийный слой: chip max ≥ T_crit.\nПриоритет #1 (выше Force Stop / зон).\nКоманды — Карта зон → Safety on_crit / on_clear.\nПри Force Stop on_clear (resume) блокируется.",
+        },
+        t_ctrl: {
+          title: "T_ctrl · датчик карты зон",
+          body: "Температура для тепловых зон Z0–Z3 (не Safety).\nИсточник в Порогах: liquid · env · chip avg/max · board max · или датчик из Периферия → Датчики.\nПороги T0 · T1 · T2 · h. Safety Critical всегда по chip max.",
+        },
+        dry_run: {
+          title: "Dry Run",
+          body: "Автозапись зон отключена. Safety Critical всё равно применяется. Действия только в лог.",
+        },
+        api_live: {
+          title: "API live",
+          body: "Whatsminer TCP :4028 через serve.py.\nOK = последний опрос успешен.\nFail → fail-safe / SIM / ошибка.",
+        },
+        warmup: {
+          title: "Warmup / upfreq",
+          body: "Майнер ещё выходит на режим. Повышение профиля заблокировано, пока не готов.",
+        },
+        override: {
+          title: "Override 30м",
+          body: "Пауза авто-зон на 30 мин (сервер).\nНиже Safety и Force Stop. Ручные кнопки режима работают.",
+        },
+        poll: {
+          title: "Интервал опроса, сек",
+          body: "Период live-опроса майнера. Сохраняется с IP / паролем.",
+        },
+        hist_interval: {
+          title: "Интервал выборки, сек",
+          body: "Как часто пишутся сэмплы в history.db.",
+        },
+        telegram: {
+          title: "Telegram-бот",
+          body: "Профиль (/profile): язык + notify + Cmd.\n/lang_en · /notify_zone · /notify_all.",
         },
       },
     };
@@ -8162,6 +8826,17 @@
       document.querySelectorAll(".view").forEach((v) => {
         v.classList.toggle("active", v.id === "view-" + mainTab);
       });
+      // keep active tab visible in mobile ribbon + refresh ‹ › state
+      requestAnimationFrame(() => {
+        try {
+          document
+            .querySelector("nav.tabs button.active")
+            ?.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+        } catch (_) { /* ignore */ }
+        if (typeof window.__poolheatSyncTabStrips === "function") {
+          window.__poolheatSyncTabStrips();
+        }
+      });
       if (mainTab === "info") setInfoSubtab(infoSub);
       if (mainTab === "miner") setMinerSubtab(minerSub);
       if (mainTab === "settings") setSettingsSubtab(settingsSub);
@@ -8220,6 +8895,112 @@
     }
 
     initUiLangControls();
+
+    /** Mobile tab ribbon: hide scrollbar, laconic ‹ ›, edge fade + soft shadow */
+    function initTabStrips() {
+      const MOBILE_MQ = window.matchMedia("(max-width: 720px)");
+
+      function wrapNav(nav) {
+        if (!nav || nav.closest(".tab-strip")) return null;
+        const isSub = nav.classList.contains("subtabs");
+        const strip = document.createElement("div");
+        strip.className = "tab-strip" + (isSub ? " tab-strip--sub" : "");
+        strip.setAttribute("data-tab-strip", "");
+
+        const prev = document.createElement("button");
+        prev.type = "button";
+        prev.className = "tab-strip-btn prev";
+        prev.setAttribute("aria-label", "Previous tabs");
+        prev.textContent = "‹";
+
+        const next = document.createElement("button");
+        next.type = "button";
+        next.className = "tab-strip-btn next";
+        next.setAttribute("aria-label", "Next tabs");
+        next.textContent = "›";
+
+        const track = document.createElement("div");
+        track.className = "tab-strip-track";
+        const scroll = document.createElement("div");
+        scroll.className = "tab-strip-scroll";
+
+        nav.parentNode.insertBefore(strip, nav);
+        scroll.appendChild(nav);
+        track.appendChild(scroll);
+        strip.appendChild(prev);
+        strip.appendChild(track);
+        strip.appendChild(next);
+
+        const STEP = () => Math.max(120, Math.floor(scroll.clientWidth * 0.7));
+
+        function sync() {
+          const max = Math.max(0, scroll.scrollWidth - scroll.clientWidth);
+          const left = scroll.scrollLeft;
+          const eps = 2;
+          const overflow = max > eps;
+          const mobile = MOBILE_MQ.matches;
+          strip.classList.toggle("has-arrows", mobile && overflow);
+          const canL = left > eps;
+          const canR = left < max - eps;
+          strip.classList.toggle("can-left", canL);
+          strip.classList.toggle("can-right", canR);
+          prev.disabled = !canL;
+          next.disabled = !canR;
+          prev.hidden = !(mobile && overflow);
+          next.hidden = !(mobile && overflow);
+        }
+
+        prev.addEventListener("click", () => {
+          scroll.scrollBy({ left: -STEP(), behavior: "smooth" });
+        });
+        next.addEventListener("click", () => {
+          scroll.scrollBy({ left: STEP(), behavior: "smooth" });
+        });
+        scroll.addEventListener("scroll", sync, { passive: true });
+
+        // Keep active tab in view after switch
+        nav.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            requestAnimationFrame(() => {
+              try {
+                btn.scrollIntoView({ inline: "nearest", block: "nearest", behavior: "smooth" });
+              } catch (_) {
+                /* ignore */
+              }
+              sync();
+            });
+          });
+        });
+
+        strip._tabStripSync = sync;
+        return strip;
+      }
+
+      document.querySelectorAll("nav.tabs, nav.subtabs").forEach(wrapNav);
+
+      function syncAll() {
+        document.querySelectorAll("[data-tab-strip]").forEach((s) => {
+          if (typeof s._tabStripSync === "function") s._tabStripSync();
+        });
+      }
+
+      window.addEventListener("resize", syncAll, { passive: true });
+      if (typeof MOBILE_MQ.addEventListener === "function") {
+        MOBILE_MQ.addEventListener("change", syncAll);
+      } else if (typeof MOBILE_MQ.addListener === "function") {
+        MOBILE_MQ.addListener(syncAll);
+      }
+      // after fonts / i18n labels settle
+      requestAnimationFrame(() => {
+        syncAll();
+        setTimeout(syncAll, 120);
+        setTimeout(syncAll, 500);
+      });
+      // re-measure when UI language flips (labels change width)
+      document.addEventListener("poolheat:lang", syncAll);
+      window.__poolheatSyncTabStrips = syncAll;
+    }
+    initTabStrips();
 
     document.querySelectorAll("nav.tabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -8753,12 +9534,36 @@
 
     function getTctrlSensor() {
       const el = document.getElementById("thr-tctrl-sensor");
-      const v = (el && el.value) || "liquid";
-      const ok = ["liquid", "env", "chip_avg", "chip_max", "board_max"];
-      return ok.includes(v) ? v : "liquid";
+      const v = String((el && el.value) || "liquid").trim();
+      const builtIn = ["liquid", "env", "chip_avg", "chip_max", "board_max"];
+      if (builtIn.includes(v)) return v;
+      if (/^sensor:[a-z][a-z0-9_]*$/i.test(v)) return v.toLowerCase();
+      // bare alias → sensor:alias
+      if (/^[a-z][a-z0-9_]*$/i.test(v) && !builtIn.includes(v.toLowerCase())) {
+        return "sensor:" + v.toLowerCase();
+      }
+      return "liquid";
     }
 
     function tctrlSensorLabel(id) {
+      const s = String(id || "liquid");
+      if (s.startsWith("sensor:")) {
+        const alias = s.slice(7);
+        if (typeof sensorsCache !== "undefined" && Array.isArray(sensorsCache)) {
+          const found = sensorsCache.find(
+            (x) => x && String(x.alias || "").toLowerCase() === alias
+          );
+          if (found) {
+            const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+            const nm =
+              lang === "ru"
+                ? found.name_ru || found.name || alias
+                : found.name_en || found.name || alias;
+            return nm + " · " + alias;
+          }
+        }
+        return alias;
+      }
       const m = {
         liquid: "liquid",
         env: "env",
@@ -8766,12 +9571,110 @@
         chip_max: "chip max",
         board_max: "board max",
       };
-      return m[id] || id || "liquid";
+      return m[s] || s || "liquid";
+    }
+
+    /**
+     * Fill Zone map T_ctrl select: miner fields + Peripherals → Sensors.
+     * Same id scheme as Pool water: sensor:<alias>
+     */
+    function fillTctrlSensorSelect(selected, optionsFromApi) {
+      const sel = document.getElementById("thr-tctrl-sensor");
+      if (!sel) return;
+      const cur = String(selected || sel.value || "liquid").trim();
+      const minerGroupLabel = t("pool.ws.group_miner", "Miner");
+      const sensGroupLabel = t("pool.ws.group_sensors", "Sensors (Peripherals)");
+      const minerOpts = [
+        { id: "liquid", label: t("pool.ws.liquid", "liquid — ASIC liquid_temp (coolant)") },
+        { id: "env", label: t("pool.ws.env", "env — Env Temp (ambient)") },
+        { id: "chip_avg", label: t("pool.ws.chip_avg", "chip avg — average across chips") },
+        { id: "chip_max", label: t("pool.ws.chip_max", "chip max — max across chips") },
+        { id: "board_max", label: t("pool.ws.board_max", "board max — max PCB") },
+      ];
+      let virt = [];
+      if (Array.isArray(optionsFromApi)) {
+        virt = optionsFromApi.filter((o) => o && o.group === "sensors");
+      } else if (typeof sensorsCache !== "undefined" && Array.isArray(sensorsCache)) {
+        virt = sensorsCache
+          .filter((s) => s && s.enabled !== false && s.alias)
+          .map((s) => {
+            const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+            const nm =
+              lang === "ru"
+                ? s.name_ru || s.name || s.alias
+                : s.name_en || s.name || s.alias;
+            return {
+              id: "sensor:" + s.alias,
+              alias: s.alias,
+              label: nm + " · " + s.alias,
+            };
+          });
+      }
+      let html =
+        '<optgroup label="' + minerGroupLabel.replace(/"/g, "&quot;") + '">';
+      minerOpts.forEach((o) => {
+        html +=
+          '<option value="' +
+          o.id +
+          '">' +
+          o.label.replace(/</g, "&lt;") +
+          "</option>";
+      });
+      html += "</optgroup>";
+      if (virt.length) {
+        html +=
+          '<optgroup label="' + sensGroupLabel.replace(/"/g, "&quot;") + '">';
+        virt.forEach((o) => {
+          const id = o.id || ("sensor:" + (o.alias || ""));
+          const lab = o.label || o.name || id;
+          html +=
+            '<option value="' +
+            String(id).replace(/"/g, "") +
+            '">' +
+            String(lab).replace(/</g, "&lt;") +
+            "</option>";
+        });
+        html += "</optgroup>";
+      }
+      sel.innerHTML = html;
+      if ([...sel.options].some((o) => o.value === cur)) {
+        sel.value = cur;
+      } else if (cur.startsWith("sensor:") && ![...sel.options].some((o) => o.value === cur)) {
+        const opt = document.createElement("option");
+        opt.value = cur;
+        opt.textContent = cur + " (missing)";
+        sel.appendChild(opt);
+        sel.value = cur;
+      } else {
+        sel.value = "liquid";
+      }
     }
 
     /** Resolve T_ctrl °C from a live/sim reading using selected sensor. */
     function resolveTctrl(r, sensor) {
       const sens = sensor || getTctrlSensor();
+      // Peripheral virtual sensor (Peripherals → Sensors)
+      if (String(sens).startsWith("sensor:")) {
+        const alias = String(sens).slice(7);
+        // Prefer server-resolved t_ctrl when it matches this sensor (from /api/live)
+        if (
+          r &&
+          r.t_ctrl_sensor &&
+          String(r.t_ctrl_sensor).toLowerCase() === String(sens).toLowerCase() &&
+          r.t_ctrl != null &&
+          Number.isFinite(Number(r.t_ctrl))
+        ) {
+          return Number(r.t_ctrl);
+        }
+        if (typeof sensorsValues !== "undefined" && sensorsValues && sensorsValues[alias]) {
+          const v = Number(sensorsValues[alias].value);
+          if (Number.isFinite(v)) return v;
+        }
+        if (r && r.t_ctrl != null && Number.isFinite(Number(r.t_ctrl))) {
+          return Number(r.t_ctrl);
+        }
+        return NaN;
+      }
       const boards = (r && r.boards) || [];
       const boardNums = boards.map(Number).filter((x) => Number.isFinite(x));
       if (sens === "env") return Number(r && r.env);
@@ -8851,10 +9754,14 @@
         if (el && v != null) el.value = v;
       };
       if (cfg.t_ctrl_sensor != null) {
-        const sel = document.getElementById("thr-tctrl-sensor");
-        if (sel) {
-          const v = String(cfg.t_ctrl_sensor);
-          if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+        if (typeof fillTctrlSensorSelect === "function") {
+          fillTctrlSensorSelect(String(cfg.t_ctrl_sensor), null);
+        } else {
+          const sel = document.getElementById("thr-tctrl-sensor");
+          if (sel) {
+            const v = String(cfg.t_ctrl_sensor);
+            if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+          }
         }
       }
       if (cfg.t0 != null) setNum("thr-low", cfg.t0);
@@ -8930,6 +9837,14 @@
         const res = await fetch("/api/zone/config", { cache: "no-store" });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "zone config fail");
+        // options for T_ctrl: miner + Peripherals → Sensors
+        if (typeof fillTctrlSensorSelect === "function") {
+          const cur =
+            (body.config && body.config.t_ctrl_sensor) ||
+            document.getElementById("thr-tctrl-sensor")?.value ||
+            "liquid";
+          fillTctrlSensorSelect(cur, body.t_ctrl_sensor_options || null);
+        }
         applyZoneMapConfig(body.config);
         return body.config;
       } catch (e) {
@@ -11164,7 +12079,8 @@
 
     /**
      * Badge right of Mining/Suspend:
-     * Tuning: upfreq 0  |  Tuned: upfreq 1
+     * Tuned: upfreq 1
+     * Tuning: upfreq 0 — spin only while mining control = resume
      */
     function updateUpfreqBadge(r) {
       const el = document.getElementById("pm-upfreq-badge");
@@ -11172,19 +12088,28 @@
       const ico = el.querySelector(".pm-uf-ico");
       const txt = el.querySelector(".pm-uf-txt");
       const flag = resolveUpfreqFlag(r);
-      el.classList.remove("is-tuning", "is-tuned", "is-unknown");
+      const work = typeof inferWorkState === "function" ? inferWorkState(r) : null;
+      const mining = work === "resume";
+      el.classList.remove("is-tuning", "is-tuned", "is-unknown", "is-spinning");
       if (flag === 1) {
         el.classList.add("is-tuned");
         if (ico) ico.textContent = "✓";
         if (txt) txt.textContent = "Tuned";
-        el.title = "Tuned: upfreq 1";
-        el.setAttribute("aria-label", "Tuned: upfreq 1");
+        el.title = "Tuned: upfreq complete";
+        el.setAttribute("aria-label", "Tuned: upfreq complete");
       } else if (flag === 0) {
         el.classList.add("is-tuning");
+        // Spin only during active mining + incomplete upfreq
+        if (mining) el.classList.add("is-spinning");
         if (ico) ico.textContent = "⟳";
         if (txt) txt.textContent = "Tuning";
-        el.title = "Tuning: upfreq 0";
-        el.setAttribute("aria-label", "Tuning: upfreq 0");
+        el.title = mining
+          ? "Tuning: upfreq incomplete · mining"
+          : "Tuning: upfreq incomplete (spin only while mining)";
+        el.setAttribute(
+          "aria-label",
+          mining ? "Tuning while mining" : "Tuning (not mining)"
+        );
       } else {
         el.classList.add("is-unknown");
         if (ico) ico.textContent = "·";
@@ -11204,6 +12129,22 @@
       return 4;
     }
 
+    function formatBoardsTitle(n) {
+      const nWant = Math.max(1, Math.min(8, Number(n) || 4));
+      if (typeof tf === "function") {
+        return tf("boards.title_n", { n: nWant }, "Hashboards · {n}");
+      }
+      const ru = typeof getUiLang === "function" && getUiLang() === "ru";
+      return (ru ? "Хешплаты · " : "Hashboards · ") + nWant;
+    }
+
+    function formatBoardCellId(i) {
+      if (typeof tf === "function") {
+        return tf("boards.cell", { n: i }, "SM{n}");
+      }
+      return "SM" + i;
+    }
+
     /** Rebuild PCB cards when board_count changes (M63=4, M60S=3, …). */
     function ensureBoardsGrid(n) {
       const grid = document.getElementById("boards-grid");
@@ -11213,12 +12154,20 @@
       grid.style.setProperty("--board-cols", String(nWant));
       grid.setAttribute("data-cols", String(nWant));
       const cur = grid.querySelectorAll(".bc-cell").length;
-      if (cur === nWant) return;
+      if (cur === nWant) {
+        // refresh labels on language change without rebuild
+        grid.querySelectorAll(".bc-cell .bc-id").forEach((el, i) => {
+          el.textContent = formatBoardCellId(i);
+        });
+        const titleKeep = document.getElementById("boards-pcb-title");
+        if (titleKeep) titleKeep.textContent = formatBoardsTitle(nWant);
+        return;
+      }
       let html = "";
       for (let i = 0; i < nWant; i++) {
         html +=
-          '<div class="bc-cell"><div class="bc-id">Board ' +
-          i +
+          '<div class="bc-cell"><div class="bc-id">' +
+          formatBoardCellId(i) +
           '</div><div class="bc-t"><span id="b' +
           i +
           '">—</span> <small>°C</small></div><div class="tc-extra" id="b' +
@@ -11227,16 +12176,29 @@
       }
       grid.innerHTML = html;
       const title = document.getElementById("boards-pcb-title");
-      if (title) {
-        title.textContent =
-          "Boards (PCB) · " + nWant + " hashboard" + (nWant === 1 ? "" : "");
-      }
+      if (title) title.textContent = formatBoardsTitle(nWant);
       const sub = document.getElementById("boards-pcb-sub");
       if (sub && rLastBoardNote) {
         sub.textContent = rLastBoardNote;
       }
     }
     let rLastBoardNote = "devs[].Temperature · Upfreq Complete";
+
+    document.addEventListener("poolheat:lang", () => {
+      try {
+        const grid = document.getElementById("boards-grid");
+        const n = grid ? grid.querySelectorAll(".bc-cell").length : 0;
+        if (n > 0 && typeof ensureBoardsGrid === "function") ensureBoardsGrid(n);
+        const lab = document.getElementById("pw-settings-toggle-label");
+        const btn = document.getElementById("btn-toggle-pw-settings");
+        if (lab && btn) {
+          const open = btn.getAttribute("aria-expanded") === "true";
+          lab.textContent = open
+            ? t("pw.settings_hide", "Hide power settings")
+            : t("pw.settings", "Power settings");
+        }
+      } catch (_) { /* ignore */ }
+    });
 
     function renderTempsCatalog(liveObj) {
       const body = document.getElementById("temps-catalog-body");
@@ -11359,9 +12321,7 @@
         }
       } catch (_) { /* ignore */ }
       const title = document.getElementById("boards-pcb-title");
-      if (title) {
-        title.textContent = "Boards (PCB) · " + nB + " hashboard";
-      }
+      if (title) title.textContent = formatBoardsTitle(nB);
       const sub = document.getElementById("boards-pcb-sub");
       if (sub) sub.textContent = rLastBoardNote;
 
@@ -11486,13 +12446,7 @@
         setId("dash-asic-uptime", upStr);
         setText("[data-bind=asicElapsed]", elStr);
         setId("dash-asic-elapsed", elStr);
-        // upfreq: 1 if all boards Upfreq Complete, else 0
-        {
-          const flag = resolveUpfreqFlag(r);
-          const upfreqTxt = flag === 0 || flag === 1 ? String(flag) : "—";
-          setText("[data-bind=upfreqOk]", upfreqTxt);
-          setId("dash-upfreq", upfreqTxt);
-        }
+        // upfreq shown only as Tuning/Tuned badge (not · upfreq 0/1)
       }
       try {
         if (typeof updateWorkBadge === "function") updateWorkBadge(r);
@@ -12858,7 +13812,11 @@
         panel.setAttribute("hidden", "");
         panel.classList.add("is-collapsed");
       }
-      if (lab) lab.textContent = next ? "hide power settings" : "power settings";
+      if (lab) {
+        lab.textContent = next
+          ? t("pw.settings_hide", "Hide power settings")
+          : t("pw.settings", "Power settings");
+      }
       return false;
     }
     document.getElementById("btn-toggle-pw-settings")?.addEventListener("click", togglePwSettings);
@@ -16029,23 +16987,16 @@
       return String(s);
     }
 
-    /** Live weather one-liner: now: 21.3 °C · ясно · 02:45 */
+    /** Footer status for weather widget (off / error / stale) — not the main meta row. */
     function formatWxNowLine(w) {
       if (!w || w.enabled === false) {
         return t("wx.off", "weather off · Pool → Weather");
       }
-      if (w && (w.ok || w.stale) && w.temp_c != null) {
-        const cond = wxConditionText(w);
-        const when = w.observed_at ? fmtWxObserved(w.observed_at) : "";
-        let line =
-          "now: " + fmtWxTemp(w.temp_c) + " °C" +
-          (cond && cond !== "—" ? " · " + cond : "") +
-          (when ? " · " + when : "");
-        if (w.stale) line += " · " + t("wx.stale", "stale");
-        return line;
+      if (w && w.error && !(w.ok || w.stale)) {
+        return "weather error: " + w.error;
       }
-      if (w && w.error) return "weather error: " + w.error;
-      return "—";
+      if (w && w.stale) return t("wx.stale", "stale");
+      return "";
     }
 
     /**
@@ -16216,8 +17167,11 @@
       const iconEl = document.getElementById("wx-icon");
       const rhWrap = document.getElementById("wx-meta-rh");
       const windWrap = document.getElementById("wx-meta-wind");
+      const pressWrap = document.getElementById("wx-meta-pressure");
+      const srcWrap = document.getElementById("wx-meta-src");
       const rhEl = document.getElementById("wx-rh");
       const windEl = document.getElementById("wx-wind");
+      const pressEl = document.getElementById("wx-pressure");
       const srcEl = document.getElementById("wx-src-label");
       if (!cityEl || !tEl) return;
 
@@ -16234,7 +17188,10 @@
         setWxTheme(card, "off");
         showMeta(rhWrap, false);
         showMeta(windWrap, false);
-        if (srcEl) srcEl.textContent = formatWxNowLine(w || { enabled: false });
+        showMeta(pressWrap, false);
+        const offLine = formatWxNowLine(w || { enabled: false });
+        showMeta(srcWrap, !!offLine);
+        if (srcEl) srcEl.textContent = offLine;
         updateHeatLoss();
         return;
       }
@@ -16277,7 +17234,26 @@
         } else {
           showMeta(windWrap, false);
         }
-        if (srcEl) srcEl.textContent = formatWxNowLine(w);
+        // pressure: Open-Meteo surface_pressure (hPa) → mmHg for RU/display
+        const pHpa = w.pressure_hpa != null ? Number(w.pressure_hpa) : NaN;
+        if (Number.isFinite(pHpa) && pHpa > 0) {
+          showMeta(pressWrap, true);
+          if (pressEl) {
+            // 1 hPa = 0.7500616827 mmHg
+            const mm = Math.round(pHpa * 0.7500616827);
+            pressEl.textContent = tf("wx.pressure", { v: String(mm) }, "{v} mmHg");
+            if (pressWrap) {
+              pressWrap.title =
+                mm + " mmHg · " + (pHpa >= 100 ? Math.round(pHpa) : pHpa.toFixed(1)) + " hPa";
+            }
+          }
+        } else {
+          showMeta(pressWrap, false);
+        }
+        // time intentionally omitted from meta row
+        const statusLine = formatWxNowLine(w);
+        showMeta(srcWrap, !!statusLine);
+        if (srcEl) srcEl.textContent = statusLine || "";
       } else {
         tEl.textContent = "—";
         if (condEl) condEl.textContent = "error: " + (w.error || "no data");
@@ -16286,7 +17262,10 @@
         setWxTheme(card, "error");
         showMeta(rhWrap, false);
         showMeta(windWrap, false);
-        if (srcEl) srcEl.textContent = formatWxNowLine(w);
+        showMeta(pressWrap, false);
+        const errLine = formatWxNowLine(w);
+        showMeta(srcWrap, !!errLine);
+        if (srcEl) srcEl.textContent = errLine;
       }
       updateHeatLoss();
     }
@@ -20289,10 +21268,12 @@
       xf = normalizeSourceXform(xf);
       if (xf.type === "offset") {
         const o = Number(xf.offset) || 0;
-        return "offset " + (o >= 0 ? "+" : "") + o;
+        const sign = o >= 0 ? "+" : "";
+        return tf("xform.sum_offset", { v: sign + o }, "offset {v}");
       }
       if (xf.type === "power_delta_table") {
-        return "power table · " + ((xf.table && xf.table.length) || 0) + " pts";
+        const n = (xf.table && xf.table.length) || 0;
+        return tf("xform.sum_power", { n: n }, "power table · {n} pts");
       }
       return "";
     }
@@ -20384,22 +21365,34 @@
         "</select></label>" +
         '<div class="src-params">' +
         (src.type === "weather"
-          ? '<label class="field" style="margin:0"><span>field</span><select class="src-field">' +
+          ? '<label class="field" style="margin:0"><span>' +
+            t("field.src_field", "Field") +
+            '</span><select class="src-field">' +
             wxOpts +
             "</select></label>"
           : src.type === "sensor"
-            ? '<label class="field" style="margin:0"><span>alias</span><select class="src-alias">' +
+            ? '<label class="field" style="margin:0"><span>' +
+              t("field.src_alias", "Alias") +
+              '</span><select class="src-alias">' +
               otherAliases +
               "</select></label>"
             : src.type === "const"
-              ? '<label class="field" style="margin:0"><span>value</span><input type="number" class="src-const" step="0.1" value="' +
+              ? '<label class="field" style="margin:0"><span>' +
+                t("field.src_value", "Value") +
+                '</span><input type="number" class="src-const" step="0.1" value="' +
                 (src.value != null ? src.value : 20) +
                 '" /></label>'
-              : '<label class="field" style="margin:0"><span>field</span><select class="src-field">' +
+              : '<label class="field" style="margin:0"><span>' +
+                t("field.src_field", "Field") +
+                '</span><select class="src-field">' +
                 liveOpts +
                 "</select></label>") +
         "</div>" +
-        '<button class="btn danger ghost src-remove" type="button" title="Remove">×</button>' +
+        '<button class="btn danger ghost src-remove" type="button" title="' +
+        t("btn.delete", "Delete") +
+        '" aria-label="' +
+        t("btn.delete", "Delete") +
+        '">×</button>' +
         "</div>" +
         '<button type="button" class="src-xform-toggle" aria-expanded="' +
         (open ? "true" : "false") +
@@ -20765,6 +21758,17 @@
             "liquid";
           fillPoolWaterSensorSelect(cur, null);
         }
+        // Zone map T_ctrl — same peripheral sensors list
+        if (typeof fillTctrlSensorSelect === "function") {
+          const curT =
+            document.getElementById("thr-tctrl-sensor")?.value ||
+            (typeof getTctrlSensor === "function" ? getTctrlSensor() : "liquid");
+          fillTctrlSensorSelect(curT, null);
+          try {
+            if (typeof syncZonesFromGlobal === "function") syncZonesFromGlobal();
+            if (typeof recompute === "function") recompute();
+          } catch (_) { /* ignore */ }
+        }
       } catch (e) {
         if (st) st.textContent = "error: " + e.message;
       }
@@ -20879,7 +21883,7 @@
     let devicesMeta = {
       backends: [],
       reserved_aliases: [],
-      icons: ["🔌", "💡", "💧", "🔥", "🌀", "⚙️", "🔆", "🧊", "🚿", "🪴", "🔋", "🛠️", "🏠", "⚡", "🌡️", "🔔"],
+      icons: ["💧", "🌀", "🚿", "🏊", "🔆", "💡", "🔌", "⚡", "⚙️", "🛠️", "🌡️", "🔥", "🧊", "🪴", "🏠", "🔔"],
     };
     let deviceEditorOpen = false;
     /** Bilingual draft while editing: { en, ru } — checkbox switches active language in the input. */
@@ -21186,10 +22190,18 @@
             "</div></div>" +
             '<div class="dev-actions">' +
             switchHtml +
-            '<button class="btn" type="button" data-device-edit="' +
+            '<button class="dev-edit-btn" type="button" data-device-edit="' +
             idEsc +
-            '">' +
+            '" title="' +
             t("btn.edit", "Edit") +
+            '" aria-label="' +
+            t("btn.edit", "Edit") +
+            '">' +
+            // sliders / tune — clear “settings” affordance
+            '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">' +
+            '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>' +
+            '<path d="M1 14h6M9 8h6M17 16h6"/>' +
+            "</svg>" +
             "</button>" +
             "</div></div></div></div>"
           );
@@ -21346,6 +22358,27 @@
       document.getElementById("dev-ha-entity").value = d.ha_entity_id || "";
       document.getElementById("dev-ha-token").value = "";
       document.getElementById("dev-ha-token").placeholder = d.ha_token_set ? "•••• (saved)" : "••••";
+      // Xiaomi / Mi Home
+      const xmIp = document.getElementById("dev-xiaomi-ip");
+      if (xmIp) xmIp.value = d.backend === "xiaomi" || d.backend === "mi" ? ip : (d.ip || "");
+      const xmTok = document.getElementById("dev-xiaomi-token");
+      if (xmTok) {
+        xmTok.value = "";
+        xmTok.placeholder = d.xiaomi_token_set
+          ? "•••• (saved)"
+          : "32 hex token";
+      }
+      const xmModel = document.getElementById("dev-xiaomi-model");
+      if (xmModel) xmModel.value = d.xiaomi_model || "";
+      const xmStat = document.getElementById("dev-xiaomi-status");
+      if (xmStat) {
+        xmStat.textContent = d.xiaomi_token_set
+          ? t("dev.xiaomi_ready", "token: saved · LAN ready")
+          : t(
+              "dev.xiaomi_need_token",
+              "token not set — 32 hex from extractor / HA"
+            );
+      }
       // Tuya / Smart Life
       const tuyaIp = document.getElementById("dev-tuya-ip");
       if (tuyaIp) tuyaIp.value = d.backend === "tuya" || d.backend === "smartlife" ? ip : (d.ip || "");
@@ -21358,20 +22391,50 @@
       setV("dev-tuya-password", "");
       const tpw = document.getElementById("dev-tuya-password");
       if (tpw) tpw.placeholder = d.password_set ? "•••• (saved)" : "••••";
-      setV("dev-tuya-country", d.tuya_country || "7");
+      // country: ensure option exists for stored code
+      const cc = String(d.tuya_country || "7").trim() || "7";
+      const ccEl = document.getElementById("dev-tuya-country");
+      if (ccEl) {
+        let found = false;
+        for (let i = 0; i < ccEl.options.length; i++) {
+          if (ccEl.options[i].value === cc) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const o = document.createElement("option");
+          o.value = cc;
+          o.textContent = cc + " — custom";
+          ccEl.appendChild(o);
+        }
+        ccEl.value = cc;
+      }
       setV("dev-tuya-region", d.tuya_region || "eu");
       setV("dev-tuya-device-id", d.device_id || "");
       setV("dev-tuya-local-key", "");
       const tlk = document.getElementById("dev-tuya-local-key");
       if (tlk) tlk.placeholder = d.tuya_local_key_set ? "•••• (saved)" : "auto after Get keys";
-      setV("dev-tuya-version", d.tuya_version != null ? d.tuya_version : 3.4);
-      setV("dev-tuya-dps", d.tuya_switch_dps != null ? d.tuya_switch_dps : 1);
-      const tstat = document.getElementById("dev-tuya-status");
-      if (tstat) {
-        tstat.textContent = d.tuya_local_key_set
-          ? "local_key: saved · LAN ready"
-          : "local_key: not set — press Get keys";
+      const ver =
+        d.tuya_version != null && d.tuya_version !== ""
+          ? String(d.tuya_version)
+          : "3.4";
+      const dps =
+        d.tuya_switch_dps != null && d.tuya_switch_dps !== ""
+          ? String(d.tuya_switch_dps)
+          : "1";
+      setV("dev-tuya-version", ver);
+      setV("dev-tuya-dps", dps);
+      setV("dev-tuya-version-sel", ver);
+      setV("dev-tuya-dps-vis", dps);
+      const advPanel = document.getElementById("dev-tuya-lan-adv-panel");
+      const advBtn = document.getElementById("btn-tuya-lan-adv");
+      if (advPanel) {
+        advPanel.hidden = true;
+        advPanel.classList.add("is-collapsed");
       }
+      if (advBtn) advBtn.setAttribute("aria-expanded", "false");
+      updateTuyaStatusLine(d);
       const pick = document.getElementById("dev-tuya-pick");
       if (pick) {
         pick.style.display = "none";
@@ -21417,12 +22480,19 @@
 
     function collectDeviceFromEditor() {
       const be = (document.getElementById("device-backend")?.value || "tapo").trim();
+      if (be === "tuya" || be === "smartlife") {
+        try {
+          syncTuyaLanHiddenFromAdv();
+        } catch (_) { /* ignore */ }
+      }
       let ip = "";
       if (be === "tapo") ip = (document.getElementById("dev-ip")?.value || "").trim();
       else if (be === "ewelink") ip = (document.getElementById("dev-ewelink-ip")?.value || "").trim();
       else if (be === "shelly") ip = (document.getElementById("dev-shelly-ip")?.value || "").trim();
       else if (be === "tuya" || be === "smartlife")
         ip = (document.getElementById("dev-tuya-ip")?.value || "").trim();
+      else if (be === "xiaomi" || be === "mi")
+        ip = (document.getElementById("dev-xiaomi-ip")?.value || "").trim();
       // flush visible inputs into bilingual draft
       flushDeviceNameInput();
       flushDeviceDescInput();
@@ -21476,8 +22546,18 @@
         tuya_country: (document.getElementById("dev-tuya-country")?.value || "7").trim(),
         tuya_region: document.getElementById("dev-tuya-region")?.value || "eu",
         tuya_local_key: (document.getElementById("dev-tuya-local-key")?.value || "").trim(),
-        tuya_version: Number(document.getElementById("dev-tuya-version")?.value) || 3.4,
-        tuya_switch_dps: Number(document.getElementById("dev-tuya-dps")?.value) || 1,
+        tuya_version:
+          Number(
+            document.getElementById("dev-tuya-version-sel")?.value ||
+              document.getElementById("dev-tuya-version")?.value
+          ) || 3.4,
+        tuya_switch_dps:
+          Number(
+            document.getElementById("dev-tuya-dps-vis")?.value ||
+              document.getElementById("dev-tuya-dps")?.value
+          ) || 1,
+        xiaomi_token: (document.getElementById("dev-xiaomi-token")?.value || "").trim(),
+        xiaomi_model: (document.getElementById("dev-xiaomi-model")?.value || "").trim(),
         auto_on_mining: !!document.getElementById("dev-auto-mining")?.checked,
         auto_off_suspend: !!document.getElementById("dev-auto-suspend")?.checked,
         allow_off_while_mining: !!document.getElementById("dev-allow-off-mining")?.checked,
@@ -21487,6 +22567,8 @@
       // empty secrets → omit so server keeps saved
       if (!payload.password) delete payload.password;
       if (!payload.ha_token) delete payload.ha_token;
+      if (!payload.tuya_local_key) delete payload.tuya_local_key;
+      if (!payload.xiaomi_token) delete payload.xiaomi_token;
       return payload;
     }
 
@@ -21771,6 +22853,79 @@
       else toastError("Save device first");
     });
     document.getElementById("device-backend")?.addEventListener("change", syncDeviceBackendUi);
+    document.getElementById("btn-tuya-lan-adv")?.addEventListener("click", () => {
+      const panel = document.getElementById("dev-tuya-lan-adv-panel");
+      const btn = document.getElementById("btn-tuya-lan-adv");
+      if (!panel) return;
+      const open = !!panel.hidden;
+      panel.hidden = !open;
+      panel.classList.toggle("is-collapsed", !open);
+      if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    document.getElementById("dev-tuya-version-sel")?.addEventListener("change", () => {
+      syncTuyaLanHiddenFromAdv();
+      updateTuyaStatusLine(null);
+    });
+    document.getElementById("dev-tuya-dps-vis")?.addEventListener("change", () => {
+      syncTuyaLanHiddenFromAdv();
+      updateTuyaStatusLine(null);
+    });
+    document.getElementById("dev-tuya-dps-vis")?.addEventListener("input", () => {
+      syncTuyaLanHiddenFromAdv();
+    });
+
+    function syncTuyaLanHiddenFromAdv() {
+      const ver =
+        document.getElementById("dev-tuya-version-sel")?.value ||
+        document.getElementById("dev-tuya-version")?.value ||
+        "3.4";
+      const dps =
+        document.getElementById("dev-tuya-dps-vis")?.value ||
+        document.getElementById("dev-tuya-dps")?.value ||
+        "1";
+      const vh = document.getElementById("dev-tuya-version");
+      const dh = document.getElementById("dev-tuya-dps");
+      if (vh) vh.value = ver;
+      if (dh) dh.value = dps;
+    }
+
+    function updateTuyaStatusLine(d) {
+      const tstat = document.getElementById("dev-tuya-status");
+      if (!tstat) return;
+      const ver =
+        document.getElementById("dev-tuya-version-sel")?.value ||
+        document.getElementById("dev-tuya-version")?.value ||
+        (d && d.tuya_version != null ? String(d.tuya_version) : "3.4");
+      const dps =
+        document.getElementById("dev-tuya-dps-vis")?.value ||
+        document.getElementById("dev-tuya-dps")?.value ||
+        (d && d.tuya_switch_dps != null ? String(d.tuya_switch_dps) : "1");
+      const typedKey = !!(
+        document.getElementById("dev-tuya-local-key")?.value || ""
+      ).trim();
+      const saved =
+        typedKey ||
+        !!(d && d.tuya_local_key_set) ||
+        (d && !d && false);
+      // Prefer explicit device flag when opening editor (key field empty = redacted)
+      const keyOk =
+        typedKey ||
+        (d && typeof d.tuya_local_key_set === "boolean"
+          ? d.tuya_local_key_set
+          : false);
+      const lan = "LAN v" + ver + " · switch DPS " + dps;
+      if (keyOk) {
+        tstat.textContent =
+          t("dev.tuya_status_ready", "local_key: saved · LAN ready") +
+          " · " +
+          lan;
+      } else {
+        tstat.textContent =
+          t("dev.tuya_status_need", "local_key: not set — press Get keys") +
+          " · " +
+          lan;
+      }
+    }
 
     async function tuyaFetchKeysFromEditor() {
       const st = document.getElementById("dev-tuya-status");
