@@ -20,6 +20,10 @@ fi
 if [ -f "$ROOT/ui-demo/chipmap_skus.json" ]; then
   cp -f "$ROOT/ui-demo/chipmap_skus.json" /opt/lib/poolheat/chipmap_skus.json
 fi
+# Tuya / Smart Life mobile API (local_key fetch) — must use POST (CloudFront blocks long GET)
+if [ -f "$ROOT/ui-demo/tuya_mobile.py" ]; then
+  cp -f "$ROOT/ui-demo/tuya_mobile.py" /opt/lib/poolheat/tuya_mobile.py
+fi
 # whatsminer-lib (vendored package)
 if [ -d "$ROOT/ui-demo/whatsminer" ]; then
   rm -rf /opt/lib/poolheat/whatsminer

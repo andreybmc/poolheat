@@ -2493,6 +2493,29 @@ class _TapoKlapLocal:
                 f"set_device_info error_code={inner.get('error_code')}"
             )
 
+    def get_power_metrics(self) -> dict | None:
+        """Instantaneous power when plug supports energy monitoring (P110 etc.)."""
+        # Prefer dedicated energy API (mW)
+        try:
+            inner = self._request("get_energy_usage")
+            if int(inner.get("error_code") or 0) == 0:
+                res = inner.get("result") or {}
+                if isinstance(res, dict):
+                    m = _tapo_result_to_power(res)
+                    if m:
+                        return m
+        except Exception:
+            pass
+        try:
+            inner = self._request("get_device_info")
+            if int(inner.get("error_code") or 0) == 0:
+                res = inner.get("result") or {}
+                if isinstance(res, dict):
+                    return _tapo_result_to_power(res)
+        except Exception:
+            pass
+        return None
+
 
 class _TapoP100Local:
     """Legacy local Tapo client (RSA handshake + securePassthrough)."""
@@ -2645,11 +2668,70 @@ class _TapoP100Local:
     def set_on(self, on: bool) -> None:
         self._device_request("set_device_info", {"device_on": bool(on)})
 
+    def get_power_metrics(self) -> dict | None:
+        try:
+            inner = self._device_request("get_energy_usage")
+            res = inner.get("result") or {}
+            if isinstance(res, dict):
+                m = _tapo_result_to_power(res)
+                if m:
+                    return m
+        except Exception:
+            pass
+        try:
+            inner = self._device_request("get_device_info")
+            res = inner.get("result") or {}
+            if isinstance(res, dict):
+                return _tapo_result_to_power(res)
+        except Exception:
+            pass
+        return None
+
+
+def _tapo_result_to_power(res: dict) -> dict | None:
+    """Map Tapo result fields → power_w / voltage_v / current_a / energy_kwh."""
+    if not isinstance(res, dict):
+        return None
+    out: dict = {}
+    # current_power: usually mW on P110 energy API
+    cp = res.get("current_power")
+    if cp is None:
+        cp = res.get("power_mw")
+    if cp is not None:
+        try:
+            v = float(cp)
+            # values > 2000 almost always mW for plugs; 1.5 kW plug → 1500000 mW
+            out["power_w"] = round(v / 1000.0, 2) if v > 2000 else round(v, 2)
+        except (TypeError, ValueError):
+            pass
+    for src, dst, scale in (
+        ("voltage_mv", "voltage_v", 1000.0),
+        ("voltage", "voltage_v", 1.0),
+        ("current_ma", "current_a", 1000.0),
+        ("current", "current_a", 1.0),
+    ):
+        if src in res and res.get(src) is not None and dst not in out:
+            try:
+                out[dst] = round(float(res[src]) / scale, 3)
+            except (TypeError, ValueError):
+                pass
+    # month/today energy if present (Wh)
+    for ek in ("month_energy", "today_energy", "local_time"):
+        pass
+    te = res.get("today_energy")
+    if te is not None:
+        try:
+            # often Wh
+            out["energy_today_kwh"] = round(float(te) / 1000.0, 3)
+        except (TypeError, ValueError):
+            pass
+    return out or None
+
 
 def _tapo_connect_client(ip: str, email: str, password: str):
     """
     Prefer KLAP (modern FW). Fall back to legacy securePassthrough.
-    Returns client with get_on/set_on.
+    Returns client with get_on/set_on (+ optional get_power_metrics).
     """
     klap_err: Exception | None = None
     try:
@@ -2863,7 +2945,14 @@ def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
             raise RuntimeError(f"Tapo device unreachable: {e}") from e
         raise RuntimeError(f"Tapo: {e}") from e
     if on is None:
-        return {"on": c.get_on(), "backend": "tapo", "ip": ip}
+        out = {"on": c.get_on(), "backend": "tapo", "ip": ip}
+        try:
+            pm = c.get_power_metrics() if hasattr(c, "get_power_metrics") else None
+            if pm:
+                out["power"] = pm
+        except Exception:
+            pass
+        return out
     try:
         c.set_on(bool(on))
     except Exception as e:
@@ -2872,7 +2961,14 @@ def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
         got = c.get_on()
     except Exception:
         got = bool(on)
-    return {"on": bool(got), "backend": "tapo", "ip": ip}
+    out = {"on": bool(got), "backend": "tapo", "ip": ip}
+    try:
+        pm = c.get_power_metrics() if hasattr(c, "get_power_metrics") else None
+        if pm:
+            out["power"] = pm
+    except Exception:
+        pass
+    return out
 
 
 def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
@@ -2957,15 +3053,39 @@ def _filtration_backend_shelly(on: bool | None, cfg: dict) -> dict:
         t = "on" if turn else "off"
         return _filtration_http(f"http://{ip}/relay/{ch}?turn={t}")
 
-    def gen1_get() -> bool | None:
+    def gen1_get() -> tuple[bool | None, dict | None]:
+        on_v: bool | None = None
+        power: dict | None = None
         try:
             code, text = _filtration_http(f"http://{ip}/relay/{ch}")
             j = json.loads(text)
             if isinstance(j, dict) and "ison" in j:
-                return bool(j["ison"])
+                on_v = bool(j["ison"])
         except Exception:
-            return None
-        return None
+            pass
+        # Gen1 metering: /meter/0 or /emeter/0
+        for path in (f"/meter/{ch}", f"/emeter/{ch}", "/meter/0", "/emeter/0"):
+            try:
+                code, text = _filtration_http(f"http://{ip}{path}")
+                j = json.loads(text)
+                if not isinstance(j, dict):
+                    continue
+                pm: dict = {}
+                if j.get("power") is not None:
+                    pm["power_w"] = round(float(j["power"]), 2)
+                if j.get("voltage") is not None:
+                    pm["voltage_v"] = round(float(j["voltage"]), 2)
+                if j.get("current") is not None:
+                    pm["current_a"] = round(float(j["current"]), 3)
+                if j.get("total") is not None:
+                    # Wh
+                    pm["energy_kwh"] = round(float(j["total"]) / 1000.0, 3)
+                if pm:
+                    power = pm
+                    break
+            except Exception:
+                continue
+        return on_v, power
 
     def gen2_set(turn: bool) -> tuple[int, str]:
         # Shelly Gen2 RPC
@@ -2976,7 +3096,7 @@ def _filtration_backend_shelly(on: bool | None, cfg: dict) -> dict:
             f"http://{ip}/rpc", method="POST", body=payload
         )
 
-    def gen2_get() -> bool | None:
+    def gen2_get() -> tuple[bool | None, dict | None]:
         try:
             payload = json.dumps(
                 {"id": 1, "method": "Switch.GetStatus", "params": {"id": ch}}
@@ -2986,21 +3106,38 @@ def _filtration_backend_shelly(on: bool | None, cfg: dict) -> dict:
             )
             j = json.loads(text)
             res = j.get("result") if isinstance(j, dict) else None
-            if isinstance(res, dict) and "output" in res:
-                return bool(res["output"])
+            if not isinstance(res, dict):
+                return None, None
+            on_v = bool(res["output"]) if "output" in res else None
+            pm: dict = {}
+            if res.get("apower") is not None:
+                pm["power_w"] = round(float(res["apower"]), 2)
+            if res.get("voltage") is not None:
+                pm["voltage_v"] = round(float(res["voltage"]), 2)
+            if res.get("current") is not None:
+                pm["current_a"] = round(float(res["current"]), 3)
+            aenergy = res.get("aenergy")
+            if isinstance(aenergy, dict) and aenergy.get("total") is not None:
+                pm["energy_kwh"] = round(float(aenergy["total"]) / 1000.0, 3)
+            return on_v, (pm or None)
         except Exception:
-            return None
-        return None
+            return None, None
 
     if on is None:
         if gen in ("1", "auto"):
-            v = gen1_get()
+            v, pm = gen1_get()
             if v is not None:
-                return {"on": v, "backend": "shelly", "gen": "1", "ip": ip}
+                out = {"on": v, "backend": "shelly", "gen": "1", "ip": ip}
+                if pm:
+                    out["power"] = pm
+                return out
         if gen in ("2", "auto"):
-            v = gen2_get()
+            v, pm = gen2_get()
             if v is not None:
-                return {"on": v, "backend": "shelly", "gen": "2", "ip": ip}
+                out = {"on": v, "backend": "shelly", "gen": "2", "ip": ip}
+                if pm:
+                    out["power"] = pm
+                return out
         return {"on": cfg.get("last_on"), "backend": "shelly", "ip": ip}
 
     if gen == "1":
@@ -3049,7 +3186,18 @@ def _filtration_backend_ha(on: bool | None, cfg: dict) -> dict:
         j = json.loads(text) if text else {}
         st = str(j.get("state") or "").lower() if isinstance(j, dict) else ""
         on_v = st in ("on", "open", "true", "1")
-        return {"on": on_v, "backend": "homeassistant", "entity": entity, "http": code}
+        out = {
+            "on": on_v,
+            "backend": "homeassistant",
+            "entity": entity,
+            "http": code,
+        }
+        attrs = j.get("attributes") if isinstance(j, dict) else None
+        if isinstance(attrs, dict):
+            pm = _ha_attrs_to_power(attrs)
+            if pm:
+                out["power"] = pm
+        return out
     domain = entity.split(".", 1)[0] if "." in entity else "switch"
     service = "turn_on" if on else "turn_off"
     payload = json.dumps({"entity_id": entity})
@@ -3579,6 +3727,11 @@ def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | 
         "last_error": raw.get("last_error"),
         "last_ok_ts": raw.get("last_ok_ts"),
         "last_action": raw.get("last_action"),
+        # last power metrics (W/V/A/kWh) when backend reports them
+        "last_power": _normalize_power_metrics(raw.get("last_power"))
+        if isinstance(raw.get("last_power"), dict)
+        else None,
+        "last_power_ts": raw.get("last_power_ts"),
     }
 
 
@@ -3705,7 +3858,14 @@ def upsert_device(raw: dict) -> dict:
         if tlk is None or str(tlk).strip() in ("", "••••", "****", "***"):
             merged["tuya_local_key"] = existing.get("tuya_local_key") or ""
         # preserve runtime unless explicitly provided
-        for rk in ("last_on", "last_error", "last_ok_ts", "last_action"):
+        for rk in (
+            "last_on",
+            "last_error",
+            "last_ok_ts",
+            "last_action",
+            "last_power",
+            "last_power_ts",
+        ):
             if rk not in merged or merged.get(rk) is None:
                 merged[rk] = existing.get(rk)
     nd = _normalize_device(merged)
@@ -3811,6 +3971,167 @@ def _device_logical_to_physical(logical_on: bool, inverted: bool) -> bool:
 
 def _device_physical_to_logical(physical_on: bool, inverted: bool) -> bool:
     return (not physical_on) if inverted else bool(physical_on)
+
+
+def _ha_attrs_to_power(attrs: dict) -> dict | None:
+    """Extract power metrics from Home Assistant entity attributes when present."""
+    if not isinstance(attrs, dict):
+        return None
+    out: dict = {}
+    # current power in W
+    for k in (
+        "current_power_w",
+        "power",
+        "power_w",
+        "current_consumption",
+        "load_power",
+    ):
+        if attrs.get(k) is not None:
+            try:
+                out["power_w"] = round(float(attrs[k]), 2)
+                break
+            except (TypeError, ValueError):
+                pass
+    for k in ("voltage", "voltage_v"):
+        if attrs.get(k) is not None:
+            try:
+                out["voltage_v"] = round(float(attrs[k]), 2)
+                break
+            except (TypeError, ValueError):
+                pass
+    for k in ("current", "current_a", "amperage"):
+        if attrs.get(k) is not None:
+            try:
+                out["current_a"] = round(float(attrs[k]), 3)
+                break
+            except (TypeError, ValueError):
+                pass
+    for k in ("energy", "total_energy", "energy_kwh"):
+        if attrs.get(k) is not None:
+            try:
+                out["energy_kwh"] = round(float(attrs[k]), 3)
+                break
+            except (TypeError, ValueError):
+                pass
+    return out or None
+
+
+def _tuya_dps_to_power(dps: dict) -> dict | None:
+    """
+    Parse common Tuya metering DPS into SI units.
+    FinePower PLG-1 / many plugs: 18=mA, 19=0.1W, 20=0.1V.
+    Older maps: 4/5/6. Total energy often 17 or 23 (0.01 kWh or Wh).
+    """
+    if not isinstance(dps, dict) or not dps:
+        return None
+    # normalize keys to str
+    d = {str(k): v for k, v in dps.items()}
+
+    def _num(key: str):
+        if key not in d or d[key] is None:
+            return None
+        try:
+            return float(d[key])
+        except (TypeError, ValueError):
+            return None
+
+    # Prefer modern 18/19/20 map when any present
+    raw_i = _num("18")
+    raw_p = _num("19")
+    raw_v = _num("20")
+    if raw_i is None and raw_p is None and raw_v is None:
+        raw_i = _num("4")
+        raw_p = _num("5")
+        raw_v = _num("6")
+
+    if raw_i is None and raw_p is None and raw_v is None:
+        # only energy total?
+        for ek in ("17", "23", "25", "9"):
+            pass
+        raw_e = _num("17")
+        if raw_e is None:
+            raw_e = _num("23")
+        if raw_e is None:
+            return None
+        # heuristic: values often 0.01 kWh units
+        out_e = {"energy_kwh": round(raw_e / 100.0, 3) if raw_e > 50 else round(raw_e, 3)}
+        return out_e
+
+    voltage_v = None
+    current_a = None
+    power_w = None
+
+    if raw_v is not None:
+        # 2300 → 230.0 V; raw 230 also ok
+        voltage_v = raw_v / 10.0 if raw_v > 400 else raw_v
+    if raw_i is not None:
+        # mA → A (values like 350 for 0.35 A, or 3500)
+        current_a = raw_i / 1000.0 if raw_i > 30 else raw_i
+    if raw_p is not None:
+        p_deci = raw_p / 10.0
+        p_raw = raw_p
+        # Choose scale by cross-check with V·I when possible
+        if voltage_v is not None and current_a is not None and (voltage_v * current_a) > 0.5:
+            vi = voltage_v * current_a
+            if abs(p_deci - vi) <= abs(p_raw - vi):
+                power_w = p_deci
+            else:
+                power_w = p_raw
+        else:
+            # typical monitoring plugs use deciwatts when voltage is deci-volts
+            if raw_v is not None and raw_v > 400:
+                power_w = p_deci
+            else:
+                power_w = p_raw
+
+    out: dict = {}
+    if power_w is not None:
+        out["power_w"] = round(max(0.0, float(power_w)), 2)
+    if voltage_v is not None:
+        out["voltage_v"] = round(float(voltage_v), 2)
+    if current_a is not None:
+        out["current_a"] = round(max(0.0, float(current_a)), 3)
+
+    raw_e = _num("17")
+    if raw_e is None:
+        raw_e = _num("23")
+    if raw_e is not None and raw_e >= 0:
+        # common: 0.01 kWh; if already small treat as kWh
+        out["energy_kwh"] = (
+            round(raw_e / 100.0, 3) if raw_e > 50 else round(raw_e, 3)
+        )
+    return out or None
+
+
+def _normalize_power_metrics(power: dict | None) -> dict | None:
+    if not isinstance(power, dict):
+        return None
+    out: dict = {}
+    for k, digits in (
+        ("power_w", 2),
+        ("voltage_v", 2),
+        ("current_a", 3),
+        ("energy_kwh", 3),
+        ("energy_today_kwh", 3),
+    ):
+        if power.get(k) is None:
+            continue
+        try:
+            out[k] = round(float(power[k]), digits)
+        except (TypeError, ValueError):
+            continue
+    return out or None
+
+
+def _power_from_backend_out(out: dict | None) -> dict | None:
+    if not isinstance(out, dict):
+        return None
+    if isinstance(out.get("power"), dict):
+        return _normalize_power_metrics(out.get("power"))
+    dps = out.get("dps")
+    if isinstance(dps, dict):
+        return _normalize_power_metrics(_tuya_dps_to_power(dps))
+    return None
 
 
 def _device_ready(cfg: dict) -> bool:
@@ -3953,7 +4274,12 @@ def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
     )
     d.set_socketTimeout(6)
     d.set_socketRetryLimit(2)
-    if on is None:
+
+    def _tuya_read_status() -> dict:
+        # Note: do NOT call updatedps([18,19,20,...]) here.
+        # On many plugs (incl. FinePower PLG-1) UPDATEDPS with metering
+        # indices is misinterpreted and can flip the switch DPS.
+        # Power DPs appear in status() only if the product schema has them.
         st = d.status()
         if isinstance(st, dict) and (st.get("Error") or st.get("Err")):
             err = st.get("Err")
@@ -3972,40 +4298,80 @@ def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
                     f"Tuya Err 914 (key/version) — обновите local_key: {msg}"
                 )
             raise RuntimeError(f"Tuya status Err={err}: {msg}")
-        dps = (st or {}).get("dps") or {}
+        return st if isinstance(st, dict) else {}
+
+    if on is None:
+        st = _tuya_read_status()
+        dps = st.get("dps") or {}
         key = str(switch_dps) if str(switch_dps) in dps else switch_dps
         val = dps.get(key)
         if val is None and dps:
             # fallback dps 1
             val = dps.get("1") if "1" in dps else dps.get(1)
-        return {
+        out = {
             "on": bool(val) if val is not None else None,
             "backend": "tuya",
             "ip": ip,
             "dps": dps,
             "device_id": dev_id,
         }
-    # set
+        pm = _tuya_dps_to_power(dps)
+        if pm:
+            out["power"] = pm
+        return out
+    # set — never re-send same state: some plugs treat set_status as toggle
+    dps = {}
+    cur: bool | None = None
+    try:
+        st0 = _tuya_read_status()
+        dps = st0.get("dps") or {}
+        key0 = str(switch_dps) if str(switch_dps) in dps else switch_dps
+        raw0 = dps.get(key0)
+        if raw0 is None and dps:
+            raw0 = dps.get("1") if "1" in dps else dps.get(1)
+        if raw0 is not None:
+            cur = bool(raw0)
+    except Exception:
+        cur = None
+    if cur is not None and cur is bool(on):
+        out = {
+            "on": cur,
+            "backend": "tuya",
+            "ip": ip,
+            "device_id": dev_id,
+            "dps": dps,
+            "skipped": True,
+            "reason": "already_in_state",
+        }
+        pm = _tuya_dps_to_power(dps) if dps else None
+        if pm:
+            out["power"] = pm
+        return out
     res = d.set_status(bool(on), switch=switch_dps)
     if isinstance(res, dict) and (res.get("Error") or res.get("Err")):
         err = res.get("Err")
         msg = res.get("Error") or res.get("Payload")
         raise RuntimeError(f"Tuya set Err={err}: {msg}")
-    # verify
+    # verify + metering
     try:
-        st = d.status()
-        dps = (st or {}).get("dps") or {}
+        st = _tuya_read_status()
+        dps = st.get("dps") or {}
         key = str(switch_dps) if str(switch_dps) in dps else switch_dps
         val = dps.get(key, on)
         got = bool(val)
     except Exception:
         got = bool(on)
-    return {
+    out = {
         "on": got,
         "backend": "tuya",
         "ip": ip,
         "device_id": dev_id,
+        "dps": dps,
     }
+    pm = _tuya_dps_to_power(dps) if dps else None
+    if pm:
+        out["power"] = pm
+    return out
 
 
 def tuya_refresh_device_keys(
@@ -4100,15 +4466,20 @@ def device_test(did: str) -> dict:
         logical = None
         if phys is not None:
             logical = _device_physical_to_logical(bool(phys), bool(cfg.get("inverted")))
+        power = _power_from_backend_out(out)
+
         def _mut(d):
             if logical is not None:
                 d["last_on"] = bool(logical)
             d["last_error"] = None
             d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
             d["last_action"] = f"test:{be}"
+            if power:
+                d["last_power"] = power
+                d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
 
         _device_update_in_store(did, _mut)
-        return {
+        ret = {
             "ok": True,
             "id": did,
             "backend": be,
@@ -4116,6 +4487,9 @@ def device_test(did: str) -> dict:
             "physical_on": phys,
             **{k: v for k, v in out.items() if k not in ("on",)},
         }
+        if power:
+            ret["power"] = power
+        return ret
     except Exception as e:
         pretty = _filtration_user_error(e, on=None, backend=be, lang="ru")
         def _mut_err(d):
@@ -4166,21 +4540,46 @@ def device_set(
             }
     physical = _device_logical_to_physical(on, inverted)
     prev = cfg.get("last_on")
+    # No-op if already in desired logical state (avoids Tuya toggle-on-repeat)
+    if prev is not None and bool(prev) is on and not force:
+        return {
+            "ok": True,
+            "id": did,
+            "on": bool(prev),
+            "physical_on": _device_logical_to_physical(bool(prev), inverted),
+            "source": source,
+            "backend": be,
+            "alias": cfg.get("alias"),
+            "name": cfg.get("name"),
+            "icon": cfg.get("icon"),
+            "prev_on": prev,
+            "skipped": True,
+            "reason": "already_in_state",
+            "power": cfg.get("last_power"),
+        }
     try:
         out = _device_backend_dispatch(physical, cfg)
         got_phys = out.get("on")
         if got_phys is None:
             got_phys = physical
         got_logical = _device_physical_to_logical(bool(got_phys), inverted)
+        power = _power_from_backend_out(out)
+        skipped = bool(out.get("skipped"))
 
         def _mut(d):
             d["last_on"] = bool(got_logical)
             d["last_error"] = None
             d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
-            d["last_action"] = f"{source}:{be}:{'on' if on else 'off'}"
+            if skipped:
+                d["last_action"] = f"{source}:{be}:skip:{'on' if on else 'off'}"
+            else:
+                d["last_action"] = f"{source}:{be}:{'on' if on else 'off'}"
+            if power:
+                d["last_power"] = power
+                d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
 
         _device_update_in_store(did, _mut)
-        return {
+        ret = {
             "ok": True,
             "id": did,
             "on": bool(got_logical),
@@ -4193,6 +4592,9 @@ def device_set(
             "prev_on": prev,
             **{k: v for k, v in out.items() if k not in ("on",)},
         }
+        if power:
+            ret["power"] = power
+        return ret
     except Exception as e:
         pretty = _filtration_user_error(e, on=on, backend=be, lang="ru")
 
@@ -4260,6 +4662,12 @@ def get_device_status(did: str, *, probe_live: bool = False) -> dict:
     d = get_device_by_id(did, redact=True)
     if not d:
         return {"ok": False, "error": "not found"}
+    if probe_live and d.get("enabled") is not False and _device_ready(d):
+        try:
+            device_test(did)
+            d = get_device_by_id(did, redact=True) or d
+        except Exception:
+            pass
     work = _mining_work_state()
     mining = work == "resume" if work else None
     on = d.get("last_on")
@@ -4276,6 +4684,31 @@ def get_device_status(did: str, *, probe_live: bool = False) -> dict:
         "can_turn_off": can_off,
         "can_turn_on": can_on,
     }
+
+
+def devices_probe_live(*, max_devices: int = 24) -> dict:
+    """
+    Best-effort live status + power for ready devices (used by Refresh).
+    Does not raise; returns summary.
+    """
+    probed = 0
+    errors = 0
+    with _devices_cfg_lock:
+        ids = [
+            str(d.get("id") or "")
+            for d in (_devices_cfg.get("devices") or [])
+            if d.get("enabled") is not False and str(d.get("id") or "")
+        ]
+    for did in ids[: max(1, int(max_devices))]:
+        cfg = _device_cfg_snapshot(did)
+        if not cfg or not _device_ready(cfg):
+            continue
+        try:
+            device_test(did)
+            probed += 1
+        except Exception:
+            errors += 1
+    return {"probed": probed, "errors": errors}
 
 
 def device_display_name(d: dict, lang: str = "ru") -> str:
@@ -22020,6 +22453,19 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api_devices_get(self) -> None:
         try:
+            qs = parse_qs(urlparse(self.path).query)
+            probe = str((qs.get("probe") or ["0"])[0]).lower() in (
+                "1",
+                "true",
+                "yes",
+                "live",
+            )
+            probe_info = None
+            if probe:
+                try:
+                    probe_info = devices_probe_live()
+                except Exception as e:
+                    probe_info = {"probed": 0, "errors": 1, "error": str(e)[:120]}
             body = get_devices_cfg(redact=True)
             # attach gate flags from mining state (cache)
             work = _mining_work_state()
@@ -22044,6 +22490,8 @@ class Handler(SimpleHTTPRequestHandler):
             body["devices"] = devices
             body["ok"] = True
             body["mining"] = mining
+            if probe_info is not None:
+                body["probe"] = probe_info
             self._json_response(200, body)
         except Exception as e:
             self._json_response(500, {"ok": False, "error": str(e)})

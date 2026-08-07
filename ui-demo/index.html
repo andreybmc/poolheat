@@ -2161,8 +2161,16 @@
       background: var(--dim);
     }
 
+    /* T_ctrl (blue) → Env (green): smooth left bookmark gradient */
     .temp-card.liquid-env::before {
-      background: linear-gradient(180deg, var(--accent) 0 50%, var(--ok) 50% 100%);
+      width: 4px;
+      background: linear-gradient(
+        180deg,
+        var(--accent) 0%,
+        #3d9cf0 22%,
+        #2bb0a0 55%,
+        var(--ok) 100%
+      );
     }
     /* outdoor weather: left tab matches sky/blue widget (same 3px bookmark as other cards) */
     .temp-card.outdoor::before {
@@ -2390,25 +2398,66 @@
       );
     }
 
-    /* Drag-reorder handles (sensors, devices, sensor sources) */
+    /* Drag-reorder handles (sensors, devices, sensor sources)
+       Laconic vertical grip rail on the full left edge */
     .drag-handle {
       cursor: grab;
-      color: var(--dim);
+      color: transparent;
       user-select: none;
       -webkit-user-select: none;
-      padding: 6px 8px;
-      margin: -4px 0;
-      font-size: 0.95rem;
-      line-height: 1;
-      letter-spacing: -0.08em;
-      border-radius: 6px;
+      padding: 0;
+      margin: 0;
+      font-size: 0;
+      line-height: 0;
+      letter-spacing: 0;
+      border-radius: 0;
       flex: 0 0 auto;
       touch-action: none;
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 10px;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
     }
-    .drag-handle:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .drag-handle::before {
+      content: "";
+      display: block;
+      width: 2px;
+      height: min(42%, 22px);
+      min-height: 12px;
+      border-radius: 1px;
+      opacity: 0.4;
+      background: repeating-linear-gradient(
+        to bottom,
+        var(--dim) 0 1.5px,
+        transparent 1.5px 3.5px
+      );
+      transition: opacity 0.15s, height 0.15s;
+    }
+    .drag-handle:hover {
+      background: rgba(61, 156, 240, 0.06);
+    }
+    .drag-handle:hover::before {
+      opacity: 0.85;
+      height: min(55%, 28px);
+    }
     .drag-handle:active { cursor: grabbing; }
     .sortable-item {
       cursor: grab;
+      position: relative;
+    }
+    /* room for left-edge grip (not overlapping text) */
+    #sensors-list .card.sortable-item > .card-b.periph-item-body,
+    #devices-list .card.sortable-item > .card-b.periph-item-body {
+      padding-left: 14px !important;
+    }
+    .sensor-source-card.sortable-item {
+      padding-left: 14px;
     }
     .sortable-item:active {
       cursor: grabbing;
@@ -2506,8 +2555,95 @@
     }
     #sensors-list .drag-handle,
     #devices-list .drag-handle {
-      padding: 4px 5px;
-      margin: -2px 0;
+      /* full-height rail is set on .drag-handle */
+      padding: 0;
+      margin: 0;
+    }
+    /* Device list ON/OFF slider (optimistic) */
+    .dev-switch {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .dev-switch input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+    }
+    .dev-switch-track {
+      position: relative;
+      width: 48px;
+      height: 28px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid var(--border);
+      transition: background 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+    }
+    .dev-switch-thumb {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, #f4f6f8, #c8cdd4);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+      transition: transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1),
+        background 0.22s ease;
+    }
+    .dev-switch.is-on .dev-switch-track,
+    .dev-switch:has(input:checked) .dev-switch-track {
+      background: linear-gradient(180deg, #4aa8f5, var(--accent2, #3d9cf0));
+      border-color: transparent;
+      box-shadow: 0 0 0 1px rgba(61, 156, 240, 0.25),
+        inset 0 1px 0 rgba(255, 255, 255, 0.15);
+    }
+    .dev-switch.is-on .dev-switch-thumb,
+    .dev-switch:has(input:checked) .dev-switch-thumb {
+      transform: translateX(20px);
+      background: linear-gradient(180deg, #fff, #e8f2fc);
+    }
+    .dev-switch.is-pending .dev-switch-track {
+      animation: dev-sw-pulse 0.9s ease-in-out infinite;
+    }
+    .dev-switch.is-pending {
+      pointer-events: none;
+      opacity: 0.92;
+    }
+    @keyframes dev-sw-pulse {
+      0%, 100% { filter: brightness(1); }
+      50% { filter: brightness(1.18); }
+    }
+    .dev-switch.is-disabled,
+    .dev-switch:has(input:disabled) {
+      opacity: 0.4;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+    .dev-switch-label {
+      font-size: 0.72rem;
+      font-weight: 650;
+      min-width: 2.1em;
+      color: var(--dim);
+      margin-right: 6px;
+      text-align: right;
+    }
+    .dev-switch.is-on .dev-switch-label,
+    .dev-switch:has(input:checked) .dev-switch-label {
+      color: var(--accent2, #3d9cf0);
+    }
+    #devices-list .dev-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
     }
     .temp-card.board-chip .tc-pcb {
       color: var(--alum);
@@ -2935,17 +3071,17 @@
     .dash-board .dash-item-tools {
       display: none;
       position: absolute;
-      top: 8px;
-      right: 8px;
+      inset: 0;
       z-index: 5;
-      gap: 4px;
-      align-items: center;
+      pointer-events: none;
     }
     .dash-board.dash-edit-mode .dash-item-tools {
-      display: flex;
+      display: block;
     }
-    .dash-item-tools .dash-hide-btn,
-    .dash-item-tools .dash-grip {
+    .dash-item-tools .dash-hide-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
       width: 26px;
       height: 26px;
       border-radius: 50%;
@@ -2959,11 +3095,47 @@
       font-size: 0.78rem;
       padding: 0;
       line-height: 1;
+      pointer-events: auto;
     }
+    /* left-edge laconic grip (full card height) in edit mode */
     .dash-item-tools .dash-grip {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 10px;
+      height: auto;
+      border-radius: 0;
+      border: none;
+      background: transparent;
+      color: transparent;
+      font-size: 0;
       cursor: grab;
-      letter-spacing: -0.06em;
-      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      pointer-events: auto;
+    }
+    .dash-item-tools .dash-grip::before {
+      content: "";
+      display: block;
+      width: 2px;
+      height: min(40%, 24px);
+      min-height: 12px;
+      border-radius: 1px;
+      opacity: 0.45;
+      background: repeating-linear-gradient(
+        to bottom,
+        var(--dim) 0 1.5px,
+        transparent 1.5px 3.5px
+      );
+    }
+    .dash-item-tools .dash-grip:hover {
+      background: rgba(61, 156, 240, 0.06);
+    }
+    .dash-item-tools .dash-grip:hover::before {
+      opacity: 0.9;
     }
     .dash-item-tools .dash-hide-btn:hover {
       color: #f87171;
@@ -10613,7 +10785,7 @@
       const tools = document.createElement("div");
       tools.className = "dash-item-tools";
       tools.innerHTML =
-        '<span class="dash-grip" title="Drag" aria-hidden="true">⋮⋮</span>' +
+        '<span class="dash-grip" title="Drag" aria-hidden="true"></span>' +
         '<button type="button" class="dash-hide-btn" title="' +
         (typeof t === "function" ? t("dash.hide_block", "Hide block") : "Hide") +
         '" aria-label="Hide">×</button>';
@@ -20003,7 +20175,7 @@
             '<div style="display:flex;gap:6px;align-items:flex-start;min-width:0;flex:1">' +
             '<span class="drag-handle" title="' +
             t("btn.drag_reorder", "Drag to reorder") +
-            '" aria-label="Drag">⋮⋮</span>' +
+            '" aria-label="Drag"></span>' +
             "<div style='min-width:0'>" +
             '<div style="font-weight:650;font-size:0.92rem">' +
             title +
@@ -20185,7 +20357,7 @@
         '<div class="src-main">' +
         '<span class="drag-handle" title="' +
         t("btn.drag_reorder", "Drag to reorder") +
-        '" aria-label="Drag">⋮⋮</span>' +
+        '" aria-label="Drag"></span>' +
         '<label class="field" style="margin:0"><span class="src-num">#' +
         (idx + 1) +
         '</span><select class="src-type">' +
@@ -20702,6 +20874,8 @@
 
     // ── Peripherals · Devices ─────────────────────────────────────────────
     let devicesCache = [];
+    /** device ids currently waiting for ON/OFF API (optimistic toggle) */
+    const deviceTogglePending = new Set();
     let devicesMeta = {
       backends: [],
       reserved_aliases: [],
@@ -20861,6 +21035,47 @@
       });
     }
 
+    /** Format last_power / power metrics for device cards (only if present). */
+    function formatDevicePowerHtml(p) {
+      if (!p || typeof p !== "object") return "";
+      const parts = [];
+      const pw = Number(p.power_w);
+      if (Number.isFinite(pw)) {
+        parts.push(
+          (Math.abs(pw) >= 100 ? pw.toFixed(0) : pw.toFixed(1)) + " W"
+        );
+      }
+      const vv = Number(p.voltage_v);
+      if (Number.isFinite(vv) && vv > 0) {
+        parts.push(vv.toFixed(0) + " V");
+      }
+      const aa = Number(p.current_a);
+      if (Number.isFinite(aa) && aa > 0) {
+        parts.push(
+          (aa >= 1 ? aa.toFixed(2) : aa.toFixed(3)) + " A"
+        );
+      }
+      const ek =
+        Number(p.energy_kwh) ||
+        Number(p.energy_today_kwh) ||
+        NaN;
+      if (Number.isFinite(ek) && ek > 0) {
+        parts.push(
+          (ek >= 10 ? ek.toFixed(1) : ek.toFixed(2)) +
+            (p.energy_today_kwh != null && p.energy_kwh == null
+              ? " kWh " + t("dev.energy_today", "today")
+              : " kWh")
+        );
+      }
+      if (!parts.length) return "";
+      return (
+        '<div class="dev-power-line" style="font-size:0.82rem;font-weight:600;margin-top:3px;color:var(--text);opacity:0.92">' +
+        "⚡ " +
+        parts.join(" · ") +
+        "</div>"
+      );
+    }
+
     function renderDevicesList() {
       const box = document.getElementById("devices-list");
       const st = document.getElementById("devices-status");
@@ -20903,17 +21118,54 @@
               String(d.last_error).replace(/</g, "&lt;").slice(0, 120) +
               "</div>"
             : "";
+          const powerHtml = formatDevicePowerHtml(d.last_power || d.power);
           const idEsc = String(d.id).replace(/"/g, "");
+          const isOn = on === true;
+          const pending = deviceTogglePending.has(String(d.id));
+          const swClass =
+            "dev-switch" +
+            (isOn ? " is-on" : "") +
+            (pending ? " is-pending" : "") +
+            (!en ? " is-disabled" : "");
+          const stateLabel =
+            on === true
+              ? "ON"
+              : on === false
+                ? "OFF"
+                : "—";
+          const switchHtml =
+            '<label class="' +
+            swClass +
+            '" data-device-switch-wrap="' +
+            idEsc +
+            '" title="' +
+            (en
+              ? t("dev.toggle_hint", "Toggle device")
+              : t("dev.disabled", "disabled")) +
+            '">' +
+            '<span class="dev-switch-label">' +
+            stateLabel +
+            "</span>" +
+            '<input type="checkbox" data-device-switch="' +
+            idEsc +
+            '"' +
+            (isOn ? " checked" : "") +
+            (!en || pending ? " disabled" : "") +
+            ' aria-label="' +
+            name.replace(/"/g, "") +
+            ' power" />' +
+            '<span class="dev-switch-track" aria-hidden="true">' +
+            '<span class="dev-switch-thumb"></span></span></label>';
           return (
             '<div class="card sortable-item" data-id="' +
             idEsc +
             '" style="margin:0;background:var(--panel2)">' +
             '<div class="card-b periph-item-body">' +
-            '<div class="btn-row" style="justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">' +
+            '<div class="btn-row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:0">' +
             '<div style="display:flex;gap:6px;align-items:flex-start;min-width:0;flex:1">' +
             '<span class="drag-handle" title="' +
             t("btn.drag_reorder", "Drag to reorder") +
-            '" aria-label="Drag">⋮⋮</span>' +
+            '" aria-label="Drag"></span>' +
             "<div style='min-width:0'>" +
             '<div style="font-weight:650;font-size:0.92rem">' +
             '<span style="font-size:1.1rem;margin-right:5px">' +
@@ -20923,23 +21175,17 @@
             ' <span style="color:var(--dim);font-weight:500;font-size:0.78rem">· /' +
             alias +
             "</span></div>" +
-            '<div style="font-size:1.1rem;font-weight:650;margin-top:2px">' +
-            stateTxt +
-            "</div>" +
+            powerHtml +
             '<div style="font-size:0.7rem;color:var(--dim);margin-top:2px">' +
             be +
             tagTxt +
+            (!en ? " · " + t("dev.disabled", "disabled") : "") +
             "</div>" +
             desc +
             err +
             "</div></div>" +
-            '<div class="btn-row" style="gap:6px;align-items:center">' +
-            '<button class="btn" type="button" data-device-on="' +
-            idEsc +
-            '">ON</button>' +
-            '<button class="btn danger" type="button" data-device-off="' +
-            idEsc +
-            '">OFF</button>' +
+            '<div class="dev-actions">' +
+            switchHtml +
             '<button class="btn" type="button" data-device-edit="' +
             idEsc +
             '">' +
@@ -20956,11 +21202,14 @@
           if (d) openDeviceEditor(d);
         });
       });
-      box.querySelectorAll("[data-device-on]").forEach((btn) => {
-        btn.addEventListener("click", () => deviceSetById(btn.getAttribute("data-device-on"), true));
-      });
-      box.querySelectorAll("[data-device-off]").forEach((btn) => {
-        btn.addEventListener("click", () => deviceSetById(btn.getAttribute("data-device-off"), false));
+      box.querySelectorAll("[data-device-switch]").forEach((inp) => {
+        inp.addEventListener("change", () => {
+          if (inp.disabled) return;
+          const id = inp.getAttribute("data-device-switch");
+          const want = !!inp.checked;
+          // optimistic UI already flipped by the checkbox — animate + request
+          void deviceSetById(id, want, { optimistic: true, inputEl: inp });
+        });
       });
       bindSortableList(box, {
         getId: (el) => el.getAttribute("data-id") || "",
@@ -20969,6 +21218,31 @@
         },
       });
       if (st) st.textContent = list.length + " · " + list.filter((d) => d.enabled !== false).length + " on";
+    }
+
+    function applyDeviceSwitchUi(id, on, { pending = false } = {}) {
+      const sid = String(id || "");
+      const wrap = document.querySelector(
+        '[data-device-switch-wrap="' + sid.replace(/"/g, '\\"') + '"]'
+      );
+      const inp = document.querySelector(
+        '[data-device-switch="' + sid.replace(/"/g, '\\"') + '"]'
+      );
+      if (wrap) {
+        wrap.classList.toggle("is-on", on === true);
+        wrap.classList.toggle("is-pending", !!pending);
+        const lab = wrap.querySelector(".dev-switch-label");
+        if (lab) {
+          lab.textContent =
+            on === true ? "ON" : on === false ? "OFF" : "—";
+        }
+      }
+      if (inp) {
+        inp.checked = on === true;
+        const d = (devicesCache || []).find((x) => x && x.id === sid);
+        const en = !d || d.enabled !== false;
+        inp.disabled = !en || !!pending || deviceTogglePending.has(sid);
+      }
     }
 
     async function persistDeviceOrder(ids) {
@@ -21216,10 +21490,12 @@
       return payload;
     }
 
-    async function loadDevices() {
+    async function loadDevices(opts) {
       const st = document.getElementById("devices-status");
+      const probe = !!(opts && opts.probe);
       try {
-        const res = await fetch("/api/devices", { cache: "no-store" });
+        const url = probe ? "/api/devices?probe=1" : "/api/devices";
+        const res = await fetch(url, { cache: "no-store" });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "devices fail");
         devicesCache = body.devices || [];
@@ -21236,14 +21512,25 @@
               const est = document.getElementById("device-editor-status");
               if (est) {
                 let s = d.last_on === true ? "ON" : d.last_on === false ? "OFF" : "—";
+                const p = d.last_power || d.power;
+                if (p && p.power_w != null && Number.isFinite(Number(p.power_w))) {
+                  const w = Number(p.power_w);
+                  s +=
+                    " · " +
+                    (Math.abs(w) >= 100 ? w.toFixed(0) : w.toFixed(1)) +
+                    " W";
+                }
                 if (d.last_error) s += " · " + String(d.last_error).slice(0, 80);
                 est.textContent = s;
               }
             }
           }
         }
+        return body;
       } catch (e) {
         if (st) st.textContent = "error: " + e.message;
+        if (probe) throw e;
+        return null;
       }
     }
 
@@ -21301,44 +21588,120 @@
       }
     }
 
-    async function deviceSetById(id, on) {
+    async function deviceSetById(id, on, opts) {
       if (!id) return;
+      const optimistic = !!(opts && opts.optimistic);
+      const sid = String(id);
+      const cached0 = (devicesCache || []).find((x) => x && x.id === sid) || null;
+      const prevOn = cached0 ? cached0.last_on : null;
+      const want = !!on;
+
+      // Guard: do not re-send same state (Tuya may toggle on repeat set)
+      if (cached0 && cached0.last_on === true && want === true) {
+        applyDeviceSwitchUi(sid, true, { pending: false });
+        return;
+      }
+      if (cached0 && cached0.last_on === false && want === false) {
+        applyDeviceSwitchUi(sid, false, { pending: false });
+        return;
+      }
+      if (deviceTogglePending.has(sid)) return;
+      deviceTogglePending.add(sid);
+
+      // Optimistic: flip UI + cache immediately
+      if (cached0) cached0.last_on = want;
+      applyDeviceSwitchUi(sid, want, { pending: true });
+
       try {
         const res = await fetch("/api/devices/set", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, on: !!on }),
+          body: JSON.stringify({ id: sid, on: want }),
         });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "set fail");
-        const cached = (devicesCache || []).find((x) => x && x.id === id) || null;
-        let name = "";
-        try {
-          if (typeof deviceDisplayName === "function" && (body.name || cached)) {
-            name = deviceDisplayName(
-              Object.assign({}, cached || {}, {
-                name: body.name || (cached && cached.name),
-                name_en: body.name_en || (cached && cached.name_en),
-                name_ru: body.name_ru || (cached && cached.name_ru),
-                alias: body.alias || (cached && cached.alias),
-              })
-            );
-          }
-        } catch (_) { /* ignore */ }
-        if (!name) {
-          name =
-            body.name ||
-            body.alias ||
-            (cached && (cached.name || cached.alias)) ||
-            "Device";
+
+        // Confirm real state from backend (may differ if skipped/failed soft)
+        let confirmed =
+          body.on === true ? true : body.on === false ? false : want;
+        // If server returned different state than requested — snap to truth
+        if (body.skipped && body.on != null) confirmed = !!body.on;
+
+        if (cached0) {
+          cached0.last_on = confirmed;
+          if (body.power) cached0.last_power = body.power;
+          cached0.last_error = null;
+        } else if (devicesCache) {
+          const hit = devicesCache.find((x) => x && x.id === sid);
+          if (hit) hit.last_on = confirmed;
         }
-        const state = on
-          ? t("dev.toast_on", "On")
-          : t("dev.toast_off", "Off");
-        toastSuccess(String(name).trim() + " " + state);
-        await loadDevices();
+
+        applyDeviceSwitchUi(sid, confirmed, { pending: false });
+
+        // If device ended up not matching request, show that
+        if (confirmed !== want) {
+          toastError(
+            t("dev.state_mismatch", "Device state differs from request")
+          );
+        } else if (!body.skipped) {
+          const cached = cached0 || (devicesCache || []).find((x) => x && x.id === sid);
+          let name = "";
+          try {
+            if (typeof deviceDisplayName === "function" && (body.name || cached)) {
+              name = deviceDisplayName(
+                Object.assign({}, cached || {}, {
+                  name: body.name || (cached && cached.name),
+                  name_en: body.name_en || (cached && cached.name_en),
+                  name_ru: body.name_ru || (cached && cached.name_ru),
+                  alias: body.alias || (cached && cached.alias),
+                })
+              );
+            }
+          } catch (_) { /* ignore */ }
+          if (!name) {
+            name =
+              body.name ||
+              body.alias ||
+              (cached && (cached.name || cached.alias)) ||
+              "Device";
+          }
+          const state = confirmed
+            ? t("dev.toast_on", "On")
+            : t("dev.toast_off", "Off");
+          toastSuccess(String(name).trim() + " " + state);
+        }
+
+        // Refresh list for power metrics without thrashing pending state
+        deviceTogglePending.delete(sid);
+        try {
+          await loadDevices();
+        } catch (_) { /* ignore */ }
+        // re-apply confirmed after re-render (loadDevices rebuilds DOM)
+        const after = (devicesCache || []).find((x) => x && x.id === sid);
+        if (after && after.last_on == null && confirmed != null) {
+          after.last_on = confirmed;
+        }
+        applyDeviceSwitchUi(
+          sid,
+          after && after.last_on != null ? after.last_on : confirmed,
+          { pending: false }
+        );
       } catch (e) {
-        toastError(e.message);
+        // Revert optimistic flip
+        if (cached0) cached0.last_on = prevOn;
+        applyDeviceSwitchUi(sid, prevOn === true, { pending: false });
+        // if prev was null, leave unchecked
+        if (prevOn == null) applyDeviceSwitchUi(sid, false, { pending: false });
+        toastError(e.message || String(e));
+        try {
+          await loadDevices();
+        } catch (_) { /* ignore */ }
+      } finally {
+        deviceTogglePending.delete(sid);
+        const wrap = document.querySelector(
+          '[data-device-switch-wrap="' + sid.replace(/"/g, '\\"') + '"]'
+        );
+        if (wrap) wrap.classList.remove("is-pending");
       }
     }
 
@@ -21385,7 +21748,10 @@
     }
 
     document.getElementById("btn-devices-refresh")?.addEventListener("click", () => {
-      loadDevices().then(() => toastSuccess(t("btn.refresh", "Refresh")));
+      // probe=1: live ON/OFF + power (W/V/A) when device supports metering
+      loadDevices({ probe: true })
+        .then(() => toastSuccess(t("btn.refresh", "Refresh")))
+        .catch((e) => toastError(e.message || String(e)));
     });
     document.getElementById("btn-device-new")?.addEventListener("click", () => {
       openDeviceEditor(null);

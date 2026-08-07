@@ -82,19 +82,53 @@ def rsa_encrypt_no_padding(n_decimal: str, e: int, plaintext: bytes) -> str:
     return format(c, f"0{2 * k}x")
 
 
-def _http_get_json(url: str, timeout: float = 30.0) -> dict:
+def _http_json(
+    url: str,
+    *,
+    method: str = "GET",
+    form: dict | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """
+    Tuya mobile endpoints: CloudFront often returns HTML 403 for long GET
+    query strings — use POST application/x-www-form-urlencoded for signed calls.
+    """
     ctx = ssl.create_default_context()
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "poolheat-tuya/1.0 (SmartLife mobile API)"},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
-        raw = resp.read().decode("utf-8", errors="replace")
-    data = json.loads(raw)
-    if not isinstance(data, dict):
-        raise RuntimeError("unexpected mobile API response")
-    return data
+    data = None
+    headers = {
+        # App-like UA; some edges reject empty / generic agents
+        "User-Agent": "TY-App/7.9.3 (Android 10; okhttp/3.12.0)",
+        "Accept": "application/json",
+    }
+    if form is not None:
+        data = urllib.parse.urlencode(form).encode("utf-8")
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        method = "POST"
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        raise RuntimeError(f"HTTP {e.code}: {body[:240]}") from e
+    raw_s = (raw or "").strip()
+    if not raw_s:
+        raise RuntimeError("empty response from Tuya mobile API")
+    if raw_s[0] not in "{[":
+        # HTML error page (CloudFront 403, etc.)
+        raise RuntimeError(
+            "Tuya mobile API returned non-JSON "
+            f"({raw_s[:120].replace(chr(10), ' ')}…)"
+        )
+    try:
+        data_out = json.loads(raw_s)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Tuya JSON parse failed: {e}; body={raw_s[:160]!r}"
+        ) from e
+    if not isinstance(data_out, dict):
+        raise RuntimeError("unexpected mobile API response type")
+    return data_out
 
 
 class TuyaMobileAPI:
@@ -159,16 +193,8 @@ class TuyaMobileAPI:
         if gid is not None:
             params["gid"] = str(gid)
         params["sign"] = self._sign(params)
-        qs = urllib.parse.urlencode(params)
-        url = self.endpoint + ("&" if "?" in self.endpoint else "?") + qs
-        # endpoint already is .../api.json — use ? for first param
-        if self.endpoint.endswith("api.json"):
-            url = self.endpoint + "?" + qs
-        try:
-            return _http_get_json(url, timeout=self.timeout)
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-            raise RuntimeError(f"HTTP {e.code}: {body[:200]}") from e
+        # POST form body — GET with long signed query is blocked by CloudFront (HTML 403)
+        return _http_json(self.endpoint, form=params, timeout=self.timeout)
 
     def login(self, email: str, password: str, country_code: str) -> dict:
         tok = self.request(
