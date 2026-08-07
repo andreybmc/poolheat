@@ -241,6 +241,10 @@
       box-shadow: var(--shadow);
       overflow: hidden;
     }
+    /* Autocomplete dropdowns (weather city, schedule TZ) must escape card clip */
+    .card.card-allow-overflow {
+      overflow: visible;
+    }
 
     .card-h {
       display: flex;
@@ -919,6 +923,93 @@
       flex-wrap: wrap;
       gap: 8px;
       margin-top: 12px;
+    }
+
+    /* —— mode profiles —— */
+    .mp-list { display: flex; flex-direction: column; gap: 8px; }
+    .mp-card {
+      display: grid;
+      grid-template-columns: 8px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+    }
+    .mp-card:hover { border-color: rgba(255,255,255,0.18); }
+    .mp-card .mp-swatch {
+      width: 8px; height: 100%; min-height: 36px; border-radius: 4px; background: #64748b;
+    }
+    .mp-card .mp-name { font-weight: 600; font-size: 0.92rem; }
+    .mp-card .mp-sum { font-size: 0.75rem; color: var(--dim); margin-top: 2px; }
+    .mp-card .mp-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .mp-card .mp-actions .btn { padding: 4px 8px; font-size: 0.72rem; }
+
+    /* —— schedule grid —— */
+    .sched-grid-wrap { overflow-x: auto; }
+    .sched-hours {
+      display: grid;
+      grid-template-columns: 42px repeat(24, minmax(22px, 1fr));
+      gap: 2px;
+      margin-bottom: 4px;
+      font-size: 0.65rem;
+      color: var(--dim);
+      text-align: center;
+    }
+    .sched-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .sched-row {
+      display: grid;
+      grid-template-columns: 42px repeat(24, minmax(22px, 1fr));
+      gap: 2px;
+      align-items: stretch;
+    }
+    .sched-dow {
+      font-size: 0.72rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      border-radius: 4px;
+      padding: 0 2px;
+    }
+    .sched-dow:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .sched-dow.is-selected {
+      color: var(--accent, #38bdf8);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .sched-cell {
+      min-height: 28px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(100,116,139,0.35);
+      cursor: pointer;
+      user-select: none;
+    }
+    .sched-cell:hover { outline: 1px solid rgba(255,255,255,0.35); }
+    .sched-cell.is-inactive { background: rgba(100,116,139,0.28); }
+    .sched-cell.is-profile { background: rgba(99,102,241,0.55); }
+    .sched-cell.is-preset { background: rgba(34,197,94,0.45); }
+    .sched-cell.is-now {
+      box-shadow: inset 0 0 0 2px var(--accent, #38bdf8);
+    }
+    .sched-ex-list { display: flex; flex-direction: column; gap: 8px; }
+    .sched-ex-row {
+      display: grid;
+      grid-template-columns: 130px 1fr 1fr auto;
+      gap: 8px;
+      align-items: end;
+    }
+    @media (max-width: 720px) {
+      .sched-ex-row { grid-template-columns: 1fr 1fr; }
     }
 
     /* —— zone map —— */
@@ -1919,6 +2010,78 @@
       border-color: rgba(240, 180, 41, 0.45);
       background: rgba(240, 180, 41, 0.12);
     }
+    /* Upfreq badge: right of work badge */
+    .pm-badge.pm-upfreq {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 6px;
+      text-transform: none;
+      letter-spacing: 0.02em;
+      font-weight: 600;
+      max-width: 100%;
+    }
+    .pm-badge.pm-upfreq .pm-uf-ico {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 0.9em;
+      height: 0.9em;
+      flex: 0 0 auto;
+      font-size: 0.78rem;
+      line-height: 1;
+      opacity: 0.95;
+      transform-origin: 50% 50%;
+      /* keep glyph optical center in the box */
+      font-style: normal;
+      font-weight: 700;
+    }
+    .pm-badge.pm-upfreq.is-tuning {
+      color: #f0b429;
+      border-color: rgba(240, 180, 41, 0.5);
+      background: rgba(240, 180, 41, 0.12);
+    }
+    /* CSS ring — true geometric center (Unicode ⟳ sits off-center in most fonts) */
+    .pm-badge.pm-upfreq.is-tuning .pm-uf-ico {
+      width: 0.85em;
+      height: 0.85em;
+      font-size: 0; /* hide any text glyph */
+      border: 1.5px solid rgba(240, 180, 41, 0.28);
+      border-top-color: #f0b429;
+      border-right-color: #f0b429;
+      border-radius: 50%;
+      box-sizing: border-box;
+      animation: pm-uf-spin 0.9s linear infinite;
+      transform-origin: 50% 50%;
+    }
+    .pm-badge.pm-upfreq.is-tuned {
+      color: #3ecf8e;
+      border-color: rgba(62, 207, 142, 0.5);
+      background: rgba(62, 207, 142, 0.12);
+    }
+    .pm-badge.pm-upfreq.is-tuned .pm-uf-ico {
+      font-size: 0.78rem;
+      border: none;
+      animation: none;
+    }
+    .pm-badge.pm-upfreq.is-unknown {
+      color: var(--muted);
+    }
+    .pm-badge.pm-upfreq.is-unknown .pm-uf-ico {
+      font-size: 0.78rem;
+      border: none;
+      animation: none;
+    }
+    @keyframes pm-uf-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .pm-badge.pm-upfreq.is-tuning .pm-uf-ico {
+        animation: none;
+        border-color: #f0b429;
+      }
+    }
     /* heat zone badge: same header row, flush right */
     .temp-card .tc-label.tc-label-stack {
       display: flex;
@@ -2365,7 +2528,52 @@
       color: var(--silicon-dim);
     }
     .temp-card.heat-loss::before { background: var(--warn); }
-    .temp-card.power-meas::before { background: var(--ok); }
+    /* Power measured: energy gradient on left tab */
+    .temp-card.power-meas::before {
+      width: 4px;
+      background: linear-gradient(
+        180deg,
+        #3ecf8e 0%,
+        #2bb0a0 35%,
+        #3d9cf0 70%,
+        #5b7cfa 100%
+      );
+      background-size: 100% 100%;
+    }
+    /* Suspend / idle — muted static strip */
+    .temp-card.power-meas.is-suspend::before {
+      background: linear-gradient(
+        180deg,
+        #f0b429 0%,
+        #d4920f 50%,
+        #a67c2a 100%
+      );
+      animation: none;
+    }
+    /* Mining — flowing gradient animation */
+    .temp-card.power-meas.is-mining::before {
+      background: linear-gradient(
+        180deg,
+        #3ecf8e 0%,
+        #45e0b0 18%,
+        #3d9cf0 42%,
+        #6b8cff 58%,
+        #3ecf8e 78%,
+        #2bb0a0 100%
+      );
+      background-size: 100% 300%;
+      animation: pm-power-flow 2.4s linear infinite;
+    }
+    @keyframes pm-power-flow {
+      0% { background-position: 0% 0%; }
+      100% { background-position: 0% 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .temp-card.power-meas.is-mining::before {
+        animation: none;
+        background-size: 100% 100%;
+      }
+    }
     .temp-card.heat-balance::before { background: var(--accent); }
     .temp-card.heat-balance.hb-up::before { background: var(--ok); }
     .temp-card.heat-balance.hb-down::before { background: var(--danger); }
@@ -2573,13 +2781,16 @@
     }
 
     .weather-results {
-      margin-top: 10px;
+      margin-top: 4px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
-      max-height: 220px;
+      max-height: 260px;
       overflow: auto;
-      background: var(--bg);
+      background: var(--panel, #1a1f2e);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      z-index: 80;
     }
+    .weather-results[hidden] { display: none !important; }
     .weather-results button {
       display: block;
       width: 100%;
@@ -2594,12 +2805,22 @@
       cursor: pointer;
     }
     .weather-results button:last-child { border-bottom: none; }
-    .weather-results button:hover { background: rgba(61, 156, 240, 0.1); }
+    .weather-results button:hover,
+    .weather-results button.is-active {
+      background: rgba(61, 156, 240, 0.14);
+    }
     .weather-results .wr-sub {
       display: block;
       font-size: 0.72rem;
       color: var(--dim);
       margin-top: 2px;
+    }
+    .ac-wrap { position: relative; z-index: 5; }
+    .ac-wrap .weather-results {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 100%;
     }
     .weather-preset-row {
       display: flex;
@@ -2630,6 +2851,178 @@
       letter-spacing: 0.06em;
       color: var(--dim);
       margin-bottom: 6px;
+    }
+
+    /* —— Dashboard layout editor —— */
+    .dash-toolbar {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 4px;
+      min-height: 32px;
+    }
+    .dash-fab {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--panel2);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      padding: 0;
+      font-size: 0.95rem;
+      line-height: 1;
+      transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    .dash-fab:hover {
+      color: var(--text);
+      border-color: rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.06);
+    }
+    .dash-fab.is-active {
+      color: var(--accent, #3d9cf0);
+      border-color: rgba(61, 156, 240, 0.55);
+      background: rgba(61, 156, 240, 0.12);
+      box-shadow: 0 0 0 3px rgba(61, 156, 240, 0.12);
+    }
+    .dash-fab[hidden] { display: none !important; }
+    .dash-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+    @media (max-width: 960px) {
+      .dash-board { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 520px) {
+      .dash-board { grid-template-columns: 1fr; }
+    }
+    .dash-item {
+      min-width: 0;
+      position: relative;
+    }
+    .dash-item.dash-span-full {
+      grid-column: 1 / -1;
+    }
+    /* layout hide — stronger than [hidden] quirks inside grid */
+    .dash-item.is-layout-hidden {
+      display: none !important;
+    }
+    /* cards fill dash cell height cleanly */
+    .dash-item > .temp-card,
+    .dash-item > .card {
+      height: 100%;
+      margin: 0;
+    }
+    .dash-board.dash-edit-mode .dash-item {
+      cursor: grab;
+    }
+    .dash-board.dash-edit-mode .dash-item.is-dragging {
+      opacity: 0.55;
+      cursor: grabbing;
+      outline: 1.5px solid rgba(61, 156, 240, 0.7) !important;
+      z-index: 2;
+    }
+    .dash-board.dash-edit-mode .dash-item.is-swap-target {
+      outline: 1.5px dashed rgba(61, 156, 240, 0.85) !important;
+      background: rgba(61, 156, 240, 0.06);
+    }
+    .dash-board .dash-item-tools {
+      display: none;
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 5;
+      gap: 4px;
+      align-items: center;
+    }
+    .dash-board.dash-edit-mode .dash-item-tools {
+      display: flex;
+    }
+    .dash-item-tools .dash-hide-btn,
+    .dash-item-tools .dash-grip {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.45);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 0.78rem;
+      padding: 0;
+      line-height: 1;
+    }
+    .dash-item-tools .dash-grip {
+      cursor: grab;
+      letter-spacing: -0.06em;
+      font-size: 0.85rem;
+    }
+    .dash-item-tools .dash-hide-btn:hover {
+      color: #f87171;
+      border-color: rgba(248, 113, 113, 0.5);
+    }
+    .dash-board.dash-edit-mode .dash-item {
+      outline: 1px dashed rgba(255,255,255,0.1);
+      border-radius: var(--radius);
+    }
+    .dash-board.dash-edit-mode .dash-item:hover {
+      outline-color: rgba(61, 156, 240, 0.45);
+    }
+    .dash-placeholder {
+      border: 1.5px dashed rgba(61, 156, 240, 0.65);
+      border-radius: var(--radius);
+      background: rgba(61, 156, 240, 0.06);
+      min-height: 80px;
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+    .dash-add-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      min-width: 200px;
+      max-width: min(280px, 90vw);
+      max-height: 280px;
+      overflow: auto;
+      z-index: 40;
+      background: var(--panel, #1a1f2e);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+      padding: 6px;
+    }
+    .dash-add-menu[hidden] { display: none !important; }
+    .dash-add-menu button {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 0.82rem;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .dash-add-menu button:hover {
+      background: rgba(61, 156, 240, 0.12);
+    }
+    .dash-add-menu .dash-add-empty {
+      padding: 10px;
+      color: var(--dim);
+      font-size: 0.78rem;
+    }
+    .dash-toolbar-wrap {
+      position: relative;
     }
 
     .temp-card .tc-val {
@@ -2950,219 +3343,247 @@
     <!-- ========== DASHBOARD ========== -->
     <section class="view active" id="view-dash">
       <div class="stack">
-        <!-- Primary temperatures -->
-        <div class="temp-grid">
-          <div class="temp-card liquid-env">
-            <div class="tc-label tc-label-stack">
-              <div class="tc-label-main">
-                <span class="tip" data-tip-key="t_ctrl" id="dash-tctrl-label">T_ctrl</span>
-                <span style="color:var(--dim)"> / </span>
-                <span class="tip" data-tip-key="env">Env</span>
-              </div>
-              <span
-                class="zone-badge tip"
-                data-tip-key="zone"
-                id="dash-zone-badge"
-                data-bind="zoneName"
-                title="Heat zone (T_ctrl) · Safety = chip max"
-              >—</span>
-            </div>
-            <div class="tc-val tc-val-dual">
-              <span class="tc-pair tip" data-tip-key="t_ctrl" title="T_ctrl — zone map sensor">
-                <span id="t-ctrl">—</span><small>°C</small>
-              </span>
-              <span class="tc-sep" aria-hidden="true">/</span>
-              <span class="tc-pair tip" data-tip-key="env" title="Env Temp">
-                <span id="t-env">—</span><small>°C</small>
-              </span>
-            </div>
-            <div class="tc-extra">
-              <div data-bind="zoneHint" id="dash-zone-hint">—</div>
-              <div id="dash-zone-thr" class="tc-thr">T0=— · T1=— · T2=— · h=—</div>
-            </div>
+        <div class="dash-toolbar-wrap">
+          <div class="dash-toolbar">
+            <button type="button" class="dash-fab" id="btn-dash-add" hidden
+              title="Show hidden block" aria-label="Add block">+</button>
+            <button type="button" class="dash-fab" id="btn-dash-edit"
+              title="Edit dashboard layout" aria-label="Edit layout" aria-pressed="false">✎</button>
           </div>
-          <div class="temp-card outdoor wx-widget wx-cloud" id="card-weather" data-wx-theme="cloud">
-            <div class="tc-label wx-label">
-              <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
-              <span class="wx-label-sep" aria-hidden="true"> · </span>
-              <span id="wx-city">—</span>
-            </div>
-            <div class="wx-top">
-              <div class="wx-main">
-                <div class="wx-temp-row">
-                  <span id="t-outdoor">—</span><span class="wx-unit">°C</span>
-                </div>
-                <div class="wx-cond-row">
-                  <span class="wx-cond" id="wx-cond">—</span>
-                  <span class="wx-feels" id="wx-feels" hidden></span>
-                </div>
-              </div>
-              <div class="wx-icon-wrap" id="wx-icon" aria-hidden="true"></div>
-            </div>
-            <div class="wx-meta" id="wx-extra">
-              <span class="wx-meta-item" id="wx-meta-rh" hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s6 6.5 6 11a6 6 0 1 1-12 0c0-4.5 6-11 6-11z"/></svg>
-                <span id="wx-rh">—</span>
-              </span>
-              <span class="wx-meta-item" id="wx-meta-wind" hidden>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 12h15a3 3 0 1 1-3 3"/><path d="M3 16h8a2.5 2.5 0 1 1-2.5 2.5"/></svg>
-                <span id="wx-wind">—</span>
-              </span>
-              <span class="wx-meta-item" id="wx-meta-src">
-                <span id="wx-src-label">Open-Meteo</span>
-              </span>
-            </div>
-          </div>
-          <div class="temp-card heat-loss" id="card-heat-loss">
-            <div class="tc-label"><span class="tip" data-tip-key="heat_loss" data-i18n="dash.heat_loss">Heat loss</span></div>
-            <div class="tc-val tc-val-dual">
-              <span id="hl-kw">—</span> <small title="power, kW (not kWh)">kW</small>
-              <span class="tc-sep" aria-hidden="true">/</span>
-              <span id="hl-dT">—</span> <small>°C/h</small>
-            </div>
-            <div class="tc-extra" id="hl-cond">—</div>
-          </div>
+          <div class="dash-add-menu weather-results" id="dash-add-menu" hidden></div>
         </div>
 
-        <!-- same card width as temp-grid (1 of 3 each) -->
-        <div class="temp-grid">
-          <div class="temp-card power-meas" id="card-power-meas">
-            <div class="tc-label">
-              <span class="tip" data-tip-key="power_measured" data-i18n="dash.power_measured">Power measured</span>
-              <span class="pm-badge" id="pm-work-badge">—</span>
-            </div>
-            <div class="tc-val-row">
+        <div class="dash-board" id="dash-board">
+          <div class="dash-item" data-dash-id="t_ctrl">
+            <div class="temp-card liquid-env" id="card-t-ctrl">
+              <div class="tc-label tc-label-stack">
+                <div class="tc-label-main">
+                  <span class="tip" data-tip-key="t_ctrl" id="dash-tctrl-label">T_ctrl</span>
+                  <span style="color:var(--dim)"> / </span>
+                  <span class="tip" data-tip-key="env">Env</span>
+                </div>
+                <span
+                  class="zone-badge tip"
+                  data-tip-key="zone"
+                  id="dash-zone-badge"
+                  data-bind="zoneName"
+                  title="Heat zone (T_ctrl) · Safety = chip max"
+                >—</span>
+              </div>
               <div class="tc-val tc-val-dual">
-                <span data-bind="pw">—</span> <small>W</small>
-                <span class="tc-sep" aria-hidden="true">|</span>
-                <span data-bind="hr">—</span> <small class="tip" data-tip-key="hashrate">TH/s</small>
+                <span class="tc-pair tip" data-tip-key="t_ctrl" title="T_ctrl — zone map sensor">
+                  <span id="t-ctrl">—</span><small>°C</small>
+                </span>
+                <span class="tc-sep" aria-hidden="true">/</span>
+                <span class="tc-pair tip" data-tip-key="env" title="Env Temp">
+                  <span id="t-env">—</span><small>°C</small>
+                </span>
               </div>
-              <div class="pm-side" aria-label="freq and efficiency">
-                <span class="pm-side-line"><span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span></span>
-                <span class="pm-side-line"><span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span></span>
-              </div>
-            </div>
-            <div class="tc-extra pm-extra">
-              <div class="pm-extra-line">
-                <span data-bind="pwMode">—</span>
-                · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot">uptime</span>
-                <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
-                · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
-                <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
-                · <span class="tip" data-tip-key="warmup" title="Upfreq Complete (all boards)">upfreq</span>
-                <span id="dash-upfreq" data-bind="upfreqOk">—</span>
-              </div>
-              <div class="pm-extra-line">
-                <span class="tip" data-tip-key="psu_temp">PSU</span>
-                <span data-bind="psuTemp">—</span>
-                · <span data-bind="psuFan">—</span>
-                · <span data-bind="psuVin" class="tip" data-tip-key="psu_vin">—</span>
-                · <span data-bind="psuIin" class="tip" data-tip-key="psu_iin">—</span>
+              <div class="tc-extra">
+                <div data-bind="zoneHint" id="dash-zone-hint">—</div>
+                <div id="dash-zone-thr" class="tc-thr">T0=— · T1=— · T2=— · h=—</div>
               </div>
             </div>
           </div>
-          <div class="temp-card board-chip">
-            <div class="tc-label">
-              <span class="tip" data-tip-key="pcb">Boards (max)</span>
-              <span style="color:var(--dim)"> / </span>
-              <span class="tip" data-tip-key="chip_max">Chips (max)</span>
-            </div>
-            <div class="tc-val tc-val-dual">
-              <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
-              <span class="tc-sep" aria-hidden="true">/</span>
-              <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
-            </div>
-            <div class="tc-extra">
-              <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
-              <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">Critical</span> <span id="t-chip-crit">—</span></div>
-            </div>
-          </div>
-          <div class="temp-card heat-balance" id="card-heat-balance">
-            <div class="tc-label"><span class="tip" data-tip-key="heat_balance" data-i18n="dash.heat_balance">Heat / cool-down</span></div>
-            <div class="tc-val tc-val-dual">
-              <span id="hb-rate">—</span> <small>°C/h</small>
-              <span class="tc-sep" aria-hidden="true">|</span>
-              <span id="hb-net">—</span> <small>kW</small>
-            </div>
-            <div class="tc-extra" id="hb-cond">—</div>
-          </div>
-        </div>
 
-        <!-- Firmware errors (active) + journal (last 100) -->
-        <div class="card errors-card" id="panel-miner-errors" style="display:none" hidden role="alert">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.errors">Errors</h2>
-              <div class="sub">active · get_error_code · ErrorCode · Cause · Time</div>
-            </div>
-            <span class="pill danger" id="pill-err-count" style="display:none"><span class="dot"></span> 0</span>
-          </div>
-          <div class="card-b" style="padding-top:12px;padding-bottom:8px">
-            <table class="err-table">
-              <thead>
-                <tr>
-                  <th class="col-code">ErrorCode</th>
-                  <th class="col-cause">Cause</th>
-                  <th class="col-time">Time</th>
-                </tr>
-              </thead>
-              <tbody id="miner-err-rows"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- History charts (above power mode) -->
-        <div class="card" id="panel-history-charts">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.history">History & charts</h2>
-            </div>
-            <button class="btn" type="button" id="btn-hist-refresh" data-i18n="btn.refresh">Refresh</button>
-          </div>
-          <div class="card-b">
-            <div class="chart-zoom-row">
-              <label class="field">Zoom
-                <select id="chart-zoom" data-fleet-zoom>
-                  <option value="1h">1 hour</option>
-                  <option value="6h">6 hours</option>
-                  <option value="12h">12 hours</option>
-                  <option value="1d" selected>1 day</option>
-                  <option value="2d">2 days</option>
-                  <option value="7d">7 days</option>
-                </select>
-              </label>
-            </div>
-            <div class="hist-meta-row">
-              <span class="hist-meta" id="hist-stats">—</span>
-              <span class="hist-meta hist-meta-view" id="hist-view-label">view: —</span>
-            </div>
-
-            <div class="card" style="box-shadow:none;margin-bottom:14px">
-              <div class="card-h"><div><h2 data-i18n="h2.temps">Temperatures °C</h2></div></div>
-              <div class="card-b" style="height:260px;position:relative">
-                <canvas id="chart-temp"></canvas>
+          <div class="dash-item" data-dash-id="weather">
+            <div class="temp-card outdoor wx-widget wx-cloud" id="card-weather" data-wx-theme="cloud">
+              <div class="tc-label wx-label">
+                <span class="tip" data-tip-key="weather" data-i18n="wx.outdoor">Outdoor</span>
+                <span class="wx-label-sep" aria-hidden="true"> · </span>
+                <span id="wx-city">—</span>
+              </div>
+              <div class="wx-top">
+                <div class="wx-main">
+                  <div class="wx-temp-row">
+                    <span id="t-outdoor">—</span><span class="wx-unit">°C</span>
+                  </div>
+                  <div class="wx-cond-row">
+                    <span class="wx-cond" id="wx-cond">—</span>
+                    <span class="wx-feels" id="wx-feels" hidden></span>
+                  </div>
+                </div>
+                <div class="wx-icon-wrap" id="wx-icon" aria-hidden="true"></div>
+              </div>
+              <div class="wx-meta" id="wx-extra">
+                <span class="wx-meta-item" id="wx-meta-rh" hidden>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3s6 6.5 6 11a6 6 0 1 1-12 0c0-4.5 6-11 6-11z"/></svg>
+                  <span id="wx-rh">—</span>
+                </span>
+                <span class="wx-meta-item" id="wx-meta-wind" hidden>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 12h15a3 3 0 1 1-3 3"/><path d="M3 16h8a2.5 2.5 0 1 1-2.5 2.5"/></svg>
+                  <span id="wx-wind">—</span>
+                </span>
+                <span class="wx-meta-item" id="wx-meta-src">
+                  <span id="wx-src-label">Open-Meteo</span>
+                </span>
               </div>
             </div>
-            <div class="card" style="box-shadow:none;margin-bottom:10px">
-              <div class="card-h"><div><h2 data-i18n="h2.power">Power · Hashrate · J/T</h2></div></div>
-              <div class="card-b" style="height:240px;position:relative">
-                <canvas id="chart-power"></canvas>
-              </div>
-            </div>
+          </div>
 
-            <div class="chart-nav">
-              <div class="chart-brush-wrap" title="Drag window / edges to zoom">
-                <canvas id="chart-brush" height="56"></canvas>
+          <div class="dash-item" data-dash-id="heat_loss">
+            <div class="temp-card heat-loss" id="card-heat-loss">
+              <div class="tc-label"><span class="tip" data-tip-key="heat_loss" data-i18n="dash.heat_loss">Heat loss</span></div>
+              <div class="tc-val tc-val-dual">
+                <span id="hl-kw">—</span> <small title="power, kW (not kWh)">kW</small>
+                <span class="tc-sep" aria-hidden="true">/</span>
+                <span id="hl-dT">—</span> <small>°C/h</small>
               </div>
-              <div class="chart-scroll" id="chart-scroll" hidden>
-                <div class="chart-scroll-track" id="chart-scroll-track">
-                  <div class="chart-scroll-thumb" id="chart-scroll-thumb"></div>
+              <div class="tc-extra" id="hl-cond">—</div>
+            </div>
+          </div>
+
+          <div class="dash-item" data-dash-id="power">
+            <div class="temp-card power-meas" id="card-power-meas">
+              <div class="tc-label">
+                <span class="tip" data-tip-key="power_measured" data-i18n="dash.power_measured">Power measured</span>
+                <span class="pm-badge" id="pm-work-badge">—</span>
+                <span class="pm-badge pm-upfreq is-unknown" id="pm-upfreq-badge"
+                  title="upfreq —" role="status" aria-label="upfreq">
+                  <span class="pm-uf-ico" aria-hidden="true">·</span>
+                  <span class="pm-uf-txt">—</span>
+                </span>
+              </div>
+              <div class="tc-val-row">
+                <div class="tc-val tc-val-dual">
+                  <span data-bind="pw">—</span> <small>W</small>
+                  <span class="tc-sep" aria-hidden="true">|</span>
+                  <span data-bind="hr">—</span> <small class="tip" data-tip-key="hashrate">TH/s</small>
+                </div>
+                <div class="pm-side" aria-label="freq and efficiency">
+                  <span class="pm-side-line"><span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span></span>
+                  <span class="pm-side-line"><span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span></span>
+                </div>
+              </div>
+              <div class="tc-extra pm-extra">
+                <div class="pm-extra-line">
+                  <span data-bind="pwMode">—</span>
+                  · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot">uptime</span>
+                  <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
+                  · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
+                  <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
+                  · <span class="tip" data-tip-key="warmup" title="Upfreq Complete (all boards)">upfreq</span>
+                  <span id="dash-upfreq" data-bind="upfreqOk">—</span>
+                </div>
+                <div class="pm-extra-line">
+                  <span class="tip" data-tip-key="psu_temp">PSU</span>
+                  <span data-bind="psuTemp">—</span>
+                  · <span data-bind="psuFan">—</span>
+                  · <span data-bind="psuVin" class="tip" data-tip-key="psu_vin">—</span>
+                  · <span data-bind="psuIin" class="tip" data-tip-key="psu_iin">—</span>
                 </div>
               </div>
             </div>
           </div>
-        </div>
 
+          <div class="dash-item" data-dash-id="boards">
+            <div class="temp-card board-chip" id="card-board-chip">
+              <div class="tc-label">
+                <span class="tip" data-tip-key="pcb">Boards (max)</span>
+                <span style="color:var(--dim)"> / </span>
+                <span class="tip" data-tip-key="chip_max">Chips (max)</span>
+              </div>
+              <div class="tc-val tc-val-dual">
+                <span class="tc-pcb"><span id="t-board-max">—</span> <small>°C</small></span>
+                <span class="tc-sep" aria-hidden="true">/</span>
+                <span class="tc-chip"><span id="t-chip-max">—</span> <small>°C</small></span>
+              </div>
+              <div class="tc-extra">
+                <div class="tc-pcb-line">pcb avg <span id="t-pcb-avg">—</span> · pcb min <span id="t-pcb-min">—</span></div>
+                <div class="tc-chip-line">chip avg <span id="t-chip-avg">—</span> · chip min <span id="t-chip-min">—</span> · <span class="tip" data-tip-key="critical">Critical</span> <span id="t-chip-crit">—</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-item" data-dash-id="heat_balance">
+            <div class="temp-card heat-balance" id="card-heat-balance">
+              <div class="tc-label"><span class="tip" data-tip-key="heat_balance" data-i18n="dash.heat_balance">Heat / cool-down</span></div>
+              <div class="tc-val tc-val-dual">
+                <span id="hb-rate">—</span> <small>°C/h</small>
+                <span class="tc-sep" aria-hidden="true">|</span>
+                <span id="hb-net">—</span> <small>kW</small>
+              </div>
+              <div class="tc-extra" id="hb-cond">—</div>
+            </div>
+          </div>
+
+          <div class="dash-item dash-span-full" data-dash-id="errors">
+            <div class="card errors-card" id="panel-miner-errors" style="display:none" hidden role="alert">
+              <div class="card-h">
+                <div>
+                  <h2 data-i18n="h2.errors">Errors</h2>
+                  <div class="sub">active · get_error_code · ErrorCode · Cause · Time</div>
+                </div>
+                <span class="pill danger" id="pill-err-count" style="display:none"><span class="dot"></span> 0</span>
+              </div>
+              <div class="card-b" style="padding-top:12px;padding-bottom:8px">
+                <table class="err-table">
+                  <thead>
+                    <tr>
+                      <th class="col-code">ErrorCode</th>
+                      <th class="col-cause">Cause</th>
+                      <th class="col-time">Time</th>
+                    </tr>
+                  </thead>
+                  <tbody id="miner-err-rows"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-item dash-span-full" data-dash-id="history">
+            <div class="card" id="panel-history-charts">
+              <div class="card-h">
+                <div>
+                  <h2 data-i18n="h2.history">History & charts</h2>
+                </div>
+                <button class="btn" type="button" id="btn-hist-refresh" data-i18n="btn.refresh">Refresh</button>
+              </div>
+              <div class="card-b">
+                <div class="chart-zoom-row">
+                  <label class="field">Zoom
+                    <select id="chart-zoom" data-fleet-zoom>
+                      <option value="1h">1 hour</option>
+                      <option value="6h">6 hours</option>
+                      <option value="12h">12 hours</option>
+                      <option value="1d" selected>1 day</option>
+                      <option value="2d">2 days</option>
+                      <option value="7d">7 days</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="hist-meta-row">
+                  <span class="hist-meta" id="hist-stats">—</span>
+                  <span class="hist-meta hist-meta-view" id="hist-view-label">view: —</span>
+                </div>
+
+                <div class="card" style="box-shadow:none;margin-bottom:14px">
+                  <div class="card-h"><div><h2 data-i18n="h2.temps">Temperatures °C</h2></div></div>
+                  <div class="card-b" style="height:260px;position:relative">
+                    <canvas id="chart-temp"></canvas>
+                  </div>
+                </div>
+                <div class="card" style="box-shadow:none;margin-bottom:10px">
+                  <div class="card-h"><div><h2 data-i18n="h2.power">Power · Hashrate · J/T</h2></div></div>
+                  <div class="card-b" style="height:240px;position:relative">
+                    <canvas id="chart-power"></canvas>
+                  </div>
+                </div>
+
+                <div class="chart-nav">
+                  <div class="chart-brush-wrap" title="Drag window / edges to zoom">
+                    <canvas id="chart-brush" height="56"></canvas>
+                  </div>
+                  <div class="chart-scroll" id="chart-scroll" hidden>
+                    <div class="chart-scroll-track" id="chart-scroll-track">
+                      <div class="chart-scroll-thumb" id="chart-scroll-thumb"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div><!-- /dash-board -->
       </div>
     </section>
 
@@ -3209,9 +3630,10 @@
               <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (chip)</span><span class="tag">off</span></div>
               <div class="layer" data-layer="force_stop"><span class="n">2</span><span class="tip" data-tip-key="force_stop">Force Stop (Suspend)</span><span class="tag">off</span></div>
               <div class="layer" data-layer="override"><span class="n">3</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
-              <div class="layer on block" data-layer="warmup"><span class="n">4</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
-              <div class="layer" data-layer="map"><span class="n">5</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
-              <div class="layer" data-layer="fail"><span class="n">6</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
+              <div class="layer" data-layer="schedule"><span class="n">4</span><span class="tip" data-tip-key="schedule">Schedule (time map)</span><span class="tag">off</span></div>
+              <div class="layer on block" data-layer="warmup"><span class="n">5</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
+              <div class="layer" data-layer="map"><span class="n">6</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
+              <div class="layer" data-layer="fail"><span class="n">7</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
             </div>
           </div>
 
@@ -3779,6 +4201,14 @@
 
     <!-- ========== MAP ========== -->
     <section class="view" id="view-map">
+      <nav class="subtabs" role="tablist" aria-label="Zone map">
+        <button type="button" class="active" data-subtab="heat" data-i18n="sub.map_heat">Heat map</button>
+        <button type="button" data-subtab="profiles" data-i18n="sub.map_profiles">Mode profiles</button>
+        <button type="button" data-subtab="schedule" data-i18n="sub.map_schedule">Schedule</button>
+      </nav>
+
+      <!-- Heat map -->
+      <div class="subview active" id="subview-map-heat">
       <div class="stack">
         <div class="card">
           <div class="card-h">
@@ -4233,6 +4663,177 @@
           </div>
         </div>
       </div>
+      </div><!-- /subview-map-heat -->
+
+      <!-- Mode profiles -->
+      <div class="subview" id="subview-map-profiles">
+        <div class="stack">
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2 data-i18n="h2.mode_profiles">Mode profiles</h2>
+                <div class="sub" data-i18n="sub.mode_profiles">ASIC setpoints · used by Schedule · Apply now</div>
+              </div>
+              <button class="btn primary" type="button" id="btn-mp-new" data-i18n="btn.new_profile">+ New</button>
+            </div>
+            <div class="card-b">
+              <p class="map-note" style="margin-top:0" data-i18n="hint.mode_profiles">
+                Library of mode / work / limit / pct. Schedule cells pick a profile, inactive, or a map preset.
+              </p>
+              <div id="mp-list" class="mp-list"></div>
+            </div>
+          </div>
+          <div class="card" id="mp-editor-card" hidden>
+            <div class="card-h">
+              <div>
+                <h2 id="mp-editor-title" data-i18n="h2.mode_profile_edit">Edit profile</h2>
+                <div class="sub" id="mp-editor-sub">—</div>
+              </div>
+              <button class="btn ghost" type="button" id="btn-mp-cancel" data-i18n="btn.cancel">Cancel</button>
+            </div>
+            <div class="card-b stack" style="gap:12px">
+              <input type="hidden" id="mp-id" value="" />
+              <div class="row" style="grid-template-columns:1fr 1fr 100px;gap:10px">
+                <label class="field">Name
+                  <input type="text" id="mp-name" maxlength="64" placeholder="Night eco" />
+                </label>
+                <label class="field">Name RU
+                  <input type="text" id="mp-name-ru" maxlength="64" placeholder="Ночь eco" />
+                </label>
+                <label class="field">Color
+                  <input type="color" id="mp-color" value="#6366f1" />
+                </label>
+              </div>
+              <div class="actions" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="act" data-act="mode">
+                  <div class="act-top">
+                    <input type="checkbox" id="mp-mode" checked onchange="syncAct(this)" />
+                    <label for="mp-mode" data-i18n="field.power_mode">Power Mode</label>
+                  </div>
+                  <select id="mp-mode-v">
+                    <option value="low">low</option>
+                    <option value="normal">normal</option>
+                    <option value="high">high</option>
+                  </select>
+                </div>
+                <div class="act" data-act="work">
+                  <div class="act-top">
+                    <input type="checkbox" id="mp-work" checked onchange="syncAct(this)" />
+                    <label for="mp-work">Mining Control</label>
+                  </div>
+                  <select id="mp-work-v">
+                    <option value="resume">Resume</option>
+                    <option value="suspend">Suspend</option>
+                  </select>
+                </div>
+                <div class="act" data-act="lim">
+                  <div class="act-top">
+                    <input type="checkbox" id="mp-lim" onchange="syncAct(this)" />
+                    <label for="mp-lim">Power Limit (W)</label>
+                  </div>
+                  <input type="number" id="mp-lim-v" value="2500" min="0" max="20000" step="50" disabled />
+                </div>
+                <div class="act" data-act="pct">
+                  <div class="act-top">
+                    <input type="checkbox" id="mp-pct" onchange="syncAct(this)" />
+                    <label for="mp-pct">Power pct (%)</label>
+                  </div>
+                  <input type="number" id="mp-pct-v" value="100" min="0" max="100" disabled />
+                </div>
+              </div>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn primary" type="button" id="btn-mp-save" data-i18n="btn.save">Save</button>
+                <button class="btn" type="button" id="btn-mp-apply" data-i18n="btn.apply_now">Apply now</button>
+                <button class="btn danger" type="button" id="btn-mp-delete" data-i18n="btn.delete">Delete</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /subview-map-profiles -->
+
+      <!-- Schedule -->
+      <div class="subview" id="subview-map-schedule">
+        <div class="stack">
+          <div class="card card-allow-overflow">
+            <div class="card-h">
+              <div>
+                <h2 data-i18n="h2.schedule">Schedule · time map</h2>
+                <div class="sub" data-i18n="sub.schedule">inactive · mode profile · map preset</div>
+              </div>
+              <button class="btn primary" type="button" id="btn-sched-save" data-i18n="btn.save">Save</button>
+            </div>
+            <div class="card-b stack" style="gap:14px;overflow:visible">
+              <div class="row" style="grid-template-columns:auto 1fr 1fr;gap:12px;align-items:end">
+                <label class="check" style="margin:0">
+                  <input type="checkbox" id="sched-enabled" />
+                  <span data-i18n="field.sched_enable">Enable schedule</span>
+                </label>
+                <div class="ac-wrap">
+                  <label class="field" style="margin:0"><span data-i18n="field.timezone">Timezone</span>
+                    <input type="text" id="sched-tz" value="Europe/Moscow"
+                      placeholder="Europe/Moscow · Moscow · MSK"
+                      autocomplete="off" spellcheck="false" />
+                  </label>
+                  <div class="weather-results" id="sched-tz-results" hidden></div>
+                </div>
+                <div class="metric" style="margin:0">
+                  <label data-i18n="field.sched_now">Now</label>
+                  <div class="val" style="font-size:0.95rem" id="sched-status-line">—</div>
+                </div>
+              </div>
+
+              <div class="sched-brush row" style="grid-template-columns:auto auto 1fr 1fr;gap:10px;align-items:end">
+                <div>
+                  <label class="field" style="margin:0"><span data-i18n="field.sched_brush">Brush</span>
+                    <select id="sched-brush-type">
+                      <option value="inactive" data-i18n="sched.brush.inactive">inactive</option>
+                      <option value="profile" data-i18n="sched.brush.profile">mode profile</option>
+                      <option value="preset" data-i18n="sched.brush.preset">map preset</option>
+                    </select>
+                  </label>
+                </div>
+                <div id="sched-brush-id-wrap">
+                  <label class="field" style="margin:0"><span data-i18n="field.sched_target">Target</span>
+                    <select id="sched-brush-id"></select>
+                  </label>
+                </div>
+                <div class="btn-row" style="gap:6px;flex-wrap:wrap;align-items:end">
+                  <button class="btn ghost" type="button" id="btn-sched-fill-workday"
+                    data-i18n="btn.sched_workdays" data-i18n-title="btn.sched_workdays_title"
+                    title="Mon–Fri 7–22">Workdays 7–22</button>
+                  <button class="btn ghost" type="button" id="btn-sched-fill-night-off"
+                    data-i18n="btn.sched_nights" data-i18n-title="btn.sched_nights_title"
+                    title="23–7 inactive">Nights off</button>
+                  <button class="btn ghost" type="button" id="btn-sched-copy-mon"
+                    data-i18n="btn.sched_copy_mon">Copy Mon→Fri</button>
+                  <button class="btn ghost" type="button" id="btn-sched-clear-day"
+                    data-i18n-title="btn.sched_clear_day_title"
+                    title="Clear selected day (all inactive)">🧹 <span data-i18n="btn.sched_clear_day">Day</span></button>
+                </div>
+                <div class="sched-legend" id="sched-legend" style="font-size:0.72rem;color:var(--dim)"></div>
+              </div>
+
+              <div class="sched-grid-wrap">
+                <div class="sched-hours" id="sched-hours"></div>
+                <div class="sched-grid" id="sched-grid"></div>
+              </div>
+
+              <div class="card" style="box-shadow:none;margin:0" id="panel-sched-ex">
+                <div class="card-h">
+                  <div>
+                    <h2 data-i18n="h2.sched_exceptions">Exception days</h2>
+                    <div class="sub" data-i18n="sub.sched_exceptions">holiday · like Sunday · custom day</div>
+                  </div>
+                  <button class="btn" type="button" id="btn-sched-ex-add" data-i18n="btn.add">+ Add</button>
+                </div>
+                <div class="card-b">
+                  <div id="sched-ex-list" class="sched-ex-list"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /subview-map-schedule -->
     </section>
 
     <!-- ========== POOL ========== -->
@@ -4309,7 +4910,7 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card card-allow-overflow">
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.weather">Weather · city</h2>
@@ -4320,7 +4921,7 @@
               <button class="btn primary" type="button" id="btn-wx-interval-save" data-i18n="btn.save">Save</button>
             </div>
           </div>
-          <div class="card-b stack" style="gap:12px">
+          <div class="card-b stack" style="gap:12px;overflow:visible">
             <label class="check">
               <input type="checkbox" id="wx-enabled" checked />
               <span data-i18n="wx.show">Show weather
@@ -4337,11 +4938,11 @@
                 <input type="number" id="wx-interval-min" value="10" min="1" max="1440" step="1" />
               </label>
             </div>
-            <div style="position:relative">
+            <div class="ac-wrap">
               <label class="field" style="margin:0"><span data-i18n="field.city_search">City search</span>
-                <input type="text" id="wx-search" data-i18n-placeholder="wx.city_ph" placeholder="e.g. Moscow" autocomplete="off" />
+                <input type="text" id="wx-search" data-i18n-placeholder="wx.city_ph" placeholder="e.g. Moscow / Москва" autocomplete="off" spellcheck="false" />
               </label>
-              <div class="weather-results" id="wx-results" hidden style="position:absolute;left:0;right:0;z-index:20;margin-top:4px;max-height:240px;overflow:auto"></div>
+              <div class="weather-results" id="wx-results" hidden></div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted)" id="wx-status">—</p>
           </div>
@@ -4537,6 +5138,7 @@
               <label class="field"><span data-i18n="dev.control_type">Control type</span>
                 <select id="device-backend">
                   <option value="tapo">Tapo P100 / P110</option>
+                  <option value="tuya">Tuya / Smart Life (LAN)</option>
                   <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
                   <option value="webhook">Webhook (HTTP)</option>
                   <option value="shelly">Shelly</option>
@@ -4561,6 +5163,63 @@
                     </span>
                   </label>
                 </div>
+              </div>
+
+              <!-- Tuya / Smart Life -->
+              <div class="dev-be" data-be="tuya" style="display:none">
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                  <label class="field"><span data-i18n="dev.tuya_eco">Ecosystem (app)</span>
+                    <select id="dev-tuya-eco">
+                      <option value="smartlife">Smart Life</option>
+                      <option value="tuya">Tuya Smart</option>
+                      <option value="classic">Tuya Smart (classic)</option>
+                    </select>
+                  </label>
+                  <label class="field"><span data-i18n="filt.outlet_ip">Outlet IP</span>
+                    <input type="text" id="dev-tuya-ip" placeholder="10.1.30.40" autocomplete="off" />
+                  </label>
+                </div>
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+                  <label class="field"><span data-i18n="dev.tuya_email">App email</span>
+                    <input type="text" id="dev-tuya-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="dev.tuya_password">App password</span>
+                    <span class="pw-wrap">
+                      <input type="password" id="dev-tuya-password" placeholder="••••" autocomplete="off" />
+                      <button type="button" class="pw-eye" data-pw-for="dev-tuya-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
+                    </span>
+                  </label>
+                </div>
+                <div class="row" style="grid-template-columns:100px 100px 1fr auto;gap:12px;margin-top:10px;align-items:end">
+                  <label class="field"><span data-i18n="dev.tuya_country">Country</span>
+                    <input type="text" id="dev-tuya-country" value="7" placeholder="7" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="dev.tuya_region">Region</span>
+                    <select id="dev-tuya-region">
+                      <option value="eu">EU</option>
+                      <option value="us">US</option>
+                      <option value="cn">CN</option>
+                      <option value="in">IN</option>
+                    </select>
+                  </label>
+                  <label class="field"><span data-i18n="dev.tuya_device_id">Device ID</span>
+                    <input type="text" id="dev-tuya-device-id" placeholder="bf…" autocomplete="off" />
+                  </label>
+                  <button type="button" class="btn" id="btn-tuya-fetch-keys" data-i18n="dev.tuya_fetch">Get keys</button>
+                </div>
+                <div class="row" style="grid-template-columns:1fr 100px 100px;gap:12px;margin-top:10px">
+                  <label class="field"><span data-i18n="dev.tuya_local_key">local_key</span>
+                    <input type="text" id="dev-tuya-local-key" placeholder="auto after Get keys" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="dev.tuya_version">Version</span>
+                    <input type="text" id="dev-tuya-version" value="3.4" placeholder="3.4" />
+                  </label>
+                  <label class="field"><span data-i18n="dev.tuya_dps">Switch DPS</span>
+                    <input type="number" id="dev-tuya-dps" value="1" min="1" max="255" />
+                  </label>
+                </div>
+                <p id="dev-tuya-status" style="font-size:0.75rem;color:var(--dim);margin:8px 0 0">—</p>
+                <select id="dev-tuya-pick" style="display:none;width:100%;margin-top:8px" size="4"></select>
               </div>
 
               <!-- eWeLink DIY -->
@@ -5469,15 +6128,25 @@
         "h2.sensors": "Sensors",
         "h2.devices": "Devices",
         "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
-        "sub.devices_card": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)",
+        "sub.devices_card": "Create actuators (Tapo, Tuya/Smart Life, Webhook, Shelly, HA)",
         "periph.sensors_empty": "No sensors yet. Create an alias with priority sources and optional virtual rules.",
         "periph.sensors_help": "",
-        "periph.devices_empty": "No devices yet. Create an actuator (Tapo, Webhook, …) with mining rules and optional bot button.",
+        "periph.devices_empty": "No devices yet. Create an actuator (Tapo, Tuya, Webhook, …) with mining rules and optional bot button.",
         "periph.devices_help": "",
         "periph.count": "Connected",
         "btn.device_new": "New device",
         "h2.device_edit": "Edit device",
         "sub.device_edit": "backend · mining · bot",
+        "dev.tuya_eco": "Ecosystem (app)",
+        "dev.tuya_email": "App email",
+        "dev.tuya_password": "App password",
+        "dev.tuya_country": "Country",
+        "dev.tuya_region": "Region",
+        "dev.tuya_device_id": "Device ID",
+        "dev.tuya_fetch": "Get keys",
+        "dev.tuya_local_key": "local_key",
+        "dev.tuya_version": "Version",
+        "dev.tuya_dps": "Switch DPS",
         "dev.icon": "Icon",
         "dev.name": "Name",
         "dev.alias": "Alias",
@@ -5653,6 +6322,54 @@
         "h2.pools": "Pools",
         "h2.zone_map": "Zone map · pool heating",
         "h2.zone_presets": "Map presets",
+        "sub.map_heat": "Heat map",
+        "sub.map_profiles": "Mode profiles",
+        "sub.map_schedule": "Schedule",
+        "h2.mode_profiles": "Mode profiles",
+        "sub.mode_profiles": "ASIC setpoints · Schedule · Apply now",
+        "hint.mode_profiles": "Library of mode / work / limit / pct. Schedule picks profile, inactive, or map preset.",
+        "h2.mode_profile_edit": "Edit profile",
+        "btn.new_profile": "+ New",
+        "btn.apply_now": "Apply now",
+        "btn.cancel": "Cancel",
+        "btn.delete": "Delete",
+        "btn.add": "+ Add",
+        "h2.schedule": "Schedule · time map",
+        "sub.schedule": "inactive · mode profile · map preset",
+        "field.sched_enable": "Enable schedule",
+        "field.sched_now": "Now",
+        "field.sched_brush": "Brush",
+        "field.sched_target": "Target",
+        "field.timezone": "Timezone",
+        "sched.brush.inactive": "inactive",
+        "sched.brush.profile": "mode profile",
+        "sched.brush.preset": "map preset",
+        "btn.sched_workdays": "Workdays 7–22",
+        "btn.sched_workdays_title": "Mon–Fri 7–22 profile/preset, else inactive",
+        "btn.sched_nights": "Nights off",
+        "btn.sched_nights_title": "23–7 → inactive",
+        "btn.sched_copy_mon": "Copy Mon→Fri",
+        "btn.sched_clear_day": "Day",
+        "btn.sched_clear_day_title": "Clear selected day (all inactive). Click day label first.",
+        "sched.legend": "grey = inactive · color = profile · green = preset · outline = now",
+        "sched.dow.mon": "Mon",
+        "sched.dow.tue": "Tue",
+        "sched.dow.wed": "Wed",
+        "sched.dow.thu": "Thu",
+        "sched.dow.fri": "Fri",
+        "sched.dow.sat": "Sat",
+        "sched.dow.sun": "Sun",
+        "sched.toast.cleared": "Day cleared",
+        "sched.toast.pick_day": "Click a day label (Mon…) then broom",
+        "sched.toast.workdays": "Workdays 7–22",
+        "sched.toast.nights": "Nights off 23–7",
+        "sched.toast.copy_mon": "Mon → Fri",
+        "sched.toast.saved": "Schedule saved",
+        "sched.status.off": "off",
+        "sched.status.on_nostat": "on · no status",
+        "sched.status.until": " · until ",
+        "h2.sched_exceptions": "Exception days",
+        "sub.sched_exceptions": "holiday · like Sunday · custom day",
         "h2.thresholds": "Thresholds (°C)",
         "h2.scale": "T_ctrl scale (zone map)",
         "h2.if_tcrit": "On T_crit",
@@ -5710,6 +6427,19 @@
         "dash.heat_loss": "Heat loss",
         "dash.heat_balance": "Heat / cool-down",
         "dash.power_measured": "Power measured",
+        "dash.edit": "Edit layout",
+        "dash.edit_done": "Done",
+        "dash.add_block": "Show hidden block",
+        "dash.hide_block": "Hide block",
+        "dash.no_hidden": "No hidden blocks",
+        "dash.widget.t_ctrl": "T_ctrl / Env",
+        "dash.widget.weather": "Outdoor",
+        "dash.widget.heat_loss": "Heat loss",
+        "dash.widget.power": "Power measured",
+        "dash.widget.boards": "Boards / Chips",
+        "dash.widget.heat_balance": "Heat / cool-down",
+        "dash.widget.errors": "Errors",
+        "dash.widget.history": "History & charts",
         "dash.hb.surplus": "surplus",
         "dash.hb.deficit": "deficit",
         "dash.hb.balance": "balance",
@@ -5905,14 +6635,24 @@
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
         "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
-        "sub.devices_card": "Create actuators (Tapo, eWeLink, Webhook, Shelly, Home Assistant)",
+        "sub.devices_card": "Создайте актуаторы (Tapo, Tuya/Smart Life, Webhook, Shelly, HA)",
         "periph.sensors_empty": "Датчиков пока нет. Создайте alias с источниками по приоритету и опциональным правилом.",
         "periph.sensors_help": "",
-        "periph.devices_empty": "Устройств пока нет. Создайте актуатор (Tapo, Webhook, …) с правилами майнинга и опциональной кнопкой бота.",
+        "periph.devices_empty": "Устройств пока нет. Создайте актуатор (Tapo, Tuya, Webhook, …) с правилами майнинга и кнопкой бота.",
         "periph.devices_help": "",
         "btn.device_new": "Новое устройство",
         "h2.device_edit": "Редактирование устройства",
         "sub.device_edit": "backend · майнинг · бот",
+        "dev.tuya_eco": "Экосистема (app)",
+        "dev.tuya_email": "Email app",
+        "dev.tuya_password": "Пароль app",
+        "dev.tuya_country": "Страна",
+        "dev.tuya_region": "Регион",
+        "dev.tuya_device_id": "Device ID",
+        "dev.tuya_fetch": "Получить keys",
+        "dev.tuya_local_key": "local_key",
+        "dev.tuya_version": "Version",
+        "dev.tuya_dps": "Switch DPS",
         "dev.icon": "Иконка",
         "dev.name": "Название",
         "dev.alias": "Alias",
@@ -6089,6 +6829,54 @@
         "h2.pools": "Пулы",
         "h2.zone_map": "Карта зон · нагрев бассейна",
         "h2.zone_presets": "Пресеты карты",
+        "sub.map_heat": "Карта тепла",
+        "sub.map_profiles": "Профили режимов",
+        "sub.map_schedule": "Расписание",
+        "h2.mode_profiles": "Профили режимов",
+        "sub.mode_profiles": "setpoint ASIC · Расписание · Применить",
+        "hint.mode_profiles": "Библиотека mode / work / limit / pct. В расписании: inactive, профиль или пресет карты.",
+        "h2.mode_profile_edit": "Редактировать профиль",
+        "btn.new_profile": "+ Новый",
+        "btn.apply_now": "Применить",
+        "btn.cancel": "Отмена",
+        "btn.delete": "Удалить",
+        "btn.add": "+ Добавить",
+        "h2.schedule": "Расписание · карта по времени",
+        "sub.schedule": "inactive · профиль · пресет карты",
+        "field.sched_enable": "Включить расписание",
+        "field.sched_now": "Сейчас",
+        "field.sched_brush": "Кисть",
+        "field.sched_target": "Цель",
+        "field.timezone": "Часовой пояс",
+        "sched.brush.inactive": "неактивен",
+        "sched.brush.profile": "профиль режима",
+        "sched.brush.preset": "пресет карты",
+        "btn.sched_workdays": "Будни 7–22",
+        "btn.sched_workdays_title": "Пн–Пт 7–22 профиль/пресет, иначе выкл",
+        "btn.sched_nights": "Ночи выкл",
+        "btn.sched_nights_title": "23–7 → неактивен",
+        "btn.sched_copy_mon": "Копировать Пн→Пт",
+        "btn.sched_clear_day": "День",
+        "btn.sched_clear_day_title": "Очистить выбранный день (весь inactive). Сначала кликните Пн/Вт…",
+        "sched.legend": "серый = выкл · цвет = профиль · зелёный = пресет · рамка = сейчас",
+        "sched.dow.mon": "Пн",
+        "sched.dow.tue": "Вт",
+        "sched.dow.wed": "Ср",
+        "sched.dow.thu": "Чт",
+        "sched.dow.fri": "Пт",
+        "sched.dow.sat": "Сб",
+        "sched.dow.sun": "Вс",
+        "sched.toast.cleared": "День очищен",
+        "sched.toast.pick_day": "Сначала кликните день (Пн…), затем веник",
+        "sched.toast.workdays": "Будни 7–22",
+        "sched.toast.nights": "Ночи выкл 23–7",
+        "sched.toast.copy_mon": "Пн → Пт",
+        "sched.toast.saved": "Расписание сохранено",
+        "sched.status.off": "выкл",
+        "sched.status.on_nostat": "вкл · нет статуса",
+        "sched.status.until": " · до ",
+        "h2.sched_exceptions": "Дни-исключения",
+        "sub.sched_exceptions": "праздник · как воскресенье · свой день",
         "h2.thresholds": "Пороги (°C)",
         "h2.scale": "Шкала T_ctrl (карта зон)",
         "h2.if_tcrit": "Если T_crit",
@@ -6146,6 +6934,19 @@
         "dash.heat_loss": "Теплопотери",
         "dash.heat_balance": "Нагрев / остывание",
         "dash.power_measured": "Мощность",
+        "dash.edit": "Редактировать",
+        "dash.edit_done": "Готово",
+        "dash.add_block": "Показать скрытый блок",
+        "dash.hide_block": "Скрыть блок",
+        "dash.no_hidden": "Нет скрытых блоков",
+        "dash.widget.t_ctrl": "T_ctrl / Env",
+        "dash.widget.weather": "Улица",
+        "dash.widget.heat_loss": "Теплопотери",
+        "dash.widget.power": "Мощность",
+        "dash.widget.boards": "Платы / Чипы",
+        "dash.widget.heat_balance": "Нагрев / остывание",
+        "dash.widget.errors": "Ошибки",
+        "dash.widget.history": "История и графики",
         "dash.hb.surplus": "избыток",
         "dash.hb.deficit": "дефицит",
         "dash.hb.balance": "баланс",
@@ -6450,6 +7251,12 @@
         const val = t(key, null);
         if (val != null) el.setAttribute("title", val);
       });
+      // schedule grid labels (Пн/Вт…) depend on lang
+      try {
+        if (typeof renderScheduleGrid === "function" && document.getElementById("sched-grid")) {
+          renderScheduleGrid();
+        }
+      } catch (_) { /* ignore */ }
       // sync selects
       const hs = document.getElementById("ui-lang-select");
       if (hs && hs.value !== lang) hs.value = lang;
@@ -6676,6 +7483,10 @@
       dry_run: {
         title: "Dry Run",
         body: "Server flag (after Save).\nOn — zones ignored: miner mode “as is” (mode/limit/MC not touched).\nOnly Safety Critical (chip ≥ T_crit) writes to the ASIC.\nZones log DRY_RUN would … (preview).\nOff — auto zones write again.\nManual miner buttons: open Power settings panel.",
+      },
+      schedule: {
+        title: "Schedule · time map",
+        body: "Priority below Override, above Warmup/zones.\nCell types:\n· inactive — Suspend (zones cannot Resume)\n· mode profile — fixed ASIC setpoint\n· map preset — soft zone map for that hour\nException days override the weekly grid.",
       },
       warmup: {
         title: "Warmup / upfreq",
@@ -7009,6 +7820,24 @@
       return sub;
     }
 
+    function setMapSubtab(subId) {
+      const allowed = { heat: 1, profiles: 1, schedule: 1 };
+      const sub = allowed[subId] ? subId : "heat";
+      document.querySelectorAll("#view-map nav.subtabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.subtab === sub);
+      });
+      document.querySelectorAll("#view-map .subview").forEach((v) => {
+        v.classList.toggle("active", v.id === "subview-map-" + sub);
+      });
+      if (sub === "profiles" && typeof loadModeProfiles === "function") {
+        void loadModeProfiles();
+      }
+      if (sub === "schedule" && typeof loadSchedule === "function") {
+        void loadSchedule();
+      }
+      return sub;
+    }
+
     function setPeriphSubtab(subId) {
       const sub = subId === "devices" ? "devices" : "sensors";
       document.querySelectorAll("#view-periph nav.subtabs button").forEach((b) => {
@@ -7254,6 +8083,11 @@
       btn.addEventListener("click", () => {
         const s = btn.dataset.subtab;
         activateTab(s === "devices" ? "devices" : "sensors");
+      });
+    });
+    document.querySelectorAll("#view-map nav.subtabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setMapSubtab(btn.dataset.subtab);
       });
     });
     window.addEventListener("hashchange", () => {
@@ -7509,11 +8343,31 @@
         panel.hidden = true;
         tbody.innerHTML = "";
         if (pill) pill.style.display = "none";
+        // collapse outer dash cell when not editing (avoid empty full-width gap)
+        const errItem = panel.closest(".dash-item");
+        if (
+          errItem &&
+          !(typeof dashEditMode !== "undefined" && dashEditMode) &&
+          typeof dashLayoutIsHidden === "function" &&
+          !dashLayoutIsHidden("errors")
+        ) {
+          errItem.classList.add("is-layout-hidden");
+          errItem.hidden = true;
+        }
         return;
       }
 
+      // Respect dashboard layout: if user hid "errors" block, keep outer item hidden
+      const errItem = panel.closest(".dash-item");
+      const layoutHides =
+        typeof dashLayoutIsHidden === "function" && dashLayoutIsHidden("errors");
       panel.hidden = false;
       panel.style.display = "block";
+      if (errItem && !layoutHides) {
+        errItem.classList.remove("is-layout-hidden");
+        errItem.removeAttribute("hidden");
+        errItem.hidden = false;
+      }
       if (pill) {
         pill.style.display = "inline-flex";
         pill.innerHTML = '<span class="dot"></span> ' + errs.length;
@@ -8192,6 +9046,956 @@
       .getElementById("btn-zone-preset-delete")
       ?.addEventListener("click", () => void zonePresetDelete());
 
+    // ── Mode profiles + Schedule ─────────────────────────────────────────
+    const SCHED_DOW = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const SCHED_DOW_L = {
+      mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu",
+      fri: "Fri", sat: "Sat", sun: "Sun",
+    };
+    function schedDowLabel(d) {
+      const fb = SCHED_DOW_L[d] || d;
+      return typeof t === "function" ? t("sched.dow." + d, fb) : fb;
+    }
+    let modeProfilesCache = { profiles: [] };
+    let scheduleCache = {
+      enabled: false,
+      timezone: "Europe/Moscow",
+      weekly: null,
+      exceptions: [],
+    };
+    let scheduleStatusCache = null;
+    let schedulePaint = false;
+    /** Selected day for broom clear: mon…sun */
+    let scheduleSelectedDow = null;
+
+    function emptyWeek() {
+      const w = {};
+      SCHED_DOW.forEach((d) => {
+        w[d] = Array.from({ length: 24 }, () => ({ t: "inactive" }));
+      });
+      return w;
+    }
+
+    function mpIsRu() {
+      return (typeof _uiLang !== "undefined" ? _uiLang : "en") === "ru";
+    }
+
+    function mpDisplayName(p) {
+      if (!p) return "—";
+      if (mpIsRu() && p.name_ru) return p.name_ru;
+      return p.name || p.id || "—";
+    }
+
+    async function modeProfileApi(payload) {
+      const res = await fetch("/api/mode/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      const body = await res.json();
+      if (!res.ok || body.ok === false)
+        throw new Error((body && body.error) || "HTTP " + res.status);
+      return body;
+    }
+
+    async function loadModeProfiles() {
+      try {
+        const res = await fetch("/api/mode/profiles", { cache: "no-store" });
+        const body = await res.json();
+        modeProfilesCache = { profiles: body.profiles || [] };
+        renderModeProfilesList();
+        refreshSchedBrushOptions();
+        return modeProfilesCache;
+      } catch (e) {
+        console.warn("mode profiles:", e);
+        return null;
+      }
+    }
+
+    function renderModeProfilesList() {
+      const list = document.getElementById("mp-list");
+      if (!list) return;
+      const items = modeProfilesCache.profiles || [];
+      if (!items.length) {
+        list.innerHTML =
+          '<div style="color:var(--dim);padding:8px">' +
+          (mpIsRu() ? "нет профилей" : "no profiles") +
+          "</div>";
+        return;
+      }
+      list.innerHTML = items
+        .map((p) => {
+          const sum = p.summary || "";
+          const built = p.builtin
+            ? ' <span style="color:var(--dim);font-size:0.7rem">builtin</span>'
+            : "";
+          return (
+            '<div class="mp-card" data-id="' +
+            String(p.id).replace(/"/g, "") +
+            '">' +
+            '<div class="mp-swatch" style="background:' +
+            (p.color || "#64748b") +
+            '"></div>' +
+            "<div><div class=\"mp-name\">" +
+            escHtml(mpDisplayName(p)) +
+            built +
+            '</div><div class="mp-sum">' +
+            escHtml(sum) +
+            "</div></div>" +
+            '<div class="mp-actions">' +
+            '<button type="button" class="btn ghost mp-edit">' +
+            (mpIsRu() ? "Изм." : "Edit") +
+            "</button>" +
+            '<button type="button" class="btn mp-apply">' +
+            (mpIsRu() ? "▶" : "▶") +
+            "</button>" +
+            "</div></div>"
+          );
+        })
+        .join("");
+      list.querySelectorAll(".mp-card").forEach((card) => {
+        const id = card.dataset.id;
+        card.querySelector(".mp-edit")?.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openModeProfileEditor(id);
+        });
+        card.querySelector(".mp-apply")?.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          void applyModeProfileNow(id);
+        });
+        card.addEventListener("click", () => openModeProfileEditor(id));
+      });
+    }
+
+    function escHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function openModeProfileEditor(id) {
+      const card = document.getElementById("mp-editor-card");
+      if (!card) return;
+      const p = (modeProfilesCache.profiles || []).find((x) => x.id === id);
+      const isNew = !p;
+      card.hidden = false;
+      document.getElementById("mp-id").value = p ? p.id : "";
+      document.getElementById("mp-name").value = p ? p.name || "" : "";
+      document.getElementById("mp-name-ru").value = p ? p.name_ru || p.name || "" : "";
+      document.getElementById("mp-color").value = p ? p.color || "#6366f1" : "#6366f1";
+      const setChk = (id, on, valId, val) => {
+        const c = document.getElementById(id);
+        const v = document.getElementById(valId);
+        if (c) {
+          c.checked = !!on;
+          if (typeof syncAct === "function") syncAct(c);
+        }
+        if (v && val != null) v.value = val;
+      };
+      setChk("mp-mode", p ? p.mode_en : true, "mp-mode-v", p ? p.mode : "low");
+      setChk("mp-work", p ? p.work_en !== false : true, "mp-work-v", p ? p.work : "resume");
+      setChk("mp-lim", p ? p.lim_en : false, "mp-lim-v", p ? p.lim : 2500);
+      setChk("mp-pct", p ? p.pct_en : false, "mp-pct-v", p ? p.pct : 100);
+      const sub = document.getElementById("mp-editor-sub");
+      if (sub) {
+        sub.textContent = p
+          ? (p.builtin ? "builtin · " : "") + (p.id || "")
+          : mpIsRu()
+            ? "новый профиль"
+            : "new profile";
+      }
+      const del = document.getElementById("btn-mp-delete");
+      if (del) del.style.display = p && !p.builtin ? "" : "none";
+      if (isNew) {
+        document.getElementById("mp-name")?.focus();
+      }
+    }
+
+    function collectModeProfileForm() {
+      return {
+        id: (document.getElementById("mp-id")?.value || "").trim() || undefined,
+        name: (document.getElementById("mp-name")?.value || "").trim(),
+        name_ru: (document.getElementById("mp-name-ru")?.value || "").trim(),
+        color: document.getElementById("mp-color")?.value || "#6366f1",
+        mode_en: !!document.getElementById("mp-mode")?.checked,
+        mode: document.getElementById("mp-mode-v")?.value || "low",
+        work_en: !!document.getElementById("mp-work")?.checked,
+        work: document.getElementById("mp-work-v")?.value || "resume",
+        lim_en: !!document.getElementById("mp-lim")?.checked,
+        lim: Number(document.getElementById("mp-lim-v")?.value || 0),
+        pct_en: !!document.getElementById("mp-pct")?.checked,
+        pct: Number(document.getElementById("mp-pct-v")?.value || 0),
+      };
+    }
+
+    async function saveModeProfileForm() {
+      const data = collectModeProfileForm();
+      if (!data.name) {
+        toastWarn(mpIsRu() ? "Имя пустое" : "Name empty");
+        return;
+      }
+      try {
+        const action = data.id ? "update" : "save";
+        const body = await modeProfileApi({ action, ...data });
+        modeProfilesCache = { profiles: body.profiles || [] };
+        renderModeProfilesList();
+        refreshSchedBrushOptions();
+        toastSuccess(mpIsRu() ? "Профиль сохранён" : "Profile saved");
+        document.getElementById("mp-editor-card").hidden = true;
+      } catch (e) {
+        toastError("Profile: " + e.message);
+      }
+    }
+
+    async function applyModeProfileNow(id) {
+      const pid = id || (document.getElementById("mp-id")?.value || "").trim();
+      if (!pid) {
+        toastWarn("No profile");
+        return;
+      }
+      try {
+        const pwEl = document.getElementById("settings-api-password");
+        const password = pwEl && pwEl.value ? pwEl.value : undefined;
+        const body = await modeProfileApi({
+          action: "apply",
+          id: pid,
+          password,
+        });
+        if (body.ok) toastSuccess((mpIsRu() ? "Применено: " : "Applied: ") + (body.name || pid));
+        else toastWarn("Apply: partial");
+      } catch (e) {
+        toastError("Apply: " + e.message);
+      }
+    }
+
+    async function deleteModeProfileForm() {
+      const id = (document.getElementById("mp-id")?.value || "").trim();
+      if (!id) return;
+      if (!window.confirm(mpIsRu() ? "Удалить профиль?" : "Delete profile?")) return;
+      try {
+        const body = await modeProfileApi({ action: "delete", id });
+        modeProfilesCache = { profiles: body.profiles || [] };
+        renderModeProfilesList();
+        refreshSchedBrushOptions();
+        document.getElementById("mp-editor-card").hidden = true;
+        toastSuccess(mpIsRu() ? "Удалено" : "Deleted");
+      } catch (e) {
+        toastError("Delete: " + e.message);
+      }
+    }
+
+    document.getElementById("btn-mp-new")?.addEventListener("click", () => {
+      openModeProfileEditor(null);
+      document.getElementById("mp-id").value = "";
+      document.getElementById("mp-name").value = "";
+      document.getElementById("mp-name-ru").value = "";
+    });
+    document.getElementById("btn-mp-cancel")?.addEventListener("click", () => {
+      const c = document.getElementById("mp-editor-card");
+      if (c) c.hidden = true;
+    });
+    document.getElementById("btn-mp-save")?.addEventListener("click", () => void saveModeProfileForm());
+    document.getElementById("btn-mp-apply")?.addEventListener("click", () => void applyModeProfileNow());
+    document.getElementById("btn-mp-delete")?.addEventListener("click", () => void deleteModeProfileForm());
+
+    // —— Schedule ——
+    function ensureWeek() {
+      if (!scheduleCache.weekly) scheduleCache.weekly = emptyWeek();
+      SCHED_DOW.forEach((d) => {
+        if (!Array.isArray(scheduleCache.weekly[d]) || scheduleCache.weekly[d].length !== 24) {
+          scheduleCache.weekly[d] = Array.from({ length: 24 }, (_, i) => {
+            const src = (scheduleCache.weekly[d] || [])[i];
+            return src && typeof src === "object" ? src : { t: "inactive" };
+          });
+        }
+      });
+    }
+
+    function cellColor(cell) {
+      if (!cell || cell.t === "inactive") return null;
+      if (cell.t === "profile") {
+        const p = (modeProfilesCache.profiles || []).find((x) => x.id === cell.id);
+        return (p && p.color) || "#6366f1";
+      }
+      if (cell.t === "preset") return "#16a34a";
+      return null;
+    }
+
+    function cellTitle(cell) {
+      if (!cell || cell.t === "inactive") return "inactive";
+      if (cell.t === "profile") {
+        const p = (modeProfilesCache.profiles || []).find((x) => x.id === cell.id);
+        return "profile · " + (p ? mpDisplayName(p) : cell.id || "?");
+      }
+      if (cell.t === "preset") {
+        const p = (zonePresetsCache.presets || []).find((x) => x.id === cell.id);
+        return "preset · " + ((p && p.name) || cell.id || "?");
+      }
+      return cell.t;
+    }
+
+    function currentBrushCell() {
+      const t = document.getElementById("sched-brush-type")?.value || "inactive";
+      if (t === "inactive") return { t: "inactive" };
+      const id = document.getElementById("sched-brush-id")?.value || "";
+      if (!id) return { t: "inactive" };
+      return { t, id };
+    }
+
+    function refreshSchedBrushOptions() {
+      const type = document.getElementById("sched-brush-type")?.value || "inactive";
+      const wrap = document.getElementById("sched-brush-id-wrap");
+      const sel = document.getElementById("sched-brush-id");
+      if (!sel) return;
+      const cur = sel.value;
+      sel.innerHTML = "";
+      if (type === "inactive") {
+        if (wrap) wrap.style.visibility = "hidden";
+        return;
+      }
+      if (wrap) wrap.style.visibility = "visible";
+      const items =
+        type === "profile"
+          ? (modeProfilesCache.profiles || []).map((p) => ({
+              id: p.id,
+              name: mpDisplayName(p),
+            }))
+          : (zonePresetsCache.presets || []).map((p) => ({
+              id: p.id,
+              name: p.name || p.id,
+            }));
+      if (!items.length) {
+        const o = document.createElement("option");
+        o.value = "";
+        o.textContent = "—";
+        sel.appendChild(o);
+        return;
+      }
+      items.forEach((it) => {
+        const o = document.createElement("option");
+        o.value = it.id;
+        o.textContent = it.name;
+        sel.appendChild(o);
+      });
+      if (cur && items.some((x) => x.id === cur)) sel.value = cur;
+    }
+
+    function renderScheduleGrid() {
+      ensureWeek();
+      const hoursEl = document.getElementById("sched-hours");
+      const grid = document.getElementById("sched-grid");
+      if (!grid) return;
+      if (hoursEl) {
+        let h = "<div></div>";
+        for (let i = 0; i < 24; i++) h += "<div>" + i + "</div>";
+        hoursEl.innerHTML = h;
+      }
+      const st = scheduleStatusCache;
+      const nowDow = st && st.dow;
+      const nowHour = st && typeof st.hour === "number" ? st.hour : -1;
+      grid.innerHTML = "";
+      SCHED_DOW.forEach((d) => {
+        const row = document.createElement("div");
+        row.className = "sched-row";
+        const lab = document.createElement("div");
+        lab.className =
+          "sched-dow" + (scheduleSelectedDow === d ? " is-selected" : "");
+        lab.textContent = schedDowLabel(d);
+        lab.title =
+          typeof t === "function"
+            ? t("btn.sched_clear_day_title", "Clear day — click to select")
+            : "Clear day — click to select";
+        lab.addEventListener("click", () => {
+          scheduleSelectedDow = d;
+          renderScheduleGrid();
+        });
+        row.appendChild(lab);
+        for (let h = 0; h < 24; h++) {
+          const cell = scheduleCache.weekly[d][h] || { t: "inactive" };
+          const el = document.createElement("div");
+          el.className =
+            "sched-cell is-" +
+            (cell.t === "profile" || cell.t === "preset" ? cell.t : "inactive");
+          if (nowDow === d && nowHour === h) el.classList.add("is-now");
+          const col = cellColor(cell);
+          if (col) el.style.background = col;
+          el.title = schedDowLabel(d) + " " + h + ":00 · " + cellTitle(cell);
+          el.dataset.dow = d;
+          el.dataset.hour = String(h);
+          const paint = () => {
+            const c = currentBrushCell();
+            scheduleCache.weekly[d][h] = c;
+            el.className =
+              "sched-cell is-" +
+              (c.t === "profile" || c.t === "preset" ? c.t : "inactive");
+            if (nowDow === d && nowHour === h) el.classList.add("is-now");
+            const cc = cellColor(c);
+            el.style.background = cc || "";
+            el.title = schedDowLabel(d) + " " + h + ":00 · " + cellTitle(c);
+          };
+          el.addEventListener("mousedown", (ev) => {
+            ev.preventDefault();
+            schedulePaint = true;
+            paint();
+          });
+          el.addEventListener("mouseenter", () => {
+            if (schedulePaint) paint();
+          });
+          row.appendChild(el);
+        }
+        grid.appendChild(row);
+      });
+      renderSchedLegend();
+      renderSchedExceptions();
+      updateSchedStatusLine();
+    }
+
+    if (!window.__schedPaintBound) {
+      window.__schedPaintBound = true;
+      document.addEventListener("mouseup", () => {
+        schedulePaint = false;
+      });
+      document.addEventListener("mouseleave", () => {
+        schedulePaint = false;
+      });
+    }
+
+    function renderSchedLegend() {
+      const el = document.getElementById("sched-legend");
+      if (!el) return;
+      el.textContent =
+        typeof t === "function"
+          ? t(
+              "sched.legend",
+              "grey = inactive · color = profile · green = preset · outline = now"
+            )
+          : "grey = inactive · color = profile · green = preset · outline = now";
+    }
+
+    function updateSchedStatusLine() {
+      const el = document.getElementById("sched-status-line");
+      if (!el) return;
+      const st = scheduleStatusCache;
+      if (!st || !st.enabled) {
+        el.textContent = scheduleCache.enabled
+          ? typeof t === "function"
+            ? t("sched.status.on_nostat", "on · no status")
+            : "on · no status"
+          : typeof t === "function"
+            ? t("sched.status.off", "off")
+            : "off";
+        return;
+      }
+      let until = "";
+      if (st.until_ts) {
+        const d = new Date(Number(st.until_ts) * 1000);
+        until =
+          (typeof t === "function" ? t("sched.status.until", " · until ") : " · until ") +
+          d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      }
+      const dowL = st.dow ? schedDowLabel(st.dow) : "";
+      el.textContent =
+        (st.label || st.key || "—") +
+        " · " +
+        dowL +
+        " " +
+        (typeof st.hour === "number" ? st.hour + ":00" : "") +
+        until;
+    }
+
+    function renderSchedExceptions() {
+      const box = document.getElementById("sched-ex-list");
+      if (!box) return;
+      const list = scheduleCache.exceptions || [];
+      if (!list.length) {
+        box.innerHTML =
+          '<div style="color:var(--dim);font-size:0.8rem;padding:4px">' +
+          (mpIsRu() ? "нет исключений" : "no exceptions") +
+          "</div>";
+        return;
+      }
+      box.innerHTML = list
+        .map((ex, idx) => {
+          const t = ex.t || "like";
+          return (
+            '<div class="sched-ex-row" data-idx="' +
+            idx +
+            '">' +
+            '<label class="field" style="margin:0">Date<input type="date" class="sx-date" value="' +
+            escHtml(ex.date || "") +
+            '" /></label>' +
+            '<label class="field" style="margin:0">Mode<select class="sx-mode">' +
+            ["like", "inactive", "profile", "preset"]
+              .map(
+                (m) =>
+                  '<option value="' +
+                  m +
+                  '"' +
+                  (t === m ? " selected" : "") +
+                  ">" +
+                  m +
+                  "</option>"
+              )
+              .join("") +
+            "</select></label>" +
+            '<label class="field" style="margin:0">Ref<select class="sx-ref"></select></label>' +
+            '<button type="button" class="btn danger sx-del">×</button>' +
+            "</div>"
+          );
+        })
+        .join("");
+      box.querySelectorAll(".sched-ex-row").forEach((row) => {
+        const idx = Number(row.dataset.idx);
+        const ex = scheduleCache.exceptions[idx];
+        const modeSel = row.querySelector(".sx-mode");
+        const refSel = row.querySelector(".sx-ref");
+        const fillRef = () => {
+          const mode = modeSel.value;
+          refSel.innerHTML = "";
+          if (mode === "like") {
+            SCHED_DOW.forEach((d) => {
+              const o = document.createElement("option");
+              o.value = d;
+              o.textContent = SCHED_DOW_L[d];
+              if ((ex.like_dow || "sun") === d) o.selected = true;
+              refSel.appendChild(o);
+            });
+            refSel.disabled = false;
+          } else if (mode === "profile") {
+            (modeProfilesCache.profiles || []).forEach((p) => {
+              const o = document.createElement("option");
+              o.value = p.id;
+              o.textContent = mpDisplayName(p);
+              if ((ex.id_ref || "") === p.id) o.selected = true;
+              refSel.appendChild(o);
+            });
+            refSel.disabled = false;
+          } else if (mode === "preset") {
+            (zonePresetsCache.presets || []).forEach((p) => {
+              const o = document.createElement("option");
+              o.value = p.id;
+              o.textContent = p.name || p.id;
+              if ((ex.id_ref || "") === p.id) o.selected = true;
+              refSel.appendChild(o);
+            });
+            refSel.disabled = false;
+          } else {
+            const o = document.createElement("option");
+            o.value = "";
+            o.textContent = "—";
+            refSel.appendChild(o);
+            refSel.disabled = true;
+          }
+        };
+        fillRef();
+        row.querySelector(".sx-date")?.addEventListener("change", (e) => {
+          scheduleCache.exceptions[idx].date = e.target.value;
+        });
+        modeSel?.addEventListener("change", () => {
+          scheduleCache.exceptions[idx].t = modeSel.value;
+          if (modeSel.value === "like") {
+            scheduleCache.exceptions[idx].like_dow = "sun";
+            delete scheduleCache.exceptions[idx].id_ref;
+          } else if (modeSel.value === "inactive") {
+            delete scheduleCache.exceptions[idx].like_dow;
+            delete scheduleCache.exceptions[idx].id_ref;
+          }
+          fillRef();
+        });
+        refSel?.addEventListener("change", () => {
+          const mode = modeSel.value;
+          if (mode === "like") scheduleCache.exceptions[idx].like_dow = refSel.value;
+          else if (mode === "profile" || mode === "preset")
+            scheduleCache.exceptions[idx].id_ref = refSel.value;
+        });
+        row.querySelector(".sx-del")?.addEventListener("click", () => {
+          scheduleCache.exceptions.splice(idx, 1);
+          renderSchedExceptions();
+        });
+      });
+    }
+
+    async function loadSchedule() {
+      try {
+        if (!(modeProfilesCache.profiles || []).length) await loadModeProfiles();
+        if (!(zonePresetsCache.presets || []).length) await loadZonePresets();
+        const res = await fetch("/api/schedule", { cache: "no-store" });
+        const body = await res.json();
+        const cfg = body.config || {};
+        scheduleCache = {
+          enabled: !!cfg.enabled,
+          timezone: cfg.timezone || "Europe/Moscow",
+          weekly: cfg.weekly || emptyWeek(),
+          exceptions: Array.isArray(cfg.exceptions) ? cfg.exceptions : [],
+          default_cell: cfg.default_cell || { t: "inactive" },
+          resolution_min: cfg.resolution_min || 60,
+          version: 1,
+        };
+        scheduleStatusCache = body.status || null;
+        const en = document.getElementById("sched-enabled");
+        if (en) en.checked = !!scheduleCache.enabled;
+        const tz = document.getElementById("sched-tz");
+        if (tz) tz.value = scheduleCache.timezone || "Europe/Moscow";
+        refreshSchedBrushOptions();
+        renderScheduleGrid();
+        return scheduleCache;
+      } catch (e) {
+        console.warn("schedule:", e);
+        toastError("Schedule: " + e.message);
+        return null;
+      }
+    }
+
+    async function saveSchedule() {
+      try {
+        ensureWeek();
+        scheduleCache.enabled = !!document.getElementById("sched-enabled")?.checked;
+        scheduleCache.timezone =
+          (document.getElementById("sched-tz")?.value || "Europe/Moscow").trim() ||
+          "Europe/Moscow";
+        const res = await fetch("/api/schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "save", config: scheduleCache }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        scheduleCache = body.config || scheduleCache;
+        scheduleStatusCache = body.status || null;
+        renderScheduleGrid();
+        toastSuccess(
+          typeof t === "function" ? t("sched.toast.saved", "Schedule saved") : "Schedule saved"
+        );
+      } catch (e) {
+        toastError("Schedule: " + e.message);
+      }
+    }
+
+    document.getElementById("sched-brush-type")?.addEventListener("change", refreshSchedBrushOptions);
+    document.getElementById("btn-sched-save")?.addEventListener("click", () => void saveSchedule());
+    document.getElementById("btn-sched-clear-day")?.addEventListener("click", () => {
+      ensureWeek();
+      let day = scheduleSelectedDow;
+      if (!day && scheduleStatusCache && scheduleStatusCache.dow) {
+        day = scheduleStatusCache.dow;
+      }
+      if (!day || SCHED_DOW.indexOf(day) < 0) {
+        toastWarn(
+          typeof t === "function"
+            ? t("sched.toast.pick_day", "Click a day label first")
+            : "Click a day label first"
+        );
+        return;
+      }
+      scheduleCache.weekly[day] = Array.from({ length: 24 }, () => ({ t: "inactive" }));
+      scheduleSelectedDow = day;
+      renderScheduleGrid();
+      toastSuccess(
+        (typeof t === "function" ? t("sched.toast.cleared", "Day cleared") : "Day cleared") +
+          " · " +
+          schedDowLabel(day)
+      );
+    });
+
+    // —— Timezone autocomplete (IANA + aliases) ——
+    const TZ_FALLBACK = [
+      "UTC",
+      "Europe/Moscow", "Europe/Kaliningrad", "Europe/Samara", "Europe/Volgograd",
+      "Europe/Saratov", "Europe/Ulyanovsk", "Europe/Kirov", "Europe/Astrakhan",
+      "Asia/Yekaterinburg", "Asia/Omsk", "Asia/Novosibirsk", "Asia/Barnaul",
+      "Asia/Tomsk", "Asia/Novokuznetsk", "Asia/Krasnoyarsk", "Asia/Irkutsk",
+      "Asia/Chita", "Asia/Yakutsk", "Asia/Vladivostok", "Asia/Sakhalin",
+      "Asia/Magadan", "Asia/Kamchatka", "Asia/Anadyr",
+      "Europe/Kyiv", "Europe/Minsk", "Europe/Riga", "Europe/Tallinn", "Europe/Vilnius",
+      "Europe/Warsaw", "Europe/Berlin", "Europe/Paris", "Europe/London",
+      "Europe/Amsterdam", "Europe/Brussels", "Europe/Vienna", "Europe/Prague",
+      "Europe/Budapest", "Europe/Bucharest", "Europe/Sofia", "Europe/Athens",
+      "Europe/Istanbul", "Europe/Helsinki", "Europe/Stockholm", "Europe/Oslo",
+      "Europe/Copenhagen", "Europe/Zurich", "Europe/Madrid", "Europe/Rome",
+      "Europe/Lisbon", "Europe/Dublin",
+      "Asia/Almaty", "Asia/Tashkent", "Asia/Bishkek", "Asia/Dushanbe",
+      "Asia/Ashgabat", "Asia/Baku", "Asia/Tbilisi", "Asia/Yerevan",
+      "Asia/Dubai", "Asia/Tehran", "Asia/Jerusalem", "Asia/Riyadh",
+      "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok", "Asia/Jakarta",
+      "Asia/Singapore", "Asia/Hong_Kong", "Asia/Shanghai", "Asia/Taipei",
+      "Asia/Tokyo", "Asia/Seoul", "Asia/Manila",
+      "Australia/Sydney", "Australia/Melbourne", "Australia/Perth",
+      "Pacific/Auckland", "Pacific/Fiji",
+      "Africa/Cairo", "Africa/Johannesburg", "Africa/Lagos", "Africa/Nairobi",
+      "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+      "America/Toronto", "America/Vancouver", "America/Mexico_City",
+      "America/Sao_Paulo", "America/Buenos_Aires", "America/Santiago",
+      "Atlantic/Reykjavik", "Etc/UTC", "Etc/GMT",
+    ];
+    /** Search aliases → IANA id (lowercase keys). */
+    const TZ_ALIASES = {
+      msk: "Europe/Moscow",
+      moscow: "Europe/Moscow",
+      москва: "Europe/Moscow",
+      msk2: "Europe/Kaliningrad",
+      kaliningrad: "Europe/Kaliningrad",
+      spb: "Europe/Moscow",
+      peterburg: "Europe/Moscow",
+      petersburg: "Europe/Moscow",
+      ekb: "Asia/Yekaterinburg",
+      yekaterinburg: "Asia/Yekaterinburg",
+      екатеринбург: "Asia/Yekaterinburg",
+      nsk: "Asia/Novosibirsk",
+      novosibirsk: "Asia/Novosibirsk",
+      новосибирск: "Asia/Novosibirsk",
+      krasnoyarsk: "Asia/Krasnoyarsk",
+      irkutsk: "Asia/Irkutsk",
+      vladivostok: "Asia/Vladivostok",
+      владивосток: "Asia/Vladivostok",
+      kamchatka: "Asia/Kamchatka",
+      utc: "UTC",
+      gmt: "Etc/GMT",
+      london: "Europe/London",
+      berlin: "Europe/Berlin",
+      paris: "Europe/Paris",
+      warsaw: "Europe/Warsaw",
+      kyiv: "Europe/Kyiv",
+      kiev: "Europe/Kyiv",
+      киев: "Europe/Kyiv",
+      minsk: "Europe/Minsk",
+      минск: "Europe/Minsk",
+      istanbul: "Europe/Istanbul",
+      dubai: "Asia/Dubai",
+      tokyo: "Asia/Tokyo",
+      seoul: "Asia/Seoul",
+      shanghai: "Asia/Shanghai",
+      hongkong: "Asia/Hong_Kong",
+      singapore: "Asia/Singapore",
+      sydney: "Australia/Sydney",
+      ny: "America/New_York",
+      nyc: "America/New_York",
+      "new york": "America/New_York",
+      la: "America/Los_Angeles",
+      "los angeles": "America/Los_Angeles",
+      chicago: "America/Chicago",
+      denver: "America/Denver",
+      toronto: "America/Toronto",
+    };
+    let tzListCache = null;
+    let tzSearchTimer = null;
+
+    function getTimezoneList() {
+      if (tzListCache) return tzListCache;
+      let list = [];
+      try {
+        if (typeof Intl !== "undefined" && typeof Intl.supportedValuesOf === "function") {
+          list = Intl.supportedValuesOf("timeZone") || [];
+        }
+      } catch (_) { /* ignore */ }
+      if (!list.length) list = TZ_FALLBACK.slice();
+      // ensure fallback favorites present
+      const set = new Set(list);
+      TZ_FALLBACK.forEach((z) => set.add(z));
+      tzListCache = Array.from(set).sort((a, b) => a.localeCompare(b));
+      return tzListCache;
+    }
+
+    function tzOffsetLabel(iana) {
+      try {
+        const fmt = new Intl.DateTimeFormat("en-US", {
+          timeZone: iana,
+          timeZoneName: "shortOffset",
+        });
+        const parts = fmt.formatToParts(new Date());
+        const p = parts.find((x) => x.type === "timeZoneName");
+        return p ? p.value : "";
+      } catch (_) {
+        return "";
+      }
+    }
+
+    function filterTimezones(q, limit) {
+      const lim = limit || 14;
+      const raw = String(q || "").trim();
+      const all = getTimezoneList();
+      if (!raw) {
+        // popular first
+        const fav = [
+          "Europe/Moscow", "Europe/Kaliningrad", "Asia/Yekaterinburg",
+          "Asia/Novosibirsk", "Asia/Vladivostok", "Europe/Kyiv", "Europe/Minsk",
+          "Europe/Berlin", "Europe/London", "UTC",
+          "America/New_York", "Asia/Dubai", "Asia/Tokyo",
+        ].filter((z) => all.includes(z) || TZ_FALLBACK.includes(z));
+        return fav.slice(0, lim).map((id) => ({ id, score: 0 }));
+      }
+      const ql = raw.toLowerCase().replace(/\s+/g, " ");
+      const scored = [];
+      // alias exact / prefix
+      Object.keys(TZ_ALIASES).forEach((alias) => {
+        if (alias === ql || alias.startsWith(ql) || ql.startsWith(alias)) {
+          const id = TZ_ALIASES[alias];
+          scored.push({ id, score: alias === ql ? 0 : 1, via: alias });
+        }
+      });
+      all.forEach((id) => {
+        const low = id.toLowerCase();
+        const city = low.split("/").pop() || low;
+        let score = 100;
+        if (low === ql) score = 0;
+        else if (city === ql) score = 1;
+        else if (low.startsWith(ql)) score = 2;
+        else if (city.startsWith(ql)) score = 3;
+        else if (low.includes(ql)) score = 4;
+        else if (city.includes(ql.replace(/_/g, " "))) score = 5;
+        else if (ql.includes("/") && low.includes(ql)) score = 2;
+        else return;
+        scored.push({ id, score });
+      });
+      // unique by id, best score
+      const best = new Map();
+      scored.forEach((s) => {
+        const prev = best.get(s.id);
+        if (!prev || s.score < prev.score) best.set(s.id, s);
+      });
+      return Array.from(best.values())
+        .sort((a, b) => a.score - b.score || a.id.localeCompare(b.id))
+        .slice(0, lim);
+    }
+
+    function hideTzResults() {
+      const box = document.getElementById("sched-tz-results");
+      if (box) {
+        box.hidden = true;
+        box.innerHTML = "";
+      }
+    }
+
+    function showTzResults(q) {
+      const box = document.getElementById("sched-tz-results");
+      const inp = document.getElementById("sched-tz");
+      if (!box || !inp) return;
+      const items = filterTimezones(q, 14);
+      if (!items.length) {
+        box.hidden = false;
+        box.innerHTML =
+          "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+          (mpIsRu() ? "ничего не найдено" : "nothing found") +
+          "</div>";
+        return;
+      }
+      box.hidden = false;
+      box.innerHTML = "";
+      items.forEach((it) => {
+        const off = tzOffsetLabel(it.id);
+        const b = document.createElement("button");
+        b.type = "button";
+        b.innerHTML =
+          "<span>" +
+          escHtml(it.id) +
+          "</span>" +
+          (off
+            ? "<span class='wr-sub'>" + escHtml(off) +
+              (it.via ? " · " + escHtml(it.via) : "") +
+              "</span>"
+            : it.via
+              ? "<span class='wr-sub'>" + escHtml(it.via) + "</span>"
+              : "");
+        b.addEventListener("mousedown", (ev) => {
+          ev.preventDefault();
+          inp.value = it.id;
+          scheduleCache.timezone = it.id;
+          hideTzResults();
+        });
+        box.appendChild(b);
+      });
+    }
+
+    function scheduleTzSearch() {
+      if (tzSearchTimer) clearTimeout(tzSearchTimer);
+      tzSearchTimer = setTimeout(() => {
+        tzSearchTimer = null;
+        const q = document.getElementById("sched-tz")?.value || "";
+        showTzResults(q);
+      }, 160);
+    }
+
+    document.getElementById("sched-tz")?.addEventListener("input", scheduleTzSearch);
+    document.getElementById("sched-tz")?.addEventListener("focus", () => {
+      showTzResults(document.getElementById("sched-tz")?.value || "");
+    });
+    document.getElementById("sched-tz")?.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") hideTzResults();
+      if (e.key === "Enter") {
+        const box = document.getElementById("sched-tz-results");
+        const first = box && !box.hidden ? box.querySelector("button") : null;
+        if (first) {
+          e.preventDefault();
+          first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        }
+      }
+    });
+    document.getElementById("sched-tz")?.addEventListener("blur", () => {
+      setTimeout(hideTzResults, 180);
+    });
+    document.getElementById("btn-sched-ex-add")?.addEventListener("click", () => {
+      if (!scheduleCache.exceptions) scheduleCache.exceptions = [];
+      const d = new Date();
+      const ds =
+        d.getFullYear() +
+        "-" +
+        String(d.getMonth() + 1).padStart(2, "0") +
+        "-" +
+        String(d.getDate()).padStart(2, "0");
+      scheduleCache.exceptions.push({
+        id: Math.random().toString(16).slice(2, 10),
+        date: ds,
+        t: "like",
+        like_dow: "sun",
+        note: "",
+      });
+      renderSchedExceptions();
+    });
+    document.getElementById("btn-sched-copy-mon")?.addEventListener("click", () => {
+      ensureWeek();
+      const mon = scheduleCache.weekly.mon.map((c) => ({ ...c }));
+      ["tue", "wed", "thu", "fri"].forEach((d) => {
+        scheduleCache.weekly[d] = mon.map((c) => ({ ...c }));
+      });
+      renderScheduleGrid();
+      toastSuccess(
+        typeof t === "function" ? t("sched.toast.copy_mon", "Mon → Fri") : "Mon → Fri"
+      );
+    });
+    document.getElementById("btn-sched-fill-workday")?.addEventListener("click", () => {
+      ensureWeek();
+      const brush = currentBrushCell();
+      const workCell =
+        brush.t !== "inactive" ? brush : { t: "profile", id: "day_full" };
+      SCHED_DOW.forEach((d) => {
+        const isWeekend = d === "sat" || d === "sun";
+        for (let h = 0; h < 24; h++) {
+          const work = !isWeekend && h >= 7 && h < 23;
+          scheduleCache.weekly[d][h] = work
+            ? { ...workCell }
+            : { t: "inactive" };
+        }
+      });
+      renderScheduleGrid();
+      toastSuccess(
+        typeof t === "function" ? t("sched.toast.workdays", "Workdays 7–22") : "Workdays 7–22"
+      );
+    });
+    document.getElementById("btn-sched-fill-night-off")?.addEventListener("click", () => {
+      ensureWeek();
+      SCHED_DOW.forEach((d) => {
+        for (let h = 0; h < 24; h++) {
+          if (h >= 23 || h < 7) scheduleCache.weekly[d][h] = { t: "inactive" };
+        }
+      });
+      renderScheduleGrid();
+      toastSuccess(
+        typeof t === "function" ? t("sched.toast.nights", "Nights off 23–7") : "Nights off 23–7"
+      );
+    });
+
     function minerHostLabel() {
       if (live && live.host) return String(live.host);
       const h = (document.getElementById("settings-miner-host")?.value || "").trim();
@@ -8711,17 +10515,510 @@
 
     function updateWorkBadge(r) {
       const el = document.getElementById("pm-work-badge");
-      if (!el) return;
+      const card = document.getElementById("card-power-meas");
       const st = inferWorkState(r);
-      el.classList.remove("is-mining", "is-suspend");
-      if (st === "suspend" || st === "sleep") {
-        el.textContent = "Suspend";
-        el.classList.add("is-suspend");
-      } else if (st === "resume") {
-        el.textContent = "Mining";
-        el.classList.add("is-mining");
+      if (el) {
+        el.classList.remove("is-mining", "is-suspend");
+        if (st === "suspend" || st === "sleep") {
+          el.textContent = "Suspend";
+          el.classList.add("is-suspend");
+        } else if (st === "resume") {
+          el.textContent = "Mining";
+          el.classList.add("is-mining");
+        } else {
+          el.textContent = "—";
+        }
+      }
+      // left tab gradient: animate while mining
+      if (card) {
+        card.classList.toggle("is-mining", st === "resume");
+        card.classList.toggle(
+          "is-suspend",
+          st === "suspend" || st === "sleep"
+        );
+      }
+    }
+
+    /** Resolve overall upfreq: 1 = all boards complete, 0 = tuning, null = unknown */
+    function resolveUpfreqFlag(r) {
+      const upArr =
+        (r && Array.isArray(r.upfreq) && r.upfreq) ||
+        (typeof live !== "undefined" && live && Array.isArray(live.upfreq)
+          ? live.upfreq
+          : null);
+      if (upArr && upArr.length) {
+        return upArr.every((u) => Number(u) === 1) ? 1 : 0;
+      }
+      if (r && (r.upfreq_ok === 0 || r.upfreq_ok === 1)) {
+        return Number(r.upfreq_ok);
+      }
+      if (r && r.upfreq_block === true) return 0;
+      if (r && r.upfreq_block === false) return 1;
+      return null;
+    }
+
+    // ── Dashboard layout (reorder / hide / show) ─────────────────────────
+    const DASH_LAYOUT_KEY = "poolheat_dash_layout_v1";
+    const DASH_DEFAULT_ORDER = [
+      "t_ctrl",
+      "weather",
+      "heat_loss",
+      "power",
+      "boards",
+      "heat_balance",
+      "errors",
+      "history",
+    ];
+    const DASH_FULL_SPAN = { errors: 1, history: 1 };
+    let dashLayout = { order: DASH_DEFAULT_ORDER.slice(), hidden: [] };
+    let dashEditMode = false;
+    let dashSortBound = false;
+
+    function dashWidgetTitle(id) {
+      return typeof t === "function"
+        ? t("dash.widget." + id, id)
+        : id;
+    }
+
+    function loadDashLayout() {
+      try {
+        const raw = localStorage.getItem(DASH_LAYOUT_KEY);
+        if (!raw) return;
+        const j = JSON.parse(raw);
+        if (!j || typeof j !== "object") return;
+        let order = Array.isArray(j.order) ? j.order.map(String) : [];
+        let hidden = Array.isArray(j.hidden) ? j.hidden.map(String) : [];
+        // merge unknown new widgets at end
+        DASH_DEFAULT_ORDER.forEach((id) => {
+          if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
+        });
+        order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        dashLayout = { order, hidden };
+      } catch (_) { /* ignore */ }
+    }
+
+    function saveDashLayout() {
+      try {
+        localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashLayout));
+      } catch (_) { /* ignore */ }
+    }
+
+    function dashLayoutIsHidden(id) {
+      return !!(dashLayout && Array.isArray(dashLayout.hidden) && dashLayout.hidden.indexOf(id) >= 0);
+    }
+
+    function ensureDashItemTools(item) {
+      if (!item || item.querySelector(".dash-item-tools")) return;
+      const tools = document.createElement("div");
+      tools.className = "dash-item-tools";
+      tools.innerHTML =
+        '<span class="dash-grip" title="Drag" aria-hidden="true">⋮⋮</span>' +
+        '<button type="button" class="dash-hide-btn" title="' +
+        (typeof t === "function" ? t("dash.hide_block", "Hide block") : "Hide") +
+        '" aria-label="Hide">×</button>';
+      tools.querySelector(".dash-hide-btn").addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = item.getAttribute("data-dash-id");
+        if (!id) return;
+        hideDashWidget(id);
+      });
+      item.appendChild(tools);
+    }
+
+    function applyDashLayout() {
+      const board = document.getElementById("dash-board");
+      if (!board) return;
+      const items = {};
+      board.querySelectorAll(".dash-item[data-dash-id]").forEach((el) => {
+        const id = el.getAttribute("data-dash-id");
+        if (!id) return;
+        items[id] = el;
+        ensureDashItemTools(el);
+        if (DASH_FULL_SPAN[id]) el.classList.add("dash-span-full");
+      });
+      // ensure every known widget is in order exactly once
+      let order = Array.isArray(dashLayout.order) ? dashLayout.order.slice() : [];
+      DASH_DEFAULT_ORDER.forEach((id) => {
+        if (order.indexOf(id) < 0) order.push(id);
+      });
+      order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+      const uniq = [];
+      order.forEach((id) => {
+        if (uniq.indexOf(id) < 0) uniq.push(id);
+      });
+      dashLayout.order = uniq;
+      // reorder DOM
+      uniq.forEach((id) => {
+        if (items[id]) board.appendChild(items[id]);
+      });
+      Object.keys(items).forEach((id) => {
+        if (uniq.indexOf(id) < 0) board.appendChild(items[id]);
+      });
+      // visibility: class + hidden attribute
+      Object.keys(items).forEach((id) => {
+        const el = items[id];
+        const hide = dashLayoutIsHidden(id);
+        el.classList.toggle("is-layout-hidden", hide);
+        if (hide) {
+          el.setAttribute("hidden", "");
+          el.hidden = true;
+        } else {
+          el.removeAttribute("hidden");
+          el.hidden = false;
+          // clear accidental inline display:none on the wrapper
+          if (el.style && el.style.display === "none") el.style.display = "";
+        }
+      });
+      // errors: if not layout-hidden but no active faults — collapse outer cell
+      // (except in edit mode so the slot stays manageable)
+      if (!dashEditMode && !dashLayoutIsHidden("errors")) {
+        const errItem = items["errors"];
+        const panel = errItem && errItem.querySelector("#panel-miner-errors");
+        const tbody = document.getElementById("miner-err-rows");
+        if (errItem && panel && tbody && !tbody.children.length) {
+          errItem.classList.add("is-layout-hidden");
+          errItem.hidden = true;
+        }
+      }
+      updateDashAddButton();
+    }
+
+    function hideDashWidget(id) {
+      id = String(id || "");
+      if (!id || DASH_DEFAULT_ORDER.indexOf(id) < 0) return;
+      if (dashLayout.hidden.indexOf(id) < 0) dashLayout.hidden.push(id);
+      // keep id in order (position preserved when re-shown)
+      if (dashLayout.order.indexOf(id) < 0) dashLayout.order.push(id);
+      saveDashLayout();
+      applyDashLayout();
+      if (dashEditMode) renderDashAddMenu();
+    }
+
+    function showDashWidget(id) {
+      id = String(id || "");
+      if (!id || DASH_DEFAULT_ORDER.indexOf(id) < 0) return;
+      dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
+      if (dashLayout.order.indexOf(id) < 0) dashLayout.order.push(id);
+      saveDashLayout();
+      applyDashLayout();
+      // force-show wrapper (apply already does this; double-check)
+      const board = document.getElementById("dash-board");
+      const el = board && board.querySelector('.dash-item[data-dash-id="' + id + '"]');
+      if (el) {
+        el.classList.remove("is-layout-hidden");
+        el.removeAttribute("hidden");
+        el.hidden = false;
+        if (el.style) el.style.display = "";
+      }
+      // if errors re-shown and has rows, ensure panel visible
+      if (id === "errors") {
+        const panel = document.getElementById("panel-miner-errors");
+        const tbody = document.getElementById("miner-err-rows");
+        if (panel && tbody && tbody.children.length) {
+          panel.hidden = false;
+          panel.style.display = "block";
+        }
+      }
+      if (dashEditMode) renderDashAddMenu();
+      updateDashAddButton();
+    }
+
+    function readDashOrderFromDom() {
+      const board = document.getElementById("dash-board");
+      if (!board) return;
+      // DOM order of all items (including layout-hidden — they stay in place)
+      const ids = Array.from(board.querySelectorAll(".dash-item[data-dash-id]"))
+        .map((el) => el.getAttribute("data-dash-id"))
+        .filter((id) => id && DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+      DASH_DEFAULT_ORDER.forEach((id) => {
+        if (ids.indexOf(id) < 0) ids.push(id);
+      });
+      const uniq = [];
+      ids.forEach((id) => {
+        if (uniq.indexOf(id) < 0) uniq.push(id);
+      });
+      dashLayout.order = uniq;
+      // never drop hidden flags here
+      if (!Array.isArray(dashLayout.hidden)) dashLayout.hidden = [];
+      dashLayout.hidden = dashLayout.hidden.filter(
+        (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0
+      );
+      saveDashLayout();
+    }
+
+    function updateDashAddButton() {
+      const addBtn = document.getElementById("btn-dash-add");
+      if (!addBtn) return;
+      const n = (dashLayout.hidden || []).length;
+      if (dashEditMode && n > 0) {
+        addBtn.hidden = false;
+        addBtn.title =
+          (typeof t === "function" ? t("dash.add_block", "Show hidden block") : "Add") +
+          " (" + n + ")";
       } else {
-        el.textContent = "—";
+        addBtn.hidden = true;
+        hideDashAddMenu();
+      }
+    }
+
+    function renderDashAddMenu() {
+      const menu = document.getElementById("dash-add-menu");
+      if (!menu) return;
+      const hidden = dashLayout.hidden || [];
+      if (!hidden.length) {
+        menu.innerHTML =
+          '<div class="dash-add-empty">' +
+          (typeof t === "function" ? t("dash.no_hidden", "No hidden blocks") : "No hidden blocks") +
+          "</div>";
+        return;
+      }
+      menu.innerHTML = hidden
+        .map((id) => {
+          return (
+            '<button type="button" data-show-id="' +
+            id +
+            '">+ ' +
+            dashWidgetTitle(id) +
+            "</button>"
+          );
+        })
+        .join("");
+      menu.querySelectorAll("button[data-show-id]").forEach((btn) => {
+        const onPick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const wid = btn.getAttribute("data-show-id");
+          if (!wid) return;
+          showDashWidget(wid);
+          if (!(dashLayout.hidden || []).length) hideDashAddMenu();
+          else renderDashAddMenu();
+        };
+        // mousedown so we don't lose the action to document click / drag
+        btn.addEventListener("mousedown", onPick);
+        btn.addEventListener("click", onPick);
+      });
+    }
+
+    function hideDashAddMenu() {
+      const menu = document.getElementById("dash-add-menu");
+      if (menu) menu.hidden = true;
+    }
+
+    function toggleDashAddMenu() {
+      const menu = document.getElementById("dash-add-menu");
+      if (!menu) return;
+      if (!menu.hidden) {
+        hideDashAddMenu();
+        return;
+      }
+      renderDashAddMenu();
+      menu.hidden = false;
+    }
+
+    function setDashEditMode(on) {
+      dashEditMode = !!on;
+      const board = document.getElementById("dash-board");
+      const editBtn = document.getElementById("btn-dash-edit");
+      if (board) board.classList.toggle("dash-edit-mode", dashEditMode);
+      if (editBtn) {
+        editBtn.classList.toggle("is-active", dashEditMode);
+        editBtn.setAttribute("aria-pressed", dashEditMode ? "true" : "false");
+        editBtn.title = dashEditMode
+          ? typeof t === "function"
+            ? t("dash.edit_done", "Done")
+            : "Done"
+          : typeof t === "function"
+            ? t("dash.edit", "Edit layout")
+            : "Edit";
+        editBtn.textContent = dashEditMode ? "✓" : "✎";
+      }
+      // enable drag only in edit mode
+      if (board) {
+        board.querySelectorAll(".dash-item").forEach((el) => {
+          el.setAttribute("draggable", dashEditMode ? "true" : "false");
+        });
+      }
+      // In edit mode, show empty errors slot so it can be reordered/hidden
+      if (dashEditMode) {
+        const errItem = board && board.querySelector('.dash-item[data-dash-id="errors"]');
+        if (errItem && !dashLayoutIsHidden("errors")) errItem.hidden = false;
+      } else {
+        applyDashLayout();
+        // re-collapse empty errors if no active faults
+        const panel = document.getElementById("panel-miner-errors");
+        const tbody = document.getElementById("miner-err-rows");
+        if (panel && tbody && !tbody.children.length && !dashLayoutIsHidden("errors")) {
+          const errItem = panel.closest(".dash-item");
+          if (errItem) errItem.hidden = true;
+          panel.style.display = "none";
+          panel.hidden = true;
+        }
+      }
+      updateDashAddButton();
+      if (!dashEditMode) hideDashAddMenu();
+    }
+
+    function bindDashSortable() {
+      const board = document.getElementById("dash-board");
+      if (!board || dashSortBound) return;
+      dashSortBound = true;
+      let dragEl = null;
+      let lastOver = null;
+
+      /** Swap two siblings in the dash grid (true place-exchange). */
+      const swapItems = (a, b) => {
+        if (!a || !b || a === b || a.parentNode !== b.parentNode) return;
+        const parent = a.parentNode;
+        const aNext = a.nextSibling;
+        const bNext = b.nextSibling;
+        // insertBefore markers: if a is right before b, special-case
+        if (aNext === b) {
+          parent.insertBefore(b, a);
+        } else if (bNext === a) {
+          parent.insertBefore(a, b);
+        } else {
+          parent.insertBefore(b, aNext);
+          parent.insertBefore(a, bNext);
+        }
+      };
+
+      const clearSwapHighlight = () => {
+        board.querySelectorAll(".dash-item.is-swap-target").forEach((el) => {
+          el.classList.remove("is-swap-target");
+        });
+      };
+
+      const cleanup = () => {
+        clearSwapHighlight();
+        if (dragEl) dragEl.classList.remove("is-dragging");
+        dragEl = null;
+        lastOver = null;
+      };
+
+      board.addEventListener("dragstart", (e) => {
+        if (!dashEditMode) {
+          e.preventDefault();
+          return;
+        }
+        const item = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
+        if (!item || !board.contains(item)) return;
+        if (e.target.closest && e.target.closest("button, input, select, a, .dash-hide-btn")) {
+          e.preventDefault();
+          return;
+        }
+        // full-width blocks swap with full-width only? allow any swap for simplicity
+        dragEl = item;
+        lastOver = null;
+        try {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", item.getAttribute("data-dash-id") || "x");
+          if (e.dataTransfer.setDragImage) {
+            e.dataTransfer.setDragImage(item, 28, 20);
+          }
+        } catch (_) { /* ignore */ }
+        item.classList.add("is-dragging");
+      });
+
+      board.addEventListener("dragover", (e) => {
+        if (!dragEl) return;
+        e.preventDefault();
+        try {
+          e.dataTransfer.dropEffect = "move";
+        } catch (_) { /* ignore */ }
+        const over = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
+        clearSwapHighlight();
+        if (
+          !over ||
+          over === dragEl ||
+          !board.contains(over) ||
+          over.hidden ||
+          over.classList.contains("is-layout-hidden")
+        ) {
+          return;
+        }
+        over.classList.add("is-swap-target");
+        // Live swap when pointer enters a new card — feels like home-screen tiles
+        if (over !== lastOver) {
+          lastOver = over;
+          swapItems(dragEl, over);
+        }
+      });
+
+      board.addEventListener("drop", (e) => {
+        if (!dragEl) return;
+        e.preventDefault();
+        e.stopPropagation();
+        // final swap if drop target differs (safety)
+        const over = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
+        if (over && over !== dragEl && board.contains(over) && !over.hidden) {
+          if (over !== lastOver) swapItems(dragEl, over);
+        }
+        cleanup();
+        readDashOrderFromDom();
+        applyDashLayout();
+      });
+
+      board.addEventListener("dragend", () => {
+        cleanup();
+        readDashOrderFromDom();
+        applyDashLayout();
+      });
+    }
+
+    function initDashLayout() {
+      loadDashLayout();
+      applyDashLayout();
+      bindDashSortable();
+      const editBtn = document.getElementById("btn-dash-edit");
+      const addBtn = document.getElementById("btn-dash-add");
+      editBtn?.addEventListener("click", () => {
+        setDashEditMode(!dashEditMode);
+      });
+      addBtn?.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleDashAddMenu();
+      });
+      document.addEventListener("click", (e) => {
+        const menu = document.getElementById("dash-add-menu");
+        const wrap = document.querySelector(".dash-toolbar-wrap");
+        if (!menu || menu.hidden) return;
+        if (wrap && wrap.contains(e.target)) return;
+        hideDashAddMenu();
+      });
+      setDashEditMode(false);
+    }
+
+    /**
+     * Badge right of Mining/Suspend:
+     * Tuning: upfreq 0  |  Tuned: upfreq 1
+     */
+    function updateUpfreqBadge(r) {
+      const el = document.getElementById("pm-upfreq-badge");
+      if (!el) return;
+      const ico = el.querySelector(".pm-uf-ico");
+      const txt = el.querySelector(".pm-uf-txt");
+      const flag = resolveUpfreqFlag(r);
+      el.classList.remove("is-tuning", "is-tuned", "is-unknown");
+      if (flag === 1) {
+        el.classList.add("is-tuned");
+        if (ico) ico.textContent = "✓";
+        if (txt) txt.textContent = "Tuned";
+        el.title = "Tuned: upfreq 1";
+        el.setAttribute("aria-label", "Tuned: upfreq 1");
+      } else if (flag === 0) {
+        el.classList.add("is-tuning");
+        if (ico) ico.textContent = "⟳";
+        if (txt) txt.textContent = "Tuning";
+        el.title = "Tuning: upfreq 0";
+        el.setAttribute("aria-label", "Tuning: upfreq 0");
+      } else {
+        el.classList.add("is-unknown");
+        if (ico) ico.textContent = "·";
+        if (txt) txt.textContent = "—";
+        el.title = "upfreq —";
+        el.setAttribute("aria-label", "upfreq unknown");
       }
     }
 
@@ -9019,23 +11316,17 @@
         setId("dash-asic-elapsed", elStr);
         // upfreq: 1 if all boards Upfreq Complete, else 0
         {
-          const upArr =
-            (r && Array.isArray(r.upfreq) && r.upfreq) ||
-            (typeof live !== "undefined" && live && Array.isArray(live.upfreq)
-              ? live.upfreq
-              : null);
-          let upfreqTxt = "—";
-          if (upArr && upArr.length) {
-            upfreqTxt = upArr.every((u) => Number(u) === 1) ? "1" : "0";
-          } else if (r && (r.upfreq_ok === 0 || r.upfreq_ok === 1)) {
-            upfreqTxt = String(r.upfreq_ok);
-          }
+          const flag = resolveUpfreqFlag(r);
+          const upfreqTxt = flag === 0 || flag === 1 ? String(flag) : "—";
           setText("[data-bind=upfreqOk]", upfreqTxt);
           setId("dash-upfreq", upfreqTxt);
         }
       }
       try {
         if (typeof updateWorkBadge === "function") updateWorkBadge(r);
+      } catch (_) { /* ignore */ }
+      try {
+        if (typeof updateUpfreqBadge === "function") updateUpfreqBadge(r);
       } catch (_) { /* ignore */ }
       updateHeatLoss();
       // J/TH = W / (TH/s)
@@ -9906,6 +12197,28 @@
           if (typeof overrideState !== "undefined" && overrideState.active) {
             l.classList.add("on");
             tag.textContent = fmtOverrideClock(overrideState.remainingSec);
+          } else {
+            tag.textContent = "off";
+          }
+        }
+        if (l.dataset.layer === "schedule") {
+          const pol =
+            (r && r.policy && r.policy.schedule) ||
+            (typeof live !== "undefined" && live && live.policy && live.policy.schedule) ||
+            null;
+          const en = !!(pol && (pol.enabled || pol.key));
+          const key = pol && pol.key ? String(pol.key) : "";
+          if (en && key) {
+            const t = key.startsWith("inactive")
+              ? "inactive"
+              : key.startsWith("profile")
+                ? "profile"
+                : key.startsWith("preset")
+                  ? "preset"
+                  : key;
+            l.classList.add("on");
+            if (t === "inactive") l.classList.add("block");
+            tag.textContent = (pol.label || t).slice(0, 28);
           } else {
             tag.textContent = "off";
           }
@@ -14191,26 +16504,52 @@
         return;
       }
       const seq = ++wxSearchSeq;
+      const lang =
+        (typeof _uiLang !== "undefined" && _uiLang) ||
+        (document.documentElement.lang || "ru");
       box.hidden = false;
-      box.innerHTML = "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>search…</div>";
+      box.removeAttribute("hidden");
+      box.innerHTML =
+        "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+        (lang === "ru" ? "поиск…" : "search…") +
+        "</div>";
       try {
-        const res = await fetch("/api/weather/search?q=" + encodeURIComponent(q) + "&count=12");
-        const body = await res.json();
+        const url =
+          "/api/weather/search?q=" +
+          encodeURIComponent(q) +
+          "&count=12&lang=" +
+          encodeURIComponent(String(lang).slice(0, 5));
+        const res = await fetch(url, { cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
         if (seq !== wxSearchSeq) return; // stale response
-        if (!body.ok) throw new Error(body.error || "search fail");
+        if (!res.ok || body.ok === false)
+          throw new Error(body.error || "HTTP " + res.status);
         const list = body.results || [];
         if (!list.length) {
-          box.innerHTML = "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>nothing found</div>";
+          box.innerHTML =
+            "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+            (lang === "ru"
+              ? "ничего не найдено — попробуйте другое написание"
+              : "nothing found — try another spelling") +
+            "</div>";
           return;
         }
         box.innerHTML = "";
         list.forEach((r) => {
           const b = document.createElement("button");
           b.type = "button";
+          const label = r.label || r.city || "—";
+          const sub =
+            (r.timezone ? r.timezone + " · " : "") +
+            Number(r.latitude).toFixed(3) +
+            ", " +
+            Number(r.longitude).toFixed(3);
           b.innerHTML =
-            "<span>" + (r.label || r.city).replace(/</g, "&lt;") + "</span>" +
+            "<span>" +
+            String(label).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
+            "</span>" +
             "<span class='wr-sub'>" +
-            Number(r.latitude).toFixed(3) + ", " + Number(r.longitude).toFixed(3) +
+            String(sub).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
             "</span>";
           b.addEventListener("mousedown", (ev) => {
             // mousedown before blur so click registers
@@ -14224,8 +16563,12 @@
         });
       } catch (e) {
         if (seq !== wxSearchSeq) return;
-        box.innerHTML = "<div style='padding:10px;color:var(--danger);font-size:0.8rem'>" +
-          String(e.message).replace(/</g, "&lt;") + "</div>";
+        box.hidden = false;
+        box.removeAttribute("hidden");
+        box.innerHTML =
+          "<div style='padding:10px;color:var(--danger);font-size:0.8rem'>" +
+          String(e.message || e).replace(/</g, "&lt;") +
+          "</div>";
       }
     }
 
@@ -18729,6 +21072,37 @@
       document.getElementById("dev-ha-entity").value = d.ha_entity_id || "";
       document.getElementById("dev-ha-token").value = "";
       document.getElementById("dev-ha-token").placeholder = d.ha_token_set ? "•••• (saved)" : "••••";
+      // Tuya / Smart Life
+      const tuyaIp = document.getElementById("dev-tuya-ip");
+      if (tuyaIp) tuyaIp.value = d.backend === "tuya" || d.backend === "smartlife" ? ip : (d.ip || "");
+      const setV = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = v != null ? v : "";
+      };
+      setV("dev-tuya-eco", d.tuya_ecosystem || "smartlife");
+      setV("dev-tuya-email", d.email || "");
+      setV("dev-tuya-password", "");
+      const tpw = document.getElementById("dev-tuya-password");
+      if (tpw) tpw.placeholder = d.password_set ? "•••• (saved)" : "••••";
+      setV("dev-tuya-country", d.tuya_country || "7");
+      setV("dev-tuya-region", d.tuya_region || "eu");
+      setV("dev-tuya-device-id", d.device_id || "");
+      setV("dev-tuya-local-key", "");
+      const tlk = document.getElementById("dev-tuya-local-key");
+      if (tlk) tlk.placeholder = d.tuya_local_key_set ? "•••• (saved)" : "auto after Get keys";
+      setV("dev-tuya-version", d.tuya_version != null ? d.tuya_version : 3.4);
+      setV("dev-tuya-dps", d.tuya_switch_dps != null ? d.tuya_switch_dps : 1);
+      const tstat = document.getElementById("dev-tuya-status");
+      if (tstat) {
+        tstat.textContent = d.tuya_local_key_set
+          ? "local_key: saved · LAN ready"
+          : "local_key: not set — press Get keys";
+      }
+      const pick = document.getElementById("dev-tuya-pick");
+      if (pick) {
+        pick.style.display = "none";
+        pick.innerHTML = "";
+      }
       document.getElementById("dev-auto-mining").checked = !!d.auto_on_mining;
       document.getElementById("dev-auto-suspend").checked = !!d.auto_off_suspend;
       document.getElementById("dev-allow-off-mining").checked = !!d.allow_off_while_mining;
@@ -18773,6 +21147,8 @@
       if (be === "tapo") ip = (document.getElementById("dev-ip")?.value || "").trim();
       else if (be === "ewelink") ip = (document.getElementById("dev-ewelink-ip")?.value || "").trim();
       else if (be === "shelly") ip = (document.getElementById("dev-shelly-ip")?.value || "").trim();
+      else if (be === "tuya" || be === "smartlife")
+        ip = (document.getElementById("dev-tuya-ip")?.value || "").trim();
       // flush visible inputs into bilingual draft
       flushDeviceNameInput();
       flushDeviceDescInput();
@@ -18784,6 +21160,14 @@
       let description_ru = (deviceDescBi.ru || "").trim();
       if (description_en && !description_ru) description_ru = description_en;
       if (description_ru && !description_en) description_en = description_ru;
+      let email = (document.getElementById("dev-email")?.value || "").trim();
+      let password = document.getElementById("dev-password")?.value || "";
+      let device_id = (document.getElementById("dev-device-id")?.value || "").trim();
+      if (be === "tuya" || be === "smartlife") {
+        email = (document.getElementById("dev-tuya-email")?.value || "").trim();
+        password = document.getElementById("dev-tuya-password")?.value || "";
+        device_id = (document.getElementById("dev-tuya-device-id")?.value || "").trim();
+      }
       const payload = {
         id: document.getElementById("device-id")?.value || undefined,
         alias: (document.getElementById("device-alias")?.value || "").trim().toLowerCase(),
@@ -18799,9 +21183,9 @@
         show_in_bot: !!document.getElementById("device-show-bot")?.checked,
         backend: be,
         ip: ip,
-        email: (document.getElementById("dev-email")?.value || "").trim(),
-        password: document.getElementById("dev-password")?.value || "",
-        device_id: (document.getElementById("dev-device-id")?.value || "").trim(),
+        email: email,
+        password: password,
+        device_id: device_id,
         ewelink_port: Number(document.getElementById("dev-ewelink-port")?.value) || 8081,
         webhook_on_url: (document.getElementById("dev-wh-on")?.value || "").trim(),
         webhook_off_url: (document.getElementById("dev-wh-off")?.value || "").trim(),
@@ -18814,6 +21198,12 @@
         ha_url: (document.getElementById("dev-ha-url")?.value || "").trim(),
         ha_entity_id: (document.getElementById("dev-ha-entity")?.value || "").trim(),
         ha_token: document.getElementById("dev-ha-token")?.value || "",
+        tuya_ecosystem: document.getElementById("dev-tuya-eco")?.value || "smartlife",
+        tuya_country: (document.getElementById("dev-tuya-country")?.value || "7").trim(),
+        tuya_region: document.getElementById("dev-tuya-region")?.value || "eu",
+        tuya_local_key: (document.getElementById("dev-tuya-local-key")?.value || "").trim(),
+        tuya_version: Number(document.getElementById("dev-tuya-version")?.value) || 3.4,
+        tuya_switch_dps: Number(document.getElementById("dev-tuya-dps")?.value) || 1,
         auto_on_mining: !!document.getElementById("dev-auto-mining")?.checked,
         auto_off_suspend: !!document.getElementById("dev-auto-suspend")?.checked,
         allow_off_while_mining: !!document.getElementById("dev-allow-off-mining")?.checked,
@@ -19015,6 +21405,86 @@
       else toastError("Save device first");
     });
     document.getElementById("device-backend")?.addEventListener("change", syncDeviceBackendUi);
+
+    async function tuyaFetchKeysFromEditor() {
+      const st = document.getElementById("dev-tuya-status");
+      const email = (document.getElementById("dev-tuya-email")?.value || "").trim();
+      let password = document.getElementById("dev-tuya-password")?.value || "";
+      const eco = document.getElementById("dev-tuya-eco")?.value || "smartlife";
+      const country = (document.getElementById("dev-tuya-country")?.value || "7").trim();
+      const region = document.getElementById("dev-tuya-region")?.value || "eu";
+      const storeId = (document.getElementById("device-id")?.value || "").trim();
+      if (!email) {
+        toastWarn("Tuya: email required");
+        return;
+      }
+      if (st) st.textContent = "logging in…";
+      try {
+        const res = await fetch("/api/devices/tuya/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password: password || undefined,
+            country,
+            region,
+            ecosystem: eco,
+            device_id: storeId || undefined,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false) throw new Error(body.error || "HTTP " + res.status);
+        const list = body.devices || [];
+        if (st) st.textContent = "OK · " + list.length + " devices";
+        const pick = document.getElementById("dev-tuya-pick");
+        if (pick) {
+          pick.innerHTML = "";
+          list.forEach((d) => {
+            const o = document.createElement("option");
+            o.value = d.id || "";
+            o.textContent =
+              (d.name || d.id || "?") +
+              (d.key_set ? " · key✓" : " · no key") +
+              (d.home ? " · " + d.home : "");
+            o.dataset.key = d.key || "";
+            o.dataset.product = d.product_id || "";
+            pick.appendChild(o);
+          });
+          pick.style.display = list.length ? "block" : "none";
+          pick.onchange = () => {
+            const opt = pick.selectedOptions[0];
+            if (!opt) return;
+            const idEl = document.getElementById("dev-tuya-device-id");
+            const keyEl = document.getElementById("dev-tuya-local-key");
+            if (idEl) idEl.value = opt.value;
+            if (keyEl && opt.dataset.key) keyEl.value = opt.dataset.key;
+            if (st) st.textContent = "selected · " + (opt.textContent || opt.value);
+          };
+          // auto-select if only one or matches current device_id
+          const curId = (document.getElementById("dev-tuya-device-id")?.value || "").trim();
+          let auto = null;
+          if (list.length === 1) auto = list[0];
+          else if (curId) auto = list.find((x) => x.id === curId) || null;
+          if (auto) {
+            pick.value = auto.id;
+            if (document.getElementById("dev-tuya-device-id"))
+              document.getElementById("dev-tuya-device-id").value = auto.id || "";
+            if (auto.key && document.getElementById("dev-tuya-local-key"))
+              document.getElementById("dev-tuya-local-key").value = auto.key;
+            if (st) st.textContent = "OK · key loaded · " + (auto.name || auto.id);
+          }
+        }
+        toastSuccess("Tuya: " + list.length + " devices");
+        // reload device list if store updated
+        if (typeof loadDevices === "function") void loadDevices();
+      } catch (e) {
+        if (st) st.textContent = "error: " + e.message;
+        toastError("Tuya login: " + e.message);
+      }
+    }
+    document
+      .getElementById("btn-tuya-fetch-keys")
+      ?.addEventListener("click", () => void tuyaFetchKeysFromEditor());
     document.getElementById("btn-toggle-dev-mining")?.addEventListener("click", () => {
       const btn = document.getElementById("btn-toggle-dev-mining");
       const open = btn?.getAttribute("aria-expanded") === "true";
@@ -19105,6 +21575,7 @@
     // LuCI proxy status → LIVE strip IP link when proxy is listening
     if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
     if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
+    if (typeof initDashLayout === "function") initDashLayout();
     loadHistoryCharts(); // charts on Overview
     loadMinerErrorLog();
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")

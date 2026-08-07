@@ -157,6 +157,8 @@ WEATHER_CFG_FILE = DATA / "weather_config.json"
 POOL_CFG_FILE = DATA / "pool_config.json"
 ZONE_CFG_FILE = DATA / "zone_map_config.json"
 ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
+MODE_PROFILES_FILE = DATA / "mode_profiles.json"
+SCHEDULE_CFG_FILE = DATA / "schedule_config.json"
 POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 # Peripherals → Devices (Tapo / webhook / … actuators)
@@ -240,6 +242,12 @@ _policy_ctrl: dict = {
     "warmup_since_ts": None,
     # Force Stop (emergency): sticky Suspend — above zones & Dry Run
     "force_stop": bool((_APP.get("file_cfg") or {}).get("force_stop", False)),
+    # Schedule layer (time map): inactive | profile | preset
+    "schedule_enabled": False,
+    "schedule_cell": None,  # resolved cell dict
+    "schedule_key": None,  # e.g. inactive|profile:id|preset:id
+    "schedule_label": None,
+    "schedule_until_ts": None,
 }
 
 # Sensors usable as T_ctrl for heat-zone map (not Safety / chip Critical).
@@ -743,6 +751,674 @@ def apply_zone_preset(preset_id: str) -> dict:
         "config": get_zone_cfg(),
         "active_id": p.get("id"),
     }
+
+
+# ── Mode profiles (ASIC setpoint library) ───────────────────────────────────
+# Reusable mode/work/limit/pct blocks for Schedule and manual Apply.
+_mode_profiles_lock = threading.Lock()
+_mode_profiles: dict = {"profiles": []}
+
+_BUILTIN_MODE_PROFILES: list[dict] = [
+    {
+        "id": "off",
+        "name": "Off (suspend)",
+        "name_ru": "Выкл (suspend)",
+        "color": "#6b7280",
+        "builtin": True,
+        "mode_en": False,
+        "mode": "low",
+        "work_en": True,
+        "work": "suspend",
+        "lim_en": False,
+        "lim": 0,
+        "pct_en": False,
+        "pct": 0,
+    },
+    {
+        "id": "low",
+        "name": "Low",
+        "name_ru": "Low",
+        "color": "#3b82f6",
+        "builtin": True,
+        "mode_en": True,
+        "mode": "low",
+        "work_en": True,
+        "work": "resume",
+        "lim_en": False,
+        "lim": 2500,
+        "pct_en": False,
+        "pct": 100,
+    },
+    {
+        "id": "normal",
+        "name": "Normal",
+        "name_ru": "Normal",
+        "color": "#22c55e",
+        "builtin": True,
+        "mode_en": True,
+        "mode": "normal",
+        "work_en": True,
+        "work": "resume",
+        "lim_en": False,
+        "lim": 5000,
+        "pct_en": False,
+        "pct": 100,
+    },
+    {
+        "id": "high",
+        "name": "High",
+        "name_ru": "High",
+        "color": "#16a34a",
+        "builtin": True,
+        "mode_en": True,
+        "mode": "high",
+        "work_en": True,
+        "work": "resume",
+        "lim_en": False,
+        "lim": 7000,
+        "pct_en": False,
+        "pct": 100,
+    },
+    {
+        "id": "night_eco",
+        "name": "Night eco 2500W",
+        "name_ru": "Ночь eco 2500W",
+        "color": "#6366f1",
+        "builtin": True,
+        "mode_en": True,
+        "mode": "low",
+        "work_en": True,
+        "work": "resume",
+        "lim_en": True,
+        "lim": 2500,
+        "pct_en": False,
+        "pct": 100,
+    },
+    {
+        "id": "day_full",
+        "name": "Day full 7000W",
+        "name_ru": "День full 7000W",
+        "color": "#f59e0b",
+        "builtin": True,
+        "mode_en": True,
+        "mode": "high",
+        "work_en": True,
+        "work": "resume",
+        "lim_en": True,
+        "lim": 7000,
+        "pct_en": False,
+        "pct": 100,
+    },
+]
+
+_DOW_KEYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+# Python weekday(): Mon=0 … Sun=6
+_DOW_FROM_PY = {i: _DOW_KEYS[i] for i in range(7)}
+
+
+def _new_id12() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _normalize_mode_profile(raw: dict | None, *, default: dict | None = None) -> dict:
+    base = dict(default or _BUILTIN_MODE_PROFILES[0])
+    if not isinstance(raw, dict):
+        return _normalize_zone_entry(base, base)
+    out = _normalize_zone_entry(raw, base)
+    pid = str(raw.get("id") or base.get("id") or _new_id12()).strip() or _new_id12()
+    name = str(raw.get("name") or base.get("name") or "Profile").strip() or "Profile"
+    if len(name) > 64:
+        name = name[:64]
+    name_ru = str(raw.get("name_ru") or raw.get("name") or name).strip() or name
+    if len(name_ru) > 64:
+        name_ru = name_ru[:64]
+    color = str(raw.get("color") or base.get("color") or "#64748b").strip()
+    if not color.startswith("#") or len(color) not in (4, 7):
+        color = "#64748b"
+    builtin = bool(raw.get("builtin") if "builtin" in raw else base.get("builtin", False))
+    return {
+        "id": pid,
+        "name": name,
+        "name_ru": name_ru,
+        "color": color,
+        "builtin": builtin,
+        "mode_en": bool(out.get("mode_en")),
+        "mode": out.get("mode") or "low",
+        "work_en": bool(out.get("work_en")),
+        "work": out.get("work") or "resume",
+        "lim_en": bool(out.get("lim_en")),
+        "lim": float(out.get("lim") or 0),
+        "pct_en": bool(out.get("pct_en")),
+        "pct": float(out.get("pct") or 0),
+        "updated_ts": raw.get("updated_ts")
+        or base.get("updated_ts")
+        or datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _mode_profile_summary(p: dict) -> str:
+    parts: list[str] = []
+    if p.get("work_en"):
+        parts.append(str(p.get("work") or "resume"))
+    if p.get("mode_en"):
+        parts.append(str(p.get("mode") or "low"))
+    if p.get("lim_en"):
+        try:
+            parts.append(f"{int(float(p.get('lim') or 0))}W")
+        except (TypeError, ValueError):
+            parts.append("lim")
+    if p.get("pct_en"):
+        try:
+            parts.append(f"{int(float(p.get('pct') or 0))}%")
+        except (TypeError, ValueError):
+            parts.append("pct")
+    return " · ".join(parts) if parts else "—"
+
+
+def _load_mode_profiles() -> None:
+    global _mode_profiles
+    with _mode_profiles_lock:
+        raw = _load_json(MODE_PROFILES_FILE, {"profiles": []})
+        if not isinstance(raw, dict):
+            raw = {"profiles": []}
+        items = raw.get("profiles") if isinstance(raw.get("profiles"), list) else []
+        by_id: dict[str, dict] = {}
+        for p in items:
+            if not isinstance(p, dict):
+                continue
+            np = _normalize_mode_profile(p)
+            by_id[np["id"]] = np
+        # ensure builtins exist (user may override non-id fields if same id)
+        for b in _BUILTIN_MODE_PROFILES:
+            if b["id"] not in by_id:
+                by_id[b["id"]] = _normalize_mode_profile(b)
+            else:
+                # keep user edits but force builtin flag for known ids
+                cur = by_id[b["id"]]
+                cur["builtin"] = True
+                by_id[b["id"]] = cur
+        # stable order: builtins first in template order, then custom
+        ordered: list[dict] = []
+        seen: set[str] = set()
+        for b in _BUILTIN_MODE_PROFILES:
+            if b["id"] in by_id:
+                ordered.append(by_id[b["id"]])
+                seen.add(b["id"])
+        for pid, p in by_id.items():
+            if pid not in seen:
+                ordered.append(p)
+        _mode_profiles = {"profiles": ordered}
+        try:
+            _save_json(MODE_PROFILES_FILE, _mode_profiles)
+        except Exception:
+            pass
+
+
+def _save_mode_profiles() -> None:
+    with _mode_profiles_lock:
+        _save_json(MODE_PROFILES_FILE, _mode_profiles)
+
+
+def list_mode_profiles() -> dict:
+    with _mode_profiles_lock:
+        items = []
+        for p in _mode_profiles.get("profiles") or []:
+            items.append(
+                {
+                    **p,
+                    "summary": _mode_profile_summary(p),
+                }
+            )
+        return {"ok": True, "profiles": items}
+
+
+def get_mode_profile(profile_id: str) -> dict | None:
+    pid = str(profile_id or "").strip()
+    if not pid:
+        return None
+    with _mode_profiles_lock:
+        for p in _mode_profiles.get("profiles") or []:
+            if p.get("id") == pid:
+                return json.loads(json.dumps(p))
+    return None
+
+
+def save_mode_profile(
+    data: dict,
+    *,
+    profile_id: str | None = None,
+) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("expected object")
+    pid = str(profile_id or data.get("id") or "").strip()
+    now = datetime.now().isoformat(timespec="seconds")
+    with _mode_profiles_lock:
+        profiles = list(_mode_profiles.get("profiles") or [])
+        existing = None
+        idx = -1
+        if pid:
+            for i, p in enumerate(profiles):
+                if p.get("id") == pid:
+                    existing = p
+                    idx = i
+                    break
+        if existing:
+            merged = dict(existing)
+            merged.update(data)
+            merged["id"] = pid
+            merged["builtin"] = bool(existing.get("builtin"))
+            merged["updated_ts"] = now
+            np = _normalize_mode_profile(merged, default=existing)
+            profiles[idx] = np
+            out_id = pid
+        else:
+            if not pid:
+                pid = _new_id12()
+            data = dict(data)
+            data["id"] = pid
+            data["builtin"] = False
+            data["updated_ts"] = now
+            np = _normalize_mode_profile(data)
+            np["builtin"] = False
+            profiles.append(np)
+            out_id = pid
+        _mode_profiles["profiles"] = profiles
+    _save_mode_profiles()
+    return {"ok": True, "id": out_id, **list_mode_profiles()}
+
+
+def delete_mode_profile(profile_id: str) -> dict:
+    pid = str(profile_id or "").strip()
+    if not pid:
+        raise ValueError("id empty")
+    with _mode_profiles_lock:
+        profiles = list(_mode_profiles.get("profiles") or [])
+        found = None
+        for p in profiles:
+            if p.get("id") == pid:
+                found = p
+                break
+        if not found:
+            raise ValueError(f"profile not found: {pid}")
+        if found.get("builtin"):
+            raise ValueError("cannot delete built-in profile")
+        _mode_profiles["profiles"] = [p for p in profiles if p.get("id") != pid]
+    _save_mode_profiles()
+    return list_mode_profiles()
+
+
+def apply_mode_profile(profile_id: str, *, password: str | None = None) -> dict:
+    """Manual apply profile commands to ASIC (respects dry_run via apply_set path)."""
+    p = get_mode_profile(profile_id)
+    if not p:
+        raise ValueError(f"profile not found: {profile_id}")
+    cmds = _zone_entry_commands(p)
+    if not cmds:
+        return {"ok": True, "id": p.get("id"), "applied": [], "skipped": True}
+    pw = password if password is not None else DEFAULT_API_PASSWORD
+    results = []
+    for action, value in cmds:
+        try:
+            out = apply_set(action, value, pw)
+            results.append({"action": action, "value": value, "ok": bool(out.get("ok")), "out": out})
+        except Exception as e:
+            results.append({"action": action, "value": value, "ok": False, "error": str(e)})
+    ok = all(r.get("ok") for r in results) if results else True
+    _policy_log(
+        "ok" if ok else "warn",
+        f"MODE_PROFILE apply {p.get('name') or p.get('id')}: "
+        + ", ".join(f"{r['action']}={r['value']}" for r in results),
+        source="mode_profile",
+    )
+    return {
+        "ok": ok,
+        "id": p.get("id"),
+        "name": p.get("name"),
+        "applied": results,
+    }
+
+
+# ── Schedule (time map: inactive | mode profile | map preset) ───────────────
+_schedule_lock = threading.Lock()
+_DEFAULT_SCHEDULE: dict = {
+    "version": 1,
+    "enabled": False,
+    "timezone": "Europe/Moscow",
+    "resolution_min": 60,
+    "default_cell": {"t": "inactive"},
+    "weekly": {d: [{"t": "inactive"}] * 24 for d in _DOW_KEYS},
+    "exceptions": [],
+}
+
+
+def _normalize_schedule_cell(raw) -> dict:
+    """Cell: {t: inactive|profile|preset|like, id?, like_dow?}."""
+    if raw is None:
+        return {"t": "inactive"}
+    if isinstance(raw, str):
+        s = raw.strip().lower()
+        if s in ("inactive", "off", "block", "0"):
+            return {"t": "inactive"}
+        if s.startswith("profile:"):
+            return {"t": "profile", "id": s.split(":", 1)[1].strip()}
+        if s.startswith("preset:"):
+            return {"t": "preset", "id": s.split(":", 1)[1].strip()}
+        return {"t": "inactive"}
+    if not isinstance(raw, dict):
+        return {"t": "inactive"}
+    t = str(raw.get("t") or raw.get("type") or "inactive").strip().lower()
+    if t in ("off", "block", "none", "disabled"):
+        t = "inactive"
+    if t not in ("inactive", "profile", "preset", "like"):
+        t = "inactive"
+    out: dict = {"t": t}
+    if t in ("profile", "preset"):
+        cid = str(raw.get("id") or "").strip()
+        if not cid:
+            return {"t": "inactive"}
+        out["id"] = cid
+    if t == "like":
+        ld = str(raw.get("like_dow") or raw.get("dow") or "sun").strip().lower()[:3]
+        # accept mon/tue/... or monday
+        for k in _DOW_KEYS:
+            if ld.startswith(k[:3]) or k.startswith(ld):
+                out["like_dow"] = k
+                break
+        else:
+            out["like_dow"] = "sun"
+    return out
+
+
+def _normalize_day_hours(raw) -> list[dict]:
+    """24 cells (hour 0..23)."""
+    cells = [{"t": "inactive"}] * 24
+    if isinstance(raw, list) and raw:
+        for i in range(24):
+            if i < len(raw):
+                cells[i] = _normalize_schedule_cell(raw[i])
+            else:
+                cells[i] = _normalize_schedule_cell(raw[-1])
+    elif isinstance(raw, dict):
+        # allow {"0": {...}, "7": ...}
+        for i in range(24):
+            if str(i) in raw:
+                cells[i] = _normalize_schedule_cell(raw[str(i)])
+            elif i in raw:
+                cells[i] = _normalize_schedule_cell(raw[i])
+    return cells
+
+
+def _normalize_schedule_cfg(raw: dict | None) -> dict:
+    base = json.loads(json.dumps(_DEFAULT_SCHEDULE))
+    if not isinstance(raw, dict):
+        return base
+    base["enabled"] = bool(raw.get("enabled", False))
+    tz = str(raw.get("timezone") or base["timezone"]).strip() or "Europe/Moscow"
+    base["timezone"] = tz
+    try:
+        res = int(raw.get("resolution_min") or 60)
+    except (TypeError, ValueError):
+        res = 60
+    base["resolution_min"] = 60 if res >= 60 else max(15, res)
+    base["default_cell"] = _normalize_schedule_cell(
+        raw.get("default_cell") or raw.get("default") or {"t": "inactive"}
+    )
+    weekly_in = raw.get("weekly") if isinstance(raw.get("weekly"), dict) else {}
+    weekly: dict = {}
+    for d in _DOW_KEYS:
+        weekly[d] = _normalize_day_hours(weekly_in.get(d))
+    base["weekly"] = weekly
+    ex_in = raw.get("exceptions") if isinstance(raw.get("exceptions"), list) else []
+    exceptions: list[dict] = []
+    for ex in ex_in:
+        if not isinstance(ex, dict):
+            continue
+        date = str(ex.get("date") or "").strip()
+        if not date or len(date) < 8:
+            continue
+        # YYYY-MM-DD
+        if len(date) > 10:
+            date = date[:10]
+        mode = str(ex.get("mode") or ex.get("t") or "like").strip().lower()
+        item: dict = {
+            "id": str(ex.get("id") or _new_id12()).strip() or _new_id12(),
+            "date": date,
+            "note": str(ex.get("note") or "")[:80],
+        }
+        if mode in ("like", "as"):
+            item["t"] = "like"
+            ld = str(ex.get("like_dow") or "sun").strip().lower()[:3]
+            item["like_dow"] = next(
+                (k for k in _DOW_KEYS if k.startswith(ld) or ld.startswith(k[:3])),
+                "sun",
+            )
+        elif mode in ("inactive", "off", "block"):
+            item["t"] = "inactive"
+        elif mode == "profile":
+            item["t"] = "profile"
+            item["id_ref"] = str(ex.get("id_ref") or ex.get("profile_id") or ex.get("ref") or "").strip()
+            if not item["id_ref"]:
+                continue
+        elif mode == "preset":
+            item["t"] = "preset"
+            item["id_ref"] = str(ex.get("id_ref") or ex.get("preset_id") or ex.get("ref") or "").strip()
+            if not item["id_ref"]:
+                continue
+        elif mode == "custom":
+            item["t"] = "custom"
+            item["hours"] = _normalize_day_hours(ex.get("hours") or ex.get("day"))
+        else:
+            # full cell in exception
+            cell = _normalize_schedule_cell(ex)
+            item["t"] = cell.get("t") or "inactive"
+            if cell.get("id"):
+                item["id_ref"] = cell["id"]
+            if cell.get("like_dow"):
+                item["like_dow"] = cell["like_dow"]
+        exceptions.append(item)
+    # sort by date
+    exceptions.sort(key=lambda x: x.get("date") or "")
+    base["exceptions"] = exceptions
+    base["version"] = 1
+    return base
+
+
+_schedule_cfg: dict = {}
+
+
+def _load_schedule_cfg() -> None:
+    global _schedule_cfg
+    with _schedule_lock:
+        raw = _load_json(SCHEDULE_CFG_FILE, _DEFAULT_SCHEDULE)
+        _schedule_cfg = _normalize_schedule_cfg(raw if isinstance(raw, dict) else None)
+        try:
+            _save_json(SCHEDULE_CFG_FILE, _schedule_cfg)
+        except Exception:
+            pass
+
+
+def _save_schedule_cfg() -> None:
+    with _schedule_lock:
+        _save_json(SCHEDULE_CFG_FILE, _schedule_cfg)
+
+
+def get_schedule_cfg() -> dict:
+    with _schedule_lock:
+        return json.loads(json.dumps(_schedule_cfg))
+
+
+def set_schedule_cfg(raw: dict) -> dict:
+    global _schedule_cfg
+    cfg = _normalize_schedule_cfg(raw if isinstance(raw, dict) else None)
+    with _schedule_lock:
+        _schedule_cfg = cfg
+    _save_schedule_cfg()
+    return get_schedule_cfg()
+
+
+def _schedule_now(tz_name: str | None = None):
+    """Return timezone-aware datetime now for schedule resolution."""
+    name = (tz_name or "Europe/Moscow").strip() or "Europe/Moscow"
+    try:
+        from zoneinfo import ZoneInfo  # py3.9+
+
+        return datetime.now(ZoneInfo(name))
+    except Exception:
+        try:
+            # fallback: local wall clock
+            return datetime.now().astimezone()
+        except Exception:
+            return datetime.now()
+
+
+def _cell_key(cell: dict | None) -> str:
+    if not isinstance(cell, dict):
+        return "inactive"
+    t = str(cell.get("t") or "inactive")
+    if t in ("profile", "preset") and cell.get("id"):
+        return f"{t}:{cell.get('id')}"
+    if t == "like":
+        return f"like:{cell.get('like_dow') or 'sun'}"
+    return t
+
+
+def _cell_label(cell: dict | None) -> str:
+    if not isinstance(cell, dict):
+        return "inactive"
+    t = str(cell.get("t") or "inactive")
+    if t == "inactive":
+        return "inactive"
+    if t == "profile":
+        p = get_mode_profile(str(cell.get("id") or ""))
+        return f"profile · {(p or {}).get('name') or cell.get('id') or '?'}"
+    if t == "preset":
+        p = get_zone_preset(str(cell.get("id") or ""))
+        return f"preset · {(p or {}).get('name') or cell.get('id') or '?'}"
+    if t == "like":
+        return f"like · {cell.get('like_dow') or 'sun'}"
+    return t
+
+
+def _hours_until_change(day_cells: list, hour: int) -> int:
+    """Hours until cell key changes from current hour (1..24)."""
+    if not day_cells or hour < 0 or hour > 23:
+        return 1
+    cur = _cell_key(day_cells[hour] if hour < len(day_cells) else None)
+    n = 1
+    h = hour + 1
+    while h < 24:
+        k = _cell_key(day_cells[h] if h < len(day_cells) else None)
+        if k != cur:
+            break
+        n += 1
+        h += 1
+    return n
+
+
+def resolve_schedule_at(dt: datetime | None = None) -> dict:
+    """
+    Resolve schedule cell for a wall-clock moment.
+    Returns: enabled, active, cell, key, label, dow, hour, date, source,
+             until_ts, exception
+    """
+    cfg = get_schedule_cfg()
+    now = dt or _schedule_now(cfg.get("timezone"))
+    dow = _DOW_FROM_PY.get(int(now.weekday()), "mon")
+    hour = int(now.hour)
+    date_s = now.strftime("%Y-%m-%d")
+    out: dict = {
+        "ok": True,
+        "enabled": bool(cfg.get("enabled")),
+        "timezone": cfg.get("timezone"),
+        "date": date_s,
+        "dow": dow,
+        "hour": hour,
+        "active": False,
+        "cell": {"t": "inactive"},
+        "key": "inactive",
+        "label": "inactive",
+        "source": "disabled",
+        "until_ts": None,
+        "exception": None,
+    }
+    if not cfg.get("enabled"):
+        return out
+
+    weekly = cfg.get("weekly") or {}
+    day_cells = list(weekly.get(dow) or [{"t": "inactive"}] * 24)
+    source = "weekly"
+    ex_hit = None
+
+    for ex in cfg.get("exceptions") or []:
+        if not isinstance(ex, dict):
+            continue
+        if str(ex.get("date") or "") != date_s:
+            continue
+        ex_hit = ex
+        et = str(ex.get("t") or "like")
+        if et == "like":
+            ld = str(ex.get("like_dow") or "sun")
+            day_cells = list(weekly.get(ld) or day_cells)
+            source = f"exception:like:{ld}"
+        elif et == "inactive":
+            day_cells = [{"t": "inactive"}] * 24
+            source = "exception:inactive"
+        elif et == "profile":
+            day_cells = [{"t": "profile", "id": ex.get("id_ref")}] * 24
+            source = "exception:profile"
+        elif et == "preset":
+            day_cells = [{"t": "preset", "id": ex.get("id_ref")}] * 24
+            source = "exception:preset"
+        elif et == "custom":
+            day_cells = list(ex.get("hours") or day_cells)
+            source = "exception:custom"
+        break
+
+    cell = _normalize_schedule_cell(
+        day_cells[hour] if hour < len(day_cells) else cfg.get("default_cell")
+    )
+    # resolve nested like in cell (rare)
+    if cell.get("t") == "like":
+        ld = str(cell.get("like_dow") or "sun")
+        alt = (weekly.get(ld) or day_cells)
+        cell = _normalize_schedule_cell(alt[hour] if hour < len(alt) else cell)
+        source = source + f"+like:{ld}"
+
+    hours_left = _hours_until_change(day_cells, hour)
+    # until next hour boundary * hours_left
+    try:
+        until = now.replace(minute=0, second=0, microsecond=0)
+        from datetime import timedelta
+
+        until = until + timedelta(hours=hours_left)
+        until_ts = until.timestamp()
+    except Exception:
+        until_ts = None
+
+    out.update(
+        {
+            "active": True,
+            "cell": cell,
+            "key": _cell_key(cell),
+            "label": _cell_label(cell),
+            "source": source,
+            "until_ts": until_ts,
+            "exception": ex_hit,
+            "day_cells": day_cells,  # for UI preview of today
+        }
+    )
+    return out
+
+
+def get_schedule_status() -> dict:
+    """Public status for UI / policy."""
+    r = resolve_schedule_at()
+    # drop heavy day_cells in light status unless needed
+    light = {k: v for k, v in r.items() if k != "day_cells"}
+    with _policy_lock:
+        light["policy_key"] = _policy_ctrl.get("schedule_key")
+        light["policy_label"] = _policy_ctrl.get("schedule_label")
+    return light
 
 
 # ── Mining pool presets (named url/user/pass snapshots) ─────────────────────
@@ -1255,8 +1931,15 @@ FILTRATION_BACKENDS: list[dict] = [
         "label": "Home Assistant",
         "hint": "REST · long-lived token · switch/entity",
     },
+    {
+        "id": "tuya",
+        "label": "Tuya / Smart Life (LAN)",
+        "hint": "LAN TCP:6668 · email/password app → local_key · IP розетки",
+    },
 ]
 _FILTRATION_BACKEND_IDS = {b["id"] for b in FILTRATION_BACKENDS}
+# Devices also accept smartlife alias for tuya
+_DEVICE_BACKEND_EXTRA = {"smartlife", "smart_life"}
 
 DEFAULT_FILTRATION_CFG: dict = {
     "enabled": False,
@@ -2756,7 +3439,9 @@ def _new_device_id() -> str:
 def _device_backend_fields_from_raw(raw: dict) -> dict:
     """Normalize connection fields shared with filtration backends."""
     be = str(raw.get("backend") or "tapo").strip().lower()
-    if be not in _FILTRATION_BACKEND_IDS:
+    if be in ("smartlife", "smart_life"):
+        be = "tuya"
+    if be not in _FILTRATION_BACKEND_IDS and be not in _DEVICE_BACKEND_EXTRA:
         be = "tapo"
     out: dict = {
         "backend": be,
@@ -2778,7 +3463,33 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         "ha_url": str(raw.get("ha_url") or "").strip()[:300],
         "ha_token": str(raw.get("ha_token") or ""),
         "ha_entity_id": str(raw.get("ha_entity_id") or "").strip()[:120],
+        # Tuya / Smart Life (LAN via tinytuya; key from mobile login)
+        "tuya_ecosystem": "smartlife",
+        "tuya_country": "7",
+        "tuya_region": "eu",
+        "tuya_local_key": str(raw.get("tuya_local_key") or raw.get("local_key") or ""),
+        "tuya_version": 3.4,
+        "tuya_switch_dps": 1,
     }
+    eco = str(raw.get("tuya_ecosystem") or raw.get("ecosystem") or "smartlife").strip().lower()
+    if eco in ("smart_life", "sl"):
+        eco = "smartlife"
+    if eco in ("tuya_smart", "tuyasmart", "793"):
+        eco = "tuya"
+    if eco not in ("smartlife", "tuya", "classic"):
+        eco = "smartlife"
+    out["tuya_ecosystem"] = eco
+    out["tuya_country"] = str(raw.get("tuya_country") or raw.get("country") or "7").strip()[:8] or "7"
+    reg = str(raw.get("tuya_region") or raw.get("region") or "eu").strip().lower()
+    out["tuya_region"] = reg if reg in ("eu", "us", "cn", "in") else "eu"
+    try:
+        out["tuya_version"] = float(raw.get("tuya_version") or raw.get("version") or 3.4)
+    except (TypeError, ValueError):
+        out["tuya_version"] = 3.4
+    try:
+        out["tuya_switch_dps"] = max(1, min(255, int(raw.get("tuya_switch_dps") or raw.get("switch_dps") or 1)))
+    except (TypeError, ValueError):
+        out["tuya_switch_dps"] = 1
     try:
         out["ewelink_port"] = max(1, min(65535, int(raw.get("ewelink_port") or 8081)))
     except (TypeError, ValueError):
@@ -2903,16 +3614,24 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
         for d in devices:
             d["password_set"] = bool(d.get("password"))
             d["ha_token_set"] = bool(d.get("ha_token"))
+            d["tuya_local_key_set"] = bool(d.get("tuya_local_key"))
             if d.get("password"):
                 d["password"] = ""
             if d.get("ha_token"):
                 d["ha_token"] = ""
+            if d.get("tuya_local_key"):
+                d["tuya_local_key"] = ""
     return {
         "version": 1,
         "devices": devices,
         "backends": list_filtration_backends(),
         "reserved_aliases": sorted(DEVICE_ALIAS_RESERVED),
         "icons": list(DEVICE_ICON_DEFAULTS),
+        "tuya_ecosystems": [
+            {"id": "smartlife", "label": "Smart Life"},
+            {"id": "tuya", "label": "Tuya Smart"},
+            {"id": "classic", "label": "Tuya Smart (classic)"},
+        ],
     }
 
 
@@ -2982,6 +3701,9 @@ def upsert_device(raw: dict) -> dict:
         tok = merged.get("ha_token")
         if tok is None or str(tok).strip() in ("", "••••", "****", "***"):
             merged["ha_token"] = existing.get("ha_token") or ""
+        tlk = merged.get("tuya_local_key") or merged.get("local_key")
+        if tlk is None or str(tlk).strip() in ("", "••••", "****", "***"):
+            merged["tuya_local_key"] = existing.get("tuya_local_key") or ""
         # preserve runtime unless explicitly provided
         for rk in ("last_on", "last_error", "last_ok_ts", "last_action"):
             if rk not in merged or merged.get(rk) is None:
@@ -3066,6 +3788,8 @@ def _device_cfg_snapshot(did: str) -> dict | None:
 def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
     """on=None read; else set physical state. Reuses filtration backends."""
     be = str(cfg.get("backend") or "tapo").lower()
+    if be in ("smartlife", "smart_life"):
+        be = "tuya"
     if be == "tapo":
         return _filtration_backend_tapo(on, cfg)
     if be in ("ewelink", "sonoff", "sonoff_diy"):
@@ -3076,6 +3800,8 @@ def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
         return _filtration_backend_shelly(on, cfg)
     if be in ("homeassistant", "ha"):
         return _filtration_backend_ha(on, cfg)
+    if be == "tuya":
+        return _device_backend_tuya(on, cfg)
     raise ValueError(f"unknown backend: {be}")
 
 
@@ -3089,6 +3815,8 @@ def _device_physical_to_logical(physical_on: bool, inverted: bool) -> bool:
 
 def _device_ready(cfg: dict) -> bool:
     be = str(cfg.get("backend") or "tapo").lower()
+    if be in ("smartlife", "smart_life"):
+        be = "tuya"
     if be == "tapo":
         return bool(str(cfg.get("ip") or "").strip())
     if be == "ewelink":
@@ -3107,7 +3835,236 @@ def _device_ready(cfg: dict) -> bool:
             str(cfg.get("ha_url") or "").strip()
             and str(cfg.get("ha_entity_id") or "").strip()
         )
+    if be == "tuya":
+        return bool(
+            str(cfg.get("ip") or "").strip()
+            and str(cfg.get("device_id") or "").strip()
+            and (
+                str(cfg.get("tuya_local_key") or "").strip()
+                or (
+                    str(cfg.get("email") or "").strip()
+                    and str(cfg.get("password") or "").strip()
+                )
+            )
+        )
     return False
+
+
+# ── Tuya / Smart Life LAN (tinytuya + mobile login for local_key) ────────────
+
+def _tuya_ensure_local_key(cfg: dict) -> str:
+    """
+    Return local_key for device. Refresh via mobile API if missing
+    and email/password present. May update store.
+    """
+    key = str(cfg.get("tuya_local_key") or "").strip()
+    if key:
+        return key
+    email = str(cfg.get("email") or "").strip()
+    password = str(cfg.get("password") or "")
+    if not email or not password:
+        raise RuntimeError(
+            "Tuya: нужен local_key или email/password Smart Life / Tuya Smart"
+        )
+    try:
+        from tuya_mobile import fetch_devices_with_keys  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "tuya_mobile module missing — reinstall poolheat package"
+        ) from e
+    dev_id = str(cfg.get("device_id") or "").strip()
+    devices = fetch_devices_with_keys(
+        email,
+        password,
+        country=str(cfg.get("tuya_country") or "7"),
+        region=str(cfg.get("tuya_region") or "eu"),
+        ecosystem=str(cfg.get("tuya_ecosystem") or "smartlife"),
+    )
+    found = None
+    for d in devices:
+        if not isinstance(d, dict):
+            continue
+        if dev_id and str(d.get("id") or "") == dev_id:
+            found = d
+            break
+    if not found and devices:
+        # single device account — take first with key
+        for d in devices:
+            if d.get("key"):
+                found = d
+                break
+    if not found or not found.get("key"):
+        raise RuntimeError(
+            f"Tuya: local_key не найден для device_id={dev_id or '—'} "
+            f"(аккаунт: {len(devices)} устр.)"
+        )
+    key = str(found["key"])
+    # cache on device
+    did = str(cfg.get("id") or "")
+    if did:
+        def _mut(d):
+            d["tuya_local_key"] = key
+            if found.get("id") and not d.get("device_id"):
+                d["device_id"] = found.get("id")
+            if found.get("id"):
+                d["device_id"] = found.get("id")
+
+        try:
+            _device_update_in_store(did, _mut)
+        except Exception:
+            pass
+    cfg["tuya_local_key"] = key
+    if found.get("id"):
+        cfg["device_id"] = found.get("id")
+    return key
+
+
+def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
+    """
+    LAN control via tinytuya (TCP 6668).
+    local_key from config or mobile login (email/password + ecosystem).
+    """
+    ip = str(cfg.get("ip") or "").strip()
+    if not ip:
+        raise RuntimeError("Tuya IP не настроен")
+    dev_id = str(cfg.get("device_id") or "").strip()
+    if not dev_id:
+        raise RuntimeError("Tuya device_id не настроен")
+    try:
+        import tinytuya  # type: ignore
+    except ImportError as e:
+        raise RuntimeError(
+            "tinytuya не установлен (pip install tinytuya)"
+        ) from e
+    local_key = _tuya_ensure_local_key(cfg)
+    try:
+        ver = float(cfg.get("tuya_version") or 3.4)
+    except (TypeError, ValueError):
+        ver = 3.4
+    try:
+        switch_dps = int(cfg.get("tuya_switch_dps") or 1)
+    except (TypeError, ValueError):
+        switch_dps = 1
+    d = tinytuya.OutletDevice(
+        dev_id=dev_id,
+        address=ip,
+        local_key=local_key,
+        version=ver,
+    )
+    d.set_socketTimeout(6)
+    d.set_socketRetryLimit(2)
+    if on is None:
+        st = d.status()
+        if isinstance(st, dict) and (st.get("Error") or st.get("Err")):
+            err = st.get("Err")
+            msg = st.get("Error") or st.get("Payload")
+            if str(err) == "914":
+                # key invalid — clear cache so next try re-logins
+                did = str(cfg.get("id") or "")
+                if did:
+                    def _clr(x):
+                        x["tuya_local_key"] = ""
+                    try:
+                        _device_update_in_store(did, _clr)
+                    except Exception:
+                        pass
+                raise RuntimeError(
+                    f"Tuya Err 914 (key/version) — обновите local_key: {msg}"
+                )
+            raise RuntimeError(f"Tuya status Err={err}: {msg}")
+        dps = (st or {}).get("dps") or {}
+        key = str(switch_dps) if str(switch_dps) in dps else switch_dps
+        val = dps.get(key)
+        if val is None and dps:
+            # fallback dps 1
+            val = dps.get("1") if "1" in dps else dps.get(1)
+        return {
+            "on": bool(val) if val is not None else None,
+            "backend": "tuya",
+            "ip": ip,
+            "dps": dps,
+            "device_id": dev_id,
+        }
+    # set
+    res = d.set_status(bool(on), switch=switch_dps)
+    if isinstance(res, dict) and (res.get("Error") or res.get("Err")):
+        err = res.get("Err")
+        msg = res.get("Error") or res.get("Payload")
+        raise RuntimeError(f"Tuya set Err={err}: {msg}")
+    # verify
+    try:
+        st = d.status()
+        dps = (st or {}).get("dps") or {}
+        key = str(switch_dps) if str(switch_dps) in dps else switch_dps
+        val = dps.get(key, on)
+        got = bool(val)
+    except Exception:
+        got = bool(on)
+    return {
+        "on": got,
+        "backend": "tuya",
+        "ip": ip,
+        "device_id": dev_id,
+    }
+
+
+def tuya_refresh_device_keys(
+    *,
+    email: str,
+    password: str,
+    country: str = "7",
+    region: str = "eu",
+    ecosystem: str = "smartlife",
+    device_store_id: str | None = None,
+) -> dict:
+    """
+    Login to Smart Life / Tuya mobile API and return device list with local_keys.
+    Optionally update stored device local_key when device_store_id given.
+    """
+    from tuya_mobile import fetch_devices_with_keys, ecosystems  # type: ignore
+
+    devices = fetch_devices_with_keys(
+        email,
+        password,
+        country=country,
+        region=region,
+        ecosystem=ecosystem,
+    )
+    # if editing a device — cache key for matching device_id
+    if device_store_id:
+        cfg = _device_cfg_snapshot(device_store_id)
+        if cfg:
+            want = str(cfg.get("device_id") or "").strip()
+            for d in devices:
+                if want and str(d.get("id") or "") == want and d.get("key"):
+                    def _mut(x, key=d["key"], did=d.get("id")):
+                        x["tuya_local_key"] = key
+                        if did:
+                            x["device_id"] = did
+                    _device_update_in_store(device_store_id, _mut)
+                    break
+    # never return full keys to UI? User needs to pick device — return keys
+    # redacted form for list display optional; for picker we need id/name/key set flag
+    safe = []
+    for d in devices:
+        safe.append(
+            {
+                "name": d.get("name"),
+                "id": d.get("id"),
+                "key_set": bool(d.get("key")),
+                "key": d.get("key"),  # needed to store when user picks
+                "product_id": d.get("product_id"),
+                "home": d.get("home"),
+                "online": d.get("online"),
+                "mac": d.get("mac"),
+            }
+        )
+    return {
+        "ok": True,
+        "devices": safe,
+        "count": len(safe),
+        "ecosystems": ecosystems(),
+    }
 
 
 def _mining_work_state() -> str | None:
@@ -6583,43 +7540,75 @@ def _wmo_text(code: int | None, lang: str = "ru") -> str:
     return table.get(int(code), "—")
 
 
-def weather_search_cities(query: str, count: int = 12) -> list[dict]:
+def weather_search_cities(
+    query: str, count: int = 12, *, language: str | None = None
+) -> list[dict]:
+    """
+    Open-Meteo geocoding. Tries preferred language, then fallbacks (en/ru)
+    so Latin and Cyrillic queries both return hits.
+    """
     q = (query or "").strip()
     if len(q) < 2:
         return []
     count = max(1, min(25, int(count)))
-    url = (
-        "https://geocoding-api.open-meteo.com/v1/search?"
-        + urllib.parse.urlencode(
-            {"name": q, "count": count, "language": "ru", "format": "json"}
+    lang0 = (language or "ru").strip().lower()[:5] or "ru"
+    # try preferred + common fallbacks (dedupe)
+    langs: list[str] = []
+    for L in (lang0, "en", "ru"):
+        if L and L not in langs:
+            langs.append(L)
+
+    def _parse(data: dict) -> list[dict]:
+        results = data.get("results") or []
+        out: list[dict] = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            try:
+                lat = float(r["latitude"])
+                lon = float(r["longitude"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            out.append(
+                {
+                    "city": r.get("name") or q,
+                    "country": r.get("country_code") or r.get("country") or "",
+                    "admin1": r.get("admin1") or "",
+                    "latitude": lat,
+                    "longitude": lon,
+                    "timezone": r.get("timezone") or "auto",
+                    "label": ", ".join(
+                        x
+                        for x in [
+                            r.get("name"),
+                            r.get("admin1"),
+                            r.get("country_code") or r.get("country"),
+                        ]
+                        if x
+                    ),
+                }
+            )
+        return out
+
+    last_err: Exception | None = None
+    for lang in langs:
+        url = (
+            "https://geocoding-api.open-meteo.com/v1/search?"
+            + urllib.parse.urlencode(
+                {"name": q, "count": count, "language": lang, "format": "json"}
+            )
         )
-    )
-    data = _http_get_json(url)
-    results = data.get("results") or []
-    out: list[dict] = []
-    for r in results:
-        if not isinstance(r, dict):
+        try:
+            data = _http_get_json(url)
+            out = _parse(data if isinstance(data, dict) else {})
+            if out:
+                return out
+        except Exception as e:
+            last_err = e
             continue
-        out.append(
-            {
-                "city": r.get("name") or q,
-                "country": r.get("country_code") or r.get("country") or "",
-                "admin1": r.get("admin1") or "",
-                "latitude": float(r["latitude"]),
-                "longitude": float(r["longitude"]),
-                "timezone": r.get("timezone") or "auto",
-                "label": ", ".join(
-                    x
-                    for x in [
-                        r.get("name"),
-                        r.get("admin1"),
-                        r.get("country_code") or r.get("country"),
-                    ]
-                    if x
-                ),
-            }
-        )
-    return out
+    if last_err is not None:
+        raise last_err
+    return []
 
 
 def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> dict:
@@ -6728,6 +7717,8 @@ _load_weather_cfg()
 _load_pool_cfg()
 _load_zone_cfg()
 _load_zone_presets()
+_load_mode_profiles()
+_load_schedule_cfg()
 _load_pool_presets()
 _load_filtration_cfg()
 _load_devices_cfg()
@@ -19320,6 +20311,13 @@ def get_policy_status() -> dict:
         "override_until_ts": ov_until if ov_until > now else None,
         "override_remaining_sec": ov_rem,
         "warmup_since_ts": warmup_since,
+        "schedule": {
+            "enabled": bool(ctrl.get("schedule_enabled")),
+            "key": ctrl.get("schedule_key"),
+            "label": ctrl.get("schedule_label"),
+            "cell": ctrl.get("schedule_cell"),
+            "until_ts": ctrl.get("schedule_until_ts"),
+        },
         "thresholds": {
             "t0": zc.get("t0"),
             "t1": zc.get("t1"),
@@ -19376,7 +20374,31 @@ def policy_tick() -> None:
     chip_max = _f(live.get("chip_max"))
     upfreq_block = _upfreq_block(live)
 
+    # Schedule resolve (timezone-aware). May soft-override zone map for this tick.
+    sched = resolve_schedule_at()
+    sched_enabled = bool(sched.get("enabled") and sched.get("active"))
+    sched_cell = sched.get("cell") if isinstance(sched.get("cell"), dict) else {"t": "inactive"}
+    sched_key = str(sched.get("key") or "inactive")
+    sched_label = str(sched.get("label") or sched_key)
+    sched_until = sched.get("until_ts")
+    with _policy_lock:
+        _policy_ctrl["schedule_enabled"] = sched_enabled
+        _policy_ctrl["schedule_cell"] = sched_cell
+        _policy_ctrl["schedule_key"] = sched_key if sched_enabled else None
+        _policy_ctrl["schedule_label"] = sched_label if sched_enabled else None
+        _policy_ctrl["schedule_until_ts"] = sched_until if sched_enabled else None
+
     zc = get_zone_cfg()
+    # Soft-apply map preset for this tick when schedule says preset (no disk write)
+    if sched_enabled and str(sched_cell.get("t") or "") == "preset":
+        pid = str(sched_cell.get("id") or "").strip()
+        if pid:
+            pp = get_zone_preset(pid)
+            if pp and isinstance(pp.get("config"), dict):
+                try:
+                    zc = _coerce_zone_config_dict(pp.get("config") or {})
+                except Exception:
+                    pass
     t0 = float(zc.get("t0", 24))
     t1 = float(zc.get("t1", 26))
     t2 = float(zc.get("t2", 28))
@@ -19469,7 +20491,61 @@ def policy_tick() -> None:
             with _policy_lock:
                 _policy_ctrl["last_key"] = "override"
             last_key = "override"
+    elif sched_enabled and str(sched_cell.get("t") or "") in ("inactive", "profile"):
+        # Schedule owns ASIC setpoint (zones silent). Critical/FS/Override above.
+        st = str(sched_cell.get("t") or "inactive")
+        if st == "inactive":
+            profile = {
+                "work_en": True,
+                "work": "suspend",
+                "mode_en": False,
+                "lim_en": False,
+                "pct_en": False,
+            }
+            desired = "schedule:inactive"
+        else:
+            mp = get_mode_profile(str(sched_cell.get("id") or ""))
+            if not mp:
+                # missing profile → safe suspend
+                profile = {
+                    "work_en": True,
+                    "work": "suspend",
+                    "mode_en": False,
+                    "lim_en": False,
+                    "pct_en": False,
+                }
+                desired = "schedule:inactive"
+                sched_label = f"profile missing · {sched_cell.get('id')}"
+            else:
+                profile = mp
+                desired = f"schedule:profile:{mp.get('id')}"
+        sk = f"sched:{desired}"
+        if dry:
+            # preview only
+            would = _diff_commands_vs_live(
+                _zone_entry_commands(profile), live, limit_tol_w=limit_tol
+            )
+            dry_tag = "dry:" + sk
+            if last_key != dry_tag:
+                if would:
+                    _policy_log(
+                        "info",
+                        f"DRY_RUN would schedule {sched_label}: "
+                        + ", ".join(f"{a}={v}" for a, v in would)
+                        + " · no write (Dry Run)",
+                    )
+                with _policy_lock:
+                    _policy_ctrl["last_key"] = dry_tag
+                last_key = dry_tag
+            desired = None
+            profile = None
+        elif last_key != sk:
+            _policy_log("info", f"SCHEDULE · {sched_label}")
+            with _policy_lock:
+                _policy_ctrl["last_key"] = sk
+            last_key = sk
     elif not dry:
+        # schedule preset: use soft-overridden zc/zones; or no schedule → normal map
         if warmup_active and heat_zone == "z0":
             # cannot go Normal heat while upfreq incomplete
             desired = None
@@ -19486,6 +20562,17 @@ def policy_tick() -> None:
         else:
             desired = heat_zone
             profile = zones.get(heat_zone)
+            if sched_enabled and str(sched_cell.get("t") or "") == "preset":
+                sk = f"sched:preset:{sched_cell.get('id')}:{heat_zone}"
+                if last_key != sk and last_key != heat_zone:
+                    _policy_log(
+                        "info",
+                        f"SCHEDULE · {sched_label} · zone {heat_zone}",
+                        heat_zone=heat_zone,
+                    )
+                    with _policy_lock:
+                        _policy_ctrl["last_key"] = sk
+                    last_key = sk
             if warmup_active and warmup_expired:
                 pass  # allow full profile after max wait
     else:
@@ -19886,6 +20973,21 @@ class Handler(SimpleHTTPRequestHandler):
             self._api_zone_presets_get()
             return
         if path in (
+            "/api/mode/profiles",
+            "/api/mode_profiles",
+            "/api/profiles",
+        ):
+            self._json_response(200, list_mode_profiles())
+            return
+        if path in ("/api/schedule", "/api/schedule/config"):
+            self._json_response(
+                200, {"ok": True, "config": get_schedule_cfg(), "status": get_schedule_status()}
+            )
+            return
+        if path in ("/api/schedule/status",):
+            self._json_response(200, get_schedule_status())
+            return
+        if path in (
             "/api/miner/pools/presets",
             "/api/pools/presets",
             "/api/pool-presets",
@@ -20122,6 +21224,14 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/devices/test":
             self._api_devices_test()
             return
+        if path in (
+            "/api/devices/tuya/login",
+            "/api/devices/tuya/devices",
+            "/api/tuya/devices",
+            "/api/tuya/login",
+        ):
+            self._api_tuya_devices_login()
+            return
         if path == "/api/weather/config":
             self._api_weather_config_post()
             return
@@ -20142,6 +21252,16 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/zone/presets", "/api/zone/preset"):
             self._api_zone_presets_post()
+            return
+        if path in (
+            "/api/mode/profiles",
+            "/api/mode_profiles",
+            "/api/profiles",
+        ):
+            self._api_mode_profiles_post()
+            return
+        if path in ("/api/schedule", "/api/schedule/config"):
+            self._api_schedule_post()
             return
         if path in (
             "/api/miner/pools/presets",
@@ -21040,6 +22160,42 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_tuya_devices_login(self) -> None:
+        """
+        POST {email, password, country?, region?, ecosystem?, device_id?}
+        → list of cloud devices with local_key (Smart Life / Tuya mobile API).
+        If device_id (poolheat store id) given, cache key on that device.
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected object")
+            email = str(req.get("email") or "").strip()
+            password = str(req.get("password") or "")
+            # allow empty password if device already has one stored
+            store_id = str(req.get("device_id") or req.get("id") or "").strip()
+            if (not password or password in ("••••", "****")) and store_id:
+                cfg = _device_cfg_snapshot(store_id)
+                if cfg and cfg.get("password"):
+                    password = str(cfg.get("password"))
+                if cfg and not email:
+                    email = str(cfg.get("email") or "")
+            if not email or not password:
+                raise ValueError("email and password required")
+            out = tuya_refresh_device_keys(
+                email=email,
+                password=password,
+                country=str(req.get("country") or req.get("tuya_country") or "7"),
+                region=str(req.get("region") or req.get("tuya_region") or "eu"),
+                ecosystem=str(
+                    req.get("ecosystem") or req.get("tuya_ecosystem") or "smartlife"
+                ),
+                device_store_id=store_id or None,
+            )
+            self._json_response(200, out)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_weather_get(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
         force = (qs.get("force", ["0"])[0] or "0") in ("1", "true", "yes")
@@ -21083,12 +22239,13 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_weather_search(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
         q = (qs.get("q", [""])[0] or "").strip()
+        lang = (qs.get("lang", [""])[0] or qs.get("language", [""])[0] or "").strip()
         try:
             count = int(qs.get("count", ["12"])[0] or 12)
         except ValueError:
             count = 12
         try:
-            results = weather_search_cities(q, count=count)
+            results = weather_search_cities(q, count=count, language=lang or None)
             self._json_response(200, {"ok": True, "query": q, "results": results})
         except Exception as e:
             self._json_response(502, {"ok": False, "error": str(e), "results": []})
@@ -21360,6 +22517,98 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api_zone_presets_get(self) -> None:
         self._json_response(200, list_zone_presets())
+
+    def _api_mode_profiles_post(self) -> None:
+        """
+        Mode profiles:
+          {action: list}
+          {action: get, id}
+          {action: save|create, name, mode_en, mode, work_en, work, lim_en, lim, …}
+          {action: update, id, …}
+          {action: delete, id}
+          {action: apply, id, password?}
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            action = str(req.get("action") or "list").strip().lower()
+            if action in ("list", "ls"):
+                self._json_response(200, list_mode_profiles())
+                return
+            if action in ("get", "one"):
+                p = get_mode_profile(str(req.get("id") or ""))
+                if not p:
+                    raise ValueError("profile not found")
+                self._json_response(200, {"ok": True, "profile": p})
+                return
+            if action in ("save", "create", "add"):
+                data = dict(req)
+                data.pop("action", None)
+                out = save_mode_profile(data, profile_id=None)
+                self._json_response(200, out)
+                return
+            if action in ("update", "edit"):
+                pid = str(req.get("id") or "").strip()
+                if not pid:
+                    raise ValueError("id required")
+                data = dict(req)
+                data.pop("action", None)
+                out = save_mode_profile(data, profile_id=pid)
+                self._json_response(200, out)
+                return
+            if action in ("delete", "remove", "del"):
+                out = delete_mode_profile(str(req.get("id") or ""))
+                self._json_response(200, out)
+                return
+            if action in ("apply", "run"):
+                pw = req.get("password") or req.get("api_password")
+                out = apply_mode_profile(
+                    str(req.get("id") or ""),
+                    password=str(pw) if pw is not None else None,
+                )
+                self._json_response(200, out)
+                return
+            raise ValueError(f"unknown action: {action}")
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_schedule_post(self) -> None:
+        """
+        Schedule:
+          {action: get|status}
+          {action: save|set, config|{enabled, weekly, exceptions, timezone}}
+          body may be the config object itself (with enabled/weekly).
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            action = str(req.get("action") or "save").strip().lower()
+            if action in ("get", "status", "list"):
+                self._json_response(
+                    200,
+                    {
+                        "ok": True,
+                        "config": get_schedule_cfg(),
+                        "status": get_schedule_status(),
+                    },
+                )
+                return
+            if action in ("save", "set", "update", "put"):
+                cfg_in = req.get("config") if isinstance(req.get("config"), dict) else req
+                # strip action key if bare config
+                if "action" in cfg_in:
+                    cfg_in = {k: v for k, v in cfg_in.items() if k != "action"}
+                cfg = set_schedule_cfg(cfg_in)
+                self._json_response(
+                    200,
+                    {"ok": True, "config": cfg, "status": get_schedule_status()},
+                )
+                return
+            raise ValueError(f"unknown action: {action}")
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_pool_presets_get(self) -> None:
         self._json_response(200, list_pool_presets(include_secrets=True))

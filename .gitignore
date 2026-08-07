@@ -24,3 +24,8 @@ tools/whatsminer-proxy/pcap/
 tools/whatsminer-proxy/firmware/
 tools/whatsminer-proxy/logs/
 tools/whatsminer-proxy/*.pcap*
+
+# Tuya local secrets
+tools/tuya-local/plg1.env
+tools/tuya-local/devices.json
+tools/tuya-local/tuya-raw.json
