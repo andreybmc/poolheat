@@ -6812,7 +6812,7 @@
                   <input type="text" id="sensor-unit" value="°C" autocomplete="off" />
                 </label>
               </div>
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
                 <label class="check">
                   <input type="checkbox" id="sensor-enabled" checked />
                   <span data-i18n="check.sensor_enabled">Enabled</span>
@@ -6821,6 +6821,12 @@
                   <input type="checkbox" id="sensor-show-status" />
                   <span><span data-i18n="check.sensor_status_bot">Status in bot</span>
                     <span class="desc" data-i18n="check.sensor_status_bot_desc">show in Telegram /status</span>
+                  </span>
+                </label>
+                <label class="check">
+                  <input type="checkbox" id="sensor-history" />
+                  <span><span data-i18n="check.sensor_history">History</span>
+                    <span class="desc" data-i18n="check.sensor_history_desc">write samples to history.db</span>
                   </span>
                 </label>
               </div>
@@ -8426,6 +8432,9 @@
         "check.sensor_enabled": "Enabled",
         "check.sensor_status_bot": "Status in bot",
         "check.sensor_status_bot_desc": "show in Telegram /status",
+        "check.sensor_history": "History",
+        "check.sensor_history_desc": "write samples to history.db",
+        "sensor.history_tag": "history",
         "sensor.status_tag": "status",
         "btn.move_up": "↑",
         "btn.move_down": "↓",
@@ -9151,6 +9160,9 @@
         "check.sensor_enabled": "Включён",
         "check.sensor_status_bot": "Статус в боте",
         "check.sensor_status_bot_desc": "показывать в Telegram /status",
+        "check.sensor_history": "История",
+        "check.sensor_history_desc": "писать сэмплы в history.db",
+        "sensor.history_tag": "история",
         "sensor.status_tag": "статус",
         "btn.move_up": "↑",
         "btn.move_down": "↓",
@@ -25835,6 +25847,7 @@
           const title = sensorDisplayName(s);
           const tags = [];
           if (s.show_in_status) tags.push(t("sensor.status_tag", "status"));
+          if (s.history) tags.push(t("sensor.history_tag", "history"));
           const tagTxt = tags.length ? " · " + tags.join(" · ") : "";
           const idEsc = String(s.id).replace(/"/g, "");
           return (
@@ -26367,6 +26380,7 @@
         unit: "°C",
         enabled: true,
         show_in_status: false,
+        history: false,
         sources: [{ type: "live", field: "liquid", transform: { type: "none" } }],
       };
       document.getElementById("sensor-id").value = s.id || "";
@@ -26382,6 +26396,8 @@
       document.getElementById("sensor-enabled").checked = s.enabled !== false;
       const showSt = document.getElementById("sensor-show-status");
       if (showSt) showSt.checked = !!s.show_in_status;
+      const histEl = document.getElementById("sensor-history");
+      if (histEl) histEl.checked = !!s.history;
       document.getElementById("sensor-note").value = s.note || "";
       // migrate legacy sensor-level transform onto first source for editor
       let sources =
@@ -26487,6 +26503,7 @@
         unit: (document.getElementById("sensor-unit")?.value || "°C").trim(),
         enabled: !!document.getElementById("sensor-enabled")?.checked,
         show_in_status: !!document.getElementById("sensor-show-status")?.checked,
+        history: !!document.getElementById("sensor-history")?.checked,
         note: document.getElementById("sensor-note")?.value || "",
         sources,
       };

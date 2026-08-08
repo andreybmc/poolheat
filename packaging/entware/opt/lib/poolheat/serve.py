@@ -7825,6 +7825,16 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
     show_in_status = _as_bool(
         raw.get("show_in_status", raw.get("status_in_bot", False))
     )
+    # Persist samples to history.db (sensor_samples) for charts / export
+    history = _as_bool(
+        raw.get(
+            "history",
+            raw.get(
+                "save_history",
+                raw.get("collect_history", raw.get("record_history", False)),
+            ),
+        )
+    )
     sources_raw = raw.get("sources")
     if not isinstance(sources_raw, list):
         sources_raw = []
@@ -7861,6 +7871,7 @@ def _normalize_sensor(raw: dict | None) -> dict | None:
         "unit": unit,
         "enabled": enabled,
         "show_in_status": show_in_status,
+        "history": history,
         "sources": sources,
         "note": str(raw.get("note") or "")[:500],
     }
@@ -8827,6 +8838,21 @@ def init_db() -> None:
                         )
                     except Exception:
                         pass
+            # User sensors with history=true (Peripherals → Sensors)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sensor_samples (
+                    ts REAL NOT NULL,
+                    alias TEXT NOT NULL,
+                    value REAL,
+                    PRIMARY KEY (ts, alias)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sensor_samples_alias_ts "
+                "ON sensor_samples(alias, ts)"
+            )
             # Miner error journal (last 100 kept by app logic)
             conn.execute(
                 """
@@ -9377,8 +9403,16 @@ def prune_old(retention_days: int) -> int:
         conn = _db_connect()
         try:
             cur = conn.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
+            n = cur.rowcount
+            try:
+                cur2 = conn.execute(
+                    "DELETE FROM sensor_samples WHERE ts < ?", (cutoff,)
+                )
+                n += cur2.rowcount
+            except Exception:
+                pass
             conn.commit()
-            return cur.rowcount
+            return n
         finally:
             conn.close()
 
@@ -9389,8 +9423,13 @@ def clear_history_samples() -> int:
         conn = _db_connect()
         try:
             cur = conn.execute("DELETE FROM samples")
-            conn.commit()
             n = cur.rowcount
+            try:
+                cur2 = conn.execute("DELETE FROM sensor_samples")
+                n += cur2.rowcount
+            except Exception:
+                pass
+            conn.commit()
             try:
                 conn.execute("VACUUM")
             except Exception:
@@ -9398,6 +9437,87 @@ def clear_history_samples() -> int:
             return n
         finally:
             conn.close()
+
+
+def _history_sensor_values(live: dict | None) -> dict[str, float]:
+    """Evaluate user sensors with history=true → {alias: value}."""
+    out: dict[str, float] = {}
+    try:
+        sensors = list_sensors()
+    except Exception:
+        return out
+    for s in sensors:
+        if not s or not s.get("history"):
+            continue
+        if s.get("enabled", True) is False:
+            continue
+        alias = str(s.get("alias") or "").strip().lower()
+        if not alias or not _sensor_alias_ok(alias):
+            continue
+        try:
+            ev = evaluate_sensor(s, live=live if isinstance(live, dict) else None)
+            if not ev or not ev.get("ok"):
+                continue
+            v = ev.get("value")
+            if v is None or v == "":
+                continue
+            fv = float(v)
+            if not math.isfinite(fv):
+                continue
+            out[alias] = fv
+        except Exception:
+            continue
+    return out
+
+
+def insert_sensor_samples(ts: float, values: dict[str, float]) -> int:
+    """Write user-sensor history samples (same ts as miner sample)."""
+    if not values:
+        return 0
+    try:
+        ts_f = float(ts)
+    except (TypeError, ValueError):
+        ts_f = time.time()
+    n = 0
+    with _db_lock:
+        conn = _db_connect()
+        try:
+            for alias, val in values.items():
+                a = str(alias or "").strip().lower()
+                if not a or not _sensor_alias_ok(a):
+                    continue
+                try:
+                    v = float(val)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(v):
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO sensor_samples (ts, alias, value)
+                    VALUES (?, ?, ?)
+                    """,
+                    (ts_f, a, v),
+                )
+                n += 1
+            if n:
+                conn.commit()
+        finally:
+            conn.close()
+    return n
+
+
+def record_sensor_history(live: dict | None, ts: float | None = None) -> int:
+    """Evaluate history-enabled sensors and store values."""
+    vals = _history_sensor_values(live)
+    if not vals:
+        return 0
+    if ts is None:
+        try:
+            ts = float((live or {}).get("ts") or time.time())
+        except (TypeError, ValueError):
+            ts = time.time()
+    return insert_sensor_samples(float(ts), vals)
 
 
 def clear_miner_error_log() -> int:
@@ -23878,7 +23998,18 @@ def collector_loop() -> None:
                     _cache = live
                     _cache_ts = time.time()
                 if enabled:
-                    insert_sample(live_to_sample(live))
+                    sample = live_to_sample(live)
+                    insert_sample(sample)
+                    try:
+                        record_sensor_history(
+                            live if isinstance(live, dict) else None,
+                            ts=sample.get("ts"),
+                        )
+                    except Exception as se:
+                        print(
+                            f"[history] sensor samples: {se}",
+                            flush=True,
+                        )
                     sample_n += 1
                     if sample_n % max(1, prune_every) == 0:
                         prune_old(retention)
@@ -23896,7 +24027,13 @@ def collector_loop() -> None:
                 # record offline marker so charts can show ASIC Offline bands
                 if enabled:
                     try:
-                        insert_sample(offline_sample(str(e)))
+                        off = offline_sample(str(e))
+                        insert_sample(off)
+                        try:
+                            # weather / const sensors may still resolve while miner is down
+                            record_sensor_history(None, ts=off.get("ts"))
+                        except Exception:
+                            pass
                         sample_n += 1
                     except Exception:
                         pass
