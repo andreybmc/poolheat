@@ -15029,8 +15029,12 @@ def _parse_error_code_item(item) -> list[dict]:
     return out
 
 
-def _fetch_miner_errors_raw() -> list[dict]:
-    """get_error_code → list of {code, ts, cause?} (cause if firmware provides it)."""
+def _fetch_miner_errors_tcp() -> list[dict]:
+    """
+    TCP get_error_code → list of {code, ts, cause?}.
+    Note: firmware often returns a *recent buffer* (history), not only the
+    active Errors table on the miner web UI. Prefer LuCI scrape when available.
+    """
     out: list[dict] = []
     try:
         raw = miner_cmd({"cmd": "get_error_code"}, timeout=4)
@@ -15047,6 +15051,18 @@ def _fetch_miner_errors_raw() -> list[dict]:
     for item in codes:
         out.extend(_parse_error_code_item(item))
     return out
+
+
+def _fetch_miner_errors_raw() -> list[dict]:
+    """
+    Active firmware errors for the live UI table.
+    Prefer LuCI Miner Status → Errors (same list as WhatsMiner web).
+    Fall back to TCP get_error_code if LuCI unavailable.
+    """
+    luci, ok = _fetch_miner_errors_luci_state(force=False)
+    if ok:
+        return luci
+    return _fetch_miner_errors_tcp()
 
 
 def _snapshot_cause_2320(
@@ -15167,12 +15183,13 @@ def _resolve_miner_errors(
     return active
 
 
-# ── ASIC Events (LuCI Miner Status «Events» table) ───────────────────────────
-# Columns: EventCode · EventCause · EventAction · EventCount · LastTime · EventSource · Detail
-# Same web UI table the user sees under Errors on the miner. Scraped via LuCI
-# (TCP 4028 has get_error_code only — events are web-status only).
+# ── ASIC Errors + Events (LuCI Miner Status page) ────────────────────────────
+# Errors table = active faults (same as web «Errors» — not TCP history buffer).
+# Events table = EventCode / EventCause / … (web-only).
+# One LuCI scrape fills both caches.
 
 _MINER_EVENTS_TTL_S = 45.0
+_MINER_ERRORS_LUCI_TTL_S = 45.0
 _miner_events_lock = threading.Lock()
 _miner_events_cache: dict = {
     "ts": 0.0,
@@ -15181,6 +15198,15 @@ _miner_events_cache: dict = {
     "source": None,
 }
 _miner_events_refreshing = False
+
+_miner_errors_luci_lock = threading.Lock()
+_miner_errors_luci_cache: dict = {
+    "ts": 0.0,
+    "errors": [],
+    "error": None,
+    "source": None,
+    "ok": False,  # True once we successfully scraped LuCI (even if 0 rows)
+}
 
 
 def _strip_html_text(s: str) -> str:
@@ -15194,6 +15220,69 @@ def _strip_html_text(s: str) -> str:
         .replace("&#39;", "'")
     )
     return re.sub(r"\s+", " ", t).strip()
+
+
+def _parse_miner_errors_html(html: str) -> list[dict]:
+    """
+    Parse active Errors table from LuCI /admin/status/btminerstatus.
+    Columns: ErrorCode · Cause · Time — same as stock web UI.
+    Returns list of {code, ts, cause}.
+    """
+    if not html:
+        return []
+    out: list[dict] = []
+    for tm in re.finditer(r"<table\b[^>]*>(.*?)</table>", html, re.I | re.S):
+        table = tm.group(1)
+        ths = re.findall(r"<th\b[^>]*>(.*?)</th>", table, re.I | re.S)
+        headers = [_strip_html_text(h).lower().replace(" ", "") for h in ths]
+        # Active errors table has ErrorCode (not EventCode)
+        if not any(h in ("errorcode", "error_code") for h in headers):
+            continue
+        if any(h in ("eventcode", "event_code") for h in headers):
+            continue
+        # Map column indices
+        def _col(*names: str) -> int | None:
+            for n in names:
+                if n in headers:
+                    return headers.index(n)
+            return None
+
+        i_code = _col("errorcode", "error_code", "code")
+        i_cause = _col("cause", "errorcause", "message")
+        i_time = _col("time", "timestamp", "when")
+        if i_code is None:
+            continue
+        for tr in re.finditer(r"<tr\b[^>]*>(.*?)</tr>", table, re.I | re.S):
+            row_html = tr.group(1)
+            # skip title / descr rows
+            if re.search(r"<th\b", row_html, re.I) and not re.search(
+                r"<td\b", row_html, re.I
+            ):
+                continue
+            tds = re.findall(r"<td\b[^>]*>(.*?)</td>", row_html, re.I | re.S)
+            if not tds:
+                continue
+            # Prefer hidden input values (stable)
+            def _cell(i: int | None) -> str:
+                if i is None or i >= len(tds):
+                    return ""
+                cell = tds[i]
+                hm = re.search(
+                    r'<input[^>]+value="([^"]*)"', cell, re.I
+                )
+                if hm:
+                    return _strip_html_text(hm.group(1))
+                return _strip_html_text(cell)
+
+            code = _cell(i_code)
+            if not code or not re.fullmatch(r"\d{2,6}", code):
+                continue
+            cause = _cell(i_cause) or None
+            ts = _cell(i_time) or None
+            out.append({"code": code, "ts": ts, "cause": cause})
+        if out:
+            break
+    return out
 
 
 def _parse_miner_events_html(html: str) -> list[dict]:
@@ -15294,10 +15383,10 @@ def _parse_miner_events_html(html: str) -> list[dict]:
     return out
 
 
-def _scrape_miner_events_luci_once() -> tuple[list[dict], str | None]:
+def _scrape_miner_status_luci_once() -> tuple[list[dict], list[dict], str | None]:
     """
-    One LuCI scrape of Miner Status → Events table.
-    Returns (events, error_or_None). Uses chipmap web credentials.
+    One LuCI scrape of Miner Status → active Errors + Events tables.
+    Returns (errors, events, error_or_None). Uses chipmap web credentials.
     """
     password = _chipmap_web_password()
     base = _chipmap_base_url()
@@ -15310,6 +15399,7 @@ def _scrape_miner_events_luci_once() -> tuple[list[dict], str | None]:
     except Exception:
         pass
 
+    errors: list[dict] = []
     events: list[dict] = []
     err: str | None = None
     try:
@@ -15326,7 +15416,7 @@ def _scrape_miner_events_luci_once() -> tuple[list[dict], str | None]:
             urllib.request.HTTPHandler(),
             urllib.request.HTTPCookieProcessor(cj),
         )
-        opener.addheaders = [("User-Agent", "poolheat-events/1.0")]
+        opener.addheaders = [("User-Agent", "poolheat-status/1.0")]
 
         login_body = urllib.parse.urlencode(
             {"luci_username": user, "luci_password": password}
@@ -15347,35 +15437,124 @@ def _scrape_miner_events_luci_once() -> tuple[list[dict], str | None]:
         with opener.open(page_req, timeout=8) as resp:
             html = resp.read().decode("utf-8", errors="replace")
 
+        errors = _parse_miner_errors_html(html)
         events = _parse_miner_events_html(html)
-        if not events and "luci_username" in html and "EventCode" not in html:
+        if (
+            not errors
+            and not events
+            and "luci_username" in html
+            and "ErrorCode" not in html
+            and "EventCode" not in html
+        ):
             err = "luci login failed (check web password)"
     except Exception as e:
         err = str(e)
+        errors = []
         events = []
+    return errors, events, err
+
+
+def _scrape_miner_events_luci_once() -> tuple[list[dict], str | None]:
+    """Back-compat: Events only."""
+    _errs, events, err = _scrape_miner_status_luci_once()
     return events, err
+
+
+def _apply_luci_status_caches(
+    errors: list[dict],
+    events: list[dict],
+    err: str | None,
+) -> None:
+    """Write both LuCI caches from one scrape."""
+    now = time.time()
+    with _miner_events_lock:
+        if err and not events and _miner_events_cache.get("events"):
+            _miner_events_cache["error"] = err
+            _miner_events_cache["ts"] = now
+        else:
+            _miner_events_cache["ts"] = now
+            _miner_events_cache["events"] = list(events)
+            _miner_events_cache["error"] = err
+            _miner_events_cache["source"] = "luci:btminerstatus"
+    with _miner_errors_luci_lock:
+        if err and not errors and _miner_errors_luci_cache.get("ok"):
+            # keep last good active list on transient failure
+            _miner_errors_luci_cache["error"] = err
+            _miner_errors_luci_cache["ts"] = now
+        else:
+            _miner_errors_luci_cache["ts"] = now
+            _miner_errors_luci_cache["errors"] = list(errors)
+            _miner_errors_luci_cache["error"] = err
+            _miner_errors_luci_cache["source"] = "luci:btminerstatus"
+            # success even when 0 active errors (empty table)
+            _miner_errors_luci_cache["ok"] = err is None or bool(errors)
 
 
 def _miner_events_bg_refresh() -> None:
     global _miner_events_refreshing
     try:
-        events, err = _scrape_miner_events_luci_once()
-        now = time.time()
-        with _miner_events_lock:
-            if err and not events and _miner_events_cache.get("events"):
-                # keep last good; still advance ts to avoid hammer
-                _miner_events_cache["error"] = err
-                _miner_events_cache["ts"] = now
-            else:
-                _miner_events_cache["ts"] = now
-                _miner_events_cache["events"] = list(events)
-                _miner_events_cache["error"] = err
-                _miner_events_cache["source"] = "luci:btminerstatus"
+        errors, events, err = _scrape_miner_status_luci_once()
+        _apply_luci_status_caches(errors, events, err)
     except Exception as e:
         print(f"[events] bg refresh: {e}")
     finally:
         with _miner_events_lock:
             _miner_events_refreshing = False
+
+
+def _fetch_miner_errors_luci_state(
+    *, force: bool = False
+) -> tuple[list[dict], bool]:
+    """
+    Active Errors from LuCI cache.
+    Returns (errors, ok) — ok=True means LuCI source is trusted (use even if empty).
+    """
+    global _miner_events_refreshing
+    now = time.time()
+    with _miner_errors_luci_lock:
+        age = now - float(_miner_errors_luci_cache.get("ts") or 0)
+        cached = list(_miner_errors_luci_cache.get("errors") or [])
+        ok = bool(_miner_errors_luci_cache.get("ok"))
+        fresh = (
+            (not force)
+            and ok
+            and age < _MINER_ERRORS_LUCI_TTL_S
+            and float(_miner_errors_luci_cache.get("ts") or 0) > 0
+        )
+        if fresh:
+            return cached, True
+        if ok and cached and not force:
+            # stale but known good — kick refresh via events path
+            pass
+        elif ok and not force:
+            # empty active list is valid
+            if age < _MINER_ERRORS_LUCI_TTL_S:
+                return cached, True
+
+    # share refresh thread with events (one LuCI page)
+    with _miner_events_lock:
+        if not _miner_events_refreshing:
+            _miner_events_refreshing = True
+            threading.Thread(
+                target=_miner_events_bg_refresh,
+                name="miner-status-luci",
+                daemon=True,
+            ).start()
+        if force:
+            pass
+        else:
+            with _miner_errors_luci_lock:
+                cached = list(_miner_errors_luci_cache.get("errors") or [])
+                ok = bool(_miner_errors_luci_cache.get("ok"))
+            return cached, ok
+
+    errors, events, err = _scrape_miner_status_luci_once()
+    _apply_luci_status_caches(errors, events, err)
+    with _miner_errors_luci_lock:
+        return (
+            list(_miner_errors_luci_cache.get("errors") or []),
+            bool(_miner_errors_luci_cache.get("ok")),
+        )
 
 
 def _fetch_miner_events_luci(*, force: bool = False) -> list[dict]:
@@ -15400,7 +15579,7 @@ def _fetch_miner_events_luci(*, force: bool = False) -> list[dict]:
                 _miner_events_refreshing = True
                 threading.Thread(
                     target=_miner_events_bg_refresh,
-                    name="miner-events",
+                    name="miner-status-luci",
                     daemon=True,
                 ).start()
             return cached
@@ -15414,24 +15593,14 @@ def _fetch_miner_events_luci(*, force: bool = False) -> list[dict]:
                 _miner_events_refreshing = True
                 threading.Thread(
                     target=_miner_events_bg_refresh,
-                    name="miner-events",
+                    name="miner-status-luci",
                     daemon=True,
                 ).start()
         return []
 
-    events, err = _scrape_miner_events_luci_once()
-    now = time.time()
-    with _miner_events_lock:
-        if err and not events and _miner_events_cache.get("events"):
-            prev = list(_miner_events_cache.get("events") or [])
-            _miner_events_cache["error"] = err
-            _miner_events_cache["ts"] = now
-            return prev
-        _miner_events_cache["ts"] = now
-        _miner_events_cache["events"] = list(events)
-        _miner_events_cache["error"] = err
-        _miner_events_cache["source"] = "luci:btminerstatus"
-        return list(events)
+    errors, events, err = _scrape_miner_status_luci_once()
+    _apply_luci_status_caches(errors, events, err)
+    return list(events)
 
 
 def _extract_liquid_temp(
