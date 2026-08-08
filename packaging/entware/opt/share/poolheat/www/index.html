@@ -17829,7 +17829,8 @@
           title: "Energy series",
           subKey: "dash.chart_energy_settings_sub",
           sub: "Choose series for the energy chart. Avg power stays in the tooltip.",
-          hasBands: true,
+          // no Suspend/Tuning/Offline bands on energy (category buckets, not history time)
+          hasBands: false,
         };
       }
       return {
@@ -17910,21 +17911,23 @@
               }
               return;
             }
-            const nextBands = {};
-            CHART_STATUS_BANDS.forEach((s) => {
-              const inp = list?.querySelector(
-                'input[data-band-id="' + s.id + '"]'
-              );
-              // if bands section hidden (shouldn't), keep defaults
-              nextBands[s.id] =
-                inp != null
-                  ? !!inp.checked
-                  : CHART_STATUS_BANDS_DEFAULT_ON[s.id] !== false;
-            });
             if (k === "temps") saveTempChartSeriesVis(next);
             else if (k === "power") savePowerChartSeriesVis(next);
             else if (k === "energy") saveEnergyChartSeriesVis(next);
-            saveChartStatusBandsVis(k, nextBands);
+            // only temps/power have status area toggles
+            if (m.hasBands) {
+              const nextBands = {};
+              CHART_STATUS_BANDS.forEach((s) => {
+                const inp = list?.querySelector(
+                  'input[data-band-id="' + s.id + '"]'
+                );
+                nextBands[s.id] =
+                  inp != null
+                    ? !!inp.checked
+                    : CHART_STATUS_BANDS_DEFAULT_ON[s.id] !== false;
+              });
+              saveChartStatusBandsVis(k, nextBands);
+            }
             closeChartSeriesModal();
             try {
               if (k === "temps") {
