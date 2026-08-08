@@ -4274,6 +4274,21 @@
       border-radius: 2px;
       flex: 0 0 auto;
     }
+    .chart-series-section-title {
+      font-size: 0.72rem;
+      font-weight: 650;
+      color: var(--dim);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin: 10px 0 6px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border2, rgba(42, 53, 68, 0.9));
+    }
+    .chart-series-section-title:first-child {
+      margin-top: 0;
+      padding-top: 0;
+      border-top: none;
+    }
     .chart-series-modal .modal-actions {
       display: flex;
       flex-wrap: wrap;
@@ -8708,6 +8723,13 @@
         "dash.chart_temps_settings_sub": "These series appear in the chart legend. You can still hide/show them by clicking the legend.",
         "dash.chart_series_min": "Select at least one series",
         "dash.chart_series_saved": "Chart series updated",
+        "dash.chart_bands": "Status areas",
+        "chart.band.suspend": "Suspend area",
+        "chart.band.tuning": "Tuning area",
+        "chart.band.offline": "Offline area",
+        "chart.band.label.suspend": "Suspend",
+        "chart.band.label.tuning": "Tuning",
+        "chart.band.label.offline": "ASIC Offline",
         "btn.reset_defaults": "Defaults",
         "btn.apply": "Apply",
         "btn.cancel": "Cancel",
@@ -9415,6 +9437,13 @@
         "dash.chart_temps_settings_sub": "Эти серии попадают в легенду графика. Временно скрыть/показать — клик по легенде.",
         "dash.chart_series_min": "Выберите хотя бы одну серию",
         "dash.chart_series_saved": "Серии графика обновлены",
+        "dash.chart_bands": "Области статуса",
+        "chart.band.suspend": "Область Suspend",
+        "chart.band.tuning": "Область Tuning",
+        "chart.band.offline": "Область Offline",
+        "chart.band.label.suspend": "Suspend",
+        "chart.band.label.tuning": "Tuning",
+        "chart.band.label.offline": "ASIC Offline",
         "btn.reset_defaults": "По умолчанию",
         "btn.apply": "Применить",
         "btn.cancel": "Отмена",
@@ -17335,6 +17364,83 @@
     };
     let tempChartSeriesVis = null;
 
+    /** Status band overlays on temp/power charts (Suspend / Tuning / Offline). */
+    const CHART_STATUS_BANDS_KEY = "poolheat_chart_status_bands_v1";
+    const CHART_STATUS_BANDS = [
+      {
+        id: "suspend",
+        labelKey: "chart.band.suspend",
+        label: "Suspend area",
+        color: "rgba(180, 142, 173, 0.85)",
+      },
+      {
+        id: "tuning",
+        labelKey: "chart.band.tuning",
+        label: "Tuning area",
+        color: "rgba(240, 180, 41, 0.9)",
+      },
+      {
+        id: "offline",
+        labelKey: "chart.band.offline",
+        label: "Offline area",
+        color: "rgba(240, 113, 120, 0.85)",
+      },
+    ];
+    const CHART_STATUS_BANDS_DEFAULT_ON = {
+      suspend: true,
+      tuning: true,
+      offline: true,
+    };
+    let chartStatusBandsVis = null;
+
+    function loadChartStatusBandsVis() {
+      const base = Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON);
+      try {
+        const raw = localStorage.getItem(CHART_STATUS_BANDS_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            CHART_STATUS_BANDS.forEach((s) => {
+              if (typeof j[s.id] === "boolean") base[s.id] = j[s.id];
+              // legacy: upfreq → tuning
+              if (s.id === "tuning" && typeof j.upfreq === "boolean") {
+                base.tuning = j.upfreq;
+              }
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+      chartStatusBandsVis = base;
+      return base;
+    }
+
+    function saveChartStatusBandsVis(vis) {
+      chartStatusBandsVis = Object.assign(
+        {},
+        CHART_STATUS_BANDS_DEFAULT_ON,
+        vis || {}
+      );
+      try {
+        localStorage.setItem(
+          CHART_STATUS_BANDS_KEY,
+          JSON.stringify(chartStatusBandsVis)
+        );
+      } catch (_) { /* ignore */ }
+      return chartStatusBandsVis;
+    }
+
+    function getChartStatusBandsVis() {
+      if (!chartStatusBandsVis) loadChartStatusBandsVis();
+      return chartStatusBandsVis;
+    }
+
+    function isStatusBandOn(id) {
+      const v = getChartStatusBandsVis();
+      // accept legacy "upfreq" id as tuning
+      if (id === "upfreq") id = "tuning";
+      return v[id] !== false;
+    }
+
     function loadTempChartSeriesVis() {
       const base = Object.assign({}, TEMP_CHART_SERIES_DEFAULT_ON);
       try {
@@ -17409,7 +17515,10 @@
         backdrop
           .querySelector("#btn-chart-temps-series-defaults")
           ?.addEventListener("click", () => {
-            fillTempChartSeriesList(TEMP_CHART_SERIES_DEFAULT_ON);
+            fillTempChartSeriesList(
+              TEMP_CHART_SERIES_DEFAULT_ON,
+              CHART_STATUS_BANDS_DEFAULT_ON
+            );
           });
         backdrop
           .querySelector("#btn-chart-temps-series-save")
@@ -17433,7 +17542,15 @@
               }
               return;
             }
+            const nextBands = {};
+            CHART_STATUS_BANDS.forEach((s) => {
+              const inp = list?.querySelector(
+                'input[data-band-id="' + s.id + '"]'
+              );
+              nextBands[s.id] = !!(inp && inp.checked);
+            });
             saveTempChartSeriesVis(next);
+            saveChartStatusBandsVis(nextBands);
             closeTempChartSeriesModal();
             try {
               // force membership rebuild from settings (legend list = settings)
@@ -17454,7 +17571,7 @@
             }
           });
       }
-      fillTempChartSeriesList(getTempChartSeriesVis());
+      fillTempChartSeriesList(getTempChartSeriesVis(), getChartStatusBandsVis());
       // refresh i18n titles if helper exists
       try {
         if (typeof applyI18n === "function") applyI18n(backdrop);
@@ -17482,11 +17599,24 @@
       backdrop._escHandler = onKey;
     }
 
-    function fillTempChartSeriesList(vis) {
+    function fillTempChartSeriesList(vis, bandsVis) {
       const list = document.getElementById("chart-temps-series-list");
       if (!list) return;
       const v = vis || getTempChartSeriesVis();
-      list.innerHTML = TEMP_CHART_SERIES.map((s) => {
+      const bv = bandsVis || getChartStatusBandsVis();
+      const seriesTitle =
+        typeof t === "function"
+          ? t("dash.chart_series", "Chart series")
+          : "Chart series";
+      const bandsTitle =
+        typeof t === "function"
+          ? t("dash.chart_bands", "Status areas")
+          : "Status areas";
+      let html =
+        '<div class="chart-series-section-title">' +
+        seriesTitle.replace(/</g, "&lt;") +
+        "</div>";
+      html += TEMP_CHART_SERIES.map((s) => {
         const on = v[s.id] !== false;
         const lab = seriesLabel(s);
         return (
@@ -17504,6 +17634,30 @@
           "</span></label>"
         );
       }).join("");
+      html +=
+        '<div class="chart-series-section-title">' +
+        bandsTitle.replace(/</g, "&lt;") +
+        "</div>";
+      html += CHART_STATUS_BANDS.map((s) => {
+        const on = bv[s.id] !== false;
+        const lab =
+          typeof t === "function" ? t(s.labelKey, s.label) : s.label;
+        return (
+          '<label class="check">' +
+          '<input type="checkbox" data-band-id="' +
+          s.id +
+          '"' +
+          (on ? " checked" : "") +
+          " />" +
+          '<span class="swatch" style="background:' +
+          s.color +
+          '"></span>' +
+          "<span>" +
+          lab.replace(/</g, "&lt;") +
+          "</span></label>"
+        );
+      }).join("");
+      list.innerHTML = html;
     }
 
     function closeTempChartSeriesModal() {
@@ -17605,7 +17759,7 @@
     }
     let chartPower = null;
     let histPoints = [];
-    let statusBands = []; // [{start,end,type,label}] offline | suspend | upfreq
+    let statusBands = []; // [{start,end,type,label}] offline | suspend | tuning
     let fullStart = 0; // unix sec
     let fullEnd = 0;
     // Per-chart time window; when sync is on both stay equal
@@ -17917,17 +18071,31 @@
         (typeof p.mode === "string" && /sleep|power.?off/i.test(p.mode))
       );
     }
-    /** Tuning / Upfreq while any board Upfreq Complete = 0 */
-    function isUpfreqPt(p) {
+    /** Tuning while any board Upfreq Complete = 0 */
+    function isTuningPt(p) {
       if (!p || isOfflinePt(p) || isSuspendPt(p)) return false;
       return p.upfreq_ok === 0 || p.upfreq_ok === "0";
+    }
+    // legacy alias
+    const isUpfreqPt = isTuningPt;
+
+    function statusBandLabel(type) {
+      if (type === "upfreq") type = "tuning";
+      if (typeof t === "function") {
+        if (type === "suspend") return t("chart.band.label.suspend", "Suspend");
+        if (type === "tuning") return t("chart.band.label.tuning", "Tuning");
+        if (type === "offline") return t("chart.band.label.offline", "ASIC Offline");
+      }
+      if (type === "suspend") return "Suspend";
+      if (type === "tuning") return "Tuning";
+      return "ASIC Offline";
     }
 
     /**
      * Status bands like hash2cash offline:
      * - ASIC Offline: online=0 samples or large gaps in history
      * - Suspend: work_state=sleep (Suspend Mining)
-     * - Upfreq: upfreq_ok=0 (tuning, Upfreq Complete ≠ 1)
+     * - Tuning: upfreq_ok=0 (Upfreq Complete ≠ 1)
      */
     function computeStatusBands(points) {
       if (!points || points.length < 1) return [];
@@ -17949,7 +18117,7 @@
       }
 
       // explicit online=0 runs
-      pushRuns(isOfflinePt, "offline", "ASIC Offline");
+      pushRuns(isOfflinePt, "offline", statusBandLabel("offline"));
 
       // gaps between samples → offline
       for (let k = 1; k < points.length; k++) {
@@ -17958,21 +18126,26 @@
         const gap = b.ts - a.ts;
         if (gap > Math.max(iv * 2.5, 90)) {
           if (!(isOfflinePt(a) && isOfflinePt(b))) {
-            bands.push({ start: a.ts, end: b.ts, type: "offline", label: "ASIC Offline" });
+            bands.push({
+              start: a.ts,
+              end: b.ts,
+              type: "offline",
+              label: statusBandLabel("offline"),
+            });
           }
         }
       }
 
       // Suspend Mining
-      pushRuns(isSuspendPt, "suspend", "Suspend");
+      pushRuns(isSuspendPt, "suspend", statusBandLabel("suspend"));
 
-      // Upfreq / tuning (Upfreq Complete = 0 on any board)
-      pushRuns(isUpfreqPt, "upfreq", "Upfreq");
+      // Tuning (Upfreq Complete = 0 on any board)
+      pushRuns(isTuningPt, "tuning", statusBandLabel("tuning"));
 
       return mergeBands(bands);
     }
 
-    /** Chart.js plugin: vertical status bands (offline / suspend). */
+    /** Chart.js plugin: vertical status bands (offline / suspend / tuning). */
     const statusBandsPlugin = {
       id: "statusBands",
       beforeDatasetsDraw(chart) {
@@ -17984,11 +18157,17 @@
         // use current scale window (per-chart when sync is off)
         const v0 = Number.isFinite(xScale.min) ? xScale.min : getView("temps").start;
         const v1 = Number.isFinite(xScale.max) ? xScale.max : getView("temps").end;
+        const lblOffline = statusBandLabel("offline");
+        const lblSuspend = statusBandLabel("suspend");
+        const lblTuning = statusBandLabel("tuning");
         ctx.save();
         ctx.beginPath();
         ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
         ctx.clip();
         for (const b of bands) {
+          // settings toggles (gear on temps chart applies to both charts)
+          const bandKey = b.type === "upfreq" ? "tuning" : b.type;
+          if (!isStatusBandOn(bandKey)) continue;
           if (b.end < v0 || b.start > v1) continue;
           const x1 = xScale.getPixelForValue(Math.max(b.start, v0));
           const x2 = xScale.getPixelForValue(Math.min(b.end, v1));
@@ -17997,9 +18176,27 @@
           const w = right - left;
           if (w < 1) continue;
           const styles = {
-            offline: { fill: "rgba(240, 113, 120, 0.13)", text: "rgba(240, 113, 120, 0.9)", label: "ASIC Offline" },
-            suspend: { fill: "rgba(180, 142, 173, 0.16)", text: "rgba(196, 160, 192, 0.95)", label: "Suspend" },
-            upfreq:  { fill: "rgba(240, 180, 41, 0.14)", text: "rgba(240, 180, 41, 0.95)", label: "Upfreq" },
+            offline: {
+              fill: "rgba(240, 113, 120, 0.13)",
+              text: "rgba(240, 113, 120, 0.9)",
+              label: lblOffline,
+            },
+            suspend: {
+              fill: "rgba(180, 142, 173, 0.16)",
+              text: "rgba(196, 160, 192, 0.95)",
+              label: lblSuspend,
+            },
+            tuning: {
+              fill: "rgba(240, 180, 41, 0.14)",
+              text: "rgba(240, 180, 41, 0.95)",
+              label: lblTuning,
+            },
+            // legacy type from older sessions / merge
+            upfreq: {
+              fill: "rgba(240, 180, 41, 0.14)",
+              text: "rgba(240, 180, 41, 0.95)",
+              label: lblTuning,
+            },
           };
           const st = styles[b.type] || styles.offline;
           ctx.fillStyle = st.fill;
