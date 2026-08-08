@@ -14788,6 +14788,273 @@ def _resolve_miner_errors(
     return active
 
 
+# ── ASIC Events (LuCI Miner Status «Events» table) ───────────────────────────
+# Columns: EventCode · EventCause · EventAction · EventCount · LastTime · EventSource · Detail
+# Same web UI table the user sees under Errors on the miner. Scraped via LuCI
+# (TCP 4028 has get_error_code only — events are web-status only).
+
+_MINER_EVENTS_TTL_S = 45.0
+_miner_events_lock = threading.Lock()
+_miner_events_cache: dict = {
+    "ts": 0.0,
+    "events": [],
+    "error": None,
+    "source": None,
+}
+_miner_events_refreshing = False
+
+
+def _strip_html_text(s: str) -> str:
+    t = re.sub(r"<[^>]+>", " ", s or "")
+    t = (
+        t.replace("&nbsp;", " ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _parse_miner_events_html(html: str) -> list[dict]:
+    """
+    Parse Events table from LuCI /admin/status/btminerstatus HTML.
+    Returns list of {code, cause, action, count, ts, source, detail}.
+    """
+    if not html:
+        return []
+    out: list[dict] = []
+    # Prefer tables that include an EventCode header (not ErrorCode).
+    for tm in re.finditer(r"<table\b[^>]*>(.*?)</table>", html, re.I | re.S):
+        table = tm.group(1)
+        ths = re.findall(r"<th\b[^>]*>(.*?)</th>", table, re.I | re.S)
+        headers = [_strip_html_text(h).lower().replace(" ", "") for h in ths]
+        if not headers:
+            # some FW use first row of <td> as titles
+            first_tr = re.search(r"<tr\b[^>]*>(.*?)</tr>", table, re.I | re.S)
+            if first_tr:
+                tds0 = re.findall(r"<t[dh]\b[^>]*>(.*?)</t[dh]>", first_tr.group(1), re.I | re.S)
+                headers = [_strip_html_text(h).lower().replace(" ", "") for h in tds0]
+        if not any(h in ("eventcode", "event_code") for h in headers):
+            continue
+        # skip pure Error table (ErrorCode without EventCode)
+        if any(h in ("errorcode", "error_code") for h in headers) and not any(
+            h in ("eventcode", "event_code") for h in headers
+        ):
+            continue
+
+        def _col(*names: str) -> int | None:
+            for n in names:
+                if n in headers:
+                    return headers.index(n)
+            return None
+
+        i_code = _col("eventcode", "event_code", "code")
+        i_cause = _col("eventcause", "event_cause", "cause")
+        i_action = _col("eventaction", "event_action", "action")
+        i_count = _col("eventcount", "event_count", "count")
+        i_time = _col("lasttime", "last_time", "time")
+        i_src = _col("eventsource", "event_source", "source")
+        i_detail = _col("detail")
+        if i_code is None:
+            continue
+
+        for rm in re.finditer(r"<tr\b[^>]*>(.*?)</tr>", table, re.I | re.S):
+            row = rm.group(1)
+            if re.search(r"<th\b", row, re.I):
+                continue
+            cells = re.findall(r"<td\b[^>]*>(.*?)</td>", row, re.I | re.S)
+            if not cells:
+                continue
+            texts = [_strip_html_text(c) for c in cells]
+            # skip header-like rows
+            joined = " ".join(texts).lower()
+            if "eventcode" in joined or joined.startswith("event code"):
+                continue
+
+            def _at(idx: int | None) -> str:
+                if idx is None or idx < 0 or idx >= len(texts):
+                    return ""
+                return texts[idx]
+
+            code = _at(i_code)
+            if not code or code in ("—", "-", "–"):
+                continue
+            # ignore placeholder / empty-section rows
+            if code.lower() in ("no data", "none", "n/a"):
+                continue
+            cause = _at(i_cause)
+            action = _at(i_action)
+            count_s = _at(i_count)
+            ts = _at(i_time)
+            source = _at(i_src)
+            detail = _at(i_detail)
+            # Detail buttons often render as "Detail" only — drop that noise
+            if detail.lower() in ("detail", "details", "…", "..."):
+                detail = ""
+            count: int | None = None
+            try:
+                if count_s:
+                    count = int(re.sub(r"[^\d-]", "", count_s) or 0)
+            except (TypeError, ValueError):
+                count = None
+            out.append(
+                {
+                    "code": code,
+                    "cause": cause or None,
+                    "action": action or None,
+                    "count": count,
+                    "ts": ts or None,
+                    "source": source or None,
+                    "detail": detail or None,
+                }
+            )
+        if out:
+            break
+    return out
+
+
+def _scrape_miner_events_luci_once() -> tuple[list[dict], str | None]:
+    """
+    One LuCI scrape of Miner Status → Events table.
+    Returns (events, error_or_None). Uses chipmap web credentials.
+    """
+    password = _chipmap_web_password()
+    base = _chipmap_base_url()
+    user = "admin"
+    verify = False
+    try:
+        with _chipmap_lock:
+            user = str(_chipmap_cfg.get("web_user") or "admin")
+            verify = bool(_chipmap_cfg.get("verify_tls", False))
+    except Exception:
+        pass
+
+    events: list[dict] = []
+    err: str | None = None
+    try:
+        import ssl as _ssl
+        import http.cookiejar
+
+        ctx = _ssl.create_default_context()
+        if not verify:
+            ctx.check_hostname = False
+            ctx.verify_mode = _ssl.CERT_NONE
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=ctx),
+            urllib.request.HTTPHandler(),
+            urllib.request.HTTPCookieProcessor(cj),
+        )
+        opener.addheaders = [("User-Agent", "poolheat-events/1.0")]
+
+        login_body = urllib.parse.urlencode(
+            {"luci_username": user, "luci_password": password}
+        ).encode("utf-8")
+        login_req = urllib.request.Request(
+            f"{base}/cgi-bin/luci",
+            data=login_body,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        with opener.open(login_req, timeout=6) as resp:
+            _ = resp.read(8192)
+
+        page_req = urllib.request.Request(
+            f"{base}/cgi-bin/luci/admin/status/btminerstatus",
+            method="GET",
+        )
+        with opener.open(page_req, timeout=8) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+
+        events = _parse_miner_events_html(html)
+        if not events and "luci_username" in html and "EventCode" not in html:
+            err = "luci login failed (check web password)"
+    except Exception as e:
+        err = str(e)
+        events = []
+    return events, err
+
+
+def _miner_events_bg_refresh() -> None:
+    global _miner_events_refreshing
+    try:
+        events, err = _scrape_miner_events_luci_once()
+        now = time.time()
+        with _miner_events_lock:
+            if err and not events and _miner_events_cache.get("events"):
+                # keep last good; still advance ts to avoid hammer
+                _miner_events_cache["error"] = err
+                _miner_events_cache["ts"] = now
+            else:
+                _miner_events_cache["ts"] = now
+                _miner_events_cache["events"] = list(events)
+                _miner_events_cache["error"] = err
+                _miner_events_cache["source"] = "luci:btminerstatus"
+    except Exception as e:
+        print(f"[events] bg refresh: {e}")
+    finally:
+        with _miner_events_lock:
+            _miner_events_refreshing = False
+
+
+def _fetch_miner_events_luci(*, force: bool = False) -> list[dict]:
+    """
+    Cached Events for live UI. Stale cache is served immediately; refresh runs
+    in a background thread so /api/live is not blocked by LuCI.
+    Cold start (empty cache) does one short sync scrape.
+    """
+    global _miner_events_refreshing
+    now = time.time()
+    with _miner_events_lock:
+        age = now - float(_miner_events_cache.get("ts") or 0)
+        cached = list(_miner_events_cache.get("events") or [])
+        fresh = (not force) and age < _MINER_EVENTS_TTL_S and (
+            _miner_events_cache.get("ts") or 0
+        ) > 0
+        if fresh:
+            return cached
+        # have something → return it, refresh in background
+        if cached and not force:
+            if not _miner_events_refreshing:
+                _miner_events_refreshing = True
+                threading.Thread(
+                    target=_miner_events_bg_refresh,
+                    name="miner-events",
+                    daemon=True,
+                ).start()
+            return cached
+        if _miner_events_refreshing and not force:
+            return cached
+
+    # cold / force: sync once (bounded timeouts inside scrape)
+    if not force:
+        with _miner_events_lock:
+            if not _miner_events_refreshing:
+                _miner_events_refreshing = True
+                threading.Thread(
+                    target=_miner_events_bg_refresh,
+                    name="miner-events",
+                    daemon=True,
+                ).start()
+        return []
+
+    events, err = _scrape_miner_events_luci_once()
+    now = time.time()
+    with _miner_events_lock:
+        if err and not events and _miner_events_cache.get("events"):
+            prev = list(_miner_events_cache.get("events") or [])
+            _miner_events_cache["error"] = err
+            _miner_events_cache["ts"] = now
+            return prev
+        _miner_events_cache["ts"] = now
+        _miner_events_cache["events"] = list(events)
+        _miner_events_cache["error"] = err
+        _miner_events_cache["source"] = "luci:btminerstatus"
+        return list(events)
+
+
 def _extract_liquid_temp(
     status: dict | None,
     summary: dict | None,
@@ -15359,6 +15626,13 @@ def fetch_live() -> dict:
         factory_ghs=factory_ghs,
     )
 
+    # ASIC Events table (LuCI status) — separate from get_error_code
+    miner_events: list[dict] = []
+    try:
+        miner_events = _fetch_miner_events_luci(force=False)
+    except Exception as e:
+        print(f"[live] miner events: {e}")
+
     # Catalog of all temperature sensors available for this miner / model
     temps = _build_temp_sensors_catalog(
         summary=summary,
@@ -15459,6 +15733,7 @@ def fetch_live() -> dict:
         "psu_iin": psu_iin,  # PowerIin A (input)
         "psu_model": psu_model,
         "miner_errors": miner_errors,
+        "miner_events": miner_events,
         "dry_run": bool(DRY_RUN),
         "policy": get_policy_status(),
     }
