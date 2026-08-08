@@ -1,13 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="GoraPool">
-  <!-- laconic pool + swimmer mark -->
-  <rect width="32" height="32" rx="8" fill="#121820"/>
-  <rect x="1" y="1" width="30" height="30" rx="7" fill="none" stroke="#2a3544" stroke-width="1"/>
-  <!-- water -->
-  <path d="M5 21.5c2 1.2 4 1.2 6 0s4-1.2 6 0 4 1.2 6 0 4-1.2 6 0" fill="none" stroke="#3d9cf0" stroke-width="1.6" stroke-linecap="round" opacity="0.9"/>
-  <path d="M5 24.5c2 1.1 4 1.1 6 0s4-1.1 6 0 4 1.1 6 0 4-1.1 6 0" fill="none" stroke="#2b7fc9" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>
-  <!-- swimmer silhouette (simplified) -->
-  <circle cx="11.5" cy="11" r="2.1" fill="#e8eef6"/>
-  <path d="M13.2 13.2c1.4 0.6 3.2 1.4 5.2 1.2 1.6-0.15 3.1-0.7 4.2-1.35" fill="none" stroke="#e8eef6" stroke-width="1.7" stroke-linecap="round"/>
-  <path d="M16.5 14.2c0.9 1.3 1.1 2.6 0.55 3.7" fill="none" stroke="#e8eef6" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M14.8 14c-0.9 0.85-2.1 1.15-3.2 0.85" fill="none" stroke="#c5ccd4" stroke-width="1.4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="PoolHeat">
+  <!-- rounded app tile -->
+  <defs>
+    <clipPath id="r">
+      <rect width="32" height="32" rx="8"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <!-- sky / night navy -->
+    <rect width="32" height="32" fill="#152033"/>
+    <!-- water -->
+    <path d="M0 12 C4 10 8 14 12 12 S20 10 24 12 S30 14 32 12 V32 H0 Z" fill="#1eb8e0"/>
+    <path d="M0 16 C4 14 8 18 12 16 S20 14 24 16 S30 18 32 16 V32 H0 Z" fill="#24c4ea" opacity="0.85"/>
+    <path d="M0 20 C4 18 8 22 12 20 S20 18 24 20 S30 22 32 20 V32 H0 Z" fill="#18a8d4" opacity="0.7"/>
+    <!-- dino body -->
+    <ellipse cx="15" cy="18.5" rx="8.2" ry="4.4" fill="#6fcf4a"/>
+    <!-- spots -->
+    <circle cx="11" cy="18" r="0.9" fill="#4e9e34"/>
+    <circle cx="13.5" cy="19.5" r="0.75" fill="#4e9e34"/>
+    <circle cx="16.5" cy="18.2" r="0.8" fill="#4e9e34"/>
+    <!-- tail -->
+    <path d="M7.2 17.2 C4.5 16 2.8 17.5 2.2 19.2 C4.8 18.8 6.2 19.2 7.6 20.2 Z" fill="#6fcf4a"/>
+    <!-- spikes -->
+    <path d="M9.2 15.2 L10.3 13 L11.5 15.4 Z" fill="#4e9e34"/>
+    <path d="M11.8 14.6 L13 12.4 L14.2 15 Z" fill="#4e9e34"/>
+    <path d="M14.5 14.4 L15.8 12.5 L16.8 15 Z" fill="#4e9e34"/>
+    <!-- head -->
+    <ellipse cx="21.2" cy="14.8" rx="4.1" ry="3.6" fill="#6fcf4a"/>
+    <!-- snout -->
+    <ellipse cx="24.2" cy="15.6" rx="2.2" ry="1.7" fill="#6fcf4a"/>
+    <!-- eye -->
+    <circle cx="21.8" cy="13.8" r="1.05" fill="#1a1a1a"/>
+    <circle cx="22.15" cy="13.5" r="0.35" fill="#fff"/>
+    <!-- cheek -->
+    <circle cx="20.3" cy="15.5" r="0.7" fill="#f4a07a" opacity="0.85"/>
+    <!-- smile -->
+    <path d="M22.6 16.2 Q24 17.2 25.2 15.9" fill="none" stroke="#2d5a1f" stroke-width="0.55" stroke-linecap="round"/>
+    <!-- swim cap -->
+    <ellipse cx="20.6" cy="11.6" rx="2.3" ry="1.55" fill="#6b5bdb"/>
+    <circle cx="20.6" cy="11.5" r="0.55" fill="#f5d547"/>
+    <!-- arm -->
+    <ellipse cx="18.8" cy="19.8" rx="1.5" ry="1.1" fill="#6fcf4a"/>
+    <!-- splash -->
+    <path d="M23 19.2 C24.2 18 25.8 18.4 26.2 19.8" fill="none" stroke="#e8f8ff" stroke-width="0.7" stroke-linecap="round" opacity="0.9"/>
+    <circle cx="8.5" cy="22" r="0.55" fill="#e8f8ff" opacity="0.75"/>
+    <circle cx="25.5" cy="22.5" r="0.45" fill="#e8f8ff" opacity="0.7"/>
+  </g>
 </svg>
