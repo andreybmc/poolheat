@@ -31,10 +31,12 @@ import math
 import os
 import re
 import shutil
+import signal
 import socket
 import sqlite3
 import struct
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -294,6 +296,12 @@ POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 # Peripherals → Devices (Tapo / webhook / … actuators)
 DEVICES_CFG_FILE = DATA / "devices_config.json"
+# Shared mining work snapshot for devices poller process (policy/collector write)
+MINING_WORK_FILE = DATA / "mining_work.json"
+# Suspend→OFF deadlines for devices poller (process-local file, survives reloads)
+DEVICES_DEADLINES_FILE = DATA / "devices_suspend_deadlines.json"
+DEVICES_POLLER_PIDFILE = DATA / "devices_poller.pid"
+DEVICES_POLLER_LOG = DATA / "devices_poller.log"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
@@ -3838,6 +3846,10 @@ _devices_cfg: dict = dict(DEFAULT_DEVICES_CFG)
 _devices_sync_ts: dict[str, float] = {}
 # Pending Auto Off after Suspend: did → unix deadline (cancel if Resume before)
 _devices_suspend_off_deadline: dict[str, float] = {}
+_devices_poller_stop = threading.Event()
+_devices_poller_proc: subprocess.Popen | None = None
+# Max wait for a single device_set inside the poller (isolation from hung Tapo/etc.)
+_DEVICES_SET_TIMEOUT_SEC = 15.0
 
 
 def _device_alias_ok(alias: str) -> bool:
@@ -5105,9 +5117,116 @@ def _device_suspend_off_remaining(did: str) -> int | None:
     return max(0, rem)
 
 
+def write_mining_work_snapshot(work: str | None, *, source: str = "") -> None:
+    """Publish mining work for the devices poller process (file IPC)."""
+    w = str(work or "").strip().lower()
+    if w == "mining":
+        w = "resume"
+    if w == "sleep":
+        w = "suspend"
+    if w not in ("resume", "suspend"):
+        w = ""
+    try:
+        _save_json(
+            MINING_WORK_FILE,
+            {
+                "work": w or None,
+                "ts": time.time(),
+                "source": str(source or "")[:40],
+            },
+        )
+    except Exception as e:
+        print(f"[devices-poller] write mining_work: {e}", flush=True)
+
+
+def read_mining_work_snapshot(max_age_sec: float = 180.0) -> str | None:
+    """Read mining work written by policy/collector. None if missing/stale."""
+    try:
+        raw = _load_json(MINING_WORK_FILE, {})
+        if not isinstance(raw, dict):
+            return None
+        ts = float(raw.get("ts") or 0)
+        if ts <= 0 or (time.time() - ts) > float(max_age_sec):
+            return None
+        w = str(raw.get("work") or "").strip().lower()
+        if w == "mining":
+            w = "resume"
+        if w == "sleep":
+            w = "suspend"
+        if w in ("resume", "suspend"):
+            return w
+    except Exception:
+        pass
+    return None
+
+
+def _load_devices_deadlines() -> None:
+    """Restore suspend-off deadlines from disk (devices poller process)."""
+    try:
+        raw = _load_json(DEVICES_DEADLINES_FILE, {})
+        if not isinstance(raw, dict):
+            return
+        dl = raw.get("deadlines") if isinstance(raw.get("deadlines"), dict) else {}
+        st = raw.get("sync_ts") if isinstance(raw.get("sync_ts"), dict) else {}
+        _devices_suspend_off_deadline.clear()
+        for k, v in dl.items():
+            try:
+                _devices_suspend_off_deadline[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+        _devices_sync_ts.clear()
+        for k, v in st.items():
+            try:
+                _devices_sync_ts[str(k)] = float(v)
+            except (TypeError, ValueError):
+                continue
+    except Exception as e:
+        print(f"[devices-poller] load deadlines: {e}", flush=True)
+
+
+def _save_devices_deadlines() -> None:
+    try:
+        _save_json(
+            DEVICES_DEADLINES_FILE,
+            {
+                "deadlines": {
+                    str(k): float(v)
+                    for k, v in _devices_suspend_off_deadline.items()
+                },
+                "sync_ts": {
+                    str(k): float(v) for k, v in _devices_sync_ts.items()
+                },
+                "ts": time.time(),
+            },
+        )
+    except Exception as e:
+        print(f"[devices-poller] save deadlines: {e}", flush=True)
+
+
+def _device_set_with_timeout(
+    did: str,
+    on: bool,
+    *,
+    source: str,
+    timeout: float = _DEVICES_SET_TIMEOUT_SEC,
+) -> dict:
+    """device_set in a worker thread; raise on hang past timeout."""
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(device_set, did, on, source=source, force=True)
+        try:
+            return fut.result(timeout=max(3.0, float(timeout)))
+        except FuturesTimeout as e:
+            raise RuntimeError(
+                f"device_set timeout after {timeout:.0f}s (device may be hung)"
+            ) from e
+
+
 def devices_sync_with_mining(measured_work: str | None) -> None:
     """
-    Called from policy_tick for every enabled device with auto flags.
+    Auto ON/OFF devices from mining work state.
+
+    Runs in the dedicated devices poller process (not policy_tick) so a hung
+    Tapo/Shelly call cannot block API / policy / history.
 
     Auto Off on Suspend uses ``auto_off_suspend_delay_sec`` (default 60):
     device stays ON for that long after Suspend; if mining Resumes within
@@ -5149,7 +5268,8 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
                 _devices_suspend_off_deadline.pop(did, None)
                 print(
                     f"[devices] suspend-off cancelled {cfg.get('alias') or did} "
-                    f"(mining resume)"
+                    f"(mining resume)",
+                    flush=True,
                 )
             if auto_on and last_on is not True:
                 want = True
@@ -5169,7 +5289,8 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
                         _devices_suspend_off_deadline[did] = now + float(delay)
                         print(
                             f"[devices] suspend-off in {delay}s "
-                            f"{cfg.get('alias') or did}"
+                            f"{cfg.get('alias') or did}",
+                            flush=True,
                         )
                 elif now >= float(deadline):
                     want = False
@@ -5185,10 +5306,157 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
             continue
         _devices_sync_ts[did] = now
         try:
-            device_set(did, want, source=src, force=True)
+            _device_set_with_timeout(did, want, source=src)
         except Exception as e:
-            print(f"[devices] sync {cfg.get('alias')}: {e}")
+            print(f"[devices] sync {cfg.get('alias')}: {e}", flush=True)
 
+
+def devices_poller_loop() -> None:
+    """
+    Dedicated loop: reload devices cfg from disk, read mining work snapshot,
+    sync auto on/off. Isolated process entry — see devices_poller_main().
+    """
+    print("[devices-poller] loop start", flush=True)
+    _load_devices_deadlines()
+    while not _devices_poller_stop.is_set():
+        t0 = time.time()
+        try:
+            # pick up UI/API config changes from main process
+            _load_devices_cfg()
+            work = read_mining_work_snapshot(max_age_sec=300.0)
+            if work is None:
+                # fallback: in-process cache (same process only) or skip
+                work = _mining_work_state()
+            if work:
+                devices_sync_with_mining(work)
+            else:
+                # still advance/clear deadlines file periodically
+                pass
+            _save_devices_deadlines()
+        except Exception as e:
+            print(f"[devices-poller] tick: {e}", flush=True)
+        # poll interval: reuse miner poll when available, clamp 3–30s
+        try:
+            with _miner_cfg_lock:
+                interval = max(3, min(30, int(POLL_INTERVAL_SEC)))
+        except Exception:
+            interval = 5
+        # account for tick duration so delay stays ~interval
+        spent = time.time() - t0
+        wait = max(1.0, float(interval) - spent)
+        _devices_poller_stop.wait(timeout=wait)
+    print("[devices-poller] loop stop", flush=True)
+    try:
+        _save_devices_deadlines()
+    except Exception:
+        pass
+
+
+def devices_poller_main() -> None:
+    """Entry for ``python serve.py --devices-poller`` (separate process)."""
+    _devices_poller_stop.clear()
+
+    def _sig(_signum=None, _frame=None) -> None:
+        _devices_poller_stop.set()
+
+    try:
+        signal.signal(signal.SIGTERM, _sig)
+        signal.signal(signal.SIGINT, _sig)
+    except Exception:
+        pass
+    try:
+        DEVICES_POLLER_PIDFILE.write_text(
+            str(os.getpid()), encoding="utf-8"
+        )
+    except Exception:
+        pass
+    print(
+        f"[devices-poller] pid={os.getpid()} data={DATA}",
+        flush=True,
+    )
+    try:
+        devices_poller_loop()
+    finally:
+        try:
+            if DEVICES_POLLER_PIDFILE.is_file():
+                DEVICES_POLLER_PIDFILE.unlink()
+        except Exception:
+            pass
+
+
+def start_devices_poller_process() -> None:
+    """Spawn isolated devices poller subprocess (non-blocking for serve)."""
+    global _devices_poller_proc
+    if not role_enabled("edge_device_poller"):
+        print("devices-poller:    off (edge_device_poller role disabled)")
+        return
+    # kill stale poller if pidfile exists
+    try:
+        if DEVICES_POLLER_PIDFILE.is_file():
+            old = int(DEVICES_POLLER_PIDFILE.read_text().strip() or "0")
+            if old > 0 and old != os.getpid():
+                try:
+                    os.kill(old, signal.SIGTERM)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    script = str(Path(__file__).resolve())
+    logf = None
+    try:
+        logf = open(DEVICES_POLLER_LOG, "a", encoding="utf-8")
+        logf.write(
+            f"\n--- start {datetime.now().isoformat(timespec='seconds')} ---\n"
+        )
+        logf.flush()
+    except Exception:
+        logf = None
+    try:
+        _devices_poller_proc = subprocess.Popen(
+            [sys.executable, script, "--devices-poller"],
+            cwd=str(Path(__file__).resolve().parent),
+            env=os.environ.copy(),
+            stdout=logf or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print(
+            f"devices-poller:    pid {_devices_poller_proc.pid} · log {DEVICES_POLLER_LOG}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"devices-poller:    failed to start: {e}", flush=True)
+        _devices_poller_proc = None
+        if logf:
+            try:
+                logf.close()
+            except Exception:
+                pass
+
+
+def stop_devices_poller_process() -> None:
+    global _devices_poller_proc
+    proc = _devices_poller_proc
+    _devices_poller_proc = None
+    if proc is None:
+        # try pidfile
+        try:
+            if DEVICES_POLLER_PIDFILE.is_file():
+                pid = int(DEVICES_POLLER_PIDFILE.read_text().strip() or "0")
+                if pid > 0:
+                    os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+    except Exception:
+        pass
 
 def get_device_status(did: str, *, probe_live: bool = False) -> dict:
     d = get_device_by_id(did, redact=True)
@@ -23873,12 +24141,11 @@ def policy_tick() -> None:
                 need_cmds = []
             desired = desired or "force_stop"
 
-    # Peripherals devices: Auto ON mining / Auto OFF suspend (edge device poller)
-    if role_enabled("edge_device_poller"):
-        try:
-            devices_sync_with_mining(measured_work)
-        except Exception as e:
-            print(f"[devices] sync: {e}")
+    # Publish mining work for isolated devices poller process (never block policy on Tapo)
+    try:
+        write_mining_work_snapshot(measured_work, source="policy")
+    except Exception as e:
+        print(f"[devices] mining_work snapshot: {e}")
 
     if not need_cmds:
         # Already matches miner — no write, no notification
@@ -24015,6 +24282,14 @@ def collector_loop() -> None:
                 if enabled:
                     sample = live_to_sample(live)
                     insert_sample(sample)
+                    try:
+                        # keep devices poller work state fresh even if policy is off
+                        if isinstance(live, dict):
+                            write_mining_work_snapshot(
+                                _live_work(live), source="history"
+                            )
+                    except Exception:
+                        pass
                     try:
                         record_sensor_history(
                             live if isinstance(live, dict) else None,
@@ -26384,6 +26659,12 @@ def main() -> None:
     else:
         print("chipmap:           off (edge_miner_poller role disabled)")
 
+    # Devices auto ON/OFF — separate process so hangs never block API/policy
+    if role_enabled("edge_device_poller"):
+        start_devices_poller_process()
+    else:
+        print("devices-poller:    off (edge_device_poller role disabled)")
+
     # After OTA restart: tell the initiating TG chat that we're back online
     def _boot_update_notify() -> None:
         if not role_enabled("app_bot"):
@@ -26487,8 +26768,17 @@ def main() -> None:
         _collector_stop.set()
         _policy_stop.set()
         _tg_stop.set()
+        _devices_poller_stop.set()
+        stop_devices_poller_process()
         print("\nstop")
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] in (
+        "--devices-poller",
+        "--device-poller",
+        "devices-poller",
+    ):
+        devices_poller_main()
+    else:
+        main()
