@@ -15831,8 +15831,18 @@
                 boxWidth: 12,
                 boxHeight: 12,
                 color: "#8b9bb0",
-                // kWh + full power; avg stays tooltip-only
-                filter: (item) => item.datasetIndex !== 2,
+                // hide avg (idx 2) + series turned off in settings
+                filter: (item, chartData) => {
+                  if (!item || item.datasetIndex === 2) return false;
+                  try {
+                    const ds =
+                      chartData &&
+                      chartData.datasets &&
+                      chartData.datasets[item.datasetIndex];
+                    if (ds && ds.hidden) return false;
+                  } catch (_) { /* ignore */ }
+                  return true;
+                },
               },
             },
             tooltip: {
@@ -15852,7 +15862,7 @@
                 label: (ctx) => {
                   const v = ctx.parsed.y;
                   if (v == null || !Number.isFinite(v)) return ctx.dataset.label + ": —";
-                  if (ctx.dataset.yAxisID === "y1") {
+                  if (ctx.dataset && ctx.dataset.yAxisID === "y1") {
                     return ctx.dataset.label + ": " + Math.round(v) + " W";
                   }
                   return (
@@ -15863,14 +15873,20 @@
                   );
                 },
               },
-              // Full power, avg power, then kWh
+              // Full power, avg power, then kWh (null-safe — bad itemSort can stack-overflow)
               itemSort: (a, b) => {
-                const rank = (ds) => {
-                  if (ds.$energyKind === "full") return 0;
-                  if (ds.$energyKind === "avg") return 1;
+                const rank = (item) => {
+                  try {
+                    const kind =
+                      item &&
+                      item.dataset &&
+                      item.dataset.$energyKind;
+                    if (kind === "full") return 0;
+                    if (kind === "avg") return 1;
+                  } catch (_) { /* ignore */ }
                   return 2;
                 };
-                return rank(a.dataset) - rank(b.dataset);
+                return rank(a) - rank(b);
               },
             },
           },
@@ -15942,19 +15958,48 @@
       return short(d0, false) + " – " + short(endInc, false);
     }
 
+    function _destroyChartOnCanvas(el) {
+      if (!el || typeof Chart === "undefined") return;
+      try {
+        const existing =
+          typeof Chart.getChart === "function" ? Chart.getChart(el) : null;
+        if (existing) existing.destroy();
+      } catch (_) { /* ignore */ }
+    }
+
     function ensureEnergyChart() {
       const el = document.getElementById("chart-energy");
       if (!el || typeof Chart === "undefined") return null;
-      if (chartEnergy) return chartEnergy;
-      chartEnergy = createEnergyChartOn(el);
+      if (chartEnergy && chartEnergy.canvas) return chartEnergy;
+      if (chartEnergy) {
+        try { chartEnergy.destroy(); } catch (_) {}
+        chartEnergy = null;
+      }
+      _destroyChartOnCanvas(el);
+      try {
+        chartEnergy = createEnergyChartOn(el);
+      } catch (e) {
+        console.warn("ensureEnergyChart", e);
+        chartEnergy = null;
+      }
       return chartEnergy;
     }
 
     function ensureEnergyChartDash() {
       const el = document.getElementById("chart-energy-dash");
       if (!el || typeof Chart === "undefined") return null;
-      if (chartEnergyDash) return chartEnergyDash;
-      chartEnergyDash = createEnergyChartOn(el);
+      if (chartEnergyDash && chartEnergyDash.canvas) return chartEnergyDash;
+      if (chartEnergyDash) {
+        try { chartEnergyDash.destroy(); } catch (_) {}
+        chartEnergyDash = null;
+      }
+      _destroyChartOnCanvas(el);
+      try {
+        chartEnergyDash = createEnergyChartOn(el);
+      } catch (e) {
+        console.warn("ensureEnergyChartDash", e);
+        chartEnergyDash = null;
+      }
       return chartEnergyDash;
     }
 
@@ -15967,11 +16012,16 @@
       return list;
     }
 
+    let _energyResizeRaf = 0;
     function resizeEnergyCharts() {
-      [chartEnergy, chartEnergyDash].forEach((ch) => {
-        try {
-          if (ch) ch.resize();
-        } catch (_) { /* ignore */ }
+      if (_energyResizeRaf) return;
+      _energyResizeRaf = requestAnimationFrame(() => {
+        _energyResizeRaf = 0;
+        [chartEnergy, chartEnergyDash].forEach((ch) => {
+          try {
+            if (ch && ch.canvas && typeof ch.resize === "function") ch.resize();
+          } catch (_) { /* ignore */ }
+        });
       });
     }
 
@@ -16044,23 +16094,20 @@
     }
 
     function applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg) {
-      if (!ch) return;
+      if (!ch || !ch.data) return false;
+      // destroyed / incomplete chart
+      if (!ch.canvas || !ch.data.datasets || ch.data.datasets.length < 3) {
+        return false;
+      }
       ch.$energyPts = pts;
       ch.data.labels = labels;
-      // If chart was created before full-power series existed, rebuild it
-      if (!ch.data.datasets || ch.data.datasets.length < 3) {
-        try {
-          ch.destroy();
-        } catch (_) { /* ignore */ }
-        return;
-      }
       ch.data.datasets[0].label = lblK;
       ch.data.datasets[0].data = kwh;
       ch.data.datasets[1].label = lblFull;
       ch.data.datasets[1].data = fullW;
       ch.data.datasets[2].label = lblAvg;
       ch.data.datasets[2].data = avgW;
-      ch.update("none");
+      return true;
     }
 
     function renderEnergyChart(body) {
@@ -16095,24 +16142,36 @@
         typeof t === "function"
           ? t("energy.chart_power", "Avg power W")
           : "Avg power W";
-      // recreate charts if still on old 2-dataset layout
-      if (typeof chartEnergy !== "undefined" && chartEnergy &&
-          (!chartEnergy.data.datasets || chartEnergy.data.datasets.length < 3)) {
+      // recreate charts if still on old 2-dataset layout or destroyed
+      const badChart = (ch) =>
+        !ch ||
+        !ch.canvas ||
+        !ch.data ||
+        !ch.data.datasets ||
+        ch.data.datasets.length < 3;
+      if (typeof chartEnergy !== "undefined" && chartEnergy && badChart(chartEnergy)) {
         try { chartEnergy.destroy(); } catch (_) {}
         chartEnergy = null;
       }
-      if (typeof chartEnergyDash !== "undefined" && chartEnergyDash &&
-          (!chartEnergyDash.data.datasets || chartEnergyDash.data.datasets.length < 3)) {
+      if (typeof chartEnergyDash !== "undefined" && chartEnergyDash && badChart(chartEnergyDash)) {
         try { chartEnergyDash.destroy(); } catch (_) {}
         chartEnergyDash = null;
       }
       const charts2 = energyChartInstances();
       charts2.forEach((ch) => {
-        applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg);
-        applyEnergyChartSeriesVisibility(ch);
         try {
+          if (!applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg)) {
+            return;
+          }
+          // visibility only — do not mutate legend options (Chart.js re-entrancy)
+          if (typeof applyEnergyChartSeriesVisibility === "function") {
+            applyEnergyChartSeriesVisibility(ch);
+          }
+          // single update after data + visibility
           ch.update("none");
-        } catch (_) { /* ignore */ }
+        } catch (err) {
+          console.warn("renderEnergyChart update", err);
+        }
       });
       const n = body && body.count != null ? body.count : "—";
       const ret = body && body.returned != null ? body.returned : pts.length;
@@ -17662,43 +17721,43 @@
       if (ds0) {
         ds0._seriesId = "kwh";
         ds0.hidden = !isEnergySeriesOn("kwh");
-        ds0.label =
-          typeof t === "function" ? t("chart.series.kwh", "kWh") : "kWh";
+        // keep create-time label unless empty
+        if (!ds0.label) {
+          ds0.label =
+            typeof t === "function" ? t("chart.series.kwh", "kWh") : "kWh";
+        }
       }
       if (ds1) {
         ds1._seriesId = "full_power";
         ds1.hidden = !isEnergySeriesOn("full_power");
-        ds1.label =
-          typeof t === "function"
-            ? t("chart.series.full_power", "Full power W")
-            : "Full power W";
+        if (!ds1.label) {
+          ds1.label =
+            typeof t === "function"
+              ? t("chart.series.full_power", "Full power W")
+              : "Full power W";
+        }
       }
-      // avg always tooltip-only (not plotted); keep data, hide from plot
+      // avg always tooltip-only (not plotted); keep data for tooltips
       if (ds2) {
         ds2._seriesId = "avg";
-        ds2.hidden = false; // still in tooltip via index mode
+        // never hide from Chart meta in a way that re-enters update;
+        // keep showLine/pointRadius fixed, legend filter excludes index 2
         ds2.showLine = false;
         ds2.pointRadius = 0;
+        ds2.pointHoverRadius = 0;
+        ds2.borderWidth = 0;
       }
-      // legend: hide avg + hidden series
-      if (ch.options && ch.options.plugins && ch.options.plugins.legend) {
-        ch.options.plugins.legend.labels = ch.options.plugins.legend.labels || {};
-        ch.options.plugins.legend.labels.filter = (item) => {
-          if (item.datasetIndex === 2) return false;
-          const ds = ch.data.datasets[item.datasetIndex];
-          return !!(ds && !ds.hidden);
-        };
-      }
+      // IMPORTANT: do not reassign legend.labels / filter here —
+      // mutating options mid-update caused "Maximum call stack size exceeded".
     }
 
     function applyEnergyChartsVisibility() {
       [chartEnergy, chartEnergyDash].forEach((ch) => {
-        if (ch) {
+        if (!ch || !ch.canvas) return;
+        try {
           applyEnergyChartSeriesVisibility(ch);
-          try {
-            ch.update("none");
-          } catch (_) { /* ignore */ }
-        }
+          ch.update("none");
+        } catch (_) { /* ignore */ }
       });
     }
 
