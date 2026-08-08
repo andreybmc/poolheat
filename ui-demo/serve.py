@@ -8882,11 +8882,41 @@ INFO_CACHE_FILE = DATA / "info_cache.json"
 MINER_ID_CACHE_FILE = DATA / "miner_identity_cache.json"
 
 
+def _normalize_sn(v) -> str | None:
+    """Non-empty serial string, or None."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s or s.lower() in ("none", "null", "n/a", "na", "—", "-"):
+        return None
+    return s
+
+
+def _effective_miner_sn(ident: dict | None) -> tuple[str | None, str | None]:
+    """
+    Display SN: minersn if set, else CustomerSn (custom_data).
+    Returns (sn, source) where source is 'minersn' | 'customer_sn' | None.
+    """
+    if not isinstance(ident, dict):
+        return None, None
+    msn = _normalize_sn(ident.get("minersn") or ident.get("miner_sn"))
+    if msn:
+        return msn, "minersn"
+    csn = _normalize_sn(
+        ident.get("customer_sn")
+        or ident.get("CustomerSn")
+        or ident.get("customerSn")
+    )
+    if csn:
+        return csn, "customer_sn"
+    return None, None
+
+
 def _miner_display_label(ident: dict | None) -> str:
-    """Prefer ASIC SN; else model · MAC."""
+    """Prefer ASIC SN (minersn → CustomerSn); else model · MAC."""
     if not isinstance(ident, dict):
         return "—"
-    sn = (ident.get("minersn") or "").strip()
+    sn, _src = _effective_miner_sn(ident)
     if sn:
         return sn
     parts: list[str] = []
@@ -12125,6 +12155,9 @@ def _collect_miner_identity() -> dict:
         "chip": None,
         "mac": None,
         "minersn": None,
+        # CustomerSn from get.device.custom_data — used when minersn empty
+        "customer_sn": None,
+        "sn_source": None,  # minersn | customer_sn | None
         "powersn": None,
         "psu_model": None,
         "psu_hw_version": None,
@@ -12151,7 +12184,7 @@ def _collect_miner_identity() -> dict:
         info = miner_cmd({"cmd": "get_miner_info"}, timeout=3).get("Msg") or {}
         if isinstance(info, dict):
             out["mac"] = info.get("mac")
-            out["minersn"] = info.get("minersn") or None
+            out["minersn"] = _normalize_sn(info.get("minersn"))
             out["powersn"] = info.get("powersn") or None
             out["hostname"] = info.get("hostname")
             if not out["powersn"]:
@@ -12226,10 +12259,14 @@ def _collect_miner_identity() -> dict:
                         out["miner_type"] = miner.get("type")
                     if not out.get("minersn"):
                         msn = miner.get("miner-sn") or miner.get("minersn")
-                        if isinstance(msn, str) and msn.strip():
-                            out["minersn"] = msn.strip()
-                        elif msn not in (None, ""):
-                            out["minersn"] = str(msn)
+                        out["minersn"] = _normalize_sn(msn)
+                    # CustomerSn may also appear under miner custom fields
+                    if not out.get("customer_sn"):
+                        out["customer_sn"] = _normalize_sn(
+                            miner.get("CustomerSn")
+                            or miner.get("customer_sn")
+                            or miner.get("customerSn")
+                        )
                     try:
                         bn = int(miner.get("board-num") or 0)
                         if bn > 0:
@@ -12275,6 +12312,15 @@ def _collect_miner_identity() -> dict:
         except Exception as e:
             print(f"[ident] v3 device: {e}")
 
+        # CustomerSn (API v3 get.device.custom_data) — fallback when minersn empty
+        if not out.get("customer_sn"):
+            try:
+                csn = _fetch_customer_sn()
+                if csn:
+                    out["customer_sn"] = csn
+            except Exception as e:
+                print(f"[ident] customer_sn: {e}")
+
         # Prefer v3 for EEPROM fields (works in Suspend); merge live temp/chips from devs
         if boards_v3:
             out["boards"] = _merge_board_rows(boards_v3, boards_devs)
@@ -12302,11 +12348,20 @@ def _collect_miner_identity() -> dict:
         if out.get("board_num") is None and out["boards"]:
             out["board_num"] = len(out["boards"])
 
+        # Display SN: minersn if set, else CustomerSn
+        out["minersn"] = _normalize_sn(out.get("minersn"))
+        out["customer_sn"] = _normalize_sn(out.get("customer_sn"))
+        eff, src = _effective_miner_sn(out)
+        out["sn_source"] = src
+        # convenience field for UI / TG (never invent fake SN)
+        out["display_sn"] = eff
+
         out["ok"] = bool(
             out.get("miner_type")
             or out.get("mac")
             or out.get("boards")
             or out.get("factory_ghs")
+            or out.get("customer_sn")
         )
     except Exception as e:
         out["error"] = str(e)
@@ -15428,6 +15483,45 @@ def _extract_liquid_temp(
 _v3_device_msg_cache: dict | None = None
 _v3_device_msg_ts = 0.0
 _V3_DEVICE_MSG_TTL_SEC = 30.0
+
+_customer_sn_cache: str | None = None
+_customer_sn_ts = 0.0
+_CUSTOMER_SN_TTL_SEC = 120.0
+
+
+def _fetch_customer_sn(*, force: bool = False) -> str | None:
+    """
+    CustomerSn from API v3 get.device.custom_data (WhatsMiner custom SN).
+    Used when factory minersn is empty / not set.
+    """
+    global _customer_sn_cache, _customer_sn_ts
+    now = time.time()
+    if (
+        not force
+        and _customer_sn_cache is not None
+        and (now - _customer_sn_ts) < _CUSTOMER_SN_TTL_SEC
+    ):
+        return _customer_sn_cache
+    csn: str | None = None
+    try:
+        from whatsminer.api.v3 import WhatsminerV3
+
+        host = str(HOST_MINER).split(":")[0]
+        c = WhatsminerV3(host, timeout=3.0)
+        raw = c.get_device_custom_data()
+        msg = raw.get("msg") or raw.get("Msg") or raw
+        if isinstance(msg, dict):
+            csn = _normalize_sn(
+                msg.get("CustomerSn")
+                or msg.get("customer_sn")
+                or msg.get("customerSn")
+            )
+    except Exception as e:
+        print(f"[ident] get.device.custom_data: {e}")
+    # NetPacket / other paths may expose it later — keep None on failure
+    _customer_sn_cache = csn
+    _customer_sn_ts = now
+    return csn
 
 
 def _fetch_v3_device_msg(*, force: bool = False) -> dict | None:
@@ -19639,7 +19733,10 @@ def _tg_info_text(lang: str = "ru") -> str:
     host = (live.get("host") if online else None) or ident.get("host") or f"{HOST_MINER}:{PORT_MINER}"
     mtype = (ident.get("miner_type") or "").strip() or "—"
     mac = _tg_fmt_mac(ident.get("mac"))
-    sn = (ident.get("minersn") or "").strip() or "—"
+    sn_eff, sn_src = _effective_miner_sn(ident)
+    sn = sn_eff or "—"
+    if sn_src == "customer_sn" and sn != "—":
+        sn = f"{sn} (CustomerSn)"
     fw = (ident.get("fw_ver") or "").strip() or "—"
     api_ver = (ident.get("api_ver") or "").strip() or "—"
     platform = (ident.get("platform") or "").strip() or "—"

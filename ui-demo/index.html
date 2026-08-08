@@ -4,13 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GoraPool · Keenetic</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png?v=4" />
-  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png?v=4" />
-  <link rel="icon" href="/icons/favicon.ico?v=4" sizes="any" />
-  <link rel="icon" href="/icons/favicon.svg?v=4" type="image/svg+xml" />
-  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png?v=4" />
-  <link rel="apple-touch-icon" sizes="192x192" href="/icons/app-icon-192.png?v=4" />
-  <link rel="apple-touch-icon" sizes="512x512" href="/icons/app-icon-512.png?v=4" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png?v=5" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png?v=5" />
+  <link rel="icon" href="/icons/favicon.ico?v=5" sizes="any" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png?v=5" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/icons/app-icon-192.png?v=5" />
+  <link rel="apple-touch-icon" sizes="512x512" href="/icons/app-icon-512.png?v=5" />
   <meta name="theme-color" content="#0f1a2b" />
   <meta name="application-name" content="PoolHeat" />
   <style>
@@ -4589,7 +4588,7 @@
     <header class="app-header">
       <div class="brand">
         <div class="brand-mark" title="PoolHeat">
-          <img src="/icons/app-icon-192.png?v=3" width="40" height="40" alt="PoolHeat" />
+          <img src="/icons/app-icon-192.png?v=5" width="40" height="40" alt="PoolHeat" />
         </div>
         <div>
           <h1>poolheat_WM</h1>
@@ -5513,9 +5512,9 @@
             </div>
             <div class="grid-3">
               <div class="metric">
-                <label>ASIC SN (minersn)</label>
-                <div class="val" style="font-size:0.95rem" id="info-miner-sn">—</div>
-                <div class="hint">get_miner_info</div>
+                <label>ASIC SN</label>
+                <div class="val" style="font-size:0.95rem;word-break:break-all" id="info-miner-sn">—</div>
+                <div class="hint" id="info-miner-sn-src">minersn · CustomerSn</div>
               </div>
               <div class="metric">
                 <label>PSU SN</label>
@@ -20122,10 +20121,38 @@
       setTxt("info-miner-api", m.api_ver ? "api " + m.api_ver : "api —");
       setTxt("info-miner-host", m.host || "—");
       setTxt("info-miner-mac", m.mac ? "MAC: " + m.mac : "MAC: —");
-      setTxt(
-        "info-miner-sn",
-        m.minersn || (m.ok ? "not set" : m.miner_type || m.mac ? "not set" : "—")
-      );
+      (function paintMinerSn() {
+        // Prefer factory minersn; if empty — CustomerSn from custom_data
+        const msn = (m.minersn || "").toString().trim();
+        const csn = (
+          m.customer_sn ||
+          m.CustomerSn ||
+          m.display_sn ||
+          ""
+        )
+          .toString()
+          .trim();
+        const src = (m.sn_source || "").toString();
+        let shown = "";
+        let hint = "minersn · CustomerSn";
+        if (msn) {
+          shown = msn;
+          hint = "minersn";
+        } else if (csn) {
+          shown = csn;
+          hint =
+            src === "customer_sn" || !msn
+              ? "CustomerSn (minersn not set)"
+              : "CustomerSn";
+        } else if (m.ok || m.miner_type || m.mac) {
+          shown = "not set";
+          hint = "minersn empty · no CustomerSn";
+        } else {
+          shown = "—";
+        }
+        setTxt("info-miner-sn", shown);
+        setTxt("info-miner-sn-src", hint);
+      })();
       setTxt("info-psu-sn", m.powersn || "—");
       setTxt(
         "info-psu-model",
