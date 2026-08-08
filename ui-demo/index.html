@@ -629,6 +629,7 @@
     }
 
     /* Energy chart controls: Sample + Range + refresh always one row */
+    .btn-row.energy-chart-toolbar,
     .energy-chart-toolbar {
       display: flex;
       flex-wrap: nowrap !important;
@@ -636,6 +637,7 @@
       gap: 6px;
       align-items: center;
       min-width: 0;
+      margin-top: 0; /* override .btn-row margin-top: 12px */
     }
     .energy-chart-toolbar .energy-chart-field {
       margin: 0;
