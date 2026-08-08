@@ -4143,7 +4143,8 @@
       display: block;
     }
     .dash-item-tools .dash-hide-btn,
-    .dash-item-tools .dash-width-btn {
+    .dash-item-tools .dash-width-btn,
+    .dash-item-tools .dash-settings-btn {
       position: absolute;
       top: 8px;
       width: 26px;
@@ -4167,6 +4168,93 @@
     }
     .dash-item-tools .dash-width-btn {
       right: 40px;
+    }
+    /* gear for chart series settings (temps) — left of width / hide */
+    .dash-item-tools .dash-settings-btn {
+      right: 40px;
+    }
+    .dash-item-tools .dash-width-btn + .dash-settings-btn,
+    .dash-item-tools .dash-settings-btn.is-with-width {
+      right: 72px;
+    }
+    .dash-item-tools .dash-settings-btn:hover {
+      color: var(--accent, #3d9cf0);
+      border-color: rgba(61, 156, 240, 0.45);
+    }
+    .dash-item-tools .dash-settings-btn .gear-ico {
+      display: block;
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+    }
+    /* Chart series settings popover */
+    .chart-series-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      background: rgba(0, 0, 0, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .chart-series-modal-backdrop[hidden] {
+      display: none !important;
+    }
+    .chart-series-modal {
+      width: min(360px, 100%);
+      max-height: min(80vh, 520px);
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--border2);
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+      padding: 14px 16px 16px;
+    }
+    .chart-series-modal h3 {
+      font-size: 0.95rem;
+      font-weight: 650;
+      margin: 0 0 4px;
+    }
+    .chart-series-modal .sub {
+      font-size: 0.72rem;
+      color: var(--dim);
+      margin: 0 0 12px;
+      line-height: 1.35;
+    }
+    .chart-series-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .chart-series-list label.check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      font-size: 0.84rem;
+      color: var(--text);
+    }
+    .chart-series-list label.check:hover {
+      background: rgba(61, 156, 240, 0.08);
+      border-color: rgba(61, 156, 240, 0.2);
+    }
+    .chart-series-list .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      flex: 0 0 auto;
+    }
+    .chart-series-modal .modal-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
     }
     /* layout icons: half = two columns · full = one wide bar */
     .dash-item-tools .dash-width-btn .dw-ico {
@@ -8590,6 +8678,24 @@
         "dash.widget.chart_power": "Power chart",
         "dash.widget.chart_energy": "Energy consumption chart",
         "sub.chart_temps": "history · liquid · env · outdoor · boards · chip",
+        "dash.chart_series": "Chart series",
+        "dash.chart_temps_settings": "Temperature series",
+        "dash.chart_temps_settings_sub": "Choose which temperatures to show on the dashboard chart.",
+        "dash.chart_series_min": "Select at least one series",
+        "dash.chart_series_saved": "Chart series updated",
+        "btn.reset_defaults": "Defaults",
+        "btn.apply": "Apply",
+        "btn.cancel": "Cancel",
+        "chart.series.liquid": "liquid",
+        "chart.series.env": "env",
+        "chart.series.outdoor": "outdoor",
+        "chart.series.board0": "SM0 PCB",
+        "chart.series.board1": "SM1 PCB",
+        "chart.series.board2": "SM2 PCB",
+        "chart.series.board3": "SM3 PCB",
+        "chart.series.chip_max": "chip max",
+        "chart.series.chip_avg": "chip avg",
+        "chart.series.chip_min": "chip min",
         "sub.chart_power": "history · power · limit · hashrate · freq · efficiency",
         "chart.sync": "Sync charts",
         "dash.hb.surplus": "surplus",
@@ -9262,6 +9368,24 @@
         "dash.widget.chart_power": "График мощности",
         "dash.widget.chart_energy": "График энергопотребления",
         "sub.chart_temps": "история · liquid · env · улица · платы · chip",
+        "dash.chart_series": "Серии графика",
+        "dash.chart_temps_settings": "Температуры на графике",
+        "dash.chart_temps_settings_sub": "Выберите, какие температуры показывать на графике дашборда.",
+        "dash.chart_series_min": "Выберите хотя бы одну серию",
+        "dash.chart_series_saved": "Серии графика обновлены",
+        "btn.reset_defaults": "По умолчанию",
+        "btn.apply": "Применить",
+        "btn.cancel": "Отмена",
+        "chart.series.liquid": "жидкость",
+        "chart.series.env": "окружение",
+        "chart.series.outdoor": "улица",
+        "chart.series.board0": "SM0 PCB",
+        "chart.series.board1": "SM1 PCB",
+        "chart.series.board2": "SM2 PCB",
+        "chart.series.board3": "SM3 PCB",
+        "chart.series.chip_max": "чипы max",
+        "chart.series.chip_avg": "чипы avg",
+        "chart.series.chip_min": "чипы min",
         "sub.chart_power": "история · power · limit · hashrate · freq · J/T",
         "chart.sync": "Синхронизация",
         "dash.hb.surplus": "избыток",
@@ -13625,6 +13749,24 @@
       });
     }
 
+    function dashGearIconHtml() {
+      return (
+        '<svg class="gear-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>' +
+        '<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06' +
+        "a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09" +
+        "a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06" +
+        "a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09" +
+        "a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06" +
+        "a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09" +
+        "a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06" +
+        'a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09' +
+        'a1.65 1.65 0 0 0-1.51 1z"/>' +
+        "</svg>"
+      );
+    }
+
     function ensureDashItemTools(item) {
       if (!item) return;
       const id = item.getAttribute("data-dash-id") || "";
@@ -13634,6 +13776,18 @@
         tools.className = "dash-item-tools";
         let html =
           '<span class="dash-grip" title="Drag" aria-hidden="true"></span>';
+        if (id === "chart_temps") {
+          html +=
+            '<button type="button" class="dash-settings-btn' +
+            (DASH_RESIZABLE[id] ? " is-with-width" : "") +
+            '" title="' +
+            (typeof t === "function"
+              ? t("dash.chart_series", "Chart series")
+              : "Chart series") +
+            '" aria-label="Chart series">' +
+            dashGearIconHtml() +
+            "</button>";
+        }
         if (DASH_RESIZABLE[id]) {
           html +=
             '<button type="button" class="dash-width-btn" title="' +
@@ -13656,16 +13810,50 @@
           if (!wid) return;
           hideDashWidget(wid);
         });
+        const sbtn = tools.querySelector(".dash-settings-btn");
+        if (sbtn) {
+          sbtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openTempChartSeriesModal();
+          });
+          sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
+        }
         item.appendChild(tools);
-      } else if (DASH_RESIZABLE[id] && !tools.querySelector(".dash-width-btn")) {
-        const hideBtn = tools.querySelector(".dash-hide-btn");
-        const wbtn = document.createElement("button");
-        wbtn.type = "button";
-        wbtn.className = "dash-width-btn";
-        wbtn.innerHTML = dashWidthIconHtml(false);
-        wbtn.setAttribute("aria-label", "Half width");
-        if (hideBtn) tools.insertBefore(wbtn, hideBtn);
-        else tools.appendChild(wbtn);
+      } else {
+        if (DASH_RESIZABLE[id] && !tools.querySelector(".dash-width-btn")) {
+          const hideBtn = tools.querySelector(".dash-hide-btn");
+          const wbtn = document.createElement("button");
+          wbtn.type = "button";
+          wbtn.className = "dash-width-btn";
+          wbtn.innerHTML = dashWidthIconHtml(false);
+          wbtn.setAttribute("aria-label", "Half width");
+          if (hideBtn) tools.insertBefore(wbtn, hideBtn);
+          else tools.appendChild(wbtn);
+        }
+        if (id === "chart_temps" && !tools.querySelector(".dash-settings-btn")) {
+          const wbtn = tools.querySelector(".dash-width-btn");
+          const hideBtn = tools.querySelector(".dash-hide-btn");
+          const sbtn = document.createElement("button");
+          sbtn.type = "button";
+          sbtn.className =
+            "dash-settings-btn" + (wbtn ? " is-with-width" : "");
+          sbtn.innerHTML = dashGearIconHtml();
+          sbtn.title =
+            typeof t === "function"
+              ? t("dash.chart_series", "Chart series")
+              : "Chart series";
+          sbtn.setAttribute("aria-label", "Chart series");
+          sbtn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openTempChartSeriesModal();
+          });
+          sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
+          const before = wbtn || hideBtn;
+          if (before) tools.insertBefore(sbtn, before);
+          else tools.appendChild(sbtn);
+        }
       }
       const wbtn = tools.querySelector(".dash-width-btn");
       if (wbtn) bindDashWidthBtn(item, wbtn);
@@ -16953,6 +17141,222 @@
 
     /* ── history / charts (zoom presets + navigators; optional sync) ── */
     let chartTemp = null;
+
+    /* ── Temperature chart series visibility (dashboard settings gear) ── */
+    const TEMP_CHART_SERIES_KEY = "poolheat_temp_chart_series_v1";
+    /** Fixed series catalog for temps chart (order = Chart.js dataset order) */
+    const TEMP_CHART_SERIES = [
+      { id: "liquid", labelKey: "chart.series.liquid", label: "liquid", color: "#3d9cf0" },
+      { id: "env", labelKey: "chart.series.env", label: "env", color: "#3ecf8e" },
+      { id: "outdoor", labelKey: "chart.series.outdoor", label: "outdoor", color: "#7dd3fc", field: "outdoor_c" },
+      { id: "board0", labelKey: "chart.series.board0", label: "SM0 PCB", color: "#f0b429", field: "board0" },
+      { id: "board1", labelKey: "chart.series.board1", label: "SM1 PCB", color: "#b48ead", field: "board1" },
+      { id: "board2", labelKey: "chart.series.board2", label: "SM2 PCB", color: "#38bdf8", field: "board2" },
+      { id: "board3", labelKey: "chart.series.board3", label: "SM3 PCB", color: "#a3e635", field: "board3" },
+      { id: "chip_max", labelKey: "chart.series.chip_max", label: "chip max", color: "#f07178", field: "chip_max" },
+      { id: "chip_avg", labelKey: "chart.series.chip_avg", label: "chip avg", color: "#fb7185", field: "chip_avg" },
+      { id: "chip_min", labelKey: "chart.series.chip_min", label: "chip min", color: "#fda4af", field: "chip_min" },
+    ];
+    const TEMP_CHART_SERIES_DEFAULT_ON = {
+      liquid: true,
+      env: true,
+      outdoor: true,
+      board0: true,
+      board1: false,
+      board2: true,
+      board3: false,
+      chip_max: true,
+      chip_avg: false,
+      chip_min: false,
+    };
+    let tempChartSeriesVis = null;
+
+    function loadTempChartSeriesVis() {
+      const base = Object.assign({}, TEMP_CHART_SERIES_DEFAULT_ON);
+      try {
+        const raw = localStorage.getItem(TEMP_CHART_SERIES_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            TEMP_CHART_SERIES.forEach((s) => {
+              if (typeof j[s.id] === "boolean") base[s.id] = j[s.id];
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+      tempChartSeriesVis = base;
+      return base;
+    }
+
+    function saveTempChartSeriesVis(vis) {
+      tempChartSeriesVis = Object.assign({}, TEMP_CHART_SERIES_DEFAULT_ON, vis || {});
+      try {
+        localStorage.setItem(
+          TEMP_CHART_SERIES_KEY,
+          JSON.stringify(tempChartSeriesVis)
+        );
+      } catch (_) { /* ignore */ }
+      return tempChartSeriesVis;
+    }
+
+    function getTempChartSeriesVis() {
+      if (!tempChartSeriesVis) loadTempChartSeriesVis();
+      return tempChartSeriesVis;
+    }
+
+    function isTempSeriesOn(id) {
+      const v = getTempChartSeriesVis();
+      return v[id] !== false;
+    }
+
+    function seriesLabel(s) {
+      if (!s) return "";
+      if (typeof t === "function") return t(s.labelKey, s.label);
+      return s.label;
+    }
+
+    function openTempChartSeriesModal() {
+      let backdrop = document.getElementById("chart-temps-series-modal");
+      if (!backdrop) {
+        backdrop = document.createElement("div");
+        backdrop.id = "chart-temps-series-modal";
+        backdrop.className = "chart-series-modal-backdrop";
+        backdrop.hidden = true;
+        backdrop.innerHTML =
+          '<div class="chart-series-modal" role="dialog" aria-modal="true" ' +
+          'aria-labelledby="chart-temps-series-title">' +
+          '<h3 id="chart-temps-series-title" data-i18n="dash.chart_temps_settings">' +
+          "Temperature series</h3>" +
+          '<p class="sub" data-i18n="dash.chart_temps_settings_sub">' +
+          "Choose which temperatures to show on the dashboard chart.</p>" +
+          '<div class="chart-series-list" id="chart-temps-series-list"></div>' +
+          '<div class="modal-actions">' +
+          '<button type="button" class="btn" id="btn-chart-temps-series-defaults" data-i18n="btn.reset_defaults">Defaults</button>' +
+          '<button type="button" class="btn" id="btn-chart-temps-series-cancel" data-i18n="btn.cancel">Cancel</button>' +
+          '<button type="button" class="btn primary" id="btn-chart-temps-series-save" data-i18n="btn.apply">Apply</button>' +
+          "</div></div>";
+        document.body.appendChild(backdrop);
+        backdrop.addEventListener("click", (e) => {
+          if (e.target === backdrop) closeTempChartSeriesModal();
+        });
+        backdrop
+          .querySelector("#btn-chart-temps-series-cancel")
+          ?.addEventListener("click", () => closeTempChartSeriesModal());
+        backdrop
+          .querySelector("#btn-chart-temps-series-defaults")
+          ?.addEventListener("click", () => {
+            fillTempChartSeriesList(TEMP_CHART_SERIES_DEFAULT_ON);
+          });
+        backdrop
+          .querySelector("#btn-chart-temps-series-save")
+          ?.addEventListener("click", () => {
+            const list = document.getElementById("chart-temps-series-list");
+            const next = {};
+            TEMP_CHART_SERIES.forEach((s) => {
+              const inp = list?.querySelector(
+                'input[data-series-id="' + s.id + '"]'
+              );
+              next[s.id] = !!(inp && inp.checked);
+            });
+            // at least one series
+            if (!Object.keys(next).some((k) => next[k])) {
+              if (typeof toastError === "function") {
+                toastError(
+                  typeof t === "function"
+                    ? t("dash.chart_series_min", "Select at least one series")
+                    : "Select at least one series"
+                );
+              }
+              return;
+            }
+            saveTempChartSeriesVis(next);
+            closeTempChartSeriesModal();
+            try {
+              applyTempChartSeriesVisibility();
+              if (typeof renderCharts === "function") renderCharts();
+            } catch (_) { /* ignore */ }
+            if (typeof toastSuccess === "function") {
+              toastSuccess(
+                typeof t === "function"
+                  ? t("dash.chart_series_saved", "Chart series updated")
+                  : "Chart series updated"
+              );
+            }
+          });
+      }
+      fillTempChartSeriesList(getTempChartSeriesVis());
+      // refresh i18n titles if helper exists
+      try {
+        if (typeof applyI18n === "function") applyI18n(backdrop);
+        else if (typeof applyUiLang === "function") applyUiLang();
+      } catch (_) { /* ignore */ }
+      const title = backdrop.querySelector("#chart-temps-series-title");
+      if (title && typeof t === "function") {
+        title.textContent = t("dash.chart_temps_settings", "Temperature series");
+      }
+      const sub = backdrop.querySelector(".sub");
+      if (sub && typeof t === "function") {
+        sub.textContent = t(
+          "dash.chart_temps_settings_sub",
+          "Choose which temperatures to show on the dashboard chart."
+        );
+      }
+      backdrop.hidden = false;
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          closeTempChartSeriesModal();
+          document.removeEventListener("keydown", onKey);
+        }
+      };
+      document.addEventListener("keydown", onKey);
+      backdrop._escHandler = onKey;
+    }
+
+    function fillTempChartSeriesList(vis) {
+      const list = document.getElementById("chart-temps-series-list");
+      if (!list) return;
+      const v = vis || getTempChartSeriesVis();
+      list.innerHTML = TEMP_CHART_SERIES.map((s) => {
+        const on = v[s.id] !== false;
+        const lab = seriesLabel(s);
+        return (
+          '<label class="check">' +
+          '<input type="checkbox" data-series-id="' +
+          s.id +
+          '"' +
+          (on ? " checked" : "") +
+          " />" +
+          '<span class="swatch" style="background:' +
+          s.color +
+          '"></span>' +
+          "<span>" +
+          lab.replace(/</g, "&lt;") +
+          "</span></label>"
+        );
+      }).join("");
+    }
+
+    function closeTempChartSeriesModal() {
+      const backdrop = document.getElementById("chart-temps-series-modal");
+      if (backdrop) {
+        if (backdrop._escHandler) {
+          document.removeEventListener("keydown", backdrop._escHandler);
+          backdrop._escHandler = null;
+        }
+        backdrop.hidden = true;
+      }
+    }
+
+    function applyTempChartSeriesVisibility() {
+      if (!chartTemp || !chartTemp.data || !chartTemp.data.datasets) return;
+      const vis = getTempChartSeriesVis();
+      TEMP_CHART_SERIES.forEach((s, i) => {
+        const ds = chartTemp.data.datasets[i];
+        if (!ds) return;
+        ds.label = seriesLabel(s);
+        ds.hidden = vis[s.id] === false;
+      });
+    }
     let chartPower = null;
     let histPoints = [];
     let statusBands = []; // [{start,end,type,label}] offline | suspend | upfreq
@@ -17396,6 +17800,18 @@
       const elTemp = document.getElementById("chart-temp");
       const elPower = document.getElementById("chart-power");
       if (!elTemp && !elPower) return;
+      // rebuild temps chart if series catalog changed (old 7-ds → 10-ds)
+      if (
+        chartTemp &&
+        chartTemp.data &&
+        Array.isArray(chartTemp.data.datasets) &&
+        chartTemp.data.datasets.length !== TEMP_CHART_SERIES.length
+      ) {
+        try {
+          chartTemp.destroy();
+        } catch (_) { /* ignore */ }
+        chartTemp = null;
+      }
       const common = {
         responsive: true,
         maintainAspectRatio: false,
@@ -17417,20 +17833,31 @@
       };
 
       if (!chartTemp && elTemp) {
+        loadTempChartSeriesVis();
+        const tempDatasets = TEMP_CHART_SERIES.map((s) => {
+          const on = isTempSeriesOn(s.id);
+          const ds = {
+            label: seriesLabel(s),
+            data: [],
+            borderColor: s.color,
+            tension: 0.15,
+            pointRadius: 0,
+            borderWidth: s.id === "liquid" || s.id === "chip_max" ? 2 : 1.5,
+            fill: false,
+            hidden: !on,
+          };
+          if (s.id === "liquid") {
+            ds.backgroundColor = "rgba(61,156,240,0.1)";
+          }
+          if (s.id === "outdoor") {
+            ds.borderDash = [6, 3];
+            ds.borderWidth = 2;
+          }
+          return ds;
+        });
         chartTemp = new Chart(elTemp, {
           type: "line",
-          data: {
-            datasets: [
-              { label: "liquid", data: [], borderColor: "#3d9cf0", backgroundColor: "rgba(61,156,240,0.1)", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
-              { label: "env", data: [], borderColor: "#3ecf8e", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
-              { label: "outdoor", data: [], borderColor: "#7dd3fc", tension: 0.15, pointRadius: 0, borderWidth: 2, borderDash: [6, 3], fill: false },
-              // PCB chart slots: M63 [0,2]; M60S 3-board [0,1,2]
-              { label: "board0", data: [], borderColor: "#f0b429", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
-              { label: "board1", data: [], borderColor: "#b48ead", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false },
-              { label: "board2", data: [], borderColor: "#38bdf8", tension: 0.15, pointRadius: 0, borderWidth: 1.5, fill: false, hidden: true },
-              { label: "chip max", data: [], borderColor: "#f07178", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
-            ],
-          },
+          data: { datasets: tempDatasets },
           options: {
             ...common,
             scales: {
@@ -17499,49 +17926,18 @@
       }
 
       if (hasTemp) {
-        // outdoor may be present while miner offline
-        chartTemp.data.datasets[0].data = xySeries("liquid");
-        chartTemp.data.datasets[1].data = xySeries("env");
-        chartTemp.data.datasets[2].data = xySeries("outdoor_c", { requireOnline: false });
-        // chart slots from last live snapshot (M63→[0,2], M60S 3-board→[0,1,2])
-        let chartSlots = [0, 2];
-        try {
-          const slots =
-            (window.__lastLive && window.__lastLive.board_chart_slots) ||
-            null;
-          if (Array.isArray(slots) && slots.length >= 1) {
-            chartSlots = slots
-              .map((x) => Number(x))
-              .filter((x) => Number.isFinite(x) && x >= 0 && x <= 7);
-            if (!chartSlots.length) chartSlots = [0, 2];
+        // Fill each series from history; visibility from dashboard series settings
+        applyTempChartSeriesVisibility();
+        TEMP_CHART_SERIES.forEach((s, i) => {
+          const ds = chartTemp.data.datasets[i];
+          if (!ds) return;
+          const field = s.field || s.id;
+          if (s.id === "outdoor" || field === "outdoor_c") {
+            ds.data = xySeries("outdoor_c", { requireOnline: false });
           } else {
-            const nb = Number(
-              (window.__lastLive && window.__lastLive.board_count) || 4
-            );
-            if (nb >= 3 && nb < 4) chartSlots = [0, 1, 2];
-            else if (nb < 3) chartSlots = nb >= 2 ? [0, 1] : [0];
-            else chartSlots = [0, 2];
+            ds.data = xySeries(field);
           }
-        } catch (_) { /* keep defaults */ }
-        // datasets[3..5] = up to 3 board series; datasets[6] = chip max
-        const boardDs = [
-          chartTemp.data.datasets[3],
-          chartTemp.data.datasets[4],
-          chartTemp.data.datasets[5],
-        ];
-        for (let i = 0; i < boardDs.length; i++) {
-          if (i < chartSlots.length) {
-            const s = chartSlots[i] | 0;
-            boardDs[i].label = "board" + s;
-            boardDs[i].data = xySeries("board" + s);
-            boardDs[i].hidden = false;
-          } else {
-            boardDs[i].label = "board—";
-            boardDs[i].data = [];
-            boardDs[i].hidden = true;
-          }
-        }
-        chartTemp.data.datasets[6].data = xySeries("chip_max");
+        });
         const vt = getView("temps");
         chartTemp.options.scales.x.min = vt.start;
         chartTemp.options.scales.x.max = vt.end;
