@@ -5099,7 +5099,7 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-                  <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power</div>
+                  <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power in tooltip</div>
                 </div>
                 <div class="btn-row energy-chart-toolbar">
                   <label class="field energy-chart-field">
@@ -5820,7 +5820,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-              <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power</div>
+              <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power in tooltip</div>
             </div>
             <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
               <label class="field energy-chart-field" style="max-width:7.5rem">
@@ -8234,7 +8234,7 @@
         "sub.energy_tariff": "1 / 2 / 3 zones · rates and time windows",
         "h2.energy": "Energy accounting",
         "h2.energy_chart": "Energy consumption",
-        "sub.energy_chart": "kWh bars · avg power",
+        "sub.energy_chart": "kWh bars · avg power in tooltip",
         "field.energy_bucket": "Sample by",
         "field.energy_range": "Range",
         "opt.energy_bucket_hour": "Hours",
@@ -8940,7 +8940,7 @@
         "sub.energy_tariff": "1 / 2 / 3 зоны · ставки и временные окна",
         "h2.energy": "Учёт энергопотребления",
         "h2.energy_chart": "Потребление электроэнергии",
-        "sub.energy_chart": "столбики кВт·ч · средняя мощность",
+        "sub.energy_chart": "столбики кВт·ч · средняя мощность в подсказке",
         "field.energy_bucket": "Семпл",
         "field.energy_range": "Период",
         "opt.energy_bucket_hour": "Часы",
@@ -15713,17 +15713,18 @@
               order: 2,
               maxBarThickness: 36,
             },
+            // Avg power: tooltip-only (invisible on plot, hidden from legend).
             {
               type: "line",
               label: lblP,
               data: [],
               borderColor: "#3ecf8e",
-              backgroundColor: "transparent",
+              backgroundColor: "#3ecf8e",
               yAxisID: "y1",
-              tension: 0.2,
-              pointRadius: 2.5,
-              pointHoverRadius: 4,
-              borderWidth: 2,
+              showLine: false,
+              pointRadius: 0,
+              pointHoverRadius: 0,
+              borderWidth: 0,
               fill: false,
               order: 1,
             },
@@ -15736,7 +15737,13 @@
           interaction: { mode: "index", intersect: false },
           plugins: {
             legend: {
-              labels: { boxWidth: 12, boxHeight: 12, color: "#8b9bb0" },
+              labels: {
+                boxWidth: 12,
+                boxHeight: 12,
+                color: "#8b9bb0",
+                // only kWh bars in legend — avg power stays in tooltip
+                filter: (item) => item.datasetIndex === 0,
+              },
             },
             tooltip: {
               callbacks: {
@@ -15766,6 +15773,12 @@
                   );
                 },
               },
+              // Put avg power first in tooltip (as before when line was visible)
+              itemSort: (a, b) => {
+                const ra = a.dataset.yAxisID === "y1" ? 0 : 1;
+                const rb = b.dataset.yAxisID === "y1" ? 0 : 1;
+                return ra - rb;
+              },
             },
           },
           scales: {
@@ -15787,11 +15800,11 @@
               ticks: { color: "#8b9bb0" },
               grid: { color: "rgba(42,53,68,0.5)" },
             },
+            // Right W axis hidden — avg power not plotted
             y1: {
+              display: false,
               position: "right",
               beginAtZero: true,
-              title: { display: true, text: "W", color: "#8b9bb0" },
-              ticks: { color: "#8b9bb0" },
               grid: { drawOnChartArea: false },
             },
           },
