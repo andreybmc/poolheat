@@ -13163,9 +13163,18 @@ def apply_github_update(ref: str | None = None) -> dict:
                             or rel.endswith(".txt")
                         ):
                             yield m
-                        # Meteocons weather icons (fill SVG) for Outdoor widget
-                        elif rel.startswith("ui-demo/icons/weather/") and (
-                            rel.endswith(".svg")
+                        # App favicons / brand icons + weather set
+                        elif rel.startswith("ui-demo/icons/") and (
+                            rel.endswith(
+                                (
+                                    ".svg",
+                                    ".png",
+                                    ".ico",
+                                    ".webp",
+                                    ".jpg",
+                                    ".jpeg",
+                                )
+                            )
                             or rel.endswith("LICENSE")
                             or rel.endswith("README.md")
                         ):
@@ -13202,15 +13211,32 @@ def apply_github_update(ref: str | None = None) -> dict:
                     installed.append(str(wm_dst))
                 except Exception as e:
                     print(f"[update] whatsminer package: {e}")
-            # Outdoor weather icons → www/icons/weather/
-            wx_src_dir = src_root / "ui-demo" / "icons" / "weather"
-            wx_dst_dir = www_dir / "icons" / "weather"
-            if wx_src_dir.is_dir():
-                for p in sorted(wx_src_dir.iterdir()):
-                    if not p.is_file():
-                        continue
-                    if p.suffix.lower() == ".svg" or p.name in ("LICENSE", "README.md"):
-                        mapping.append((p, wx_dst_dir / p.name))
+            # Brand + weather icons → www/icons/ (favicon, app-icon, apple-touch, …)
+            icons_src = src_root / "ui-demo" / "icons"
+            icons_dst = www_dir / "icons"
+            if icons_src.is_dir():
+                try:
+                    icons_dst.mkdir(parents=True, exist_ok=True)
+                    for p in sorted(icons_src.rglob("*")):
+                        if not p.is_file():
+                            continue
+                        if p.name in (".DS_Store",) or "__pycache__" in p.parts:
+                            continue
+                        suf = p.suffix.lower()
+                        if suf not in (
+                            ".svg",
+                            ".png",
+                            ".ico",
+                            ".webp",
+                            ".jpg",
+                            ".jpeg",
+                        ) and p.name not in ("LICENSE", "README.md"):
+                            continue
+                        rel = p.relative_to(icons_src)
+                        mapping.append((p, icons_dst / rel))
+                    installed.append(str(icons_dst))
+                except Exception as e:
+                    print(f"[update] icons: {e}")
             ver_src = src_root / "VERSION"
             if ver_src.is_file():
                 new_version = _read_version_file(ver_src)
