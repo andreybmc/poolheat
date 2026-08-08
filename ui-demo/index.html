@@ -514,6 +514,8 @@
       font-size: 0.92rem;
       font-weight: 650;
       letter-spacing: -0.01em;
+      margin: 0;
+      line-height: 1.2;
     }
 
     .card-h .sub {
@@ -521,6 +523,48 @@
       color: var(--dim);
       font-weight: 400;
       margin-top: 2px;
+      line-height: 1.2;
+    }
+
+    /*
+     * Unified header strip for dash charts + errors (+ miner energy chart).
+     * Same min-height / padding so half-width packs line up.
+     */
+    #panel-chart-temps > .card-h,
+    #panel-chart-power > .card-h,
+    #panel-chart-energy-dash > .card-h,
+    #panel-energy-chart > .card-h,
+    #panel-miner-errors > .card-h,
+    .card.errors-card > .card-h {
+      box-sizing: border-box;
+      min-height: 60px;
+      height: 60px;
+      padding: 10px 16px;
+      gap: 10px;
+      align-items: center;
+      overflow: hidden;
+    }
+    #panel-chart-temps > .card-h > div:first-child,
+    #panel-chart-power > .card-h > div:first-child,
+    #panel-chart-energy-dash > .card-h > div:first-child,
+    #panel-energy-chart > .card-h > div:first-child,
+    #panel-miner-errors > .card-h > div:first-child,
+    .card.errors-card > .card-h > div:first-child {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    /* keep subtitle line reserved for visual weight match (empty = still ~1 line) */
+    #panel-chart-temps > .card-h .sub,
+    #panel-chart-power > .card-h .sub,
+    #panel-chart-energy-dash > .card-h .sub,
+    #panel-energy-chart > .card-h .sub,
+    #panel-miner-errors > .card-h .sub,
+    .card.errors-card > .card-h .sub {
+      margin-top: 2px;
+      min-height: calc(0.72rem * 1.2);
     }
 
     /*
@@ -608,16 +652,16 @@
       width: 100%;
       min-width: 0;
     }
-    /* pull Sample/Period labels up so card-h height ≈ other chart cards */
+    /* Sample/Period labels sit above pills; compact so they fit fixed card-h */
     .energy-chart-toolbar .energy-chart-field > span {
       display: block;
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      line-height: 1.15;
+      line-height: 1.1;
       color: var(--dim);
-      margin: -10px 0 0;
+      margin: 0 0 2px;
       padding: 0;
     }
     .energy-chart-toolbar .energy-chart-refresh {
@@ -643,15 +687,8 @@
       line-height: 1;
       display: block;
     }
-    /* stock card-h (align center like Power · Hashrate) — no custom title hacks */
     #panel-chart-energy-dash > .card-h {
       flex-wrap: nowrap;
-      gap: 8px;
-      align-items: center;
-    }
-    #panel-chart-energy-dash > .card-h > div:first-child {
-      min-width: 0;
-      flex: 1 1 auto;
     }
     .dash-charts-pack #panel-chart-energy-dash > .card-h {
       flex-wrap: nowrap;
@@ -661,10 +698,6 @@
     }
     .dash-charts-pack .energy-chart-toolbar .energy-chart-field-range {
       max-width: 3.75rem;
-    }
-    /* Pool → Energy chart header */
-    #panel-energy-chart > .card-h {
-      align-items: center;
     }
     #panel-energy-chart > .card-h .btn-row {
       align-items: flex-end;
@@ -676,10 +709,10 @@
     }
     #panel-energy-chart > .card-h .btn-row > .field > span {
       display: block;
-      font-size: 0.65rem;
+      font-size: 0.62rem;
       color: var(--dim);
-      line-height: 1.15;
-      margin: -10px 0 0;
+      line-height: 1.1;
+      margin: 0 0 2px;
       padding: 0;
     }
 
