@@ -652,21 +652,17 @@
       width: 100%;
       min-width: 0;
     }
-    /* Sample/Period labels sit above pills; compact so they fit fixed card-h */
-    .energy-chart-toolbar .energy-chart-field > span {
-      display: block;
-      font-size: 0.62rem;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      line-height: 1.1;
-      color: var(--dim);
-      margin: 0 0 2px;
-      padding: 0;
+    /* Sample/Period labels removed from header — use title/aria on selects */
+    .energy-chart-toolbar .energy-chart-field > span,
+    #panel-energy-chart > .card-h .btn-row > .field > span {
+      display: none;
+    }
+    .energy-chart-toolbar .energy-chart-field {
+      gap: 0;
     }
     .energy-chart-toolbar .energy-chart-refresh {
       flex: 0 0 auto;
-      align-self: flex-end;
+      align-self: center;
       width: 28px;
       min-width: 28px;
       height: 28px;
@@ -700,20 +696,12 @@
       max-width: 3.75rem;
     }
     #panel-energy-chart > .card-h .btn-row {
-      align-items: flex-end;
+      align-items: center;
       gap: 6px;
     }
     #panel-energy-chart > .card-h .btn-row > .field {
-      gap: 2px;
+      gap: 0;
       margin: 0;
-    }
-    #panel-energy-chart > .card-h .btn-row > .field > span {
-      display: block;
-      font-size: 0.62rem;
-      color: var(--dim);
-      line-height: 1.1;
-      margin: 0 0 2px;
-      padding: 0;
     }
 
     .card-b { padding: 16px; }
