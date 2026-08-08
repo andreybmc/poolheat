@@ -514,6 +514,75 @@
       margin-top: 2px;
     }
 
+    /*
+     * Shared compact pill control — chart zoom + energy Sample/Period.
+     * One style; native <select> only differs by chevron a bit further right.
+     */
+    .ui-pill-control,
+    .chart-zoom-toggle,
+    select.energy-chart-bucket,
+    select.energy-chart-range {
+      box-sizing: border-box;
+      border: 1px solid var(--border2);
+      background-color: var(--panel2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1;
+      min-height: 28px;
+      height: 28px;
+      cursor: pointer;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .ui-pill-control:hover,
+    .chart-zoom-toggle:hover,
+    select.energy-chart-bucket:hover,
+    select.energy-chart-range:hover {
+      border-color: var(--accent);
+    }
+    .ui-pill-control:focus,
+    .chart-zoom-toggle:focus,
+    select.energy-chart-bucket:focus,
+    select.energy-chart-range:focus {
+      border-color: var(--accent);
+    }
+    .chart-zoom-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 3.2rem;
+      /* button reset */
+      appearance: none;
+      -webkit-appearance: none;
+    }
+    /* native select: same pill, chevron slightly more to the right than zoom chev */
+    select.energy-chart-bucket,
+    select.energy-chart-range {
+      display: inline-block;
+      width: auto;
+      min-width: 3.2rem;
+      max-width: 100%;
+      /* room for chevron; icon sits closer to right edge than form selects */
+      padding: 6px 1.35rem 6px 10px;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9bb0' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.4rem center;
+      background-size: 10px 10px;
+      vertical-align: middle;
+    }
+    select.energy-chart-bucket:disabled,
+    select.energy-chart-range:disabled {
+      opacity: 0.55;
+      cursor: default;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235c6b7e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    }
+
     /* Energy chart controls: Sample + Range + refresh always one row */
     .energy-chart-toolbar {
       display: flex;
@@ -528,38 +597,44 @@
       min-width: 0;
       flex: 0 1 auto;
       max-width: 6.5rem;
+      gap: 3px;
     }
     .energy-chart-toolbar .energy-chart-field-range {
       flex: 0 1 auto;
-      max-width: 4.5rem;
+      max-width: 4.25rem;
     }
     .energy-chart-toolbar .energy-chart-field select {
       width: 100%;
       min-width: 0;
-      font-size: 0.78rem;
-      padding-left: 8px;
-      padding-right: 22px;
     }
     .energy-chart-toolbar .energy-chart-field > span {
-      font-size: 0.68rem;
+      font-size: 0.65rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      line-height: 1.2;
+      color: var(--dim);
     }
     .energy-chart-toolbar .energy-chart-refresh {
       flex: 0 0 auto;
       align-self: flex-end;
-      width: 2.15rem;
-      min-width: 2.15rem;
-      height: 2.15rem;
+      width: 28px;
+      min-width: 28px;
+      height: 28px;
       padding: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       line-height: 1;
+      border-radius: 8px;
+      border: 1px solid var(--border2);
+      background: var(--panel2);
+    }
+    .energy-chart-toolbar .energy-chart-refresh:hover {
+      border-color: var(--accent);
     }
     .energy-chart-toolbar .energy-chart-refresh .ico-refresh {
-      font-size: 1.05rem;
+      font-size: 0.95rem;
       line-height: 1;
       display: block;
     }
@@ -577,10 +652,24 @@
       flex-wrap: nowrap;
     }
     .dash-charts-pack .energy-chart-toolbar .energy-chart-field {
-      max-width: 5.75rem;
+      max-width: 5.5rem;
     }
     .dash-charts-pack .energy-chart-toolbar .energy-chart-field-range {
-      max-width: 4rem;
+      max-width: 3.75rem;
+    }
+    /* Pool → Energy chart header (same pills as dash) */
+    #panel-energy-chart > .card-h .btn-row {
+      align-items: flex-end;
+      gap: 6px;
+    }
+    #panel-energy-chart > .card-h .btn-row > .field {
+      gap: 3px;
+      margin: 0;
+    }
+    #panel-energy-chart > .card-h .btn-row > .field > span {
+      font-size: 0.65rem;
+      color: var(--dim);
+      line-height: 1.2;
     }
 
     .card-b { padding: 16px; }
@@ -1147,6 +1236,34 @@
     }
     select:disabled {
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235c6b7e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    }
+    /*
+     * Compact energy Sample/Period — re-assert after global select so form
+     * styles don't inflate height. Same pill as chart zoom; chevron righter.
+     */
+    select.energy-chart-bucket,
+    select.energy-chart-range {
+      width: auto;
+      min-width: 3.2rem;
+      min-height: 28px;
+      height: 28px;
+      padding: 6px 1.35rem 6px 10px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1;
+      border-radius: 8px;
+      background-color: var(--panel2);
+      border: 1px solid var(--border2);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9bb0' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.4rem center;
+      background-size: 10px 10px;
+    }
+    select.energy-chart-bucket:hover,
+    select.energy-chart-range:hover,
+    select.energy-chart-bucket:focus,
+    select.energy-chart-range:focus {
+      border-color: var(--accent);
     }
 
     /* password + eye toggle */
@@ -4335,33 +4452,17 @@
       gap: 10px 12px;
       margin-bottom: 10px;
     }
-    /* compact zoom pill + menu (like pool hashrate chart) */
+    /* compact zoom pill + menu — shell + chev; surface = .ui-pill-control / shared above */
     .chart-zoom-wrap {
       position: relative;
       display: inline-flex;
       align-items: center;
     }
-    .chart-zoom-toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      border: 1px solid var(--border2);
-      background: var(--panel2);
-      color: var(--text);
-      border-radius: 8px;
-      padding: 6px 10px;
-      font: inherit;
-      font-size: 0.8rem;
-      font-weight: 600;
-      cursor: pointer;
-      min-width: 3.2rem;
-      line-height: 1;
-    }
-    .chart-zoom-toggle:hover { border-color: var(--accent); }
     .chart-zoom-toggle .chev {
       font-size: 0.55rem;
       opacity: 0.7;
       color: var(--muted);
+      margin-left: 0; /* gap from flex on .chart-zoom-toggle */
     }
     .chart-zoom-menu {
       position: absolute;
@@ -4926,10 +5027,10 @@
                   <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
                   <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power</div>
                 </div>
-                <div class="btn-row energy-chart-toolbar" style="align-items:end">
+                <div class="btn-row energy-chart-toolbar">
                   <label class="field energy-chart-field">
                     <span data-i18n="field.energy_bucket">Sample by</span>
-                    <select id="energy-chart-bucket-dash" class="energy-chart-bucket">
+                    <select id="energy-chart-bucket-dash" class="energy-chart-bucket ui-pill-control">
                       <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
                       <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
                       <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
@@ -4938,7 +5039,7 @@
                   </label>
                   <label class="field energy-chart-field energy-chart-field-range">
                     <span data-i18n="field.energy_range">Range</span>
-                    <select id="energy-chart-range-dash" class="energy-chart-range">
+                    <select id="energy-chart-range-dash" class="energy-chart-range ui-pill-control">
                       <option value="24">1d</option>
                       <option value="48" selected>2d</option>
                       <option value="168">7d</option>
@@ -5647,19 +5748,19 @@
               <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
               <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power</div>
             </div>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:end">
-              <label class="field" style="margin:0;min-width:9rem">
+            <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
+              <label class="field energy-chart-field" style="max-width:7.5rem">
                 <span data-i18n="field.energy_bucket">Sample by</span>
-                <select id="energy-chart-bucket" class="energy-chart-bucket">
+                <select id="energy-chart-bucket" class="energy-chart-bucket ui-pill-control">
                   <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
                   <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
                   <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
                   <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
                 </select>
               </label>
-              <label class="field" style="margin:0;min-width:8rem">
+              <label class="field energy-chart-field energy-chart-field-range" style="max-width:4.5rem">
                 <span data-i18n="field.energy_range">Range</span>
-                <select id="energy-chart-range" class="energy-chart-range">
+                <select id="energy-chart-range" class="energy-chart-range ui-pill-control">
                   <option value="24">1d</option>
                   <option value="48" selected>2d</option>
                   <option value="168">7d</option>
