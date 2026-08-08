@@ -640,20 +640,40 @@
       line-height: 1;
       display: block;
     }
-    /* title row: align h2 with label+select block (labels on top of pills) */
-    #panel-chart-energy-dash > .card-h {
+    /*
+     * Energy chart card-h: title TOP (not vertically centered next to
+     * Sample/Period). Tighter padding so the block header sits higher.
+     */
+    #panel-chart-energy-dash > .card-h,
+    #panel-energy-chart > .card-h {
       flex-wrap: nowrap;
-      gap: 8px;
+      gap: 8px 10px;
       align-items: flex-start;
+      padding: 10px 16px 10px;
     }
-    #panel-chart-energy-dash > .card-h > div:first-child {
+    #panel-chart-energy-dash > .card-h > div:first-child,
+    #panel-energy-chart > .card-h > div:first-child {
       min-width: 0;
       flex: 1 1 auto;
-      /* match first line of toolbar labels so h2 sits at top of header */
-      padding-top: 0;
-      display: flex;
-      align-items: center;
-      min-height: calc(0.65rem * 1.2 + 3px + 28px);
+      margin: 0;
+      padding: 0;
+      /* no min-height / no vertical centering — h2 stays on top */
+      min-height: 0;
+      display: block;
+      align-self: flex-start;
+    }
+    #panel-chart-energy-dash > .card-h h2,
+    #panel-energy-chart > .card-h h2 {
+      margin: 0;
+      padding: 0;
+      line-height: 1.2;
+    }
+    /* Sample/Period block also starts at top of header */
+    #panel-chart-energy-dash > .card-h .energy-chart-toolbar,
+    #panel-energy-chart > .card-h .energy-chart-toolbar {
+      align-self: flex-start;
+      margin: 0;
+      padding: 0;
     }
     /* pack / half: keep toolbar on one line */
     .dash-charts-pack #panel-chart-energy-dash > .card-h {
@@ -665,18 +685,10 @@
     .dash-charts-pack .energy-chart-toolbar .energy-chart-field-range {
       max-width: 3.75rem;
     }
-    /* Pool → Energy chart header (same pills as dash) */
-    #panel-energy-chart > .card-h {
-      align-items: flex-start;
-    }
-    #panel-energy-chart > .card-h > div:first-child {
-      display: flex;
-      align-items: center;
-      min-height: calc(0.65rem * 1.2 + 3px + 28px);
-    }
     #panel-energy-chart > .card-h .btn-row {
       align-items: flex-end;
       gap: 6px;
+      margin: 0;
     }
     #panel-energy-chart > .card-h .btn-row > .field {
       gap: 3px;
