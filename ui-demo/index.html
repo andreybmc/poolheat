@@ -5003,7 +5003,7 @@
                       </thead>
                       <tbody id="miner-event-rows"></tbody>
                     </table>
-                    <div class="err-empty" id="miner-event-empty" data-i18n="events.empty">No events</div>
+                    <div class="err-empty" id="miner-event-empty" data-i18n="events.empty">No active events</div>
                   </div>
                 </div>
               </div>
@@ -8720,7 +8720,7 @@
         "sub.errors_events": "active errors · miner events",
         "label.miner_errors": "Errors",
         "errors.empty": "No active errors",
-        "events.empty": "No events",
+        "events.empty": "No active events",
         "label.miner_events": "Events",
         "dash.widget.history": "History & charts",
         "dash.widget.chart_temps": "Temperatures chart",
@@ -9448,7 +9448,7 @@
         "sub.errors_events": "активные ошибки · события майнера",
         "label.miner_errors": "Ошибки",
         "errors.empty": "Нет активных ошибок",
-        "events.empty": "Нет событий",
+        "events.empty": "Нет активных событий",
         "label.miner_events": "События",
         "dash.widget.history": "История и графики",
         "dash.widget.chart_temps": "График температур",
@@ -11218,8 +11218,27 @@
 
       // real get_error_code + LuCI Events table (no Hash Stable soft-alerts)
       const errs = live && Array.isArray(live.miner_errors) ? live.miner_errors : [];
-      const events =
+      // drop LuCI empty-section placeholders ("This section contains no values yet")
+      const eventsRaw =
         live && Array.isArray(live.miner_events) ? live.miner_events : [];
+      const events = eventsRaw.filter((e) => {
+        const code = String(e && e.code != null ? e.code : "")
+          .trim()
+          .toLowerCase();
+        if (!code || code === "—" || code === "-" || code === "–") return false;
+        if (
+          code.indexOf("no values") >= 0 ||
+          code.indexOf("no events") >= 0 ||
+          code.indexOf("contains no") >= 0 ||
+          code.indexOf("this section") >= 0 ||
+          code === "no data" ||
+          code === "none" ||
+          code === "n/a"
+        ) {
+          return false;
+        }
+        return true;
+      });
       const total = errs.length + events.length;
 
       // Always show card; only layout-hide if user hid the widget
@@ -11329,7 +11348,7 @@
       }
       if (evEmpty) {
         evEmpty.hidden = !!events.length;
-        evEmpty.textContent = t("events.empty", "No events");
+        evEmpty.textContent = t("events.empty", "No active events");
       }
       const evTable = evBody && evBody.closest("table");
       if (evTable) evTable.style.display = events.length ? "" : "none";

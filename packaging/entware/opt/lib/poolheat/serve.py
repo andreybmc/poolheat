@@ -15489,9 +15489,24 @@ def _parse_miner_events_html(html: str) -> list[dict]:
             code = _at(i_code)
             if not code or code in ("—", "-", "–"):
                 continue
-            # ignore placeholder / empty-section rows
-            if code.lower() in ("no data", "none", "n/a"):
+            # ignore placeholder / empty-section rows (LuCI empty table message)
+            code_l = code.lower().strip()
+            if code_l in ("no data", "none", "n/a", "—", "-", "–"):
                 continue
+            if (
+                "no values" in code_l
+                or "no events" in code_l
+                or "no data" in code_l
+                or "contains no" in code_l
+                or "section contains" in code_l
+                or code_l.startswith("this section")
+            ):
+                continue
+            # multi-word prose is never a real EventCode (codes are short tokens)
+            if len(code) > 40 or (" " in code and not re.match(r"^[\w.-]+$", code)):
+                # allow short codes with dots; reject long free-text cells
+                if " " in code and not re.match(r"^E?\d{1,6}$", code, re.I):
+                    continue
             cause = _at(i_cause)
             action = _at(i_action)
             count_s = _at(i_count)
