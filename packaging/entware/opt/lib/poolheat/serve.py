@@ -10311,7 +10311,8 @@ def energy_series(
     Aggregated energy chart series from energy.db.
 
     bucket: hour | day | week | month
-    Each point: bar kWh (sum of hold deltas) + avg_power_w (continuous mean for bucket).
+    Each point: bar kWh (sum of hold deltas) + avg_power_w (continuous mean)
+    + max_power_w (peak hold power in bucket — "full power" line on chart).
     """
     cfg = get_energy_cfg()
     now = time.time()
@@ -10360,7 +10361,7 @@ def energy_series(
                 """,
                 (meter_id, since, now + 1),
             ).fetchall()
-            raw: list[tuple[float, float, float]] = []
+            raw: list[tuple[float, float, float | None]] = []
             for r in rows:
                 try:
                     ts = float(r["ts"])
@@ -10378,7 +10379,7 @@ def energy_series(
                     d_kwh = 0.0
                 if pw is not None and not math.isfinite(pw):
                     pw = None
-                raw.append((ts, d_kwh, pw if pw is not None else 0.0))
+                raw.append((ts, d_kwh, pw))
         finally:
             conn.close()
 
@@ -10415,6 +10416,7 @@ def energy_series(
                 "pw_sum": 0.0,
                 "pw_wsum": 0.0,  # energy-weighted power
                 "pw_w": 0.0,
+                "pw_max": None,  # peak hold power in bucket
                 "first_ts": ts,
                 "last_ts": ts,
             }
@@ -10430,6 +10432,8 @@ def energy_series(
             if w > 0:
                 bk["pw_wsum"] += pw * w
                 bk["pw_w"] += w
+            if bk["pw_max"] is None or pw > bk["pw_max"]:
+                bk["pw_max"] = pw
         try:
             price = _energy_price_at(ts, cfg)
             bk["cost"] += max(0.0, d_kwh) * price
@@ -10456,6 +10460,10 @@ def energy_series(
         # if coverage is most of the bucket, prefer energy/nominal for "sample avg power"
         if bk["kwh"] > 0 and nom_h >= 0.25 and span_h >= nom_h * 0.5:
             avg_w = (bk["kwh"] / nom_h) * 1000.0
+        max_w = bk["pw_max"]
+        # if no sample max but we have continuous avg, fall back so line still draws
+        if max_w is None and avg_w is not None:
+            max_w = avg_w
         points.append(
             {
                 "ts": bk["ts"],
@@ -10464,6 +10472,7 @@ def energy_series(
                 "kwh": round(bk["kwh"], 4),
                 "cost": round(bk["cost"], 2),
                 "avg_power_w": round(avg_w, 1) if avg_w is not None and math.isfinite(avg_w) else None,
+                "max_power_w": round(max_w, 1) if max_w is not None and math.isfinite(max_w) else None,
                 "samples": bk["n"],
             }
         )

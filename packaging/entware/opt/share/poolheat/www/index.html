@@ -5099,7 +5099,7 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-                  <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power in tooltip</div>
+                  <div class="sub" data-i18n="sub.energy_chart">kWh bars · full power · avg in tooltip</div>
                 </div>
                 <div class="btn-row energy-chart-toolbar">
                   <label class="field energy-chart-field">
@@ -5820,7 +5820,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-              <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power in tooltip</div>
+              <div class="sub" data-i18n="sub.energy_chart">kWh bars · full power · avg in tooltip</div>
             </div>
             <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
               <label class="field energy-chart-field" style="max-width:7.5rem">
@@ -8234,7 +8234,7 @@
         "sub.energy_tariff": "1 / 2 / 3 zones · rates and time windows",
         "h2.energy": "Energy accounting",
         "h2.energy_chart": "Energy consumption",
-        "sub.energy_chart": "kWh bars · avg power in tooltip",
+        "sub.energy_chart": "kWh bars · full power · avg in tooltip",
         "field.energy_bucket": "Sample by",
         "field.energy_range": "Range",
         "opt.energy_bucket_hour": "Hours",
@@ -8244,6 +8244,7 @@
         "h2.energy_tariff": "Electricity tariff",
         "energy.live_power": "Live power",
         "energy.chart_power": "Avg power W",
+        "energy.chart_full_power": "Full power W",
         "energy.chart_kwh": "kWh",
         "energy.tariff_now": "Tariff now",
         "energy.today": "Today",
@@ -8940,7 +8941,7 @@
         "sub.energy_tariff": "1 / 2 / 3 зоны · ставки и временные окна",
         "h2.energy": "Учёт энергопотребления",
         "h2.energy_chart": "Потребление электроэнергии",
-        "sub.energy_chart": "столбики кВт·ч · средняя мощность в подсказке",
+        "sub.energy_chart": "столбики кВт·ч · полная мощность · средняя в подсказке",
         "field.energy_bucket": "Семпл",
         "field.energy_range": "Период",
         "opt.energy_bucket_hour": "Часы",
@@ -8950,6 +8951,7 @@
         "h2.energy_tariff": "Тариф на электроэнергию",
         "energy.live_power": "Мощность сейчас",
         "energy.chart_power": "Средняя мощность W",
+        "energy.chart_full_power": "Полная мощность W",
         "energy.chart_kwh": "кВт·ч",
         "energy.tariff_now": "Тариф сейчас",
         "energy.today": "Сегодня",
@@ -15692,7 +15694,11 @@
       } catch (_) { /* ignore */ }
       const lblK =
         typeof t === "function" ? t("energy.chart_kwh", "kWh") : "kWh";
-      const lblP =
+      const lblFull =
+        typeof t === "function"
+          ? t("energy.chart_full_power", "Full power W")
+          : "Full power W";
+      const lblAvg =
         typeof t === "function"
           ? t("energy.chart_power", "Avg power W")
           : "Avg power W";
@@ -15710,23 +15716,40 @@
               borderWidth: 1,
               borderRadius: 3,
               yAxisID: "y",
-              order: 2,
+              order: 3,
               maxBarThickness: 36,
             },
-            // Avg power: tooltip-only (invisible on plot, hidden from legend).
+            // Full (peak) power — visible line on right W axis
             {
               type: "line",
-              label: lblP,
+              label: lblFull,
               data: [],
               borderColor: "#3ecf8e",
-              backgroundColor: "#3ecf8e",
+              backgroundColor: "transparent",
+              yAxisID: "y1",
+              tension: 0.2,
+              pointRadius: 2.5,
+              pointHoverRadius: 4,
+              borderWidth: 2,
+              fill: false,
+              order: 1,
+              $energyKind: "full",
+            },
+            // Avg power: tooltip-only (invisible on plot, hidden from legend)
+            {
+              type: "line",
+              label: lblAvg,
+              data: [],
+              borderColor: "#f0c14a",
+              backgroundColor: "#f0c14a",
               yAxisID: "y1",
               showLine: false,
               pointRadius: 0,
               pointHoverRadius: 0,
               borderWidth: 0,
               fill: false,
-              order: 1,
+              order: 2,
+              $energyKind: "avg",
             },
           ],
         },
@@ -15741,8 +15764,8 @@
                 boxWidth: 12,
                 boxHeight: 12,
                 color: "#8b9bb0",
-                // only kWh bars in legend — avg power stays in tooltip
-                filter: (item) => item.datasetIndex === 0,
+                // kWh + full power; avg stays tooltip-only
+                filter: (item) => item.datasetIndex !== 2,
               },
             },
             tooltip: {
@@ -15773,11 +15796,14 @@
                   );
                 },
               },
-              // Put avg power first in tooltip (as before when line was visible)
+              // Full power, avg power, then kWh
               itemSort: (a, b) => {
-                const ra = a.dataset.yAxisID === "y1" ? 0 : 1;
-                const rb = b.dataset.yAxisID === "y1" ? 0 : 1;
-                return ra - rb;
+                const rank = (ds) => {
+                  if (ds.$energyKind === "full") return 0;
+                  if (ds.$energyKind === "avg") return 1;
+                  return 2;
+                };
+                return rank(a.dataset) - rank(b.dataset);
               },
             },
           },
@@ -15800,11 +15826,12 @@
               ticks: { color: "#8b9bb0" },
               grid: { color: "rgba(42,53,68,0.5)" },
             },
-            // Right W axis hidden — avg power not plotted
             y1: {
-              display: false,
+              display: true,
               position: "right",
               beginAtZero: true,
+              title: { display: true, text: "W", color: "#8b9bb0" },
+              ticks: { color: "#8b9bb0" },
               grid: { drawOnChartArea: false },
             },
           },
@@ -15949,26 +15976,43 @@
       });
     }
 
-    function applyEnergyChartData(ch, pts, labels, kwh, avgW, lblK, lblP) {
+    function applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg) {
       if (!ch) return;
       ch.$energyPts = pts;
       ch.data.labels = labels;
+      // If chart was created before full-power series existed, rebuild it
+      if (!ch.data.datasets || ch.data.datasets.length < 3) {
+        try {
+          ch.destroy();
+        } catch (_) { /* ignore */ }
+        return;
+      }
       ch.data.datasets[0].label = lblK;
       ch.data.datasets[0].data = kwh;
-      ch.data.datasets[1].label = lblP;
-      ch.data.datasets[1].data = avgW;
+      ch.data.datasets[1].label = lblFull;
+      ch.data.datasets[1].data = fullW;
+      ch.data.datasets[2].label = lblAvg;
+      ch.data.datasets[2].data = avgW;
       ch.update("none");
     }
 
     function renderEnergyChart(body) {
-      const charts = energyChartInstances();
-      if (!charts.length) return;
       energyChartLastBody = body || null;
       const pts = (body && body.points) || [];
       const labels = pts.map((p) => p.label || "");
       const kwh = pts.map((p) =>
         p.kwh != null && Number.isFinite(Number(p.kwh)) ? Number(p.kwh) : 0
       );
+      const fullW = pts.map((p) => {
+        if (p.max_power_w != null && Number.isFinite(Number(p.max_power_w))) {
+          return Number(p.max_power_w);
+        }
+        // older API: fall back to avg so line still shows
+        if (p.avg_power_w != null && Number.isFinite(Number(p.avg_power_w))) {
+          return Number(p.avg_power_w);
+        }
+        return null;
+      });
       const avgW = pts.map((p) =>
         p.avg_power_w != null && Number.isFinite(Number(p.avg_power_w))
           ? Number(p.avg_power_w)
@@ -15976,11 +16020,29 @@
       );
       const lblK =
         typeof t === "function" ? t("energy.chart_kwh", "kWh") : "kWh";
-      const lblP =
+      const lblFull =
+        typeof t === "function"
+          ? t("energy.chart_full_power", "Full power W")
+          : "Full power W";
+      const lblAvg =
         typeof t === "function"
           ? t("energy.chart_power", "Avg power W")
           : "Avg power W";
-      charts.forEach((ch) => applyEnergyChartData(ch, pts, labels, kwh, avgW, lblK, lblP));
+      // recreate charts if still on old 2-dataset layout
+      if (typeof chartEnergy !== "undefined" && chartEnergy &&
+          (!chartEnergy.data.datasets || chartEnergy.data.datasets.length < 3)) {
+        try { chartEnergy.destroy(); } catch (_) {}
+        chartEnergy = null;
+      }
+      if (typeof chartEnergyDash !== "undefined" && chartEnergyDash &&
+          (!chartEnergyDash.data.datasets || chartEnergyDash.data.datasets.length < 3)) {
+        try { chartEnergyDash.destroy(); } catch (_) {}
+        chartEnergyDash = null;
+      }
+      const charts2 = energyChartInstances();
+      charts2.forEach((ch) =>
+        applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg)
+      );
       const n = body && body.count != null ? body.count : "—";
       const ret = body && body.returned != null ? body.returned : pts.length;
       const b = (body && body.bucket) || energyChartBucket;
