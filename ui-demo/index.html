@@ -8721,6 +8721,10 @@
         "dash.chart_series": "Chart series",
         "dash.chart_temps_settings": "Temperature series",
         "dash.chart_temps_settings_sub": "These series appear in the chart legend. You can still hide/show them by clicking the legend.",
+        "dash.chart_power_settings": "Power · Hashrate series",
+        "dash.chart_power_settings_sub": "Choose series for the power chart. Status areas tint Suspend / Tuning / Offline periods.",
+        "dash.chart_energy_settings": "Energy series",
+        "dash.chart_energy_settings_sub": "Choose series for the energy chart. Avg power stays in the tooltip.",
         "dash.chart_series_min": "Select at least one series",
         "dash.chart_series_saved": "Chart series updated",
         "dash.chart_bands": "Status areas",
@@ -8730,6 +8734,13 @@
         "chart.band.label.suspend": "Suspend",
         "chart.band.label.tuning": "Tuning",
         "chart.band.label.offline": "ASIC Offline",
+        "chart.series.power": "Power W",
+        "chart.series.limit": "Limit W",
+        "chart.series.hashrate": "HR TH/s",
+        "chart.series.freq": "Freq",
+        "chart.series.eff": "EEF J/T",
+        "chart.series.kwh": "kWh",
+        "chart.series.full_power": "Full power W",
         "btn.reset_defaults": "Defaults",
         "btn.apply": "Apply",
         "btn.cancel": "Cancel",
@@ -9435,6 +9446,10 @@
         "dash.chart_series": "Серии графика",
         "dash.chart_temps_settings": "Температуры на графике",
         "dash.chart_temps_settings_sub": "Эти серии попадают в легенду графика. Временно скрыть/показать — клик по легенде.",
+        "dash.chart_power_settings": "Серии Power · Hashrate",
+        "dash.chart_power_settings_sub": "Серии графика мощности. Области подсвечивают периоды Suspend / Tuning / Offline.",
+        "dash.chart_energy_settings": "Серии энергопотребления",
+        "dash.chart_energy_settings_sub": "Серии графика энергии. Средняя мощность — только в подсказке.",
         "dash.chart_series_min": "Выберите хотя бы одну серию",
         "dash.chart_series_saved": "Серии графика обновлены",
         "dash.chart_bands": "Области статуса",
@@ -9444,6 +9459,13 @@
         "chart.band.label.suspend": "Suspend",
         "chart.band.label.tuning": "Tuning",
         "chart.band.label.offline": "ASIC Offline",
+        "chart.series.power": "Power W",
+        "chart.series.limit": "Limit W",
+        "chart.series.hashrate": "HR TH/s",
+        "chart.series.freq": "Freq",
+        "chart.series.eff": "EEF J/T",
+        "chart.series.kwh": "кВт·ч",
+        "chart.series.full_power": "Полная мощность W",
         "btn.reset_defaults": "По умолчанию",
         "btn.apply": "Применить",
         "btn.cancel": "Отмена",
@@ -13854,16 +13876,39 @@
       );
     }
 
+    function dashChartSettingsKind(dashId) {
+      if (dashId === "chart_temps") return "temps";
+      if (dashId === "chart_power") return "power";
+      if (dashId === "chart_energy") return "energy";
+      return null;
+    }
+
+    function bindDashChartSettingsBtn(sbtn, kind) {
+      if (!sbtn || sbtn._chartSettingsBound) return;
+      sbtn._chartSettingsBound = true;
+      sbtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof openChartSeriesModal === "function") {
+          openChartSeriesModal(kind);
+        } else if (typeof openTempChartSeriesModal === "function") {
+          openTempChartSeriesModal();
+        }
+      });
+      sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    }
+
     function ensureDashItemTools(item) {
       if (!item) return;
       const id = item.getAttribute("data-dash-id") || "";
+      const chartKind = dashChartSettingsKind(id);
       let tools = item.querySelector(".dash-item-tools");
       if (!tools) {
         tools = document.createElement("div");
         tools.className = "dash-item-tools";
         let html =
           '<span class="dash-grip" title="Drag" aria-hidden="true"></span>';
-        if (id === "chart_temps") {
+        if (chartKind) {
           html +=
             '<button type="button" class="dash-settings-btn' +
             (DASH_RESIZABLE[id] ? " is-with-width" : "") +
@@ -13898,14 +13943,7 @@
           hideDashWidget(wid);
         });
         const sbtn = tools.querySelector(".dash-settings-btn");
-        if (sbtn) {
-          sbtn.addEventListener("click", (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openTempChartSeriesModal();
-          });
-          sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
-        }
+        if (sbtn && chartKind) bindDashChartSettingsBtn(sbtn, chartKind);
         item.appendChild(tools);
       } else {
         if (DASH_RESIZABLE[id] && !tools.querySelector(".dash-width-btn")) {
@@ -13918,7 +13956,7 @@
           if (hideBtn) tools.insertBefore(wbtn, hideBtn);
           else tools.appendChild(wbtn);
         }
-        if (id === "chart_temps" && !tools.querySelector(".dash-settings-btn")) {
+        if (chartKind && !tools.querySelector(".dash-settings-btn")) {
           const wbtn = tools.querySelector(".dash-width-btn");
           const hideBtn = tools.querySelector(".dash-hide-btn");
           const sbtn = document.createElement("button");
@@ -13931,15 +13969,15 @@
               ? t("dash.chart_series", "Chart series")
               : "Chart series";
           sbtn.setAttribute("aria-label", "Chart series");
-          sbtn.addEventListener("click", (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            openTempChartSeriesModal();
-          });
-          sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
+          bindDashChartSettingsBtn(sbtn, chartKind);
           const before = wbtn || hideBtn;
           if (before) tools.insertBefore(sbtn, before);
           else tools.appendChild(sbtn);
+        } else if (chartKind) {
+          bindDashChartSettingsBtn(
+            tools.querySelector(".dash-settings-btn"),
+            chartKind
+          );
         }
       }
       const wbtn = tools.querySelector(".dash-width-btn");
@@ -16069,9 +16107,13 @@
         chartEnergyDash = null;
       }
       const charts2 = energyChartInstances();
-      charts2.forEach((ch) =>
-        applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg)
-      );
+      charts2.forEach((ch) => {
+        applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg);
+        applyEnergyChartSeriesVisibility(ch);
+        try {
+          ch.update("none");
+        } catch (_) { /* ignore */ }
+      });
       const n = body && body.count != null ? body.count : "—";
       const ret = body && body.returned != null ? body.returned : pts.length;
       const b = (body && body.bucket) || energyChartBucket;
@@ -17364,8 +17406,10 @@
     };
     let tempChartSeriesVis = null;
 
-    /** Status band overlays on temp/power charts (Suspend / Tuning / Offline). */
-    const CHART_STATUS_BANDS_KEY = "poolheat_chart_status_bands_v1";
+    /** Status band overlays per chart (Suspend / Tuning / Offline). */
+    const CHART_STATUS_BANDS_KEY = "poolheat_chart_status_bands_v2";
+    const CHART_STATUS_BANDS_KEY_LEGACY = "poolheat_chart_status_bands_v1";
+    const CHART_STATUS_BAND_CHARTS = ["temps", "power", "energy"];
     const CHART_STATUS_BANDS = [
       {
         id: "suspend",
@@ -17391,35 +17435,66 @@
       tuning: true,
       offline: true,
     };
-    let chartStatusBandsVis = null;
+    let chartStatusBandsVis = null; // { temps: {...}, power: {...}, energy: {...} }
+
+    function _normalizeBandVis(src) {
+      const base = Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON);
+      if (!src || typeof src !== "object") return base;
+      CHART_STATUS_BANDS.forEach((s) => {
+        if (typeof src[s.id] === "boolean") base[s.id] = src[s.id];
+      });
+      if (typeof src.upfreq === "boolean") base.tuning = src.upfreq;
+      return base;
+    }
 
     function loadChartStatusBandsVis() {
-      const base = Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON);
+      const all = {};
+      CHART_STATUS_BAND_CHARTS.forEach((k) => {
+        all[k] = Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON);
+      });
       try {
         const raw = localStorage.getItem(CHART_STATUS_BANDS_KEY);
         if (raw) {
           const j = JSON.parse(raw);
           if (j && typeof j === "object") {
-            CHART_STATUS_BANDS.forEach((s) => {
-              if (typeof j[s.id] === "boolean") base[s.id] = j[s.id];
-              // legacy: upfreq → tuning
-              if (s.id === "tuning" && typeof j.upfreq === "boolean") {
-                base.tuning = j.upfreq;
+            CHART_STATUS_BAND_CHARTS.forEach((k) => {
+              if (j[k] && typeof j[k] === "object") {
+                all[k] = _normalizeBandVis(j[k]);
+              } else if (typeof j.suspend === "boolean") {
+                // accidental flat v2
+                all[k] = _normalizeBandVis(j);
               }
+            });
+          }
+        } else {
+          // migrate flat v1 → all charts
+          const leg = localStorage.getItem(CHART_STATUS_BANDS_KEY_LEGACY);
+          if (leg) {
+            const j = JSON.parse(leg);
+            const flat = _normalizeBandVis(j);
+            CHART_STATUS_BAND_CHARTS.forEach((k) => {
+              all[k] = Object.assign({}, flat);
             });
           }
         }
       } catch (_) { /* ignore */ }
-      chartStatusBandsVis = base;
-      return base;
+      chartStatusBandsVis = all;
+      return all;
     }
 
-    function saveChartStatusBandsVis(vis) {
-      chartStatusBandsVis = Object.assign(
-        {},
-        CHART_STATUS_BANDS_DEFAULT_ON,
-        vis || {}
-      );
+    function saveChartStatusBandsVis(visOrKind, maybeVis) {
+      if (!chartStatusBandsVis) loadChartStatusBandsVis();
+      // saveChartStatusBandsVis({suspend...}) — legacy all charts
+      // saveChartStatusBandsVis("power", {suspend...}) — one chart
+      if (typeof visOrKind === "string") {
+        const kind = visOrKind;
+        chartStatusBandsVis[kind] = _normalizeBandVis(maybeVis);
+      } else {
+        const flat = _normalizeBandVis(visOrKind);
+        CHART_STATUS_BAND_CHARTS.forEach((k) => {
+          chartStatusBandsVis[k] = Object.assign({}, flat);
+        });
+      }
       try {
         localStorage.setItem(
           CHART_STATUS_BANDS_KEY,
@@ -17429,16 +17504,202 @@
       return chartStatusBandsVis;
     }
 
-    function getChartStatusBandsVis() {
+    function getChartStatusBandsVis(kind) {
       if (!chartStatusBandsVis) loadChartStatusBandsVis();
-      return chartStatusBandsVis;
+      const k = kind || "temps";
+      if (!chartStatusBandsVis[k]) {
+        chartStatusBandsVis[k] = Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON);
+      }
+      return chartStatusBandsVis[k];
     }
 
-    function isStatusBandOn(id) {
-      const v = getChartStatusBandsVis();
-      // accept legacy "upfreq" id as tuning
+    function isStatusBandOn(id, chartKind) {
       if (id === "upfreq") id = "tuning";
+      const v = getChartStatusBandsVis(chartKind || "temps");
       return v[id] !== false;
+    }
+
+    /** Power chart series catalog */
+    const POWER_CHART_SERIES_KEY = "poolheat_power_chart_series_v1";
+    const POWER_CHART_SERIES = [
+      { id: "power", labelKey: "chart.series.power", label: "Power W", color: "#3ecf8e" },
+      { id: "limit", labelKey: "chart.series.limit", label: "Limit W", color: "#3d9cf0" },
+      { id: "hashrate", labelKey: "chart.series.hashrate", label: "HR TH/s", color: "#c792ea" },
+      { id: "freq", labelKey: "chart.series.freq", label: "Freq", color: "#f0b429" },
+      { id: "eff", labelKey: "chart.series.eff", label: "EEF J/T", color: "#ff9f43" },
+    ];
+    const POWER_CHART_SERIES_DEFAULT_ON = {
+      power: true,
+      limit: true,
+      hashrate: true,
+      freq: true,
+      eff: true,
+    };
+    let powerChartSeriesVis = null;
+
+    function loadPowerChartSeriesVis() {
+      const base = Object.assign({}, POWER_CHART_SERIES_DEFAULT_ON);
+      try {
+        const raw = localStorage.getItem(POWER_CHART_SERIES_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            POWER_CHART_SERIES.forEach((s) => {
+              if (typeof j[s.id] === "boolean") base[s.id] = j[s.id];
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+      powerChartSeriesVis = base;
+      return base;
+    }
+
+    function savePowerChartSeriesVis(vis) {
+      powerChartSeriesVis = Object.assign(
+        {},
+        POWER_CHART_SERIES_DEFAULT_ON,
+        vis || {}
+      );
+      try {
+        localStorage.setItem(
+          POWER_CHART_SERIES_KEY,
+          JSON.stringify(powerChartSeriesVis)
+        );
+      } catch (_) { /* ignore */ }
+      return powerChartSeriesVis;
+    }
+
+    function getPowerChartSeriesVis() {
+      if (!powerChartSeriesVis) loadPowerChartSeriesVis();
+      return powerChartSeriesVis;
+    }
+
+    function isPowerSeriesOn(id) {
+      return getPowerChartSeriesVis()[id] !== false;
+    }
+
+    /** Energy chart series (avg stays tooltip-only, not listed). */
+    const ENERGY_CHART_SERIES_KEY = "poolheat_energy_chart_series_v1";
+    const ENERGY_CHART_SERIES = [
+      { id: "kwh", labelKey: "chart.series.kwh", label: "kWh", color: "rgba(61, 156, 240, 0.9)" },
+      {
+        id: "full_power",
+        labelKey: "chart.series.full_power",
+        label: "Full power W",
+        color: "#3ecf8e",
+      },
+    ];
+    const ENERGY_CHART_SERIES_DEFAULT_ON = { kwh: true, full_power: true };
+    let energyChartSeriesVis = null;
+
+    function loadEnergyChartSeriesVis() {
+      const base = Object.assign({}, ENERGY_CHART_SERIES_DEFAULT_ON);
+      try {
+        const raw = localStorage.getItem(ENERGY_CHART_SERIES_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            ENERGY_CHART_SERIES.forEach((s) => {
+              if (typeof j[s.id] === "boolean") base[s.id] = j[s.id];
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+      energyChartSeriesVis = base;
+      return base;
+    }
+
+    function saveEnergyChartSeriesVis(vis) {
+      energyChartSeriesVis = Object.assign(
+        {},
+        ENERGY_CHART_SERIES_DEFAULT_ON,
+        vis || {}
+      );
+      try {
+        localStorage.setItem(
+          ENERGY_CHART_SERIES_KEY,
+          JSON.stringify(energyChartSeriesVis)
+        );
+      } catch (_) { /* ignore */ }
+      return energyChartSeriesVis;
+    }
+
+    function getEnergyChartSeriesVis() {
+      if (!energyChartSeriesVis) loadEnergyChartSeriesVis();
+      return energyChartSeriesVis;
+    }
+
+    function isEnergySeriesOn(id) {
+      return getEnergyChartSeriesVis()[id] !== false;
+    }
+
+    function applyPowerChartSeriesVisibility() {
+      if (!chartPower || !chartPower.data || !chartPower.data.datasets) return;
+      const map = {
+        power: 0,
+        limit: 1,
+        hashrate: 2,
+        freq: 3,
+        eff: 4,
+      };
+      Object.keys(map).forEach((id) => {
+        const i = map[id];
+        const ds = chartPower.data.datasets[i];
+        if (!ds) return;
+        ds._seriesId = id;
+        ds.hidden = !isPowerSeriesOn(id);
+        // refresh i18n labels
+        const cat = POWER_CHART_SERIES.find((s) => s.id === id);
+        if (cat) ds.label = seriesLabel(cat);
+      });
+    }
+
+    function applyEnergyChartSeriesVisibility(ch) {
+      if (!ch || !ch.data || !ch.data.datasets) return;
+      const ds0 = ch.data.datasets[0];
+      const ds1 = ch.data.datasets[1];
+      const ds2 = ch.data.datasets[2];
+      if (ds0) {
+        ds0._seriesId = "kwh";
+        ds0.hidden = !isEnergySeriesOn("kwh");
+        ds0.label =
+          typeof t === "function" ? t("chart.series.kwh", "kWh") : "kWh";
+      }
+      if (ds1) {
+        ds1._seriesId = "full_power";
+        ds1.hidden = !isEnergySeriesOn("full_power");
+        ds1.label =
+          typeof t === "function"
+            ? t("chart.series.full_power", "Full power W")
+            : "Full power W";
+      }
+      // avg always tooltip-only (not plotted); keep data, hide from plot
+      if (ds2) {
+        ds2._seriesId = "avg";
+        ds2.hidden = false; // still in tooltip via index mode
+        ds2.showLine = false;
+        ds2.pointRadius = 0;
+      }
+      // legend: hide avg + hidden series
+      if (ch.options && ch.options.plugins && ch.options.plugins.legend) {
+        ch.options.plugins.legend.labels = ch.options.plugins.legend.labels || {};
+        ch.options.plugins.legend.labels.filter = (item) => {
+          if (item.datasetIndex === 2) return false;
+          const ds = ch.data.datasets[item.datasetIndex];
+          return !!(ds && !ds.hidden);
+        };
+      }
+    }
+
+    function applyEnergyChartsVisibility() {
+      [chartEnergy, chartEnergyDash].forEach((ch) => {
+        if (ch) {
+          applyEnergyChartSeriesVisibility(ch);
+          try {
+            ch.update("none");
+          } catch (_) { /* ignore */ }
+        }
+      });
     }
 
     function loadTempChartSeriesVis() {
@@ -17485,54 +17746,102 @@
       return s.label;
     }
 
+    function chartSettingsMeta(kind) {
+      if (kind === "power") {
+        return {
+          kind: "power",
+          series: POWER_CHART_SERIES,
+          defaultOn: POWER_CHART_SERIES_DEFAULT_ON,
+          getVis: getPowerChartSeriesVis,
+          titleKey: "dash.chart_power_settings",
+          title: "Power · Hashrate series",
+          subKey: "dash.chart_power_settings_sub",
+          sub: "Choose series for the power chart. Status areas tint Suspend / Tuning / Offline periods.",
+          hasBands: true,
+        };
+      }
+      if (kind === "energy") {
+        return {
+          kind: "energy",
+          series: ENERGY_CHART_SERIES,
+          defaultOn: ENERGY_CHART_SERIES_DEFAULT_ON,
+          getVis: getEnergyChartSeriesVis,
+          titleKey: "dash.chart_energy_settings",
+          title: "Energy series",
+          subKey: "dash.chart_energy_settings_sub",
+          sub: "Choose series for the energy chart. Avg power stays in the tooltip.",
+          hasBands: true,
+        };
+      }
+      return {
+        kind: "temps",
+        series: TEMP_CHART_SERIES,
+        defaultOn: TEMP_CHART_SERIES_DEFAULT_ON,
+        getVis: getTempChartSeriesVis,
+        titleKey: "dash.chart_temps_settings",
+        title: "Temperature series",
+        subKey: "dash.chart_temps_settings_sub",
+        sub: "Choose which temperatures to show on the dashboard chart.",
+        hasBands: true,
+      };
+    }
+
+    /** @deprecated use openChartSeriesModal */
     function openTempChartSeriesModal() {
-      let backdrop = document.getElementById("chart-temps-series-modal");
+      openChartSeriesModal("temps");
+    }
+
+    function openChartSeriesModal(kind) {
+      const meta = chartSettingsMeta(kind || "temps");
+      let backdrop = document.getElementById("chart-series-settings-modal");
       if (!backdrop) {
         backdrop = document.createElement("div");
-        backdrop.id = "chart-temps-series-modal";
+        backdrop.id = "chart-series-settings-modal";
         backdrop.className = "chart-series-modal-backdrop";
         backdrop.hidden = true;
         backdrop.innerHTML =
           '<div class="chart-series-modal" role="dialog" aria-modal="true" ' +
-          'aria-labelledby="chart-temps-series-title">' +
-          '<h3 id="chart-temps-series-title" data-i18n="dash.chart_temps_settings">' +
-          "Temperature series</h3>" +
-          '<p class="sub" data-i18n="dash.chart_temps_settings_sub">' +
-          "Choose which temperatures to show on the dashboard chart.</p>" +
-          '<div class="chart-series-list" id="chart-temps-series-list"></div>' +
+          'aria-labelledby="chart-series-settings-title">' +
+          '<h3 id="chart-series-settings-title">Chart series</h3>' +
+          '<p class="sub" id="chart-series-settings-sub"></p>' +
+          '<div class="chart-series-list" id="chart-series-settings-list"></div>' +
           '<div class="modal-actions">' +
-          '<button type="button" class="btn" id="btn-chart-temps-series-defaults" data-i18n="btn.reset_defaults">Defaults</button>' +
-          '<button type="button" class="btn" id="btn-chart-temps-series-cancel" data-i18n="btn.cancel">Cancel</button>' +
-          '<button type="button" class="btn primary" id="btn-chart-temps-series-save" data-i18n="btn.apply">Apply</button>' +
+          '<button type="button" class="btn" id="btn-chart-series-defaults" data-i18n="btn.reset_defaults">Defaults</button>' +
+          '<button type="button" class="btn" id="btn-chart-series-cancel" data-i18n="btn.cancel">Cancel</button>' +
+          '<button type="button" class="btn primary" id="btn-chart-series-save" data-i18n="btn.apply">Apply</button>' +
           "</div></div>";
         document.body.appendChild(backdrop);
         backdrop.addEventListener("click", (e) => {
-          if (e.target === backdrop) closeTempChartSeriesModal();
+          if (e.target === backdrop) closeChartSeriesModal();
         });
         backdrop
-          .querySelector("#btn-chart-temps-series-cancel")
-          ?.addEventListener("click", () => closeTempChartSeriesModal());
+          .querySelector("#btn-chart-series-cancel")
+          ?.addEventListener("click", () => closeChartSeriesModal());
         backdrop
-          .querySelector("#btn-chart-temps-series-defaults")
+          .querySelector("#btn-chart-series-defaults")
           ?.addEventListener("click", () => {
-            fillTempChartSeriesList(
-              TEMP_CHART_SERIES_DEFAULT_ON,
-              CHART_STATUS_BANDS_DEFAULT_ON
+            const k = backdrop._chartKind || "temps";
+            const m = chartSettingsMeta(k);
+            fillChartSeriesList(
+              k,
+              m.defaultOn,
+              Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON)
             );
           });
         backdrop
-          .querySelector("#btn-chart-temps-series-save")
+          .querySelector("#btn-chart-series-save")
           ?.addEventListener("click", () => {
-            const list = document.getElementById("chart-temps-series-list");
+            const k = backdrop._chartKind || "temps";
+            const m = chartSettingsMeta(k);
+            const list = document.getElementById("chart-series-settings-list");
             const next = {};
-            TEMP_CHART_SERIES.forEach((s) => {
+            m.series.forEach((s) => {
               const inp = list?.querySelector(
                 'input[data-series-id="' + s.id + '"]'
               );
               next[s.id] = !!(inp && inp.checked);
             });
-            // at least one series
-            if (!Object.keys(next).some((k) => next[k])) {
+            if (!Object.keys(next).some((key) => next[key])) {
               if (typeof toastError === "function") {
                 toastError(
                   typeof t === "function"
@@ -17547,20 +17856,35 @@
               const inp = list?.querySelector(
                 'input[data-band-id="' + s.id + '"]'
               );
-              nextBands[s.id] = !!(inp && inp.checked);
+              // if bands section hidden (shouldn't), keep defaults
+              nextBands[s.id] =
+                inp != null
+                  ? !!inp.checked
+                  : CHART_STATUS_BANDS_DEFAULT_ON[s.id] !== false;
             });
-            saveTempChartSeriesVis(next);
-            saveChartStatusBandsVis(nextBands);
-            closeTempChartSeriesModal();
+            if (k === "temps") saveTempChartSeriesVis(next);
+            else if (k === "power") savePowerChartSeriesVis(next);
+            else if (k === "energy") saveEnergyChartSeriesVis(next);
+            saveChartStatusBandsVis(k, nextBands);
+            closeChartSeriesModal();
             try {
-              // force membership rebuild from settings (legend list = settings)
-              if (chartTemp && chartTemp.data) {
-                chartTemp.data.datasets = [];
+              if (k === "temps") {
+                if (chartTemp && chartTemp.data) chartTemp.data.datasets = [];
+                if (typeof syncTempChartToSettings === "function") {
+                  syncTempChartToSettings();
+                }
+                if (typeof renderCharts === "function") renderCharts();
+              } else if (k === "power") {
+                applyPowerChartSeriesVisibility();
+                if (typeof renderCharts === "function") renderCharts();
+              } else if (k === "energy") {
+                applyEnergyChartsVisibility();
+                if (typeof loadEnergyChart === "function") {
+                  void loadEnergyChart();
+                } else if (energyChartLastBody && typeof renderEnergyChart === "function") {
+                  renderEnergyChart(energyChartLastBody);
+                }
               }
-              if (typeof syncTempChartToSettings === "function") {
-                syncTempChartToSettings();
-              }
-              if (typeof renderCharts === "function") renderCharts();
             } catch (_) { /* ignore */ }
             if (typeof toastSuccess === "function") {
               toastSuccess(
@@ -17571,27 +17895,26 @@
             }
           });
       }
-      fillTempChartSeriesList(getTempChartSeriesVis(), getChartStatusBandsVis());
-      // refresh i18n titles if helper exists
+      backdrop._chartKind = meta.kind;
+      fillChartSeriesList(meta.kind, meta.getVis(), getChartStatusBandsVis(meta.kind));
       try {
         if (typeof applyI18n === "function") applyI18n(backdrop);
         else if (typeof applyUiLang === "function") applyUiLang();
       } catch (_) { /* ignore */ }
-      const title = backdrop.querySelector("#chart-temps-series-title");
-      if (title && typeof t === "function") {
-        title.textContent = t("dash.chart_temps_settings", "Temperature series");
+      const title = backdrop.querySelector("#chart-series-settings-title");
+      if (title) {
+        title.textContent =
+          typeof t === "function" ? t(meta.titleKey, meta.title) : meta.title;
       }
-      const sub = backdrop.querySelector(".sub");
-      if (sub && typeof t === "function") {
-        sub.textContent = t(
-          "dash.chart_temps_settings_sub",
-          "Choose which temperatures to show on the dashboard chart."
-        );
+      const sub = backdrop.querySelector("#chart-series-settings-sub");
+      if (sub) {
+        sub.textContent =
+          typeof t === "function" ? t(meta.subKey, meta.sub) : meta.sub;
       }
       backdrop.hidden = false;
       const onKey = (e) => {
         if (e.key === "Escape") {
-          closeTempChartSeriesModal();
+          closeChartSeriesModal();
           document.removeEventListener("keydown", onKey);
         }
       };
@@ -17599,11 +17922,12 @@
       backdrop._escHandler = onKey;
     }
 
-    function fillTempChartSeriesList(vis, bandsVis) {
-      const list = document.getElementById("chart-temps-series-list");
+    function fillChartSeriesList(kind, vis, bandsVis) {
+      const list = document.getElementById("chart-series-settings-list");
       if (!list) return;
-      const v = vis || getTempChartSeriesVis();
-      const bv = bandsVis || getChartStatusBandsVis();
+      const meta = chartSettingsMeta(kind || "temps");
+      const v = vis || meta.getVis();
+      const bv = bandsVis || getChartStatusBandsVis(meta.kind);
       const seriesTitle =
         typeof t === "function"
           ? t("dash.chart_series", "Chart series")
@@ -17616,52 +17940,61 @@
         '<div class="chart-series-section-title">' +
         seriesTitle.replace(/</g, "&lt;") +
         "</div>";
-      html += TEMP_CHART_SERIES.map((s) => {
-        const on = v[s.id] !== false;
-        const lab = seriesLabel(s);
-        return (
-          '<label class="check">' +
-          '<input type="checkbox" data-series-id="' +
-          s.id +
-          '"' +
-          (on ? " checked" : "") +
-          " />" +
-          '<span class="swatch" style="background:' +
-          s.color +
-          '"></span>' +
-          "<span>" +
-          lab.replace(/</g, "&lt;") +
-          "</span></label>"
-        );
-      }).join("");
-      html +=
-        '<div class="chart-series-section-title">' +
-        bandsTitle.replace(/</g, "&lt;") +
-        "</div>";
-      html += CHART_STATUS_BANDS.map((s) => {
-        const on = bv[s.id] !== false;
-        const lab =
-          typeof t === "function" ? t(s.labelKey, s.label) : s.label;
-        return (
-          '<label class="check">' +
-          '<input type="checkbox" data-band-id="' +
-          s.id +
-          '"' +
-          (on ? " checked" : "") +
-          " />" +
-          '<span class="swatch" style="background:' +
-          s.color +
-          '"></span>' +
-          "<span>" +
-          lab.replace(/</g, "&lt;") +
-          "</span></label>"
-        );
-      }).join("");
+      html += meta.series
+        .map((s) => {
+          const on = v[s.id] !== false;
+          const lab = seriesLabel(s);
+          return (
+            '<label class="check">' +
+            '<input type="checkbox" data-series-id="' +
+            s.id +
+            '"' +
+            (on ? " checked" : "") +
+            " />" +
+            '<span class="swatch" style="background:' +
+            s.color +
+            '"></span>' +
+            "<span>" +
+            lab.replace(/</g, "&lt;") +
+            "</span></label>"
+          );
+        })
+        .join("");
+      if (meta.hasBands) {
+        html +=
+          '<div class="chart-series-section-title">' +
+          bandsTitle.replace(/</g, "&lt;") +
+          "</div>";
+        html += CHART_STATUS_BANDS.map((s) => {
+          const on = bv[s.id] !== false;
+          const lab =
+            typeof t === "function" ? t(s.labelKey, s.label) : s.label;
+          return (
+            '<label class="check">' +
+            '<input type="checkbox" data-band-id="' +
+            s.id +
+            '"' +
+            (on ? " checked" : "") +
+            " />" +
+            '<span class="swatch" style="background:' +
+            s.color +
+            '"></span>' +
+            "<span>" +
+            lab.replace(/</g, "&lt;") +
+            "</span></label>"
+          );
+        }).join("");
+      }
       list.innerHTML = html;
     }
 
-    function closeTempChartSeriesModal() {
-      const backdrop = document.getElementById("chart-temps-series-modal");
+    /** @deprecated */
+    function fillTempChartSeriesList(vis, bandsVis) {
+      fillChartSeriesList("temps", vis, bandsVis);
+    }
+
+    function closeChartSeriesModal() {
+      const backdrop = document.getElementById("chart-series-settings-modal");
       if (backdrop) {
         if (backdrop._escHandler) {
           document.removeEventListener("keydown", backdrop._escHandler);
@@ -17669,6 +18002,13 @@
         }
         backdrop.hidden = true;
       }
+      // legacy id cleanup
+      const old = document.getElementById("chart-temps-series-modal");
+      if (old) old.hidden = true;
+    }
+
+    function closeTempChartSeriesModal() {
+      closeChartSeriesModal();
     }
 
     /** Series enabled in block settings (legend list comes from this). */
@@ -18165,9 +18505,18 @@
         ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
         ctx.clip();
         for (const b of bands) {
-          // settings toggles (gear on temps chart applies to both charts)
+          // per-chart toggles from gear settings
+          const chartKind =
+            (chart && chart.$chartKey) ||
+            (chart &&
+              chart.canvas &&
+              chart.canvas.id === "chart-power"
+              ? "power"
+              : chart && chart.canvas && chart.canvas.id === "chart-temp"
+                ? "temps"
+                : "temps");
           const bandKey = b.type === "upfreq" ? "tuning" : b.type;
-          if (!isStatusBandOn(bandKey)) continue;
+          if (!isStatusBandOn(bandKey, chartKind)) continue;
           if (b.end < v0 || b.start > v1) continue;
           const x1 = xScale.getPixelForValue(Math.max(b.start, v0));
           const x2 = xScale.getPixelForValue(Math.min(b.end, v1));
@@ -18311,17 +18660,80 @@
           },
           plugins: [statusBandsPlugin],
         });
+        chartTemp.$chartKey = "temps";
       }
       if (!chartPower && elPower) {
+        loadPowerChartSeriesVis();
+        const pLab = (id, fallback) => {
+          const s = POWER_CHART_SERIES.find((x) => x.id === id);
+          return s ? seriesLabel(s) : fallback;
+        };
         chartPower = new Chart(elPower, {
           type: "line",
           data: {
             datasets: [
-              { label: "Power W", data: [], borderColor: "#3ecf8e", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
-              { label: "Limit W", data: [], borderColor: "#3d9cf0", yAxisID: "y", tension: 0.15, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 4], fill: false },
-              { label: "HR TH/s", data: [], borderColor: "#c792ea", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
-              { label: "Freq", data: [], borderColor: "#f0b429", yAxisID: "y1", tension: 0.15, pointRadius: 0, borderWidth: 1.2, borderDash: [2, 3], fill: false },
-              { label: "EEF J/T", data: [], borderColor: "#ff9f43", yAxisID: "y2", tension: 0.15, pointRadius: 0, borderWidth: 2, fill: false },
+              {
+                _seriesId: "power",
+                label: pLab("power", "Power W"),
+                data: [],
+                borderColor: "#3ecf8e",
+                yAxisID: "y",
+                tension: 0.15,
+                pointRadius: 0,
+                borderWidth: 2,
+                fill: false,
+                hidden: !isPowerSeriesOn("power"),
+              },
+              {
+                _seriesId: "limit",
+                label: pLab("limit", "Limit W"),
+                data: [],
+                borderColor: "#3d9cf0",
+                yAxisID: "y",
+                tension: 0.15,
+                pointRadius: 0,
+                borderWidth: 1.5,
+                borderDash: [4, 4],
+                fill: false,
+                hidden: !isPowerSeriesOn("limit"),
+              },
+              {
+                _seriesId: "hashrate",
+                label: pLab("hashrate", "HR TH/s"),
+                data: [],
+                borderColor: "#c792ea",
+                yAxisID: "y1",
+                tension: 0.15,
+                pointRadius: 0,
+                borderWidth: 2,
+                fill: false,
+                hidden: !isPowerSeriesOn("hashrate"),
+              },
+              {
+                _seriesId: "freq",
+                label: pLab("freq", "Freq"),
+                data: [],
+                borderColor: "#f0b429",
+                yAxisID: "y1",
+                tension: 0.15,
+                pointRadius: 0,
+                borderWidth: 1.2,
+                borderDash: [2, 3],
+                fill: false,
+                hidden: !isPowerSeriesOn("freq"),
+              },
+              {
+                _seriesId: "eff",
+                label: pLab("eff", "EEF J/T"),
+                data: [],
+                borderColor: "#ff9f43",
+                yAxisID: "y2",
+                tension: 0.15,
+                pointRadius: 0,
+                borderWidth: 2,
+                fill: false,
+                hidden: !isPowerSeriesOn("eff"),
+              },
             ],
           },
           options: {
@@ -18341,6 +18753,7 @@
           },
           plugins: [statusBandsPlugin],
         });
+        chartPower.$chartKey = "power";
       }
     }
 
@@ -18384,6 +18797,7 @@
         chartPower.data.datasets[2].data = xySeries("hashrate_th");
         chartPower.data.datasets[3].data = xySeries("freq");
         chartPower.data.datasets[4].data = xyEffSeries();
+        applyPowerChartSeriesVisibility();
         const vp = getView("power");
         chartPower.options.scales.x.min = vp.start;
         chartPower.options.scales.x.max = vp.end;
