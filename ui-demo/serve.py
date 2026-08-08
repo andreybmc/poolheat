@@ -3578,7 +3578,9 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
 #
 # Mining options:
 #   auto_on_mining        — Resume → force logical ON
-#   auto_off_suspend      — Suspend → force logical OFF
+#   auto_off_suspend      — Suspend → force logical OFF (after delay)
+#   auto_off_suspend_delay_sec — wait N sec after Suspend before OFF (0 = immediate);
+#                                if mining resumes within the window, OFF is cancelled
 #   allow_off_while_mining — manual OFF while mining allowed
 #   allow_on_while_suspend — manual ON while suspend allowed
 # State hold:
@@ -3707,6 +3709,8 @@ _devices_cfg_lock = threading.Lock()
 _devices_cfg: dict = dict(DEFAULT_DEVICES_CFG)
 # per-device last-try throttle for auto-sync after errors
 _devices_sync_ts: dict[str, float] = {}
+# Pending Auto Off after Suspend: did → unix deadline (cancel if Resume before)
+_devices_suspend_off_deadline: dict[str, float] = {}
 
 
 def _device_alias_ok(alias: str) -> bool:
@@ -3810,6 +3814,20 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
     return out
 
 
+def _device_off_delay_sec(v) -> int:
+    """
+    Seconds to wait after Suspend before Auto Off.
+    Default 60. 0 = immediate. Clamped 0…3600.
+    """
+    if v is None or v == "":
+        return 60
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return 60
+    return max(0, min(3600, n))
+
+
 def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | None:
     if not isinstance(raw, dict):
         return None
@@ -3875,6 +3893,9 @@ def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | 
         "show_in_bot": show_in_bot,
         "auto_on_mining": _as_bool(raw.get("auto_on_mining", False)),
         "auto_off_suspend": _as_bool(raw.get("auto_off_suspend", False)),
+        "auto_off_suspend_delay_sec": _device_off_delay_sec(
+            raw.get("auto_off_suspend_delay_sec")
+        ),
         "allow_off_while_mining": _as_bool(raw.get("allow_off_while_mining", False)),
         "allow_on_while_suspend": _as_bool(raw.get("allow_on_while_suspend", False)),
         "enforce_desired": _as_bool(raw.get("enforce_desired", False)),
@@ -3924,6 +3945,16 @@ def _save_devices_cfg() -> None:
 def get_devices_cfg(*, redact: bool = True) -> dict:
     with _devices_cfg_lock:
         devices = json.loads(json.dumps(_devices_cfg.get("devices") or []))
+    # live countdown for Auto Off after Suspend (not persisted)
+    for d in devices:
+        did = str(d.get("id") or "")
+        rem = _device_suspend_off_remaining(did) if did else None
+        if rem is not None:
+            d["auto_off_suspend_in_sec"] = rem
+            d["auto_off_suspend_pending"] = True
+        else:
+            d["auto_off_suspend_in_sec"] = None
+            d["auto_off_suspend_pending"] = False
     if redact:
         for d in devices:
             d["password_set"] = bool(d.get("password"))
@@ -4070,6 +4101,7 @@ def delete_device(did: str) -> bool:
         _devices_cfg["devices"] = new
     _save_devices_cfg()
     _devices_sync_ts.pop(did, None)
+    _devices_suspend_off_deadline.pop(did, None)
     return True
 
 
@@ -4934,9 +4966,26 @@ def device_set(
         }
 
 
+def _device_suspend_off_remaining(did: str) -> int | None:
+    """Seconds left until Auto Off after Suspend, or None if not pending."""
+    did = str(did or "")
+    if not did:
+        return None
+    dl = _devices_suspend_off_deadline.get(did)
+    if dl is None:
+        return None
+    rem = int(dl - time.time() + 0.999)  # ceil-ish
+    return max(0, rem)
+
+
 def devices_sync_with_mining(measured_work: str | None) -> None:
     """
     Called from policy_tick for every enabled device with auto flags.
+
+    Auto Off on Suspend uses ``auto_off_suspend_delay_sec`` (default 60):
+    device stays ON for that long after Suspend; if mining Resumes within
+    the window the pending OFF is cancelled and the device is left as-is
+    (or turned ON if auto_on_mining).
     """
     work = str(measured_work or "").lower()
     if work not in ("resume", "suspend", "sleep", "mining"):
@@ -4952,8 +5001,11 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
         if not _device_ready(cfg):
             continue
         did = str(cfg.get("id") or "")
+        if not did:
+            continue
         auto_on = bool(cfg.get("auto_on_mining", False))
         auto_off = bool(cfg.get("auto_off_suspend", False))
+        delay = _device_off_delay_sec(cfg.get("auto_off_suspend_delay_sec"))
         last_on = cfg.get("last_on")
         last_err = cfg.get("last_error")
         last_act = str(cfg.get("last_action") or "")
@@ -4963,14 +5015,45 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
                 continue
         want: bool | None = None
         src = "auto"
-        if work == "resume" and auto_on:
-            if last_on is not True:
+
+        if work == "resume":
+            # mining back on → cancel any pending Auto Off
+            if did in _devices_suspend_off_deadline:
+                _devices_suspend_off_deadline.pop(did, None)
+                print(
+                    f"[devices] suspend-off cancelled {cfg.get('alias') or did} "
+                    f"(mining resume)"
+                )
+            if auto_on and last_on is not True:
                 want = True
                 src = "auto_mining"
         elif work in ("suspend", "sleep") and auto_off:
-            if last_on is not False:
-                want = False
-                src = "auto_suspend"
+            # already off → nothing pending
+            if last_on is False:
+                _devices_suspend_off_deadline.pop(did, None)
+            else:
+                # device on (or unknown) → schedule / fire delayed OFF
+                deadline = _devices_suspend_off_deadline.get(did)
+                if deadline is None:
+                    if delay <= 0:
+                        want = False
+                        src = "auto_suspend"
+                    else:
+                        _devices_suspend_off_deadline[did] = now + float(delay)
+                        print(
+                            f"[devices] suspend-off in {delay}s "
+                            f"{cfg.get('alias') or did}"
+                        )
+                elif now >= float(deadline):
+                    want = False
+                    src = "auto_suspend"
+                    _devices_suspend_off_deadline.pop(did, None)
+                # else still waiting — leave device ON
+        else:
+            # auto_off disabled while suspend → clear stale deadline
+            if work in ("suspend", "sleep") and not auto_off:
+                _devices_suspend_off_deadline.pop(did, None)
+
         if want is None:
             continue
         _devices_sync_ts[did] = now

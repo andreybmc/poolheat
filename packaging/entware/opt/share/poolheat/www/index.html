@@ -7069,8 +7069,13 @@
                   <label class="check">
                     <input type="checkbox" id="dev-auto-suspend" />
                     <span><span data-i18n="dev.auto_off_suspend">Auto Off on Suspend</span>
-                      <span class="desc" data-i18n="dev.auto_off_suspend_desc">Suspend → device OFF</span>
+                      <span class="desc" data-i18n="dev.auto_off_suspend_desc">Suspend → device OFF after delay</span>
                     </span>
+                  </label>
+                  <label class="field" style="margin:0">
+                    <span data-i18n="dev.auto_off_delay">Off delay after Suspend</span>
+                    <input type="number" id="dev-auto-suspend-delay" min="0" max="3600" step="1" value="60" />
+                    <span class="desc" data-i18n="dev.auto_off_delay_desc">seconds · 0 = immediate · Resume cancels pending OFF</span>
                   </label>
                   <label class="check">
                     <input type="checkbox" id="dev-allow-off-mining" />
@@ -8241,7 +8246,9 @@
         "dev.enforce_desired": "Hold desired state",
         "dev.enforce_desired_desc": "store target ON/OFF · on status check, re-apply if device differs",
         "dev.auto_off_suspend": "Auto Off on Suspend",
-        "dev.auto_off_suspend_desc": "Suspend → device OFF",
+        "dev.auto_off_suspend_desc": "Suspend → device OFF after delay",
+        "dev.auto_off_delay": "Off delay after Suspend",
+        "dev.auto_off_delay_desc": "seconds · 0 = immediate · Resume cancels pending OFF",
         "dev.allow_off_mining": "Allow OFF while mining",
         "dev.allow_off_mining_desc": "manual Off during Resume",
         "dev.allow_on_suspend": "Allow ON while Suspend",
@@ -8910,7 +8917,9 @@
         "dev.enforce_desired": "Удерживать статус",
         "dev.enforce_desired_desc": "хранить требуемое вкл/выкл · при сверке, если устройство не совпадает — вернуть",
         "dev.auto_off_suspend": "Auto Off при Suspend",
-        "dev.auto_off_suspend_desc": "Suspend → устройство OFF",
+        "dev.auto_off_suspend_desc": "Suspend → OFF после задержки",
+        "dev.auto_off_delay": "Задержка OFF после Suspend",
+        "dev.auto_off_delay_desc": "секунды · 0 = сразу · Resume отменяет ожидание",
         "dev.allow_off_mining": "Разрешить OFF при майнинге",
         "dev.allow_off_mining_desc": "ручной Off во время Resume",
         "dev.allow_on_suspend": "Разрешить ON при Suspend",
@@ -25456,7 +25465,15 @@
                   : "hold";
             tags.push(des);
           }
-          if (d.auto_off_suspend) tags.push("auto↓");
+          if (d.auto_off_suspend_pending && d.auto_off_suspend_in_sec != null) {
+            tags.push("auto↓ " + Number(d.auto_off_suspend_in_sec) + "s");
+          } else if (d.auto_off_suspend) {
+            const del =
+              d.auto_off_suspend_delay_sec != null
+                ? Number(d.auto_off_suspend_delay_sec)
+                : 60;
+            tags.push(del > 0 ? "auto↓ " + del + "s" : "auto↓");
+          }
           const tagTxt = tags.length ? " · " + tags.join(" · ") : "";
           const icon = d.icon || "🔌";
           const name = deviceDisplayName(d);
@@ -25661,6 +25678,7 @@
         backend: "tapo",
         auto_on_mining: false,
         auto_off_suspend: false,
+        auto_off_suspend_delay_sec: 60,
         allow_off_while_mining: false,
         allow_on_while_suspend: false,
         enforce_desired: false,
@@ -25794,6 +25812,16 @@
       }
       document.getElementById("dev-auto-mining").checked = !!d.auto_on_mining;
       document.getElementById("dev-auto-suspend").checked = !!d.auto_off_suspend;
+      const delayEl = document.getElementById("dev-auto-suspend-delay");
+      if (delayEl) {
+        const del =
+          d.auto_off_suspend_delay_sec != null
+            ? Number(d.auto_off_suspend_delay_sec)
+            : 60;
+        delayEl.value = String(
+          Number.isFinite(del) ? Math.max(0, Math.min(3600, del)) : 60
+        );
+      }
       const enf = document.getElementById("dev-enforce-desired");
       if (enf) enf.checked = !!d.enforce_desired;
       document.getElementById("dev-allow-off-mining").checked = !!d.allow_off_while_mining;
@@ -25915,6 +25943,13 @@
         xiaomi_model: (document.getElementById("dev-xiaomi-model")?.value || "").trim(),
         auto_on_mining: !!document.getElementById("dev-auto-mining")?.checked,
         auto_off_suspend: !!document.getElementById("dev-auto-suspend")?.checked,
+        auto_off_suspend_delay_sec: (() => {
+          const n = Number(
+            document.getElementById("dev-auto-suspend-delay")?.value
+          );
+          if (!Number.isFinite(n)) return 60;
+          return Math.max(0, Math.min(3600, Math.round(n)));
+        })(),
         allow_off_while_mining: !!document.getElementById("dev-allow-off-mining")?.checked,
         allow_on_while_suspend: !!document.getElementById("dev-allow-on-suspend")?.checked,
         enforce_desired: !!document.getElementById("dev-enforce-desired")?.checked,
