@@ -8738,6 +8738,39 @@ def _db_connect() -> sqlite3.Connection:
     return conn
 
 
+# Temperatures persisted for dashboard chart (settings gear list).
+# Keep in sync with ui-demo TEMP_CHART_SERIES / live temps catalog.
+HISTORY_TEMP_COLUMNS: tuple[str, ...] = (
+    "liquid",
+    "env",
+    "outdoor_c",
+    "chip_min",
+    "chip_avg",
+    "chip_max",
+    "board0",
+    "board1",
+    "board2",
+    "board3",
+    "board_max",
+    "psu_temp",
+    "inlet",
+    "outlet",
+    # per-slot chip temps (SM0–SM3) when ASIC exposes them
+    "sm0_chip_min",
+    "sm0_chip_avg",
+    "sm0_chip_max",
+    "sm1_chip_min",
+    "sm1_chip_avg",
+    "sm1_chip_max",
+    "sm2_chip_min",
+    "sm2_chip_avg",
+    "sm2_chip_max",
+    "sm3_chip_min",
+    "sm3_chip_avg",
+    "sm3_chip_max",
+)
+
+
 def init_db() -> None:
     with _db_lock:
         conn = _db_connect()
@@ -8785,6 +8818,15 @@ def init_db() -> None:
                 conn.execute("ALTER TABLE samples ADD COLUMN outdoor_c REAL")
             if "eff_jt" not in cols:
                 conn.execute("ALTER TABLE samples ADD COLUMN eff_jt REAL")
+            # all chart-displayable temperatures
+            for col in HISTORY_TEMP_COLUMNS:
+                if col not in cols:
+                    try:
+                        conn.execute(
+                            f"ALTER TABLE samples ADD COLUMN {col} REAL"
+                        )
+                    except Exception:
+                        pass
             # Miner error journal (last 100 kept by app logic)
             conn.execute(
                 """
@@ -9251,42 +9293,48 @@ def insert_sample(row: dict) -> None:
                 uf_db = None
             else:
                 uf_db = 0 if uf in (0, False, "0") else 1
+            # Core non-temp + all HISTORY_TEMP_COLUMNS (chart-displayable)
+            cols = [
+                "ts",
+                "ts_iso",
+                *HISTORY_TEMP_COLUMNS,
+                "power",
+                "power_limit",
+                "power_limit_set",
+                "power_pct_cmd",
+                "freq",
+                "hashrate_th",
+                "mode",
+                "hash_stable",
+                "online",
+                "work_state",
+                "upfreq_ok",
+                "eff_jt",
+            ]
+            # de-dupe while preserving order (outdoor_c is in HISTORY_TEMP)
+            seen: set[str] = set()
+            cols_u: list[str] = []
+            for c in cols:
+                if c not in seen:
+                    seen.add(c)
+                    cols_u.append(c)
+            vals = []
+            for c in cols_u:
+                if c == "online":
+                    vals.append(
+                        0 if row.get("online") in (0, False, "0") else 1
+                    )
+                elif c == "upfreq_ok":
+                    vals.append(uf_db)
+                elif c in ("ts", "ts_iso"):
+                    vals.append(row.get(c))
+                else:
+                    vals.append(row.get(c))
+            placeholders = ",".join("?" * len(cols_u))
+            col_sql = ",".join(cols_u)
             conn.execute(
-                """
-                INSERT OR REPLACE INTO samples (
-                    ts, ts_iso, liquid, env, chip_min, chip_avg, chip_max,
-                    board0, board1, board2, board3,
-                    power, power_limit, power_limit_set, power_pct_cmd,
-                    freq, hashrate_th, mode, hash_stable, online, work_state,
-                    upfreq_ok, outdoor_c, eff_jt
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    row["ts"],
-                    row["ts_iso"],
-                    row.get("liquid"),
-                    row.get("env"),
-                    row.get("chip_min"),
-                    row.get("chip_avg"),
-                    row.get("chip_max"),
-                    row.get("board0"),
-                    row.get("board1"),
-                    row.get("board2"),
-                    row.get("board3"),
-                    row.get("power"),
-                    row.get("power_limit"),
-                    row.get("power_limit_set"),
-                    row.get("power_pct_cmd"),
-                    row.get("freq"),
-                    row.get("hashrate_th"),
-                    row.get("mode"),
-                    row.get("hash_stable"),
-                    0 if row.get("online") in (0, False, "0") else 1,
-                    row.get("work_state"),
-                    uf_db,
-                    row.get("outdoor_c"),
-                    row.get("eff_jt"),
-                ),
+                f"INSERT OR REPLACE INTO samples ({col_sql}) VALUES ({placeholders})",
+                tuple(vals),
             )
             conn.commit()
         finally:
@@ -16003,6 +16051,19 @@ def fetch_live() -> dict:
         "elapsed": summary.get("Elapsed"),
         "uptime": summary.get("Uptime"),
         "psu_temp": psu_temp,
+        # optional hydro inlet/outlet when firmware exposes them
+        "inlet": _f(
+            summary.get("Inlet Temp")
+            or summary.get("inlet_temp")
+            or status.get("Inlet Temp")
+            or status.get("inlet_temp")
+        ),
+        "outlet": _f(
+            summary.get("Outlet Temp")
+            or summary.get("outlet_temp")
+            or status.get("Outlet Temp")
+            or status.get("outlet_temp")
+        ),
         "psu_fan": psu_fan,
         "psu_pin": psu_pin,
         "psu_vin": psu_vin,  # PowerVin V (input)
@@ -16279,8 +16340,47 @@ def _sample_eff_jt(power, hashrate_th) -> float | None:
         return 0.0
 
 
+def _temp_fields_from_live(live: dict) -> dict:
+    """
+    All temperatures that can be charted (settings gear list).
+    PCB boards, chip global + per-slot, PSU, inlet/outlet, outdoor.
+    """
+    boards = live.get("boards") or []
+    bcm = live.get("board_chip_min") or []
+    bca = live.get("board_chip_avg") or []
+    bcx = live.get("board_chip_max") or []
+    out: dict = {
+        "liquid": _f(live.get("liquid")),
+        "env": _f(live.get("env")),
+        "outdoor_c": _sample_outdoor_c(),
+        "chip_min": _f(live.get("chip_min")),
+        "chip_avg": _f(live.get("chip_avg")),
+        "chip_max": _f(live.get("chip_max")),
+        "psu_temp": _f(live.get("psu_temp")),
+        "inlet": _f(live.get("inlet")),
+        "outlet": _f(live.get("outlet")),
+    }
+    # inlet/outlet may only appear in temps catalog
+    for trow in live.get("temps") or []:
+        if not isinstance(trow, dict):
+            continue
+        tid = str(trow.get("id") or "")
+        if tid in ("inlet", "outlet") and out.get(tid) is None:
+            out[tid] = _f(trow.get("value"))
+    pcb_vals: list[float] = []
+    for i in range(4):
+        bv = _f(boards[i] if i < len(boards) else None)
+        out[f"board{i}"] = bv
+        if bv is not None and bv > 0.05:
+            pcb_vals.append(bv)
+        out[f"sm{i}_chip_min"] = _f(bcm[i] if i < len(bcm) else None)
+        out[f"sm{i}_chip_avg"] = _f(bca[i] if i < len(bca) else None)
+        out[f"sm{i}_chip_max"] = _f(bcx[i] if i < len(bcx) else None)
+    out["board_max"] = max(pcb_vals) if pcb_vals else None
+    return out
+
+
 def live_to_sample(live: dict) -> dict:
-    boards = live.get("boards") or [None, None, None, None]
     lim_set = live.get("power_limit_set")
     try:
         lim_set_f = float(lim_set) if lim_set not in (None, "") else None
@@ -16290,18 +16390,10 @@ def live_to_sample(live: dict) -> dict:
     online = 1 if live.get("ok") is not False else 0
     power = _f(live.get("power"))
     hashrate_th = _f(live.get("hashrate_th"))
-    return {
+    row = {
         "ts": now,
         "ts_iso": datetime.now().isoformat(timespec="seconds"),
-        "liquid": _f(live.get("liquid")),
-        "env": _f(live.get("env")),
-        "chip_min": _f(live.get("chip_min")),
-        "chip_avg": _f(live.get("chip_avg")),
-        "chip_max": _f(live.get("chip_max")),
-        "board0": _f(boards[0] if len(boards) > 0 else None),
-        "board1": _f(boards[1] if len(boards) > 1 else None),
-        "board2": _f(boards[2] if len(boards) > 2 else None),
-        "board3": _f(boards[3] if len(boards) > 3 else None),
+        **_temp_fields_from_live(live),
         "power": power,
         "power_limit": _f(live.get("power_limit")),
         "power_limit_set": lim_set_f,
@@ -16313,27 +16405,22 @@ def live_to_sample(live: dict) -> dict:
         "online": online,
         "work_state": _infer_work_state(live) if online else None,
         "upfreq_ok": _infer_upfreq_ok(live) if online else None,
-        "outdoor_c": _sample_outdoor_c(),
         # always store a number for chart (0 = undefined / no hash)
         "eff_jt": _sample_eff_jt(power, hashrate_th) if online else 0.0,
     }
+    return row
 
 
 def offline_sample(err: str | None = None) -> dict:
     """Marker sample when miner is unreachable from monitor."""
     now = time.time()
+    temps = {c: None for c in HISTORY_TEMP_COLUMNS}
+    # weather is independent of miner link
+    temps["outdoor_c"] = _sample_outdoor_c()
     return {
         "ts": now,
         "ts_iso": datetime.now().isoformat(timespec="seconds"),
-        "liquid": None,
-        "env": None,
-        "chip_min": None,
-        "chip_avg": None,
-        "chip_max": None,
-        "board0": None,
-        "board1": None,
-        "board2": None,
-        "board3": None,
+        **temps,
         "power": None,
         "power_limit": None,
         "power_limit_set": None,
@@ -16345,8 +16432,6 @@ def offline_sample(err: str | None = None) -> dict:
         "online": 0,
         "work_state": None,
         "upfreq_ok": None,
-        # weather is independent of miner link
-        "outdoor_c": _sample_outdoor_c(),
         "eff_jt": None,
     }
 

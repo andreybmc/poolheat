@@ -4,15 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GoraPool · Keenetic</title>
-  <link rel="icon" href="/icons/favicon.svg?v=3" type="image/svg+xml" />
-  <link rel="icon" href="/icons/favicon.ico?v=3" sizes="any" />
-  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png?v=3" />
-  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png?v=3" />
-  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png?v=3" />
-  <link rel="apple-touch-icon" href="/icons/app-icon-192.png?v=3" />
-  <link rel="apple-touch-icon" sizes="192x192" href="/icons/app-icon-192.png?v=3" />
-  <link rel="apple-touch-icon" sizes="512x512" href="/icons/app-icon-512.png?v=3" />
-  <meta name="theme-color" content="#152033" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png?v=4" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png?v=4" />
+  <link rel="icon" href="/icons/favicon.ico?v=4" sizes="any" />
+  <link rel="icon" href="/icons/favicon.svg?v=4" type="image/svg+xml" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png?v=4" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/icons/app-icon-192.png?v=4" />
+  <link rel="apple-touch-icon" sizes="512x512" href="/icons/app-icon-512.png?v=4" />
+  <meta name="theme-color" content="#0f1a2b" />
   <meta name="application-name" content="PoolHeat" />
   <style>
     :root {
@@ -8696,6 +8695,22 @@
         "chart.series.chip_max": "chip max",
         "chart.series.chip_avg": "chip avg",
         "chart.series.chip_min": "chip min",
+        "chart.series.board_max": "board max",
+        "chart.series.psu_temp": "PSU",
+        "chart.series.inlet": "inlet",
+        "chart.series.outlet": "outlet",
+        "chart.series.sm0_chip_max": "SM0 chip max",
+        "chart.series.sm0_chip_avg": "SM0 chip avg",
+        "chart.series.sm0_chip_min": "SM0 chip min",
+        "chart.series.sm1_chip_max": "SM1 chip max",
+        "chart.series.sm1_chip_avg": "SM1 chip avg",
+        "chart.series.sm1_chip_min": "SM1 chip min",
+        "chart.series.sm2_chip_max": "SM2 chip max",
+        "chart.series.sm2_chip_avg": "SM2 chip avg",
+        "chart.series.sm2_chip_min": "SM2 chip min",
+        "chart.series.sm3_chip_max": "SM3 chip max",
+        "chart.series.sm3_chip_avg": "SM3 chip avg",
+        "chart.series.sm3_chip_min": "SM3 chip min",
         "sub.chart_power": "history · power · limit · hashrate · freq · efficiency",
         "chart.sync": "Sync charts",
         "dash.hb.surplus": "surplus",
@@ -9386,6 +9401,22 @@
         "chart.series.chip_max": "чипы max",
         "chart.series.chip_avg": "чипы avg",
         "chart.series.chip_min": "чипы min",
+        "chart.series.board_max": "платы max",
+        "chart.series.psu_temp": "PSU",
+        "chart.series.inlet": "вход",
+        "chart.series.outlet": "выход",
+        "chart.series.sm0_chip_max": "SM0 чип max",
+        "chart.series.sm0_chip_avg": "SM0 чип avg",
+        "chart.series.sm0_chip_min": "SM0 чип min",
+        "chart.series.sm1_chip_max": "SM1 чип max",
+        "chart.series.sm1_chip_avg": "SM1 чип avg",
+        "chart.series.sm1_chip_min": "SM1 чип min",
+        "chart.series.sm2_chip_max": "SM2 чип max",
+        "chart.series.sm2_chip_avg": "SM2 чип avg",
+        "chart.series.sm2_chip_min": "SM2 чип min",
+        "chart.series.sm3_chip_max": "SM3 чип max",
+        "chart.series.sm3_chip_avg": "SM3 чип avg",
+        "chart.series.sm3_chip_min": "SM3 чип min",
         "sub.chart_power": "история · power · limit · hashrate · freq · J/T",
         "chart.sync": "Синхронизация",
         "dash.hb.surplus": "избыток",
@@ -17145,6 +17176,7 @@
     /* ── Temperature chart series visibility (dashboard settings gear) ── */
     const TEMP_CHART_SERIES_KEY = "poolheat_temp_chart_series_v1";
     /** Fixed series catalog for temps chart (order = Chart.js dataset order) */
+    /** Must match serve.py HISTORY_TEMP_COLUMNS / live_to_sample fields */
     const TEMP_CHART_SERIES = [
       { id: "liquid", labelKey: "chart.series.liquid", label: "liquid", color: "#3d9cf0" },
       { id: "env", labelKey: "chart.series.env", label: "env", color: "#3ecf8e" },
@@ -17153,9 +17185,25 @@
       { id: "board1", labelKey: "chart.series.board1", label: "SM1 PCB", color: "#b48ead", field: "board1" },
       { id: "board2", labelKey: "chart.series.board2", label: "SM2 PCB", color: "#38bdf8", field: "board2" },
       { id: "board3", labelKey: "chart.series.board3", label: "SM3 PCB", color: "#a3e635", field: "board3" },
+      { id: "board_max", labelKey: "chart.series.board_max", label: "board max", color: "#eab308", field: "board_max" },
       { id: "chip_max", labelKey: "chart.series.chip_max", label: "chip max", color: "#f07178", field: "chip_max" },
       { id: "chip_avg", labelKey: "chart.series.chip_avg", label: "chip avg", color: "#fb7185", field: "chip_avg" },
       { id: "chip_min", labelKey: "chart.series.chip_min", label: "chip min", color: "#fda4af", field: "chip_min" },
+      { id: "psu_temp", labelKey: "chart.series.psu_temp", label: "PSU", color: "#f97316", field: "psu_temp" },
+      { id: "inlet", labelKey: "chart.series.inlet", label: "inlet", color: "#22d3ee", field: "inlet" },
+      { id: "outlet", labelKey: "chart.series.outlet", label: "outlet", color: "#67e8f9", field: "outlet" },
+      { id: "sm0_chip_max", labelKey: "chart.series.sm0_chip_max", label: "SM0 chip max", color: "#c084fc", field: "sm0_chip_max" },
+      { id: "sm0_chip_avg", labelKey: "chart.series.sm0_chip_avg", label: "SM0 chip avg", color: "#a78bfa", field: "sm0_chip_avg" },
+      { id: "sm0_chip_min", labelKey: "chart.series.sm0_chip_min", label: "SM0 chip min", color: "#ddd6fe", field: "sm0_chip_min" },
+      { id: "sm1_chip_max", labelKey: "chart.series.sm1_chip_max", label: "SM1 chip max", color: "#e879f9", field: "sm1_chip_max" },
+      { id: "sm1_chip_avg", labelKey: "chart.series.sm1_chip_avg", label: "SM1 chip avg", color: "#d946ef", field: "sm1_chip_avg" },
+      { id: "sm1_chip_min", labelKey: "chart.series.sm1_chip_min", label: "SM1 chip min", color: "#f0abfc", field: "sm1_chip_min" },
+      { id: "sm2_chip_max", labelKey: "chart.series.sm2_chip_max", label: "SM2 chip max", color: "#2dd4bf", field: "sm2_chip_max" },
+      { id: "sm2_chip_avg", labelKey: "chart.series.sm2_chip_avg", label: "SM2 chip avg", color: "#14b8a6", field: "sm2_chip_avg" },
+      { id: "sm2_chip_min", labelKey: "chart.series.sm2_chip_min", label: "SM2 chip min", color: "#5eead4", field: "sm2_chip_min" },
+      { id: "sm3_chip_max", labelKey: "chart.series.sm3_chip_max", label: "SM3 chip max", color: "#fbbf24", field: "sm3_chip_max" },
+      { id: "sm3_chip_avg", labelKey: "chart.series.sm3_chip_avg", label: "SM3 chip avg", color: "#f59e0b", field: "sm3_chip_avg" },
+      { id: "sm3_chip_min", labelKey: "chart.series.sm3_chip_min", label: "SM3 chip min", color: "#fcd34d", field: "sm3_chip_min" },
     ];
     const TEMP_CHART_SERIES_DEFAULT_ON = {
       liquid: true,
@@ -17165,9 +17213,25 @@
       board1: false,
       board2: true,
       board3: false,
+      board_max: false,
       chip_max: true,
       chip_avg: false,
       chip_min: false,
+      psu_temp: false,
+      inlet: false,
+      outlet: false,
+      sm0_chip_max: false,
+      sm0_chip_avg: false,
+      sm0_chip_min: false,
+      sm1_chip_max: false,
+      sm1_chip_avg: false,
+      sm1_chip_min: false,
+      sm2_chip_max: false,
+      sm2_chip_avg: false,
+      sm2_chip_min: false,
+      sm3_chip_max: false,
+      sm3_chip_avg: false,
+      sm3_chip_min: false,
     };
     let tempChartSeriesVis = null;
 
