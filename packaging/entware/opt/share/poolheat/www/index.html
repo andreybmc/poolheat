@@ -730,6 +730,30 @@
       color: var(--muted);
     }
 
+    /* Long serials / chip strings — stay in card without ugly wrap */
+    .metric .val.info-sn-val {
+      font-size: 0.72rem;
+      font-weight: 600;
+      line-height: 1.25;
+      letter-spacing: -0.02em;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      font-variant-numeric: tabular-nums;
+      font-family: var(--mono, ui-monospace, "SF Mono", Consolas, monospace);
+    }
+    .metric .val.info-sn-val.is-long {
+      font-size: 0.64rem;
+      letter-spacing: -0.03em;
+    }
+    .metric .val.info-chip-val {
+      font-size: 0.72rem;
+      font-weight: 600;
+      line-height: 1.3;
+      letter-spacing: -0.02em;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+    }
+
     .metric.highlight-ok .val { color: var(--ok); }
     .metric.highlight-warn .val { color: var(--warn); }
     .metric.highlight-danger .val { color: var(--danger); }
@@ -5515,17 +5539,17 @@
             <div class="grid-3">
               <div class="metric">
                 <label>ASIC SN</label>
-                <div class="val" style="font-size:0.95rem;word-break:break-all" id="info-miner-sn">—</div>
+                <div class="val info-sn-val" id="info-miner-sn">—</div>
                 <div class="hint" id="info-miner-sn-src">minersn · CustomerSn</div>
               </div>
               <div class="metric">
                 <label>PSU SN</label>
-                <div class="val" style="font-size:0.95rem" id="info-psu-sn">—</div>
+                <div class="val info-sn-val" id="info-psu-sn">—</div>
                 <div class="hint" id="info-psu-model">model —</div>
               </div>
               <div class="metric">
                 <label>Chip</label>
-                <div class="val" style="font-size:0.85rem;line-height:1.3;word-break:break-all" id="info-miner-chip">—</div>
+                <div class="val info-chip-val" id="info-miner-chip">—</div>
                 <div class="hint">chip data</div>
               </div>
             </div>
@@ -20154,6 +20178,13 @@
         }
         setTxt("info-miner-sn", shown);
         setTxt("info-miner-sn-src", hint);
+        const snEl = document.getElementById("info-miner-sn");
+        if (snEl) {
+          snEl.classList.toggle(
+            "is-long",
+            shown.length > 22 && shown !== "not set" && shown !== "—"
+          );
+        }
       })();
       setTxt("info-psu-sn", m.powersn || "—");
       setTxt(
