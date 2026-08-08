@@ -54,6 +54,60 @@
       background-image:
         radial-gradient(ellipse 80% 50% at 10% -10%, rgba(61, 156, 240, 0.12), transparent),
         radial-gradient(ellipse 60% 40% at 90% 0%, rgba(62, 207, 142, 0.06), transparent);
+      /* Firefox: thin dark scrollbar */
+      scrollbar-width: thin;
+      scrollbar-color: rgba(90, 110, 135, 0.55) transparent;
+    }
+
+    /*
+     * App-wide scrollbars — match dark panel UI (not OS white chrome).
+     * Covers tables, errors/events, temps catalog, any overflow:auto.
+     */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: rgba(90, 110, 135, 0.55) transparent;
+    }
+    *::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    *::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 8px;
+      margin: 2px;
+    }
+    *::-webkit-scrollbar-thumb {
+      background: rgba(90, 110, 135, 0.45);
+      border-radius: 8px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+      min-height: 28px;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: rgba(120, 145, 175, 0.65);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    *::-webkit-scrollbar-thumb:active {
+      background: rgba(61, 156, 240, 0.55);
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    *::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    /* Nested scroll areas (errors, temps): slightly denser track */
+    .errors-scroll,
+    .temps-scroll,
+    .card .card-b [style*="overflow"],
+    .card-b > div[style*="overflow"] {
+      scrollbar-color: rgba(90, 110, 135, 0.6) rgba(18, 24, 32, 0.35);
+    }
+    .errors-scroll::-webkit-scrollbar-track,
+    .temps-scroll::-webkit-scrollbar-track,
+    .card-b > div[style*="overflow"]::-webkit-scrollbar-track {
+      background: rgba(18, 24, 32, 0.45);
+      border-radius: 8px;
     }
 
     /* —— layout —— */
@@ -2508,6 +2562,11 @@
       border: none;
       animation: none;
     }
+    /* Suspend: hide Tuning/Tuned entirely (no dead badge gap) */
+    .pm-badge.pm-upfreq[hidden],
+    .pm-badge.pm-upfreq.is-hidden-suspend {
+      display: none !important;
+    }
     @keyframes pm-uf-spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
@@ -4671,7 +4730,8 @@
                   <span data-bind="pwMode">—</span>
                   · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot">uptime</span>
                   <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
-                  · <span class="tip" data-tip-key="asic_elapsed" title="Elapsed — since mining start">mining</span>
+                  · <span class="tip" data-tip-key="asic_elapsed" id="dash-asic-elapsed-lbl"
+                      title="Elapsed — since mining start">mining</span>
                   <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
                 </div>
                 <div class="pm-extra-line">
@@ -5139,7 +5199,7 @@
           </div>
           <div class="card-b" style="padding-top:10px;padding-bottom:8px">
             <p id="temps-catalog-hint" style="font-size:0.75rem;color:var(--dim);margin:0 0 8px">—</p>
-            <div style="max-height:min(50vh,420px);overflow:auto">
+            <div class="temps-scroll" style="max-height:min(50vh,420px);overflow:auto">
               <table class="err-table temps-table" id="temps-catalog-table">
                 <thead>
                   <tr>
@@ -9728,7 +9788,11 @@
       },
       asic_elapsed: {
         title: "Elapsed · mining",
-        body: "How long the current mining session has been running (summary Elapsed, sec).\nResets on Suspend / resume / btminer reboot.\nShorter than or equal to Uptime.",
+        body: "How long the current mining session has been running (summary Elapsed, sec).\nResets on Suspend / resume / btminer reboot.\nShorter than or equal to Uptime.\nWhile Suspend the label shows «suspend» instead of «mining».",
+      },
+      asic_suspend_elapsed: {
+        title: "Elapsed · suspend",
+        body: "ASIC is Suspend: label shows «suspend» + Elapsed.\nElapsed is the miner session timer (often freezes or tracks time since last resume cycle).\nUptime is always since last reboot.",
       },
       psu_temp: {
         title: "PSU °C",
@@ -14141,8 +14205,10 @@
 
     /**
      * Badge right of Mining/Suspend:
-     * Tuned: upfreq 1
-     * Tuning: upfreq 0 — spin only while mining control = resume
+     * Only while RESUME mining:
+     *   Tuned  — upfreq 1
+     *   Tuning — upfreq 0 (spin)
+     * SUSPEND → hide entirely (Tuning is not meaningful when not mining).
      */
     function updateUpfreqBadge(r) {
       const el = document.getElementById("pm-upfreq-badge");
@@ -14153,6 +14219,19 @@
       const work = typeof inferWorkState === "function" ? inferWorkState(r) : null;
       const mining = work === "resume";
       el.classList.remove("is-tuning", "is-tuned", "is-unknown", "is-spinning");
+      // Suspend / unknown work: no Tuning/Tuned badge
+      if (!mining) {
+        el.hidden = true;
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+        if (txt) txt.textContent = "";
+        el.title = "";
+        el.setAttribute("aria-label", "");
+        return;
+      }
+      el.hidden = false;
+      el.style.display = "";
+      el.removeAttribute("aria-hidden");
       if (flag === 1) {
         el.classList.add("is-tuned");
         if (ico) ico.textContent = "✓";
@@ -14160,18 +14239,12 @@
         el.title = "Tuned: upfreq complete";
         el.setAttribute("aria-label", "Tuned: upfreq complete");
       } else if (flag === 0) {
-        el.classList.add("is-tuning");
-        // Spin only during active mining + incomplete upfreq
-        if (mining) el.classList.add("is-spinning");
+        // Tuning only: resume mining + upfreq incomplete
+        el.classList.add("is-tuning", "is-spinning");
         if (ico) ico.textContent = "⟳";
         if (txt) txt.textContent = "Tuning";
-        el.title = mining
-          ? "Tuning: upfreq incomplete · mining"
-          : "Tuning: upfreq incomplete (spin only while mining)";
-        el.setAttribute(
-          "aria-label",
-          mining ? "Tuning while mining" : "Tuning (not mining)"
-        );
+        el.title = "Tuning: resume mining · upfreq incomplete";
+        el.setAttribute("aria-label", "Tuning while mining");
       } else {
         el.classList.add("is-unknown");
         if (ico) ico.textContent = "·";
@@ -14526,6 +14599,38 @@
         setId("dash-asic-uptime", upStr);
         setText("[data-bind=asicElapsed]", elStr);
         setId("dash-asic-elapsed", elStr);
+        // Label: "mining Xm" while resume; "suspend Xm" while suspend
+        // (Elapsed still from summary — session timer; label reflects work state)
+        {
+          const workSt =
+            typeof inferWorkState === "function" ? inferWorkState(r) : null;
+          const lbl = document.getElementById("dash-asic-elapsed-lbl");
+          if (lbl) {
+            const isSus =
+              workSt === "suspend" || workSt === "sleep";
+            const ru =
+              typeof getUiLang === "function" && getUiLang() === "ru";
+            if (isSus) {
+              lbl.textContent = "suspend";
+              lbl.setAttribute(
+                "title",
+                ru
+                  ? "Suspend — сколько ASIC в паузе майнинга (Elapsed)"
+                  : "Suspend — how long mining has been stopped (Elapsed)"
+              );
+              lbl.setAttribute("data-tip-key", "asic_suspend_elapsed");
+            } else {
+              lbl.textContent = "mining";
+              lbl.setAttribute(
+                "title",
+                ru
+                  ? "Mining — длительность текущей сессии майнинга (Elapsed)"
+                  : "Elapsed — since mining start"
+              );
+              lbl.setAttribute("data-tip-key", "asic_elapsed");
+            }
+          }
+        }
         // upfreq shown only as Tuning/Tuned badge (not · upfreq 0/1)
       }
       try {
