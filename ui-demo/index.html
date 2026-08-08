@@ -4628,6 +4628,25 @@
       gap: 10px 12px;
       margin-bottom: 10px;
     }
+    /* zoom + sync in card-h (temps / power) */
+    .chart-header-toolbar {
+      display: flex;
+      flex-wrap: nowrap;
+      flex-shrink: 0;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      margin: 0;
+    }
+    #panel-chart-temps > .card-h,
+    #panel-chart-power > .card-h {
+      flex-wrap: nowrap;
+    }
+    #panel-chart-temps > .card-h .chart-header-toolbar .btn,
+    #panel-chart-power > .card-h .chart-header-toolbar .btn {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
     /* chart zoom = same native pill select as energy Sample/Period */
     .chart-zoom-wrap {
       display: inline-flex;
@@ -4640,9 +4659,17 @@
       color: var(--muted);
       user-select: none;
       white-space: nowrap;
+      font-size: 0.78rem;
     }
     .chart-sync-lbl input {
       accent-color: var(--accent);
+    }
+    /* view range meta under header (no longer in zoom row) */
+    .chart-view-meta {
+      font-size: 0.72rem;
+      color: var(--dim);
+      margin: 0 0 8px;
+      line-height: 1.3;
     }
     .hist-meta-row {
       display: flex;
@@ -5063,10 +5090,7 @@
                   <h2 data-i18n="h2.temps">Temperatures °C</h2>
                   <div class="sub" data-i18n="sub.chart_temps">history · liquid · env · outdoor · boards · chip</div>
                 </div>
-                <button class="btn" type="button" id="btn-hist-refresh" data-i18n="btn.refresh">Refresh</button>
-              </div>
-              <div class="card-b">
-                <div class="chart-zoom-row">
+                <div class="chart-header-toolbar">
                   <div class="chart-zoom-wrap" data-chart-key="temps">
                     <select
                       class="chart-zoom-select ui-pill-control"
@@ -5074,21 +5098,28 @@
                       data-zoom-select
                       title="Zoom"
                       aria-label="Zoom"
+                      data-i18n-title="chart.zoom"
+                      data-i18n-aria="chart.zoom"
                     >
-                      <option value="1h">1h</option>
-                      <option value="6h">6h</option>
-                      <option value="12h">12h</option>
-                      <option value="1d" selected>1d</option>
-                      <option value="1w">1w</option>
-                      <option value="all">All</option>
+                      <optgroup label="Zoom" data-i18n-label="chart.zoom">
+                        <option value="1h">1h</option>
+                        <option value="6h">6h</option>
+                        <option value="12h">12h</option>
+                        <option value="1d" selected>1d</option>
+                        <option value="1w">1w</option>
+                        <option value="all">All</option>
+                      </optgroup>
                     </select>
                   </div>
-                  <label class="check chart-sync-lbl" style="margin:0;font-size:0.78rem">
+                  <label class="check chart-sync-lbl" style="margin:0">
                     <input type="checkbox" class="chart-sync" id="chart-sync" checked />
                     <span data-i18n="chart.sync">Sync charts</span>
                   </label>
-                  <span class="hist-meta chart-view-label" data-chart-key="temps">view: —</span>
+                  <button class="btn" type="button" id="btn-hist-refresh" data-i18n="btn.refresh">Refresh</button>
                 </div>
+              </div>
+              <div class="card-b">
+                <div class="chart-view-meta hist-meta chart-view-label" data-chart-key="temps">view: —</div>
                 <!-- hidden select kept for fleet / external hooks -->
                 <select id="chart-zoom" data-fleet-zoom hidden aria-hidden="true">
                   <option value="1h">1h</option>
@@ -5117,9 +5148,7 @@
                   <h2 data-i18n="h2.power">Power · Hashrate</h2>
                   <div class="sub" data-i18n="sub.chart_power">history · power · limit · hashrate · freq · efficiency</div>
                 </div>
-              </div>
-              <div class="card-b">
-                <div class="chart-zoom-row">
+                <div class="chart-header-toolbar">
                   <div class="chart-zoom-wrap" data-chart-key="power">
                     <select
                       class="chart-zoom-select ui-pill-control"
@@ -5127,21 +5156,27 @@
                       data-zoom-select
                       title="Zoom"
                       aria-label="Zoom"
+                      data-i18n-title="chart.zoom"
+                      data-i18n-aria="chart.zoom"
                     >
-                      <option value="1h">1h</option>
-                      <option value="6h">6h</option>
-                      <option value="12h">12h</option>
-                      <option value="1d" selected>1d</option>
-                      <option value="1w">1w</option>
-                      <option value="all">All</option>
+                      <optgroup label="Zoom" data-i18n-label="chart.zoom">
+                        <option value="1h">1h</option>
+                        <option value="6h">6h</option>
+                        <option value="12h">12h</option>
+                        <option value="1d" selected>1d</option>
+                        <option value="1w">1w</option>
+                        <option value="all">All</option>
+                      </optgroup>
                     </select>
                   </div>
-                  <label class="check chart-sync-lbl" style="margin:0;font-size:0.78rem">
+                  <label class="check chart-sync-lbl" style="margin:0">
                     <input type="checkbox" class="chart-sync" checked />
                     <span data-i18n="chart.sync">Sync charts</span>
                   </label>
-                  <span class="hist-meta chart-view-label" data-chart-key="power">view: —</span>
                 </div>
+              </div>
+              <div class="card-b">
+                <div class="chart-view-meta hist-meta chart-view-label" data-chart-key="power">view: —</div>
                 <div style="height:240px;position:relative">
                   <canvas id="chart-power"></canvas>
                 </div>
@@ -8867,6 +8902,7 @@
         "chart.series.sm3_chip_min": "SM3 chip min",
         "sub.chart_power": "history · power · limit · hashrate · freq · efficiency",
         "chart.sync": "Sync charts",
+        "chart.zoom": "Zoom",
         "dash.hb.surplus": "surplus",
         "dash.hb.deficit": "deficit",
         "dash.hb.balance": "balance",
@@ -9602,6 +9638,7 @@
         "chart.series.sm3_chip_min": "SM3 чип min",
         "sub.chart_power": "история · power · limit · hashrate · freq · J/T",
         "chart.sync": "Синхронизация",
+        "chart.zoom": "Зум",
         "dash.hb.surplus": "избыток",
         "dash.hb.deficit": "дефицит",
         "dash.hb.balance": "баланс",
