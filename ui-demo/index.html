@@ -584,13 +584,13 @@
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235c6b7e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     }
 
-    /* Energy chart controls: Sample + Range + refresh — one row with title */
+    /* Energy chart controls: Sample + Range + refresh always one row */
     .energy-chart-toolbar {
       display: flex;
       flex-wrap: nowrap !important;
       flex-shrink: 0;
       gap: 6px;
-      align-items: center;
+      align-items: flex-end;
       min-width: 0;
     }
     .energy-chart-toolbar .energy-chart-field {
@@ -598,7 +598,7 @@
       min-width: 0;
       flex: 0 1 auto;
       max-width: 6.5rem;
-      gap: 0;
+      gap: 3px;
     }
     .energy-chart-toolbar .energy-chart-field-range {
       flex: 0 1 auto;
@@ -608,16 +608,18 @@
       width: 100%;
       min-width: 0;
     }
-    /* labels live in title/aria — hide in card-h so header matches other charts */
-    .energy-chart-toolbar .energy-chart-field > span,
-    #panel-chart-energy-dash > .card-h .energy-chart-field > span,
-    #panel-energy-chart > .card-h .energy-chart-field > span,
-    #panel-energy-chart > .card-h .btn-row > .field > span {
-      display: none;
+    .energy-chart-toolbar .energy-chart-field > span {
+      display: block;
+      font-size: 0.65rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.2;
+      color: var(--dim);
     }
     .energy-chart-toolbar .energy-chart-refresh {
       flex: 0 0 auto;
-      align-self: center;
+      align-self: flex-end;
       width: 28px;
       min-width: 28px;
       height: 28px;
@@ -638,14 +640,20 @@
       line-height: 1;
       display: block;
     }
+    /* title row: align h2 with label+select block (labels on top of pills) */
     #panel-chart-energy-dash > .card-h {
       flex-wrap: nowrap;
       gap: 8px;
-      align-items: center;
+      align-items: flex-start;
     }
     #panel-chart-energy-dash > .card-h > div:first-child {
       min-width: 0;
       flex: 1 1 auto;
+      /* match first line of toolbar labels so h2 sits at top of header */
+      padding-top: 0;
+      display: flex;
+      align-items: center;
+      min-height: calc(0.65rem * 1.2 + 3px + 28px);
     }
     /* pack / half: keep toolbar on one line */
     .dash-charts-pack #panel-chart-energy-dash > .card-h {
@@ -659,15 +667,26 @@
     }
     /* Pool → Energy chart header (same pills as dash) */
     #panel-energy-chart > .card-h {
+      align-items: flex-start;
+    }
+    #panel-energy-chart > .card-h > div:first-child {
+      display: flex;
       align-items: center;
+      min-height: calc(0.65rem * 1.2 + 3px + 28px);
     }
     #panel-energy-chart > .card-h .btn-row {
-      align-items: center;
+      align-items: flex-end;
       gap: 6px;
     }
     #panel-energy-chart > .card-h .btn-row > .field {
-      gap: 0;
+      gap: 3px;
       margin: 0;
+    }
+    #panel-energy-chart > .card-h .btn-row > .field > span {
+      display: block;
+      font-size: 0.65rem;
+      color: var(--dim);
+      line-height: 1.2;
     }
 
     .card-b { padding: 16px; }
