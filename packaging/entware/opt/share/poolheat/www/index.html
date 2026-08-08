@@ -598,7 +598,7 @@
       min-width: 0;
       flex: 0 1 auto;
       max-width: 6.5rem;
-      gap: 3px;
+      gap: 2px;
     }
     .energy-chart-toolbar .energy-chart-field-range {
       flex: 0 1 auto;
@@ -608,14 +608,17 @@
       width: 100%;
       min-width: 0;
     }
+    /* pull Sample/Period labels up so card-h height ≈ other chart cards */
     .energy-chart-toolbar .energy-chart-field > span {
       display: block;
       font-size: 0.65rem;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      line-height: 1.2;
+      line-height: 1.15;
       color: var(--dim);
+      margin: -10px 0 0;
+      padding: 0;
     }
     .energy-chart-toolbar .energy-chart-refresh {
       flex: 0 0 auto;
@@ -640,42 +643,16 @@
       line-height: 1;
       display: block;
     }
-    /*
-     * Energy chart card-h: title TOP (not vertically centered next to
-     * Sample/Period). Tighter padding so the block header sits higher.
-     */
-    #panel-chart-energy-dash > .card-h,
-    #panel-energy-chart > .card-h {
+    /* stock card-h (align center like Power · Hashrate) — no custom title hacks */
+    #panel-chart-energy-dash > .card-h {
       flex-wrap: nowrap;
-      gap: 8px 10px;
-      align-items: flex-start;
-      padding: 10px 16px 10px;
+      gap: 8px;
+      align-items: center;
     }
-    #panel-chart-energy-dash > .card-h > div:first-child,
-    #panel-energy-chart > .card-h > div:first-child {
+    #panel-chart-energy-dash > .card-h > div:first-child {
       min-width: 0;
       flex: 1 1 auto;
-      margin: 0;
-      padding: 0;
-      /* no min-height / no vertical centering — h2 stays on top */
-      min-height: 0;
-      display: block;
-      align-self: flex-start;
     }
-    #panel-chart-energy-dash > .card-h h2,
-    #panel-energy-chart > .card-h h2 {
-      margin: 0;
-      padding: 0;
-      line-height: 1.2;
-    }
-    /* Sample/Period block also starts at top of header */
-    #panel-chart-energy-dash > .card-h .energy-chart-toolbar,
-    #panel-energy-chart > .card-h .energy-chart-toolbar {
-      align-self: flex-start;
-      margin: 0;
-      padding: 0;
-    }
-    /* pack / half: keep toolbar on one line */
     .dash-charts-pack #panel-chart-energy-dash > .card-h {
       flex-wrap: nowrap;
     }
@@ -685,20 +662,25 @@
     .dash-charts-pack .energy-chart-toolbar .energy-chart-field-range {
       max-width: 3.75rem;
     }
+    /* Pool → Energy chart header */
+    #panel-energy-chart > .card-h {
+      align-items: center;
+    }
     #panel-energy-chart > .card-h .btn-row {
       align-items: flex-end;
       gap: 6px;
-      margin: 0;
     }
     #panel-energy-chart > .card-h .btn-row > .field {
-      gap: 3px;
+      gap: 2px;
       margin: 0;
     }
     #panel-energy-chart > .card-h .btn-row > .field > span {
       display: block;
       font-size: 0.65rem;
       color: var(--dim);
-      line-height: 1.2;
+      line-height: 1.15;
+      margin: -10px 0 0;
+      padding: 0;
     }
 
     .card-b { padding: 16px; }
