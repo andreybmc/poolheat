@@ -2229,21 +2229,33 @@
     }
     .err-table th {
       text-align: center;
-      font-size: 0.7rem;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
+      font-size: 0.68rem;
+      text-transform: none;
+      letter-spacing: 0.01em;
       color: var(--dim);
-      font-weight: 600;
-      padding: 0 8px 8px;
+      font-weight: 550;
+      padding: 0 6px 6px;
       border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      white-space: nowrap;
     }
     .err-table th:last-child { padding-right: 0; }
     .err-table th:first-child { padding-left: 0; }
     .err-table td {
-      padding: 10px 8px;
+      padding: 10px 6px;
       vertical-align: middle;
       border-bottom: 1px solid rgba(42, 53, 68, 0.55);
       color: var(--text);
+    }
+    /* center body cells that match centered headers (code / action / count / time) */
+    .err-table td.col-code,
+    .err-table td.col-action,
+    .err-table td.col-count,
+    .err-table td.col-time {
+      text-align: center;
+    }
+    .err-table td.col-cause {
+      text-align: left;
     }
     /* Hashboards · PCB SN — all columns centered */
     #info-boards-table th,
@@ -2321,7 +2333,7 @@
       width: 9.5rem;
       color: var(--muted);
       white-space: nowrap;
-      text-align: right;
+      text-align: center;
     }
     @media (max-width: 640px) {
       .err-table .col-time { width: auto; display: block; text-align: left; margin-top: 4px; }
@@ -4980,9 +4992,9 @@
                     <table class="err-table">
                       <thead>
                         <tr>
-                          <th class="col-code">ErrorCode</th>
-                          <th class="col-cause">Cause</th>
-                          <th class="col-time">Time</th>
+                          <th class="col-code" data-i18n="th.err_code">Code</th>
+                          <th class="col-cause" data-i18n="th.err_cause">Cause</th>
+                          <th class="col-time" data-i18n="th.err_time">Time</th>
                         </tr>
                       </thead>
                       <tbody id="miner-err-rows"></tbody>
@@ -4994,11 +5006,11 @@
                     <table class="err-table events-table">
                       <thead>
                         <tr>
-                          <th class="col-code">EventCode</th>
-                          <th class="col-cause">EventCause</th>
-                          <th class="col-action">EventAction</th>
-                          <th class="col-count">Count</th>
-                          <th class="col-time">LastTime</th>
+                          <th class="col-code" data-i18n="th.ev_code">Code</th>
+                          <th class="col-cause" data-i18n="th.ev_cause">Cause</th>
+                          <th class="col-action" data-i18n="th.ev_action">Action</th>
+                          <th class="col-count" data-i18n="th.ev_count">Count</th>
+                          <th class="col-time" data-i18n="th.ev_last">Last</th>
                         </tr>
                       </thead>
                       <tbody id="miner-event-rows"></tbody>
@@ -8721,6 +8733,14 @@
         "label.miner_errors": "Errors",
         "errors.empty": "No active errors",
         "events.empty": "No active events",
+        "th.err_code": "Code",
+        "th.err_cause": "Cause",
+        "th.err_time": "Time",
+        "th.ev_code": "Code",
+        "th.ev_cause": "Cause",
+        "th.ev_action": "Action",
+        "th.ev_count": "Count",
+        "th.ev_last": "Last",
         "label.miner_events": "Events",
         "dash.widget.history": "History & charts",
         "dash.widget.chart_temps": "Temperatures chart",
@@ -9449,6 +9469,14 @@
         "label.miner_errors": "Ошибки",
         "errors.empty": "Нет активных ошибок",
         "events.empty": "Нет активных событий",
+        "th.err_code": "Код",
+        "th.err_cause": "Причина",
+        "th.err_time": "Время",
+        "th.ev_code": "Код",
+        "th.ev_cause": "Причина",
+        "th.ev_action": "Действие",
+        "th.ev_count": "Кол-во",
+        "th.ev_last": "Последнее",
         "label.miner_events": "События",
         "dash.widget.history": "История и графики",
         "dash.widget.chart_temps": "График температур",
