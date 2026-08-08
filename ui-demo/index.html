@@ -455,6 +455,62 @@
       margin-top: 2px;
     }
 
+    /* Energy chart controls: compact so Sample + Range + icon fit one row (half-width) */
+    .energy-chart-toolbar {
+      flex-wrap: nowrap;
+      gap: 6px;
+      align-items: flex-end;
+      min-width: 0;
+      flex: 0 1 auto;
+    }
+    .energy-chart-toolbar .energy-chart-field {
+      margin: 0;
+      min-width: 0;
+      flex: 1 1 5.5rem;
+      max-width: 7rem;
+    }
+    .energy-chart-toolbar .energy-chart-field-range {
+      flex: 0 1 4.25rem;
+      max-width: 5rem;
+    }
+    .energy-chart-toolbar .energy-chart-field select {
+      width: 100%;
+      min-width: 0;
+      font-size: 0.78rem;
+      padding-left: 8px;
+      padding-right: 22px;
+    }
+    .energy-chart-toolbar .energy-chart-field > span {
+      font-size: 0.68rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .energy-chart-toolbar .energy-chart-refresh {
+      flex: 0 0 auto;
+      width: 2.15rem;
+      min-width: 2.15rem;
+      height: 2.15rem;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .energy-chart-toolbar .energy-chart-refresh .ico-refresh {
+      font-size: 1.05rem;
+      line-height: 1;
+      display: block;
+    }
+    #panel-chart-energy-dash > .card-h {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    #panel-chart-energy-dash > .card-h > div:first-child {
+      min-width: 0;
+      flex: 1 1 8rem;
+    }
+
     .card-b { padding: 16px; }
 
     .stack { display: flex; flex-direction: column; gap: 16px; }
@@ -1622,15 +1678,15 @@
       letter-spacing: 0.02em;
     }
 
-    /* —— Errors + Events panel (get_error_code · LuCI Events) —— */
+    /* —— Errors + Events panel (same shell as chart cards on dash) —— */
     .card.errors-card {
       margin-bottom: 16px;
-      border-color: rgba(240, 113, 120, 0.35);
-    }
-    .card.errors-card .card-h {
-      background: rgba(240, 113, 120, 0.08);
     }
     .card.errors-card .card-h h2 {
+      color: inherit;
+    }
+    /* keep error codes readable; events stay accent */
+    .card.errors-card .err-table:not(.events-table) .col-code {
       color: var(--danger);
     }
     .err-section-label {
@@ -2423,7 +2479,7 @@
       content: "";
       position: absolute;
       left: 0; top: 0; bottom: 0;
-      width: 3px;
+      width: 4px; /* same left stripe width on all dash widgets */
       background: var(--dim);
     }
 
@@ -2438,9 +2494,10 @@
         var(--ok) 100%
       );
     }
-    /* outdoor weather: left tab matches sky/blue widget (same 3px bookmark as other cards) */
+    /* outdoor weather: same 4px left stripe as Power / T_ctrl / etc. */
     .temp-card.outdoor::before {
       display: block;
+      width: 4px;
       background: linear-gradient(180deg, #7ec8f5 0%, #3d9cf0 45%, #1a6bb5 100%);
       z-index: 2;
     }
@@ -2722,7 +2779,8 @@
     }
 
     .temp-card.board-chip::before {
-      /* Boards (alum, top) → Chips (silicon, bottom) — mirrored from prior */
+      /* Boards (alum, top) → Chips (silicon, bottom) — same 4px as other widgets */
+      width: 4px;
       background: linear-gradient(
         180deg,
         var(--alum) 0%,
@@ -4651,8 +4709,8 @@
                   <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
                   <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power · by hour / day / week / month</div>
                 </div>
-                <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:end">
-                  <label class="field" style="margin:0;min-width:9rem">
+                <div class="btn-row energy-chart-toolbar" style="align-items:end">
+                  <label class="field energy-chart-field">
                     <span data-i18n="field.energy_bucket">Sample by</span>
                     <select id="energy-chart-bucket-dash" class="energy-chart-bucket">
                       <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
@@ -4661,7 +4719,7 @@
                       <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
                     </select>
                   </label>
-                  <label class="field" style="margin:0;min-width:8rem">
+                  <label class="field energy-chart-field energy-chart-field-range">
                     <span data-i18n="field.energy_range">Range</span>
                     <select id="energy-chart-range-dash" class="energy-chart-range">
                       <option value="24">1d</option>
@@ -4671,7 +4729,17 @@
                       <option value="2160">90d</option>
                     </select>
                   </label>
-                  <button class="btn" type="button" id="btn-energy-chart-refresh-dash" data-i18n="btn.refresh">Refresh</button>
+                  <button
+                    class="btn energy-chart-refresh"
+                    type="button"
+                    id="btn-energy-chart-refresh-dash"
+                    title="Refresh"
+                    aria-label="Refresh"
+                    data-i18n-title="btn.refresh"
+                    data-i18n-aria="btn.refresh"
+                  >
+                    <span class="ico-refresh" aria-hidden="true">↻</span>
+                  </button>
                 </div>
               </div>
               <div class="card-b">
@@ -6768,19 +6836,49 @@
         <div class="card" id="panel-ui-lang">
           <div class="card-h">
             <div>
-              <h2 data-i18n="lang.label">Interface language</h2>
-              <div class="sub" data-i18n="lang.sub">English · Russian</div>
+              <h2 data-i18n="lang.region_title">Language & region</h2>
+              <div class="sub" data-i18n="lang.region_sub">interface · currency · date & time format</div>
             </div>
             <button class="btn primary" type="button" id="btn-ui-lang-save" data-i18n="btn.save">Save</button>
           </div>
           <div class="card-b">
-            <label class="field" style="max-width:280px">
-              <span data-i18n="lang.label">Interface language</span>
-              <select id="settings-ui-lang" class="lang-select" style="width:100%;padding:10px 28px 10px 12px;font-size:0.9rem">
-                <option value="en" selected>English</option>
-                <option value="ru">Russian</option>
-              </select>
-            </label>
+            <div class="row" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:12px;align-items:end">
+              <label class="field" style="margin:0">
+                <span data-i18n="lang.label">Interface language</span>
+                <select id="settings-ui-lang" class="lang-select" style="width:100%;padding:10px 28px 10px 12px;font-size:0.9rem">
+                  <option value="en" selected>English</option>
+                  <option value="ru">Russian</option>
+                </select>
+              </label>
+              <label class="field" style="margin:0">
+                <span data-i18n="lang.currency">Currency</span>
+                <select id="settings-ui-currency" style="width:100%;padding:10px 28px 10px 12px;font-size:0.9rem">
+                  <option value="RUB">RUB · ₽</option>
+                  <option value="USD">USD · $</option>
+                  <option value="EUR">EUR · €</option>
+                  <option value="UAH">UAH · ₴</option>
+                  <option value="KZT">KZT · ₸</option>
+                  <option value="BYN">BYN · Br</option>
+                  <option value="CNY">CNY · ¥</option>
+                  <option value="GBP">GBP · £</option>
+                </select>
+              </label>
+              <label class="field" style="margin:0">
+                <span data-i18n="lang.date_format">Date format</span>
+                <select id="settings-ui-date-format" style="width:100%;padding:10px 28px 10px 12px;font-size:0.9rem">
+                  <option value="dmy">DD.MM.YYYY</option>
+                  <option value="mdy">MM/DD/YYYY</option>
+                  <option value="ymd">YYYY-MM-DD</option>
+                </select>
+              </label>
+              <label class="field" style="margin:0">
+                <span data-i18n="lang.time_format">Time format</span>
+                <select id="settings-ui-time-format" style="width:100%;padding:10px 28px 10px 12px;font-size:0.9rem">
+                  <option value="24h">24-hour</option>
+                  <option value="12h">12-hour</option>
+                </select>
+              </label>
+            </div>
             <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="ui-lang-status">—</p>
           </div>
         </div>
@@ -7565,8 +7663,163 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script>
 
-    /* —— UI i18n (ru / en) —— */
+    /* —— UI i18n (ru / en) + region prefs —— */
     const UI_LANG_KEY = "poolheat_ui_lang";
+    const UI_PREFS_KEY = "poolheat_ui_prefs_v1";
+    const UI_CURRENCY_MAP = {
+      RUB: "₽",
+      USD: "$",
+      EUR: "€",
+      UAH: "₴",
+      KZT: "₸",
+      BYN: "Br",
+      CNY: "¥",
+      GBP: "£",
+    };
+    /** @type {{ currency: string, currency_symbol: string, date_format: string, time_format: string }} */
+    let uiPrefs = {
+      currency: "RUB",
+      currency_symbol: "₽",
+      date_format: "dmy",
+      time_format: "24h",
+    };
+
+    function loadUiPrefs() {
+      try {
+        const raw = localStorage.getItem(UI_PREFS_KEY);
+        if (!raw) return;
+        const j = JSON.parse(raw);
+        if (!j || typeof j !== "object") return;
+        const cur = String(j.currency || uiPrefs.currency).trim().toUpperCase() || "RUB";
+        const sym =
+          (j.currency_symbol && String(j.currency_symbol).trim()) ||
+          UI_CURRENCY_MAP[cur] ||
+          "₽";
+        let df = String(j.date_format || "dmy").toLowerCase();
+        if (df !== "dmy" && df !== "mdy" && df !== "ymd") df = "dmy";
+        let tf = String(j.time_format || "24h").toLowerCase();
+        if (tf !== "24h" && tf !== "12h") tf = "24h";
+        uiPrefs = {
+          currency: cur,
+          currency_symbol: sym,
+          date_format: df,
+          time_format: tf,
+        };
+      } catch (_) { /* ignore */ }
+    }
+
+    function saveUiPrefs() {
+      try {
+        localStorage.setItem(UI_PREFS_KEY, JSON.stringify(uiPrefs));
+      } catch (_) { /* ignore */ }
+    }
+
+    function getUiCurrency() {
+      return uiPrefs.currency || "RUB";
+    }
+
+    function getUiCurrencySymbol() {
+      return (
+        uiPrefs.currency_symbol ||
+        UI_CURRENCY_MAP[getUiCurrency()] ||
+        "₽"
+      );
+    }
+
+    function getUiDateFormat() {
+      return uiPrefs.date_format || "dmy";
+    }
+
+    function getUiTimeFormat() {
+      return uiPrefs.time_format || "24h";
+    }
+
+    function _pad2(n) {
+      return n < 10 ? "0" + n : String(n);
+    }
+
+    /**
+     * Format Date / unix-sec / ISO-ish string per UI date+time prefs.
+     * @param {Date|number|string|null} input
+     * @param {{ dateOnly?: boolean, timeOnly?: boolean }} [opts]
+     */
+    function formatUiDateTime(input, opts) {
+      opts = opts || {};
+      if (input == null || input === "") return "";
+      let d = null;
+      if (input instanceof Date) {
+        d = input;
+      } else if (typeof input === "number" && Number.isFinite(input)) {
+        d = new Date(input > 1e12 ? input : input * 1000);
+      } else {
+        const s = String(input).trim();
+        // "2026-08-03 01:26:57" or ISO
+        const m = s.match(
+          /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/
+        );
+        if (m) {
+          d = new Date(
+            Number(m[1]),
+            Number(m[2]) - 1,
+            Number(m[3]),
+            m[4] != null ? Number(m[4]) : 0,
+            m[5] != null ? Number(m[5]) : 0,
+            m[6] != null ? Number(m[6]) : 0
+          );
+        } else {
+          const t = Date.parse(s);
+          if (!Number.isFinite(t)) return s;
+          d = new Date(t);
+        }
+      }
+      if (!d || !Number.isFinite(d.getTime())) return String(input);
+      const y = d.getFullYear();
+      const mo = _pad2(d.getMonth() + 1);
+      const day = _pad2(d.getDate());
+      let datePart = day + "." + mo + "." + y;
+      const df = getUiDateFormat();
+      if (df === "mdy") datePart = mo + "/" + day + "/" + y;
+      else if (df === "ymd") datePart = y + "-" + mo + "-" + day;
+      if (opts.dateOnly) return datePart;
+      let h = d.getHours();
+      const mi = _pad2(d.getMinutes());
+      let timePart;
+      if (getUiTimeFormat() === "12h") {
+        const am = h < 12;
+        let h12 = h % 12;
+        if (h12 === 0) h12 = 12;
+        timePart = h12 + ":" + mi + (am ? " AM" : " PM");
+      } else {
+        timePart = _pad2(h) + ":" + mi;
+      }
+      if (opts.timeOnly) return timePart;
+      return datePart + " " + timePart;
+    }
+
+    /** Short day.month (+ time) for charts / buckets */
+    function formatUiDateShort(input, withTime) {
+      if (input == null || input === "") return "";
+      const d =
+        input instanceof Date
+          ? input
+          : typeof input === "number"
+            ? new Date(input > 1e12 ? input : input * 1000)
+            : new Date(
+                typeof input === "string" && /^\d{4}-\d{2}/.test(input)
+                  ? input.replace(" ", "T")
+                  : input
+              );
+      if (!d || !Number.isFinite(d.getTime())) return String(input);
+      const mo = _pad2(d.getMonth() + 1);
+      const day = _pad2(d.getDate());
+      const df = getUiDateFormat();
+      let datePart = day + "." + mo;
+      if (df === "mdy") datePart = mo + "/" + day;
+      else if (df === "ymd") datePart = mo + "-" + day;
+      if (!withTime) return datePart;
+      return datePart + " " + formatUiDateTime(d, { timeOnly: true });
+    }
+
     const I18N = {
       en: {
         "tab.dash": "Overview",
@@ -7852,11 +8105,19 @@
         "lang.label": "Interface language",
         "lang.label_short": "Lang",
         "lang.sub": "English · Russian",
+        "lang.region_title": "Language & region",
+        "lang.region_sub": "interface · currency · date & time format",
+        "lang.currency": "Currency",
+        "lang.date_format": "Date format",
+        "lang.time_format": "Time format",
+        "lang.time_24h": "24-hour",
+        "lang.time_12h": "12-hour",
         "lang.ru": "Русский",
         "lang.en": "English",
         "lang.primary": "English (primary)",
         "lang.extension": "Русский (extension)",
         "toast.lang_saved": "Language saved",
+        "toast.region_saved": "Language & region saved",
         "banner.dry_span": "Auto zones not written · Safety active · log only",
         "banner.warmup_span": "Miner still warming up — upward blocked. Downward and Critical allowed.",
         "banner.override_span": "Auto zones Z0–Z2 paused · Safety Critical active · left",
@@ -8512,11 +8773,19 @@
         "lang.label": "Язык интерфейса",
         "lang.label_short": "Язык",
         "lang.sub": "английский · русский",
+        "lang.region_title": "Язык и регион",
+        "lang.region_sub": "интерфейс · валюта · формат даты и времени",
+        "lang.currency": "Валюта",
+        "lang.date_format": "Формат даты",
+        "lang.time_format": "Формат времени",
+        "lang.time_24h": "24 часа",
+        "lang.time_12h": "12 часов",
         "lang.ru": "Русский",
         "lang.en": "English",
         "lang.primary": "English (основной)",
         "lang.extension": "Русский (расширение)",
         "toast.lang_saved": "Язык сохранён",
+        "toast.region_saved": "Язык и регион сохранены",
         "banner.dry_span": "Авто-зоны не пишутся · Safety работает · только лог",
         "banner.warmup_span": "Майнер ещё выходит на режим — upward заблокирован. Downward и Critical разрешены.",
         "banner.override_span": "Авто-зоны Z0–Z2 на паузе · Safety Critical работает · осталось",
@@ -9018,6 +9287,12 @@
         const val = t(key, null);
         if (val != null) el.setAttribute("title", val);
       });
+      document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-aria");
+        if (!key) return;
+        const val = t(key, null);
+        if (val != null) el.setAttribute("aria-label", val);
+      });
       // schedule grid labels (Пн/Вт…) depend on lang
       try {
         if (typeof renderScheduleGrid === "function" && document.getElementById("sched-grid")) {
@@ -9036,6 +9311,9 @@
         if (o0) o0.textContent = t("lang.ru", "Russian");
         if (o1) o1.textContent = t("lang.en", "English");
       }
+      try {
+        if (typeof syncUiPrefsForm === "function") syncUiPrefsForm();
+      } catch (_) { /* ignore */ }
       if (typeof applyTipsLang === "function") applyTipsLang(lang);
       if (opts.persist !== false) {
         try { localStorage.setItem(UI_LANG_KEY, lang); } catch (_) {}
@@ -9080,13 +9358,91 @@
       return lang;
     }
 
+    function syncUiPrefsForm() {
+      const cur = document.getElementById("settings-ui-currency");
+      const df = document.getElementById("settings-ui-date-format");
+      const tf = document.getElementById("settings-ui-time-format");
+      if (cur) cur.value = getUiCurrency();
+      if (df) df.value = getUiDateFormat();
+      if (tf) {
+        tf.value = getUiTimeFormat();
+        const o24 = tf.querySelector('option[value="24h"]');
+        const o12 = tf.querySelector('option[value="12h"]');
+        if (o24) o24.textContent = t("lang.time_24h", "24-hour");
+        if (o12) o12.textContent = t("lang.time_12h", "12-hour");
+      }
+    }
+
+    function readUiPrefsFromForm() {
+      const curEl = document.getElementById("settings-ui-currency");
+      const dfEl = document.getElementById("settings-ui-date-format");
+      const tfEl = document.getElementById("settings-ui-time-format");
+      const cur = String((curEl && curEl.value) || getUiCurrency())
+        .trim()
+        .toUpperCase() || "RUB";
+      let df = String((dfEl && dfEl.value) || getUiDateFormat()).toLowerCase();
+      if (df !== "dmy" && df !== "mdy" && df !== "ymd") df = "dmy";
+      let tf = String((tfEl && tfEl.value) || getUiTimeFormat()).toLowerCase();
+      if (tf !== "24h" && tf !== "12h") tf = "24h";
+      uiPrefs = {
+        currency: cur,
+        currency_symbol: UI_CURRENCY_MAP[cur] || getUiCurrencySymbol() || "₽",
+        date_format: df,
+        time_format: tf,
+      };
+      saveUiPrefs();
+      // keep energy tariff form in sync if open
+      try {
+        const eCur = document.getElementById("energy-currency");
+        const eSym = document.getElementById("energy-symbol");
+        if (eCur) eCur.value = cur;
+        if (eSym) eSym.value = uiPrefs.currency_symbol;
+      } catch (_) { /* ignore */ }
+    }
+
+    function applyRegionRefresh() {
+      try {
+        if (typeof renderEnergySummary === "function" && energyCache) {
+          renderEnergySummary(energyCache);
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        if (typeof live !== "undefined" && live && typeof renderMinerErrors === "function") {
+          renderMinerErrors(live);
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        if (typeof energyChartLastBody !== "undefined" && energyChartLastBody &&
+            typeof renderEnergyChart === "function") {
+          renderEnergyChart(energyChartLastBody);
+        }
+      } catch (_) { /* ignore */ }
+      document.dispatchEvent(
+        new CustomEvent("poolheat:region", { detail: { prefs: uiPrefs } })
+      );
+    }
+
     function initUiLangControls() {
+      loadUiPrefs();
       const applyFrom = (sel) => {
         const lang = (sel && sel.value) || getUiLang();
+        readUiPrefsFromForm();
         applyUiLang(lang);
-        if (typeof toastSuccess === "function") toastSuccess(t("toast.lang_saved"));
+        applyRegionRefresh();
+        if (typeof toastSuccess === "function") {
+          toastSuccess(t("toast.region_saved", "Language & region saved"));
+        }
         const st = document.getElementById("ui-lang-status");
-        if (st) st.textContent = lang === "ru" ? t("lang.extension") : t("lang.primary");
+        if (st) {
+          st.textContent =
+            (lang === "ru" ? t("lang.extension") : t("lang.primary")) +
+            " · " +
+            getUiCurrency() +
+            " · " +
+            getUiDateFormat().toUpperCase() +
+            " · " +
+            getUiTimeFormat();
+        }
       };
       document.getElementById("ui-lang-select")?.addEventListener("change", (e) => {
         applyUiLang(e.target.value);
@@ -9095,10 +9451,24 @@
         applyUiLang(e.target.value);
       });
       document.getElementById("btn-ui-lang-save")?.addEventListener("click", () => {
-        const sel = document.getElementById("settings-ui-lang") || document.getElementById("ui-lang-select");
+        const sel =
+          document.getElementById("settings-ui-lang") ||
+          document.getElementById("ui-lang-select");
         applyFrom(sel);
       });
       applyUiLang(_uiLang, { persist: false });
+      syncUiPrefsForm();
+      const st = document.getElementById("ui-lang-status");
+      if (st) {
+        st.textContent =
+          (_uiLang === "ru" ? t("lang.extension") : t("lang.primary")) +
+          " · " +
+          getUiCurrency() +
+          " · " +
+          getUiDateFormat().toUpperCase() +
+          " · " +
+          getUiTimeFormat();
+      }
     }
 
     /* —— glossary tooltips —— */
@@ -10281,13 +10651,11 @@
       return line;
     }
 
-    /** Miner error_code ts: "2026-08-03 01:26:57" → "03.08.2026 01:26" */
+    /** Miner error/event ts via UI date+time prefs */
     function formatMinerErrTs(ts) {
       if (!ts) return "";
-      const s = String(ts).trim();
-      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
-      if (m) return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5];
-      return s;
+      const out = formatUiDateTime(ts);
+      return out || String(ts).trim();
     }
 
     /** True if Errors or Events tables currently have rows. */
@@ -10437,13 +10805,7 @@
 
     function formatSeenIso(iso) {
       if (!iso) return "—";
-      // 2026-08-03T08:40:00 → 03.08.2026 08:40:00
-      const m = String(iso).trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
-      if (m) {
-        return m[3] + "." + m[2] + "." + m[1] + " " + m[4] + ":" + m[5] +
-          (m[6] != null ? ":" + m[6] : "");
-      }
-      return formatMinerErrTs(iso) || iso;
+      return formatUiDateTime(iso) || String(iso);
     }
 
     async function loadMinerErrorLog() {
@@ -13019,13 +13381,12 @@
      * Pack consecutive half-width charts into column-major flow:
      * top→bottom left column, then top→bottom right column.
      * Widgets / full-width stay on the main board: left→right, top→bottom (snake).
-     * In edit mode packs are flattened so drag-swap sees all .dash-item as siblings.
+     * Same packing in view and edit so visual order matches layout order.
      */
     function packDashHalfCharts(board) {
       if (!board) return;
       flattenDashChartPacks(board);
-      // edit mode: keep flat for drag; narrow: single column is already top→bottom
-      if (dashEditMode) return;
+      // narrow: single column is already top→bottom
       const narrow =
         typeof window.matchMedia === "function" &&
         window.matchMedia("(max-width: 520px)").matches;
@@ -13321,14 +13682,9 @@
             : "Edit";
         editBtn.textContent = dashEditMode ? "✓" : "✎";
       }
-      // edit: flatten chart packs so drag-swap has flat siblings;
-      // leave edit: re-apply layout (row snake widgets + column pack half charts)
+      // same packing in edit and view (column-major half charts) so order matches
       if (board) {
-        if (dashEditMode) {
-          flattenDashChartPacks(board);
-        } else {
-          applyDashLayout();
-        }
+        applyDashLayout();
         board.querySelectorAll(".dash-item").forEach((el) => {
           el.setAttribute("draggable", dashEditMode ? "true" : "false");
         });
@@ -13361,20 +13717,43 @@
       let dragEl = null;
       let lastOver = null;
 
-      /** Swap two siblings in the dash grid (true place-exchange). */
+      /**
+       * Swap two dash items (works across .dash-charts-pack boundaries).
+       * Document order of .dash-item = layout order (column-major inside packs).
+       */
       const swapItems = (a, b) => {
-        if (!a || !b || a === b || a.parentNode !== b.parentNode) return;
-        const parent = a.parentNode;
+        if (!a || !b || a === b) return;
+        if (!board.contains(a) || !board.contains(b)) return;
+        const all = Array.from(
+          board.querySelectorAll(".dash-item[data-dash-id]")
+        );
+        const ia = all.indexOf(a);
+        const ib = all.indexOf(b);
+        if (ia < 0 || ib < 0) return;
+        // keep dashLayout.order in sync with visual document order
+        const ids = all.map((el) => el.getAttribute("data-dash-id"));
+        const tmpId = ids[ia];
+        ids[ia] = ids[ib];
+        ids[ib] = tmpId;
+        const seen = {};
+        ids.forEach((id) => {
+          if (id) seen[id] = 1;
+        });
+        const rest = (dashLayout.order || []).filter((id) => !seen[id]);
+        dashLayout.order = ids.concat(rest);
+
+        const aParent = a.parentNode;
+        const bParent = b.parentNode;
+        if (!aParent || !bParent) return;
         const aNext = a.nextSibling;
         const bNext = b.nextSibling;
-        // insertBefore markers: if a is right before b, special-case
         if (aNext === b) {
-          parent.insertBefore(b, a);
+          aParent.insertBefore(b, a);
         } else if (bNext === a) {
-          parent.insertBefore(a, b);
+          bParent.insertBefore(a, b);
         } else {
-          parent.insertBefore(b, aNext);
-          parent.insertBefore(a, bNext);
+          aParent.insertBefore(b, aNext);
+          bParent.insertBefore(a, bNext);
         }
       };
 
@@ -14316,6 +14695,9 @@
     let energyCache = null;
 
     function energySym(cfg) {
+      // Prefer Settings → Language & region; fall back to energy tariff config
+      const fromUi = getUiCurrencySymbol();
+      if (fromUi) return fromUi;
       return (cfg && (cfg.currency_symbol || cfg.currency)) || "₽";
     }
 
@@ -14738,7 +15120,11 @@
                   const i = items[0].dataIndex;
                   const ch = items[0].chart;
                   const pts = ch && ch.$energyPts;
-                  if (pts && pts[i] && pts[i].label) return pts[i].label;
+                  if (pts && pts[i]) {
+                    const range = formatEnergyPointRange(pts[i]);
+                    if (range) return range;
+                    if (pts[i].label) return pts[i].label;
+                  }
                   return items[0].label || "";
                 },
                 label: (ctx) => {
@@ -14786,6 +15172,42 @@
           },
         },
       });
+    }
+
+    /** Tooltip title: bucket range «from – to» (local time, UI date/time prefs). */
+    function formatEnergyPointRange(pt) {
+      if (!pt) return "";
+      const t0 = Number(pt.ts);
+      const t1 = Number(pt.ts_end);
+      if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) {
+        return pt.label ? String(pt.label) : "";
+      }
+      const d0 = new Date(t0 * 1000);
+      const d1 = new Date(t1 * 1000);
+      const spanH = (t1 - t0) / 3600;
+      const short = (d, withTime) => formatUiDateShort(d, withTime);
+      const timeOnly = (d) => formatUiDateTime(d, { timeOnly: true });
+      // hour (or sub-day)
+      if (spanH <= 24.5) {
+        if (
+          d0.getDate() === d1.getDate() &&
+          d0.getMonth() === d1.getMonth() &&
+          d0.getFullYear() === d1.getFullYear()
+        ) {
+          return short(d0, false) + " " + timeOnly(d0) + " – " + timeOnly(d1);
+        }
+        return short(d0, true) + " – " + short(d1, true);
+      }
+      // multi-day / week / month (end exclusive)
+      const endInc = new Date(t1 * 1000 - 1000);
+      if (spanH >= 27 * 24) {
+        return (
+          formatUiDateTime(d0, { dateOnly: true }) +
+          " – " +
+          formatUiDateTime(endInc, { dateOnly: true })
+        );
+      }
+      return short(d0, false) + " – " + short(endInc, false);
     }
 
     function ensureEnergyChart() {
@@ -15000,6 +15422,12 @@
       if (refreshDash && !refreshDash._bound) {
         refreshDash._bound = true;
         refreshDash.addEventListener("click", () => void loadEnergyChart());
+      }
+      if (refreshDash) {
+        const lab =
+          typeof t === "function" ? t("btn.refresh", "Refresh") : "Refresh";
+        refreshDash.title = lab;
+        refreshDash.setAttribute("aria-label", lab);
       }
       syncEnergyChartRangeOptions(energyChartBucket || "hour");
     }
