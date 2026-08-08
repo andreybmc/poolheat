@@ -88,7 +88,7 @@ _FAMILIES: list[dict[str, Any]] = [
             "virtual_per_physical": 2,
             "chart_slots": [0, 2],
             "slot_link": "0:1 2:3",
-            "note": "2 physical × 2 virtual slots",
+            "note": "2 physical × 2 virtual slots",  # UI prefixes «HB »
         },
         "chip_layout": {
             "style": "hydro",

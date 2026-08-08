@@ -153,8 +153,11 @@ PROJECT_NAME = str(
 ).strip() or "poolheat_WM"
 STATE_FILE = DATA / "last_commands.json"
 DB_FILE = DATA / "history.db"
+ENERGY_DB_FILE = DATA / "energy.db"
 CONFIG_FILE = DATA / "history_config.json"
 WEATHER_CFG_FILE = DATA / "weather_config.json"
+ENERGY_CFG_FILE = DATA / "energy_config.json"
+VIRTUAL_METER_ID = "virtual_miner"
 POOL_CFG_FILE = DATA / "pool_config.json"
 ZONE_CFG_FILE = DATA / "zone_map_config.json"
 ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
@@ -3573,6 +3576,9 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
 #   auto_off_suspend      — Suspend → force logical OFF
 #   allow_off_while_mining — manual OFF while mining allowed
 #   allow_on_while_suspend — manual ON while suspend allowed
+# State hold:
+#   enforce_desired       — on status probe, if live ≠ desired_on → re-apply
+#   desired_on            — last intended logical ON/OFF (local)
 # inverted: logical ON means physical OFF (and vice versa)
 
 DEFAULT_DEVICES_CFG: dict = {"version": 1, "devices": []}
@@ -3866,8 +3872,14 @@ def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | 
         "auto_off_suspend": _as_bool(raw.get("auto_off_suspend", False)),
         "allow_off_while_mining": _as_bool(raw.get("allow_off_while_mining", False)),
         "allow_on_while_suspend": _as_bool(raw.get("allow_on_while_suspend", False)),
+        "enforce_desired": _as_bool(raw.get("enforce_desired", False)),
         **fields,
         "last_on": last_on,
+        "desired_on": (
+            None
+            if raw.get("desired_on") is None
+            else _as_bool(raw.get("desired_on"))
+        ),
         "last_error": raw.get("last_error"),
         "last_ok_ts": raw.get("last_ok_ts"),
         "last_action": raw.get("last_action"),
@@ -4011,6 +4023,7 @@ def upsert_device(raw: dict) -> dict:
         # preserve runtime unless explicitly provided
         for rk in (
             "last_on",
+            "desired_on",
             "last_error",
             "last_ok_ts",
             "last_action",
@@ -4022,6 +4035,10 @@ def upsert_device(raw: dict) -> dict:
     nd = _normalize_device(merged)
     if not nd:
         raise ValueError("invalid device (alias / fields)")
+    # seed desired_on when enabling hold without prior intent
+    if nd.get("enforce_desired") and nd.get("desired_on") is None:
+        if nd.get("last_on") is not None:
+            nd["desired_on"] = bool(nd.get("last_on"))
     with _devices_cfg_lock:
         devices = list(_devices_cfg.get("devices") or [])
         idx = next((i for i, d in enumerate(devices) if d.get("id") == nd["id"]), None)
@@ -4666,7 +4683,56 @@ def _mining_work_state() -> str | None:
     return None
 
 
+# Throttle enforce_desired re-apply (per device)
+_devices_enforce_ts: dict[str, float] = {}
+_DEVICES_ENFORCE_COOLDOWN_SEC = 15.0
+
+
+def _device_enforce_desired(did: str, logical: bool | None) -> dict | None:
+    """
+    If enforce_desired is on and live logical state ≠ stored desired_on,
+    re-apply desired_on (force). Returns device_set result or None if skipped.
+    """
+    if logical is None:
+        return None
+    cfg = _device_cfg_snapshot(did)
+    if not cfg or not cfg.get("enabled"):
+        return None
+    if not bool(cfg.get("enforce_desired")):
+        return None
+    desired = cfg.get("desired_on")
+    if desired is None:
+        # seed from first successful probe so hold has a target
+        def _seed(d):
+            d["desired_on"] = bool(logical)
+
+        _device_update_in_store(did, _seed)
+        return None
+    if bool(logical) is bool(desired):
+        return None
+    now = time.time()
+    last = float(_devices_enforce_ts.get(did) or 0)
+    if now - last < _DEVICES_ENFORCE_COOLDOWN_SEC:
+        return None
+    _devices_enforce_ts[did] = now
+    try:
+        print(
+            f"[devices] enforce_desired {cfg.get('alias') or did}: "
+            f"live={'ON' if logical else 'OFF'} → desired={'ON' if desired else 'OFF'}"
+        )
+        return device_set(
+            did, bool(desired), source="enforce_desired", force=True
+        )
+    except Exception as e:
+        print(f"[devices] enforce_desired {cfg.get('alias') or did}: {e}")
+        return None
+
+
 def device_test(did: str) -> dict:
+    """
+    Probe live device state. Updates last_on.
+    If enforce_desired is enabled and live ≠ desired_on → re-apply desired.
+    """
     cfg = _device_cfg_snapshot(did)
     if not cfg:
         return {"ok": False, "error": "device not found"}
@@ -4690,6 +4756,11 @@ def device_test(did: str) -> dict:
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
 
         _device_update_in_store(did, _mut)
+        enforced = None
+        if logical is not None:
+            enforced = _device_enforce_desired(did, logical)
+            if isinstance(enforced, dict) and enforced.get("ok"):
+                logical = enforced.get("on", logical)
         ret = {
             "ok": True,
             "id": did,
@@ -4700,6 +4771,14 @@ def device_test(did: str) -> dict:
         }
         if power:
             ret["power"] = power
+        if isinstance(enforced, dict):
+            ret["enforced"] = True
+            ret["enforce_result"] = {
+                "ok": enforced.get("ok"),
+                "on": enforced.get("on"),
+                "skipped": enforced.get("skipped"),
+                "error": enforced.get("error"),
+            }
         return ret
     except Exception as e:
         pretty = _device_user_error(e, on=None, backend=be, lang="ru")
@@ -4769,6 +4848,11 @@ def device_set(
     prev = cfg.get("last_on")
     # No-op if already in desired logical state (avoids Tuya toggle-on-repeat)
     if prev is not None and bool(prev) is on and not force:
+        # still stamp desired_on so hold has a target after UI toggle skip
+        def _mut_skip(d):
+            d["desired_on"] = bool(on)
+
+        _device_update_in_store(did, _mut_skip)
         return {
             "ok": True,
             "id": did,
@@ -4780,6 +4864,7 @@ def device_set(
             "name": cfg.get("name"),
             "icon": cfg.get("icon"),
             "prev_on": prev,
+            "desired_on": bool(on),
             "skipped": True,
             "reason": "already_in_state",
             "power": cfg.get("last_power"),
@@ -4795,6 +4880,8 @@ def device_set(
 
         def _mut(d):
             d["last_on"] = bool(got_logical)
+            # always remember intended state (used by enforce_desired on probe)
+            d["desired_on"] = bool(on)
             d["last_error"] = None
             d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
             if skipped:
@@ -4817,6 +4904,7 @@ def device_set(
             "name": cfg.get("name"),
             "icon": cfg.get("icon"),
             "prev_on": prev,
+            "desired_on": bool(on),
             **{k: v for k, v in out.items() if k not in ("on",)},
         }
         if power:
@@ -6727,6 +6815,8 @@ def build_config_backup() -> dict:
     devices.pop("icons", None)
     with _weather_cfg_lock:
         weather = dict(_weather_cfg)
+    with _energy_cfg_lock:
+        energy = dict(_energy_cfg)
     with _pool_cfg_lock:
         pool = dict(_pool_cfg)
 
@@ -6760,6 +6850,7 @@ def build_config_backup() -> dict:
             "sensors": sensors,
             "devices": devices,
             "weather": weather,
+            "energy": energy,
             "pool": pool,
             "zone_map": zone,
             "zone_presets": zone_presets,
@@ -6931,6 +7022,14 @@ def restore_config_backup(payload: dict, *, sections: list[str] | None = None) -
             applied.append("weather")
         except Exception as e:
             errors["weather"] = str(e)
+
+    # 3b) energy tariff
+    if "energy" in want and isinstance(cfgs.get("energy"), dict):
+        try:
+            set_energy_cfg(cfgs["energy"])
+            applied.append("energy")
+        except Exception as e:
+            errors["energy"] = str(e)
 
     # 4) pool
     if "pool" in want and isinstance(cfgs.get("pool"), dict):
@@ -9088,6 +9187,1325 @@ def history_stats() -> dict:
             }
         finally:
             conn.close()
+
+
+# ── Energy accounting (energy.db meters + hold integration) ──────────────────
+# Virtual meter: hold current miner power W until next sample → kWh.
+# Physical meters: schema reserved for future external counters.
+
+DEFAULT_ENERGY_CFG: dict = {
+    # ── metering process (Advanced settings) ──
+    "metering_enabled": True,
+    # hold = power constant until next sample; trap = trapezoid (legacy/optional)
+    "integration": "hold",
+    # if True — tick from history collector when a live sample is taken
+    "attach_to_history": True,
+    # used when attach_to_history is false (own loop interval)
+    "metering_interval_sec": 30,
+    # gaps larger than this do not accumulate (no fake kWh)
+    "max_gap_sec": 900,
+    # energy_samples retention
+    "retention_days": 365,
+    # default virtual meter source
+    "virtual_source": "miner_power",
+    # one-shot: import history.db → energy.db on first init only (never after reset)
+    "history_backfill_done": False,
+    "history_backfill_at": None,
+    "history_backfill_samples": 0,
+    # ── tariff (Miner → Energy) ──
+    "currency": "RUB",
+    "currency_symbol": "₽",
+    # 1zone | 2zone | 3zone  (legacy: flat / day_night)
+    "tariff_mode": "1zone",
+    # 1-zone
+    "price_kwh": 5.0,
+    # 2-zone (day = non-night)
+    "price_day_kwh": 6.0,
+    "price_night_kwh": 3.0,
+    "night_start": "23:00",
+    "night_end": "07:00",
+    # 3-zone: peak / mid (semi-peak) / night; priority night > peak > mid
+    "price_peak_kwh": 8.0,
+    "price_mid_kwh": 6.0,
+    "peak1_start": "07:00",
+    "peak1_end": "10:00",
+    "peak2_start": "17:00",
+    "peak2_end": "21:00",
+}
+
+_energy_cfg_lock = threading.Lock()
+_energy_cfg: dict = dict(DEFAULT_ENERGY_CFG)
+
+_ENERGY_TIME_KEYS = (
+    "night_start",
+    "night_end",
+    "peak1_start",
+    "peak1_end",
+    "peak2_start",
+    "peak2_end",
+)
+_ENERGY_PRICE_KEYS = (
+    "price_kwh",
+    "price_day_kwh",
+    "price_night_kwh",
+    "price_peak_kwh",
+    "price_mid_kwh",
+)
+
+
+def _parse_hhmm(s: str, default_h: int = 0, default_m: int = 0) -> int:
+    """Return minutes from midnight."""
+    try:
+        parts = str(s or "").strip().split(":")
+        h = int(parts[0])
+        m = int(parts[1]) if len(parts) > 1 else 0
+        return max(0, min(23, h)) * 60 + max(0, min(59, m))
+    except Exception:
+        return default_h * 60 + default_m
+
+
+def _fmt_hhmm(mins: int) -> str:
+    mins = int(mins) % (24 * 60)
+    return f"{mins // 60:02d}:{mins % 60:02d}"
+
+
+def _energy_normalize_mode(mode: str | None) -> str:
+    m = str(mode or "1zone").strip().lower().replace("-", "_").replace(" ", "")
+    if m in (
+        "1zone",
+        "1",
+        "one",
+        "single",
+        "flat",
+        "однозонный",
+        "однозонн",
+        "1зон",
+        "zone1",
+    ):
+        return "1zone"
+    if m in (
+        "2zone",
+        "2",
+        "two",
+        "day_night",
+        "daynight",
+        "tou",
+        "двухзонный",
+        "двухзонн",
+        "2зон",
+        "zone2",
+    ):
+        return "2zone"
+    if m in (
+        "3zone",
+        "3",
+        "three",
+        "triple",
+        "трёхзонный",
+        "трехзонный",
+        "трёхзонн",
+        "трехзонн",
+        "3зон",
+        "zone3",
+    ):
+        return "3zone"
+    return "1zone"
+
+
+def _energy_normalize_cfg(raw: dict | None) -> dict:
+    c = dict(DEFAULT_ENERGY_CFG)
+    if isinstance(raw, dict):
+        c.update({k: raw[k] for k in DEFAULT_ENERGY_CFG if k in raw})
+    c["tariff_mode"] = _energy_normalize_mode(c.get("tariff_mode"))
+    c["currency"] = (str(c.get("currency") or "RUB").strip() or "RUB")[:8].upper()
+    sym = str(c.get("currency_symbol") or "").strip()
+    if not sym:
+        sym = {"RUB": "₽", "USD": "$", "EUR": "€", "UAH": "₴", "KZT": "₸"}.get(
+            c["currency"], c["currency"]
+        )
+    c["currency_symbol"] = sym[:4]
+    for k in _ENERGY_PRICE_KEYS:
+        try:
+            c[k] = max(0.0, float(c.get(k) if c.get(k) is not None else DEFAULT_ENERGY_CFG[k]))
+        except (TypeError, ValueError):
+            c[k] = float(DEFAULT_ENERGY_CFG[k])
+    for k in _ENERGY_TIME_KEYS:
+        default = str(DEFAULT_ENERGY_CFG[k])
+        val = str(c.get(k) or default).strip() or default
+        # normalize to HH:MM
+        c[k] = _fmt_hhmm(_parse_hhmm(val, *_parse_hhmm_defaults(default)))
+    c["metering_enabled"] = bool(c.get("metering_enabled", True))
+    c["attach_to_history"] = bool(c.get("attach_to_history", True))
+    c["history_backfill_done"] = bool(c.get("history_backfill_done", False))
+    if c.get("history_backfill_at") is not None:
+        c["history_backfill_at"] = str(c.get("history_backfill_at") or "") or None
+    try:
+        c["history_backfill_samples"] = max(0, int(c.get("history_backfill_samples") or 0))
+    except (TypeError, ValueError):
+        c["history_backfill_samples"] = 0
+    integ = str(c.get("integration") or "hold").strip().lower()
+    c["integration"] = "trap" if integ in ("trap", "trapezoid", "trapezoidal") else "hold"
+    try:
+        c["max_gap_sec"] = max(60, min(7200, int(c.get("max_gap_sec") or 900)))
+    except (TypeError, ValueError):
+        c["max_gap_sec"] = 900
+    try:
+        c["metering_interval_sec"] = max(5, min(3600, int(c.get("metering_interval_sec") or 30)))
+    except (TypeError, ValueError):
+        c["metering_interval_sec"] = 30
+    try:
+        c["retention_days"] = max(1, min(3650, int(c.get("retention_days") or 365)))
+    except (TypeError, ValueError):
+        c["retention_days"] = 365
+    c["virtual_source"] = str(c.get("virtual_source") or "miner_power").strip() or "miner_power"
+    return c
+
+
+def _parse_hhmm_defaults(s: str) -> tuple[int, int]:
+    try:
+        parts = str(s).split(":")
+        return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        return 0, 0
+
+
+def _load_energy_cfg() -> None:
+    global _energy_cfg
+    with _energy_cfg_lock:
+        _energy_cfg = _energy_normalize_cfg(_load_json(ENERGY_CFG_FILE, DEFAULT_ENERGY_CFG))
+
+
+def _save_energy_cfg() -> None:
+    with _energy_cfg_lock:
+        _save_json(ENERGY_CFG_FILE, _energy_cfg)
+
+
+def get_energy_cfg() -> dict:
+    with _energy_cfg_lock:
+        return dict(_energy_cfg)
+
+
+def set_energy_cfg(patch: dict) -> dict:
+    global _energy_cfg
+    if not isinstance(patch, dict):
+        raise ValueError("body must be object")
+    with _energy_cfg_lock:
+        merged = dict(_energy_cfg)
+        for k in DEFAULT_ENERGY_CFG:
+            if k in patch and patch[k] is not None:
+                merged[k] = patch[k]
+        # allow nested "config" from UI
+        if isinstance(patch.get("config"), dict):
+            for k in DEFAULT_ENERGY_CFG:
+                if k in patch["config"] and patch["config"][k] is not None:
+                    merged[k] = patch["config"][k]
+        _energy_cfg = _energy_normalize_cfg(merged)
+        cfg = dict(_energy_cfg)
+    _save_energy_cfg()
+    return cfg
+
+
+# ── energy.db (virtual + physical meters) ────────────────────────────────────
+
+_energy_db_lock = threading.Lock()
+_energy_db_ready = False
+
+
+def _energy_db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(ENERGY_DB_FILE), check_same_thread=False, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _ensure_energy_db() -> None:
+    """Create energy.db schema and default virtual meter."""
+    global _energy_db_ready
+    if _energy_db_ready and ENERGY_DB_FILE.is_file():
+        return
+    with _energy_db_lock:
+        if _energy_db_ready and ENERGY_DB_FILE.is_file():
+            return
+        conn = _energy_db_connect()
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS meters (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,          -- virtual | physical
+                    name TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    source TEXT,                 -- miner_power | modbus | shelly | …
+                    source_config TEXT,          -- JSON for physical drivers (future)
+                    unit TEXT NOT NULL DEFAULT 'kWh',
+                    created_ts REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS meter_state (
+                    meter_id TEXT PRIMARY KEY,
+                    last_ts REAL,
+                    last_power_w REAL,
+                    total_kwh REAL NOT NULL DEFAULT 0,
+                    updated_ts REAL,
+                    FOREIGN KEY (meter_id) REFERENCES meters(id)
+                );
+                CREATE TABLE IF NOT EXISTS energy_samples (
+                    meter_id TEXT NOT NULL,
+                    ts REAL NOT NULL,
+                    power_w REAL,               -- power held for interval ending at ts
+                    delta_kwh REAL NOT NULL DEFAULT 0,
+                    total_kwh REAL NOT NULL DEFAULT 0,
+                    online INTEGER,
+                    PRIMARY KEY (meter_id, ts)
+                );
+                CREATE INDEX IF NOT EXISTS idx_energy_samples_ts
+                    ON energy_samples(meter_id, ts);
+                """
+            )
+            # default virtual meter (calculated from miner power)
+            now = time.time()
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO meters
+                    (id, type, name, enabled, source, source_config, unit, created_ts)
+                VALUES (?, 'virtual', ?, 1, 'miner_power', NULL, 'kWh', ?)
+                """,
+                (VIRTUAL_METER_ID, "Virtual · miner power", now),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO meter_state
+                    (meter_id, last_ts, last_power_w, total_kwh, updated_ts)
+                VALUES (?, NULL, NULL, 0, ?)
+                """,
+                (VIRTUAL_METER_ID, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        _energy_db_ready = True
+
+
+def list_energy_meters() -> list[dict]:
+    _ensure_energy_db()
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT m.*, s.last_ts, s.last_power_w, s.total_kwh, s.updated_ts
+                FROM meters m
+                LEFT JOIN meter_state s ON s.meter_id = m.id
+                ORDER BY m.type, m.name
+                """
+            ).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["enabled"] = bool(d.get("enabled"))
+                if d.get("total_kwh") is not None:
+                    d["total_kwh"] = round(float(d["total_kwh"]), 4)
+                if d.get("last_power_w") is not None:
+                    try:
+                        d["last_power_w"] = round(float(d["last_power_w"]), 1)
+                    except (TypeError, ValueError):
+                        pass
+                out.append(d)
+            return out
+        finally:
+            conn.close()
+
+
+def energy_meter_tick(
+    power_w: float | None,
+    *,
+    ts: float | None = None,
+    online: bool = True,
+    meter_id: str = VIRTUAL_METER_ID,
+) -> dict | None:
+    """
+    Hold-scheme sample for a meter.
+
+    Previous power is held constant until this sample:
+        delta_kWh = last_power_W × (ts − last_ts) / 3_600_000
+    Then store last_power = current power for the next interval.
+    """
+    cfg = get_energy_cfg()
+    if not cfg.get("metering_enabled", True):
+        return None
+    if meter_id != VIRTUAL_METER_ID:
+        # physical drivers not implemented yet
+        return None
+    _ensure_energy_db()
+    now = float(ts if ts is not None else time.time())
+    try:
+        pw = float(power_w) if power_w is not None and online else 0.0
+    except (TypeError, ValueError):
+        pw = 0.0
+    if not math.isfinite(pw) or pw < 0:
+        pw = 0.0
+    max_gap = float(cfg.get("max_gap_sec") or 900)
+    integ = str(cfg.get("integration") or "hold")
+
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            st = conn.execute(
+                "SELECT last_ts, last_power_w, total_kwh FROM meter_state WHERE meter_id = ?",
+                (meter_id,),
+            ).fetchone()
+            if not st:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO meters
+                        (id, type, name, enabled, source, unit, created_ts)
+                    VALUES (?, 'virtual', ?, 1, 'miner_power', 'kWh', ?)
+                    """,
+                    (meter_id, "Virtual · miner power", now),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO meter_state (meter_id, last_ts, last_power_w, total_kwh, updated_ts)
+                    VALUES (?, ?, ?, 0, ?)
+                    """,
+                    (meter_id, now, pw, now),
+                )
+                conn.commit()
+                return {
+                    "meter_id": meter_id,
+                    "delta_kwh": 0.0,
+                    "total_kwh": 0.0,
+                    "power_w": pw,
+                    "ts": now,
+                }
+
+            last_ts = st["last_ts"]
+            last_pw = st["last_power_w"]
+            total = float(st["total_kwh"] or 0)
+            delta = 0.0
+            if last_ts is not None and last_pw is not None:
+                dt = now - float(last_ts)
+                if 0 < dt <= max_gap:
+                    try:
+                        lp = float(last_pw)
+                    except (TypeError, ValueError):
+                        lp = 0.0
+                    if not math.isfinite(lp) or lp < 0:
+                        lp = 0.0
+                    if integ == "trap":
+                        # optional: average with new power
+                        mid = (lp + pw) / 2.0
+                        delta = mid * dt / 3600.0 / 1000.0
+                    else:
+                        # hold: previous power constant until this sample
+                        delta = lp * dt / 3600.0 / 1000.0
+                    total += delta
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO energy_samples
+                    (meter_id, ts, power_w, delta_kwh, total_kwh, online)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    meter_id,
+                    now,
+                    float(last_pw) if last_pw is not None and delta > 0 else pw,
+                    delta,
+                    total,
+                    1 if online else 0,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE meter_state
+                SET last_ts = ?, last_power_w = ?, total_kwh = ?, updated_ts = ?
+                WHERE meter_id = ?
+                """,
+                (now, pw, total, now, meter_id),
+            )
+            conn.commit()
+            return {
+                "meter_id": meter_id,
+                "delta_kwh": round(delta, 6),
+                "total_kwh": round(total, 4),
+                "power_w": pw,
+                "ts": now,
+            }
+        finally:
+            conn.close()
+
+
+def energy_meter_tick_from_live(live: dict | None) -> dict | None:
+    """Extract power from live payload and tick virtual meter."""
+    if not isinstance(live, dict):
+        return None
+    cfg = get_energy_cfg()
+    if not cfg.get("metering_enabled", True):
+        return None
+    online = True
+    if live.get("ok") is False:
+        online = False
+    if live.get("online") in (0, "0", False):
+        online = False
+    pw = None
+    for k in ("power_w", "power", "Power", "avg_power"):
+        if live.get(k) is not None:
+            try:
+                pw = float(live[k])
+                break
+            except (TypeError, ValueError):
+                pass
+    # nested summary
+    if pw is None and isinstance(live.get("summary"), dict):
+        for k in ("power_w", "power", "Power"):
+            if live["summary"].get(k) is not None:
+                try:
+                    pw = float(live["summary"][k])
+                    break
+                except (TypeError, ValueError):
+                    pass
+    ts = live.get("ts") or live.get("timestamp") or time.time()
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        ts = time.time()
+    return energy_meter_tick(pw, ts=ts, online=online)
+
+
+def prune_energy_samples(retention_days: int | None = None) -> int:
+    cfg = get_energy_cfg()
+    days = int(retention_days if retention_days is not None else cfg.get("retention_days") or 365)
+    cutoff = time.time() - max(1, days) * 86400
+    _ensure_energy_db()
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            cur = conn.execute("DELETE FROM energy_samples WHERE ts < ?", (cutoff,))
+            conn.commit()
+            return int(cur.rowcount or 0)
+        finally:
+            conn.close()
+
+
+def _mark_history_backfill_done(*, samples: int = 0) -> None:
+    """Persist one-shot flag so history.db is never re-imported after first init/reset."""
+    set_energy_cfg(
+        {
+            "history_backfill_done": True,
+            "history_backfill_at": datetime.now().isoformat(timespec="seconds"),
+            "history_backfill_samples": int(samples),
+        }
+    )
+
+
+def backfill_energy_from_history(*, force: bool = False) -> dict:
+    """
+    One-shot: build virtual meter samples from history.db power (hold scheme).
+
+    Runs only once after the energy feature is introduced (or force=True for admin).
+    After reset of energy.db the flag stays set — history is NOT imported again.
+    If live energy samples already exist, only older history (ts < first energy sample)
+    is prepended.
+    """
+    cfg = get_energy_cfg()
+    if not force and cfg.get("history_backfill_done"):
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "already_done",
+            "at": cfg.get("history_backfill_at"),
+            "samples": cfg.get("history_backfill_samples"),
+        }
+
+    _ensure_energy_db()
+    max_gap = float(cfg.get("max_gap_sec") or 900)
+    hold = str(cfg.get("integration") or "hold") != "trap"
+    meter_id = VIRTUAL_METER_ID
+
+    # oldest energy sample (if any) — only import history before it
+    oldest_energy_ts = None
+    energy_count = 0
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c, MIN(ts) AS tmin FROM energy_samples WHERE meter_id = ?",
+                (meter_id,),
+            ).fetchone()
+            energy_count = int(row["c"] or 0)
+            if row["tmin"] is not None:
+                oldest_energy_ts = float(row["tmin"])
+        finally:
+            conn.close()
+
+    # load history power series
+    hist_points: list[tuple[float, float, int]] = []
+    try:
+        with _db_lock:
+            conn = _db_connect()
+            try:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
+                if "power" not in cols:
+                    _mark_history_backfill_done(samples=0)
+                    return {"ok": True, "skipped": True, "reason": "no_power_column"}
+                if "online" in cols:
+                    cur = conn.execute(
+                        """
+                        SELECT ts, power, online FROM samples
+                        WHERE power IS NOT NULL
+                        ORDER BY ts ASC
+                        """
+                    )
+                else:
+                    cur = conn.execute(
+                        """
+                        SELECT ts, power, 1 AS online FROM samples
+                        WHERE power IS NOT NULL
+                        ORDER BY ts ASC
+                        """
+                    )
+                for r in cur.fetchall():
+                    try:
+                        ts = float(r["ts"])
+                        pw = float(r["power"])
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(ts) or not math.isfinite(pw) or pw < 0:
+                        continue
+                    online = 1
+                    try:
+                        if r["online"] is not None and int(r["online"]) == 0:
+                            online = 0
+                            pw = 0.0
+                    except (TypeError, ValueError, KeyError):
+                        pass
+                    if oldest_energy_ts is not None and ts >= oldest_energy_ts - 1e-6:
+                        break
+                    hist_points.append((ts, pw, online))
+            finally:
+                conn.close()
+    except Exception as e:
+        return {"ok": False, "error": f"history read: {e}"}
+
+    if not hist_points:
+        _mark_history_backfill_done(samples=0)
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "no_history" if energy_count == 0 else "nothing_older",
+            "energy_samples_before": energy_count,
+        }
+
+    # hold integration over history points
+    rows_out: list[tuple] = []
+    total = 0.0
+    last_ts: float | None = None
+    last_pw: float | None = None
+    for ts, pw, online in hist_points:
+        delta = 0.0
+        if last_ts is not None and last_pw is not None:
+            dt = ts - last_ts
+            if 0 < dt <= max_gap:
+                if hold:
+                    delta = float(last_pw) * dt / 3600.0 / 1000.0
+                else:
+                    delta = (float(last_pw) + float(pw)) / 2.0 * dt / 3600.0 / 1000.0
+                total += delta
+        held_pw = float(last_pw) if (last_pw is not None and delta > 0) else float(pw)
+        rows_out.append((meter_id, ts, held_pw, delta, total, int(online)))
+        last_ts = ts
+        last_pw = float(pw)
+
+    # Write into energy.db. If live samples already exist, prepend older history
+    # and shift existing total_kwh by the imported prefix (keep live deltas).
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            if energy_count == 0:
+                conn.execute("DELETE FROM energy_samples WHERE meter_id = ?", (meter_id,))
+                if rows_out:
+                    conn.executemany(
+                        """
+                        INSERT OR REPLACE INTO energy_samples
+                            (meter_id, ts, power_w, delta_kwh, total_kwh, online)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        rows_out,
+                    )
+                conn.execute(
+                    """
+                    UPDATE meter_state
+                    SET last_ts = ?, last_power_w = ?, total_kwh = ?, updated_ts = ?
+                    WHERE meter_id = ?
+                    """,
+                    (last_ts, last_pw, total, time.time(), meter_id),
+                )
+            else:
+                if rows_out:
+                    conn.executemany(
+                        """
+                        INSERT OR IGNORE INTO energy_samples
+                            (meter_id, ts, power_w, delta_kwh, total_kwh, online)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        rows_out,
+                    )
+                    # shift totals of samples that already existed (ts >= first live)
+                    conn.execute(
+                        """
+                        UPDATE energy_samples
+                        SET total_kwh = total_kwh + ?
+                        WHERE meter_id = ? AND ts >= ?
+                        """,
+                        (total, meter_id, oldest_energy_ts),
+                    )
+                    conn.execute(
+                        """
+                        UPDATE meter_state
+                        SET total_kwh = total_kwh + ?, updated_ts = ?
+                        WHERE meter_id = ?
+                        """,
+                        (total, time.time(), meter_id),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+
+    imported = len(rows_out)
+    _mark_history_backfill_done(samples=imported)
+    print(
+        f"[energy] history backfill: imported={imported} "
+        f"energy_before={energy_count} prefix_kwh≈{total:.3f}"
+    )
+    return {
+        "ok": True,
+        "skipped": False,
+        "imported": imported,
+        "energy_samples_before": energy_count,
+        "history_points": len(hist_points),
+        "total_kwh_prefix": round(total, 4),
+    }
+
+
+def maybe_backfill_energy_from_history() -> dict:
+    """Called once at service start (safe if already done)."""
+    try:
+        return backfill_energy_from_history(force=False)
+    except Exception as e:
+        print(f"[energy] history backfill failed: {e}")
+        # do not set done flag on hard failure — retry next boot
+        return {"ok": False, "error": str(e)}
+
+
+def reset_energy_meter(meter_id: str = VIRTUAL_METER_ID, *, clear_samples: bool = False) -> dict:
+    """Reset cumulative total (optional wipe samples). Does NOT re-import history.db."""
+    _ensure_energy_db()
+    now = time.time()
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            if clear_samples:
+                conn.execute("DELETE FROM energy_samples WHERE meter_id = ?", (meter_id,))
+            conn.execute(
+                """
+                UPDATE meter_state
+                SET total_kwh = 0, last_ts = NULL, last_power_w = NULL, updated_ts = ?
+                WHERE meter_id = ?
+                """,
+                (now, meter_id),
+            )
+            conn.commit()
+            out = {"ok": True, "meter_id": meter_id, "total_kwh": 0.0}
+        finally:
+            conn.close()
+    # Never auto-import history again after an explicit reset
+    try:
+        _mark_history_backfill_done(samples=0)
+        out["history_backfill_done"] = True
+        out["note"] = "history.db will not be re-imported"
+    except Exception as e:
+        out["history_backfill_warn"] = str(e)
+    return out
+
+
+def _query_energy_deltas(
+    since: float, until: float, meter_id: str = VIRTUAL_METER_ID
+) -> list[tuple[float, float, float]]:
+    """Return [(ts, delta_kwh, power_w), ...] from energy.db."""
+    _ensure_energy_db()
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ts, delta_kwh, power_w FROM energy_samples
+                WHERE meter_id = ? AND ts > ? AND ts <= ? AND delta_kwh IS NOT NULL
+                ORDER BY ts ASC
+                """,
+                (meter_id, since, until),
+            ).fetchall()
+            out = []
+            for r in rows:
+                try:
+                    ts = float(r["ts"])
+                    d = float(r["delta_kwh"] or 0)
+                    pw = float(r["power_w"]) if r["power_w"] is not None else 0.0
+                except (TypeError, ValueError):
+                    continue
+                out.append((ts, d, pw))
+            return out
+        finally:
+            conn.close()
+
+
+def _energy_bucket_key(ts: float, bucket: str) -> tuple:
+    """
+    Return (sort_key, label, bucket_start_ts, bucket_end_ts) for local time.
+    bucket: hour | day | week | month
+    """
+    lt = time.localtime(ts)
+    b = (bucket or "hour").strip().lower()
+    if b in ("h", "hr", "hours"):
+        b = "hour"
+    elif b in ("d", "days"):
+        b = "day"
+    elif b in ("w", "weeks"):
+        b = "week"
+    elif b in ("m", "mo", "months"):
+        b = "month"
+    else:
+        b = b if b in ("hour", "day", "week", "month") else "hour"
+
+    if b == "hour":
+        start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour, 0, 0, 0, 0, -1))
+        end = start + 3600
+        label = time.strftime("%d.%m %H:00", time.localtime(start))
+        key = (lt.tm_year, lt.tm_mon, lt.tm_mday, lt.tm_hour)
+    elif b == "day":
+        start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+        end = start + 86400
+        label = time.strftime("%d.%m", time.localtime(start))
+        key = (lt.tm_year, lt.tm_mon, lt.tm_mday)
+    elif b == "week":
+        # ISO week: Monday start
+        day_start = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+        # tm_wday: Mon=0 .. Sun=6
+        start = day_start - lt.tm_wday * 86400
+        end = start + 7 * 86400
+        iso = time.strftime("%G-W%V", time.localtime(start))
+        label = iso
+        y, w, _ = time.strftime("%G %V %u", time.localtime(start)).split()
+        key = (int(y), int(w))
+    else:  # month
+        start = time.mktime((lt.tm_year, lt.tm_mon, 1, 0, 0, 0, 0, 0, -1))
+        if lt.tm_mon == 12:
+            end = time.mktime((lt.tm_year + 1, 1, 1, 0, 0, 0, 0, 0, -1))
+        else:
+            end = time.mktime((lt.tm_year, lt.tm_mon + 1, 1, 0, 0, 0, 0, 0, -1))
+        label = time.strftime("%Y-%m", time.localtime(start))
+        key = (lt.tm_year, lt.tm_mon)
+    return key, label, float(start), float(end)
+
+
+def energy_series(
+    *,
+    hours: float | None = None,
+    bucket: str = "hour",
+    max_points: int = 500,
+    meter_id: str = VIRTUAL_METER_ID,
+) -> dict:
+    """
+    Aggregated energy chart series from energy.db.
+
+    bucket: hour | day | week | month
+    Each point: bar kWh (sum of hold deltas) + avg_power_w (continuous mean for bucket).
+    """
+    cfg = get_energy_cfg()
+    now = time.time()
+    b = (bucket or "hour").strip().lower()
+    if b in ("h", "hr", "hours"):
+        b = "hour"
+    elif b in ("d", "days"):
+        b = "day"
+    elif b in ("w", "weeks"):
+        b = "week"
+    elif b in ("m", "mo", "months"):
+        b = "month"
+    if b not in ("hour", "day", "week", "month"):
+        b = "hour"
+
+    # default lookback by bucket if hours omitted
+    default_hours = {
+        "hour": 48.0,
+        "day": 30 * 24.0,
+        "week": 16 * 7 * 24.0,
+        "month": 24 * 30.0,
+    }
+    try:
+        if hours is None:
+            hours = default_hours.get(b, 48.0)
+        else:
+            hours = max(1.0, min(24 * 400, float(hours)))
+    except (TypeError, ValueError):
+        hours = default_hours.get(b, 48.0)
+    try:
+        max_points = max(12, min(2000, int(max_points)))
+    except (TypeError, ValueError):
+        max_points = 500
+
+    since = now - hours * 3600.0
+    _ensure_energy_db()
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT ts, power_w, delta_kwh
+                FROM energy_samples
+                WHERE meter_id = ? AND ts >= ? AND ts <= ?
+                ORDER BY ts ASC
+                """,
+                (meter_id, since, now + 1),
+            ).fetchall()
+            raw: list[tuple[float, float, float]] = []
+            for r in rows:
+                try:
+                    ts = float(r["ts"])
+                except (TypeError, ValueError):
+                    continue
+                try:
+                    d_kwh = float(r["delta_kwh"] or 0)
+                except (TypeError, ValueError):
+                    d_kwh = 0.0
+                try:
+                    pw = float(r["power_w"]) if r["power_w"] is not None else None
+                except (TypeError, ValueError):
+                    pw = None
+                if not math.isfinite(d_kwh):
+                    d_kwh = 0.0
+                if pw is not None and not math.isfinite(pw):
+                    pw = None
+                raw.append((ts, d_kwh, pw if pw is not None else 0.0))
+        finally:
+            conn.close()
+
+    if not raw:
+        return {
+            "ok": True,
+            "points": [],
+            "bucket": b,
+            "hours": hours,
+            "count": 0,
+            "returned": 0,
+            "meter_id": meter_id,
+            "from_ts": since,
+            "to_ts": now,
+            "from_iso": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
+            "to_iso": datetime.fromtimestamp(now).isoformat(timespec="seconds"),
+            "integration": cfg.get("integration") or "hold",
+        }
+
+    # aggregate into buckets
+    buckets: dict[tuple, dict] = {}
+    order: list[tuple] = []
+    for ts, d_kwh, pw in raw:
+        key, label, b_start, b_end = _energy_bucket_key(ts, b)
+        if key not in buckets:
+            buckets[key] = {
+                "key": key,
+                "label": label,
+                "ts": b_start,  # bar position = bucket start
+                "ts_end": min(b_end, now),
+                "kwh": 0.0,
+                "cost": 0.0,
+                "n": 0,
+                "pw_sum": 0.0,
+                "pw_wsum": 0.0,  # energy-weighted power
+                "pw_w": 0.0,
+                "first_ts": ts,
+                "last_ts": ts,
+            }
+            order.append(key)
+        bk = buckets[key]
+        bk["kwh"] += max(0.0, d_kwh)
+        bk["n"] += 1
+        bk["first_ts"] = min(bk["first_ts"], ts)
+        bk["last_ts"] = max(bk["last_ts"], ts)
+        if pw is not None and pw >= 0:
+            bk["pw_sum"] += pw
+            w = max(d_kwh, 0.0)
+            if w > 0:
+                bk["pw_wsum"] += pw * w
+                bk["pw_w"] += w
+        try:
+            price = _energy_price_at(ts, cfg)
+            bk["cost"] += max(0.0, d_kwh) * price
+        except Exception:
+            pass
+
+    points: list[dict] = []
+    for key in order:
+        bk = buckets[key]
+        # duration of actual coverage in bucket (not empty calendar span)
+        span_h = max((bk["last_ts"] - bk["first_ts"]) / 3600.0, 1.0 / 60.0)
+        # also cap by nominal bucket end so incomplete current bucket is fair
+        nom_h = max((bk["ts_end"] - bk["ts"]) / 3600.0, 1e-6)
+        # continuous average: kWh / hours_covered * 1000
+        avg_from_energy = (bk["kwh"] / span_h) * 1000.0 if bk["kwh"] > 0 else None
+        if bk["pw_w"] > 0:
+            avg_w = bk["pw_wsum"] / bk["pw_w"]
+        elif avg_from_energy is not None:
+            avg_w = avg_from_energy
+        elif bk["n"] > 0 and bk["pw_sum"] > 0:
+            avg_w = bk["pw_sum"] / bk["n"]
+        else:
+            avg_w = None
+        # if coverage is most of the bucket, prefer energy/nominal for "sample avg power"
+        if bk["kwh"] > 0 and nom_h >= 0.25 and span_h >= nom_h * 0.5:
+            avg_w = (bk["kwh"] / nom_h) * 1000.0
+        points.append(
+            {
+                "ts": bk["ts"],
+                "ts_end": bk["ts_end"],
+                "label": bk["label"],
+                "kwh": round(bk["kwh"], 4),
+                "cost": round(bk["cost"], 2),
+                "avg_power_w": round(avg_w, 1) if avg_w is not None and math.isfinite(avg_w) else None,
+                "samples": bk["n"],
+            }
+        )
+
+    # cap points (keep most recent)
+    if len(points) > max_points:
+        points = points[-max_points:]
+
+    return {
+        "ok": True,
+        "points": points,
+        "bucket": b,
+        "hours": hours,
+        "count": len(raw),
+        "returned": len(points),
+        "meter_id": meter_id,
+        "from_ts": since,
+        "to_ts": now,
+        "from_iso": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
+        "to_iso": datetime.fromtimestamp(now).isoformat(timespec="seconds"),
+        "integration": cfg.get("integration") or "hold",
+    }
+
+
+def _sum_energy_period(
+    since: float, until: float, cfg: dict, meter_id: str = VIRTUAL_METER_ID
+) -> dict:
+    """Sum stored hold deltas and price with current tariff at each sample ts."""
+    rows = _query_energy_deltas(since, until, meter_id)
+    by_zone: dict[str, dict[str, float]] = {
+        "flat": {"kwh": 0.0, "cost": 0.0},
+        "day": {"kwh": 0.0, "cost": 0.0},
+        "night": {"kwh": 0.0, "cost": 0.0},
+        "peak": {"kwh": 0.0, "cost": 0.0},
+        "mid": {"kwh": 0.0, "cost": 0.0},
+    }
+    kwh = 0.0
+    cost = 0.0
+    span_sec = 0.0
+    for ts, delta, pw in rows:
+        if delta <= 0:
+            continue
+        zone = _energy_zone_at(ts, cfg)
+        price = _energy_price_at(ts, cfg)
+        seg_cost = delta * price
+        kwh += delta
+        cost += seg_cost
+        if zone not in by_zone:
+            zone = "flat"
+        by_zone[zone]["kwh"] += delta
+        by_zone[zone]["cost"] += seg_cost
+        # reconstruct span from hold: delta = P * dt / 3.6e6 → dt = delta * 3.6e6 / P
+        if pw and pw > 0:
+            span_sec += delta * 3600.0 * 1000.0 / pw
+    avg_w = (kwh * 1000.0 * 3600.0 / span_sec) if span_sec > 0 else None
+    return {
+        "kwh": round(kwh, 4),
+        "cost": round(cost, 2),
+        "kwh_day": round(by_zone["day"]["kwh"] + by_zone["flat"]["kwh"], 4),
+        "kwh_night": round(by_zone["night"]["kwh"], 4),
+        "kwh_peak": round(by_zone["peak"]["kwh"], 4),
+        "kwh_mid": round(by_zone["mid"]["kwh"], 4),
+        "cost_day": round(by_zone["day"]["cost"] + by_zone["flat"]["cost"], 2),
+        "cost_night": round(by_zone["night"]["cost"], 2),
+        "cost_peak": round(by_zone["peak"]["cost"], 2),
+        "cost_mid": round(by_zone["mid"]["cost"], 2),
+        "avg_w": round(avg_w, 1) if avg_w is not None else None,
+        "span_sec": round(span_sec, 1),
+        "samples": len(rows),
+        "zone": _energy_normalize_mode(cfg.get("tariff_mode")),
+    }
+
+
+def _energy_in_range(mins: int, start_m: int, end_m: int) -> bool:
+    """True if mins is in [start, end) on a 24h clock (end may wrap midnight)."""
+    if start_m == end_m:
+        return False
+    if start_m < end_m:
+        return start_m <= mins < end_m
+    return mins >= start_m or mins < end_m
+
+
+def _energy_zone_at(ts: float, cfg: dict) -> str:
+    """
+    Return zone key for timestamp:
+      1zone → 'flat'
+      2zone → 'day' | 'night'
+      3zone → 'peak' | 'mid' | 'night'  (priority: night > peak > mid)
+    """
+    mode = _energy_normalize_mode(cfg.get("tariff_mode"))
+    if mode == "1zone":
+        return "flat"
+    lt = time.localtime(ts)
+    mins = lt.tm_hour * 60 + lt.tm_min
+    ns = _parse_hhmm(cfg.get("night_start"), 23, 0)
+    ne = _parse_hhmm(cfg.get("night_end"), 7, 0)
+    if mode == "2zone":
+        return "night" if _energy_in_range(mins, ns, ne) else "day"
+    # 3zone
+    if _energy_in_range(mins, ns, ne):
+        return "night"
+    p1s = _parse_hhmm(cfg.get("peak1_start"), 7, 0)
+    p1e = _parse_hhmm(cfg.get("peak1_end"), 10, 0)
+    p2s = _parse_hhmm(cfg.get("peak2_start"), 17, 0)
+    p2e = _parse_hhmm(cfg.get("peak2_end"), 21, 0)
+    if _energy_in_range(mins, p1s, p1e) or _energy_in_range(mins, p2s, p2e):
+        return "peak"
+    return "mid"
+
+
+def _energy_price_at(ts: float, cfg: dict) -> float:
+    zone = _energy_zone_at(ts, cfg)
+    if zone == "flat":
+        return float(cfg.get("price_kwh") or 0)
+    if zone == "day":
+        return float(cfg.get("price_day_kwh") or 0)
+    if zone == "night":
+        return float(cfg.get("price_night_kwh") or 0)
+    if zone == "peak":
+        return float(cfg.get("price_peak_kwh") or 0)
+    if zone == "mid":
+        return float(cfg.get("price_mid_kwh") or 0)
+    return float(cfg.get("price_kwh") or 0)
+
+
+def _query_power_samples(since: float, until: float) -> list[tuple[float, float]]:
+    """Return [(ts, power_w), ...] for integration (no downsampling)."""
+    with _db_lock:
+        conn = _db_connect()
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(samples)").fetchall()}
+            if "power" not in cols:
+                return []
+            # prefer only online==1 when column exists; still keep rows with power
+            if "online" in cols:
+                cur = conn.execute(
+                    """
+                    SELECT ts, power FROM samples
+                    WHERE ts >= ? AND ts <= ? AND power IS NOT NULL
+                      AND (online IS NULL OR online != 0)
+                    ORDER BY ts ASC
+                    """,
+                    (since, until),
+                )
+            else:
+                cur = conn.execute(
+                    """
+                    SELECT ts, power FROM samples
+                    WHERE ts >= ? AND ts <= ? AND power IS NOT NULL
+                    ORDER BY ts ASC
+                    """,
+                    (since, until),
+                )
+            out: list[tuple[float, float]] = []
+            for r in cur.fetchall():
+                try:
+                    ts = float(r["ts"])
+                    pw = float(r["power"])
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(ts) or not math.isfinite(pw) or pw < 0:
+                    continue
+                out.append((ts, pw))
+            return out
+        finally:
+            conn.close()
+
+
+def _integrate_energy(
+    points: list[tuple[float, float]],
+    cfg: dict,
+    *,
+    since: float | None = None,
+    until: float | None = None,
+) -> dict:
+    """
+    Integrate power series → kWh/cost.
+    Default integration=hold: power at sample i held until sample i+1.
+    """
+    max_gap = float(cfg.get("max_gap_sec") or 900)
+    hold = str(cfg.get("integration") or "hold") != "trap"
+    kwh = 0.0
+    cost = 0.0
+    by_zone: dict[str, dict[str, float]] = {
+        "flat": {"kwh": 0.0, "cost": 0.0},
+        "day": {"kwh": 0.0, "cost": 0.0},
+        "night": {"kwh": 0.0, "cost": 0.0},
+        "peak": {"kwh": 0.0, "cost": 0.0},
+        "mid": {"kwh": 0.0, "cost": 0.0},
+    }
+    span_sec = 0.0
+    samples = 0
+    empty = {
+        "kwh": 0.0,
+        "cost": 0.0,
+        "kwh_day": 0.0,
+        "kwh_night": 0.0,
+        "kwh_peak": 0.0,
+        "kwh_mid": 0.0,
+        "cost_day": 0.0,
+        "cost_night": 0.0,
+        "cost_peak": 0.0,
+        "cost_mid": 0.0,
+        "avg_w": None,
+        "span_sec": 0.0,
+        "samples": len(points),
+        "zone": _energy_normalize_mode(cfg.get("tariff_mode")),
+    }
+    if len(points) < 2:
+        empty["samples"] = len(points)
+        return empty
+    for i in range(1, len(points)):
+        t0, p0 = points[i - 1]
+        t1, p1 = points[i]
+        if since is not None and t1 < since:
+            continue
+        if until is not None and t0 > until:
+            break
+        dt = t1 - t0
+        if dt <= 0 or dt > max_gap:
+            continue
+        a, b = t0, t1
+        if since is not None and a < since:
+            a = since
+            dt = b - a
+        if until is not None and b > until:
+            b = until
+            dt = b - a
+        if dt <= 0 or dt > max_gap:
+            continue
+        # hold: p0 constant; trap: average
+        mid_p = p0 if hold else (p0 + p1) / 2.0
+        seg_kwh = mid_p * dt / 3600.0 / 1000.0
+        mid_t = (a + b) / 2.0
+        zone = _energy_zone_at(mid_t, cfg)
+        price = _energy_price_at(mid_t, cfg)
+        seg_cost = seg_kwh * price
+        kwh += seg_kwh
+        cost += seg_cost
+        span_sec += dt
+        samples += 1
+        if zone not in by_zone:
+            zone = "flat"
+        by_zone[zone]["kwh"] += seg_kwh
+        by_zone[zone]["cost"] += seg_cost
+    avg_w = (kwh * 1000.0 * 3600.0 / span_sec) if span_sec > 0 else None
+    return {
+        "kwh": round(kwh, 4),
+        "cost": round(cost, 2),
+        "kwh_day": round(by_zone["day"]["kwh"] + by_zone["flat"]["kwh"], 4),
+        "kwh_night": round(by_zone["night"]["kwh"], 4),
+        "kwh_peak": round(by_zone["peak"]["kwh"], 4),
+        "kwh_mid": round(by_zone["mid"]["kwh"], 4),
+        "cost_day": round(by_zone["day"]["cost"] + by_zone["flat"]["cost"], 2),
+        "cost_night": round(by_zone["night"]["cost"], 2),
+        "cost_peak": round(by_zone["peak"]["cost"], 2),
+        "cost_mid": round(by_zone["mid"]["cost"], 2),
+        "avg_w": round(avg_w, 1) if avg_w is not None else None,
+        "span_sec": round(span_sec, 1),
+        "samples": samples,
+        "zone": _energy_normalize_mode(cfg.get("tariff_mode")),
+    }
+
+
+def _local_day_start(ts: float | None = None) -> float:
+    t = time.localtime(ts if ts is not None else time.time())
+    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
+
+
+def energy_summary() -> dict:
+    """kWh / cost periods from energy.db hold samples + virtual meter state."""
+    cfg = get_energy_cfg()
+    _ensure_energy_db()
+    now = time.time()
+    day0 = _local_day_start(now)
+    windows = {
+        "today": (day0, now),
+        "yesterday": (day0 - 86400, day0),
+        "d7": (now - 7 * 86400, now),
+        "d30": (now - 30 * 86400, now),
+    }
+    periods = {}
+    for key, (a, b) in windows.items():
+        periods[key] = {
+            "from_ts": a,
+            "to_ts": b,
+            "from_iso": datetime.fromtimestamp(a).isoformat(timespec="seconds"),
+            "to_iso": datetime.fromtimestamp(b).isoformat(timespec="seconds"),
+            **_sum_energy_period(a, b, cfg),
+        }
+    meters = list_energy_meters()
+    virtual = next((m for m in meters if m.get("id") == VIRTUAL_METER_ID), None)
+    live_w = virtual.get("last_power_w") if virtual else None
+    sample_count = 0
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c, MIN(ts) AS tmin, MAX(ts) AS tmax FROM energy_samples WHERE meter_id = ?",
+                (VIRTUAL_METER_ID,),
+            ).fetchone()
+            sample_count = int(row["c"] or 0)
+            oldest = row["tmin"]
+            newest = row["tmax"]
+        finally:
+            conn.close()
+    return {
+        "ok": True,
+        "config": cfg,
+        "live_power_w": live_w,
+        "periods": periods,
+        "meters": meters,
+        "virtual_meter": virtual,
+        "energy_db": {
+            "path": str(ENERGY_DB_FILE),
+            "size_bytes": ENERGY_DB_FILE.stat().st_size if ENERGY_DB_FILE.exists() else 0,
+            "samples": sample_count,
+            "oldest_ts": oldest,
+            "newest_ts": newest,
+            "integration": cfg.get("integration") or "hold",
+            "metering_enabled": bool(cfg.get("metering_enabled", True)),
+            "history_backfill_done": bool(cfg.get("history_backfill_done")),
+            "history_backfill_at": cfg.get("history_backfill_at"),
+            "history_backfill_samples": cfg.get("history_backfill_samples"),
+        },
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+try:
+    _load_energy_cfg()
+    _ensure_energy_db()
+    maybe_backfill_energy_from_history()
+except Exception:
+    pass
 
 
 # ─── miner I/O ────────────────────────────────────────────────────────────────
@@ -21526,14 +22944,23 @@ def policy_loop() -> None:
 
 def collector_loop() -> None:
     sample_n = 0
+    energy_n = 0
     while not _collector_stop.is_set():
         with _hist_cfg_lock:
             enabled = bool(_hist_cfg.get("enabled", True))
             interval = int(_hist_cfg.get("sample_interval_sec", 30))
             retention = int(_hist_cfg.get("retention_days", 7))
             prune_every = int(_hist_cfg.get("prune_every_samples", 20))
+        try:
+            e_cfg = get_energy_cfg()
+        except Exception:
+            e_cfg = dict(DEFAULT_ENERGY_CFG)
+        metering_on = bool(e_cfg.get("metering_enabled", True))
+        attach = bool(e_cfg.get("attach_to_history", True))
+        e_interval = int(e_cfg.get("metering_interval_sec") or interval or 30)
 
-        if enabled:
+        live = None
+        if enabled or (metering_on and attach):
             try:
                 live = fetch_live()
                 # refresh cache too
@@ -21541,21 +22968,39 @@ def collector_loop() -> None:
                 with _cache_lock:
                     _cache = live
                     _cache_ts = time.time()
-                insert_sample(live_to_sample(live))
-                sample_n += 1
-                if sample_n % max(1, prune_every) == 0:
-                    prune_old(retention)
+                if enabled:
+                    insert_sample(live_to_sample(live))
+                    sample_n += 1
+                    if sample_n % max(1, prune_every) == 0:
+                        prune_old(retention)
+                if metering_on and attach:
+                    try:
+                        energy_meter_tick_from_live(live if isinstance(live, dict) else None)
+                        energy_n += 1
+                        if energy_n % max(1, prune_every) == 0:
+                            prune_energy_samples()
+                    except Exception as ee:
+                        print(
+                            f"[energy] {datetime.now().isoformat(timespec='seconds')} tick: {ee}"
+                        )
             except Exception as e:
                 # record offline marker so charts can show ASIC Offline bands
-                try:
-                    insert_sample(offline_sample(str(e)))
-                    sample_n += 1
-                except Exception:
-                    pass
+                if enabled:
+                    try:
+                        insert_sample(offline_sample(str(e)))
+                        sample_n += 1
+                    except Exception:
+                        pass
+                if metering_on and attach:
+                    try:
+                        energy_meter_tick(0.0, online=False)
+                    except Exception:
+                        pass
                 print(f"[collector] {datetime.now().isoformat(timespec='seconds')} error: {e}")
 
         # wait interval, but wake early on stop
-        _collector_stop.wait(timeout=max(5, interval))
+        wait_sec = interval if enabled or attach else e_interval
+        _collector_stop.wait(timeout=max(5, int(wait_sec)))
 
 
 # ─── HTTP ─────────────────────────────────────────────────────────────────────
@@ -21631,6 +23076,18 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/weather/presets":
             self._json_response(200, {"ok": True, "presets": WEATHER_PRESETS})
+            return
+        if path in ("/api/energy", "/api/energy/summary"):
+            self._api_energy_summary()
+            return
+        if path in ("/api/energy/series", "/api/energy/chart"):
+            self._api_energy_series()
+            return
+        if path == "/api/energy/config":
+            self._api_energy_config_get()
+            return
+        if path in ("/api/energy/meters", "/api/energy/meter"):
+            self._json_response(200, {"ok": True, "meters": list_energy_meters()})
             return
         if path in ("/api/telegram/config", "/api/telegram"):
             self._json_response(200, {"ok": True, "config": get_telegram_cfg(redact=True)})
@@ -21850,6 +23307,10 @@ class Handler(SimpleHTTPRequestHandler):
         # SPA tab routes: / · /dashboard · /miner · # handled client-side
         spa_tabs = {
             "miner",
+            "chips",
+            "pools",
+            "energy",
+            "minerinfo",
             "map",
             "pool",
             "periph",
@@ -21917,6 +23378,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/weather/config":
             self._api_weather_config_post()
+            return
+        if path == "/api/energy/config":
+            self._api_energy_config_post()
+            return
+        if path in ("/api/energy/meter/reset", "/api/energy/reset"):
+            self._api_energy_meter_reset()
             return
         if path in ("/api/telegram/config", "/api/telegram"):
             self._api_telegram_config_post()
@@ -22974,6 +24441,71 @@ class Handler(SimpleHTTPRequestHandler):
             cfg = dict(_weather_cfg)
         self._json_response(200, {"ok": True, "config": cfg, "presets": WEATHER_PRESETS})
 
+    def _api_energy_summary(self) -> None:
+        try:
+            body = energy_summary()
+            self._json_response(200, body)
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_energy_series(self) -> None:
+        try:
+            qs = parse_qs(urlparse(self.path).query)
+            hours = None
+            if qs.get("hours"):
+                try:
+                    hours = float((qs.get("hours") or ["48"])[0])
+                except (TypeError, ValueError):
+                    hours = None
+            try:
+                max_points = int((qs.get("max") or ["500"])[0])
+            except (TypeError, ValueError):
+                max_points = 500
+            bucket = (qs.get("bucket") or qs.get("group") or ["hour"])[0] or "hour"
+            mid = (qs.get("meter_id") or [VIRTUAL_METER_ID])[0] or VIRTUAL_METER_ID
+            body = energy_series(
+                hours=hours,
+                bucket=str(bucket),
+                max_points=max_points,
+                meter_id=str(mid),
+            )
+            self._json_response(200, body)
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_energy_config_get(self) -> None:
+        self._json_response(
+            200,
+            {
+                "ok": True,
+                "config": get_energy_cfg(),
+                "meters": list_energy_meters(),
+                "energy_db": str(ENERGY_DB_FILE),
+            },
+        )
+
+    def _api_energy_config_post(self) -> None:
+        try:
+            req = self._read_json_body()
+            cfg = set_energy_cfg(req if isinstance(req, dict) else {})
+            summary = energy_summary()
+            self._json_response(200, {"ok": True, "config": cfg, "summary": summary})
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_energy_meter_reset(self) -> None:
+        try:
+            req = self._read_json_body() if self.headers.get("Content-Length") else {}
+            if not isinstance(req, dict):
+                req = {}
+            mid = str(req.get("meter_id") or VIRTUAL_METER_ID)
+            clear = bool(req.get("clear_samples") or req.get("clear"))
+            body = reset_energy_meter(mid, clear_samples=clear)
+            body["summary"] = energy_summary()
+            self._json_response(200, body)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_weather_config_post(self) -> None:
         global _weather_cache, _weather_cache_ts
         try:
@@ -23753,6 +25285,8 @@ def main() -> None:
     print(f"set API:           POST /api/set")
     print(f"history:           GET  /api/history?hours=24")
     print(f"weather:           GET  /api/weather")
+    print(f"energy:            GET  /api/energy · /api/energy/series · config · meters")
+    print(f"energy.db:         {ENERGY_DB_FILE}")
     print(f"pool:              GET  /api/pool/config")
     print(f"zone map:          GET/POST /api/zone/config")
     print(f"zone presets:      GET/POST /api/zone/presets")

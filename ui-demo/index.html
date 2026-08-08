@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>poolheat_WM · Keenetic · Whatsminer</title>
+  <title>GoraPool · Keenetic</title>
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icons/favicon.svg" />
   <style>
     :root {
       --bg: #0b0f14;
@@ -640,9 +642,10 @@
     }
     /*
      * Cell size from --chip-size (fit-to-width).
-     *  mid:    large value (temp / metric)
+     *  top:    chip # only (centered)
+     *  mid:    metric value (true center)
      *  bot:    err crc x repeat
-     *  corner: C#
+     *  aux:    hidden in cell (still in tooltip)
      */
     .chip-cell {
       width: var(--chip-size, 24px);
@@ -653,11 +656,8 @@
       background: var(--border2);
       cursor: default;
       position: relative;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: space-between;
-      padding: 1px;
+      display: block;
+      padding: 0;
       font-weight: 600;
       line-height: 1;
       color: rgba(255, 255, 255, 0.92);
@@ -666,137 +666,64 @@
       box-sizing: border-box;
       overflow: hidden;
     }
-    /* tiny cells: hide dense chrome, keep value + id */
-    .chip-snake.is-dense .chip-cell .c-bot,
-    .chip-snake.is-dense .chip-cell .c-top {
-      display: none;
-    }
-    .chip-snake.is-dense .chip-cell .c-aux {
-      display: none;
-    }
-    .chip-snake.is-dense .chip-cell .c-id {
-      font-size: 0.32rem;
-      opacity: 0.45;
-    }
-    .chip-snake.is-dense .chip-cell .c-main {
-      font-size: calc(var(--chip-size, 20px) * 0.38);
-    }
-    .chip-snake.is-tiny .chip-cell .c-id {
-      display: none;
-    }
-    .chip-snake.is-tiny .chip-cell .c-main {
-      font-size: calc(var(--chip-size, 14px) * 0.42);
-    }
-    .chip-cell.empty {
-      opacity: 0.28;
-      color: transparent;
-      text-shadow: none;
-      border-color: transparent;
-    }
-    .chip-cell .c-id {
-      position: absolute;
-      top: 0;
-      right: 1px;
-      font-size: 0.42rem;
-      font-weight: 700;
-      opacity: 0.5;
-      letter-spacing: -0.03em;
-      line-height: 1;
-      pointer-events: none;
-    }
-    .chip-cell .c-top {
-      display: flex;
-      justify-content: center;
-      gap: 2px;
-      width: 100%;
-      font-size: 0.42rem;
-      font-weight: 600;
-      opacity: 0.9;
-      padding-right: 8px; /* room for C# */
-      box-sizing: border-box;
-      letter-spacing: -0.03em;
-    }
-    .chip-cell .c-main {
-      font-size: max(0.55rem, calc(var(--chip-size, 24px) * 0.34));
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1;
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    .chip-cell .c-bot {
-      display: flex;
-      justify-content: center;
-      gap: 2px;
-      width: 100%;
-      font-size: 0.38rem;
-      font-weight: 600;
-      opacity: 0.78;
-      font-variant-numeric: tabular-nums;
-      letter-spacing: -0.02em;
-    }
-    /* All modes: chip # top-right (faint) */
+    /* All modes: chip # top-center only */
     .chip-cell .c-id {
       position: absolute;
       top: 1px;
-      right: 2px;
-      left: auto;
-      text-align: right;
-      font-size: 0.4rem;
-      font-weight: 500;
-      opacity: 0.38;
-      letter-spacing: 0;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-size: max(0.34rem, calc(var(--chip-size, 24px) * 0.18));
+      font-weight: 600;
+      opacity: 0.48;
+      letter-spacing: -0.02em;
       line-height: 1;
       pointer-events: none;
       color: inherit;
+      z-index: 2;
     }
-    /* top-left auxiliary (vol mV / freq) */
-    .chip-cell .c-aux {
+    /* aux (vol/freq) — not drawn on cell; kept empty / for DOM compatibility */
+    .chip-cell .c-aux,
+    .chip-cell .c-top {
+      display: none !important;
+    }
+    /* metric value — optical center between chip # and bottom row */
+    .chip-cell .c-main {
       position: absolute;
-      top: 1px;
-      left: 2px;
-      font-size: 0.4rem;
-      font-weight: 600;
-      opacity: 0.55;
-      letter-spacing: -0.02em;
-      line-height: 1;
-      pointer-events: none;
-      max-width: 48%;
-      overflow: hidden;
-      white-space: nowrap;
-    }
-    .chip-cell .c-aux .c-unit {
-      font-size: 0.65em;
-      font-weight: 550;
-      opacity: 0.75;
-      margin-left: 0.08em;
-      vertical-align: super;
-      line-height: 0;
-    }
-    /* temp / gradient / outliers / nonce_def: main mid · err bottom */
-    .chip-cell.chip-simple {
-      justify-content: space-between;
-      padding: 1px;
-    }
-    .chip-cell.chip-simple .c-top {
-      display: none;
-    }
-    .chip-cell.chip-simple .c-bot {
+      left: 0;
+      right: 0;
+      /* leave room for # (top) and err row (bottom) so value sits mid-chip */
+      top: 16%;
+      bottom: 20%;
       display: flex;
-    }
-    .chip-cell.chip-simple .c-main {
-      font-size: 0.8rem;
-      font-weight: 700;
-      width: 100%;
-      padding-top: 9px;
-      padding-left: 3px;
-      align-items: flex-start;
+      align-items: center;
       justify-content: center;
-      gap: 0;
+      text-align: center;
+      font-size: max(0.48rem, calc(var(--chip-size, 24px) * 0.30));
+      font-weight: 700;
+      letter-spacing: -0.04em;
       line-height: 1;
+      padding: 0 1px;
       box-sizing: border-box;
+      z-index: 1;
+      transform: none;
+    }
+    .chip-cell .c-bot {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 1px;
+      display: flex;
+      justify-content: center;
+      gap: 2px;
+      width: 100%;
+      font-size: max(0.28rem, calc(var(--chip-size, 24px) * 0.14));
+      font-weight: 600;
+      opacity: 0.72;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
+      z-index: 2;
+      pointer-events: none;
     }
     .chip-cell .c-deg {
       display: inline-block;
@@ -804,44 +731,56 @@
       font-weight: 650;
       line-height: 1;
       margin-left: 0.04em;
-      margin-top: 0.02em;
       opacity: 0.88;
       letter-spacing: -0.05em;
       vertical-align: top;
-      position: relative;
-      top: 0;
     }
-    /* Compact hash modes: aux top-left · # top-right · value center · err bottom
-       freq / nonce_rate → aux=vol; nonce / est_th → aux=freq */
-    .chip-cell.chip-compact {
-      justify-content: space-between;
-      padding: 1px;
-    }
-    .chip-cell.chip-compact .c-top {
+    /* dense / tiny */
+    .chip-snake.is-dense .chip-cell .c-bot {
       display: none;
     }
-    .chip-cell.chip-compact .c-main {
-      font-size: 0.78rem;
-      font-weight: 700;
-      width: 100%;
-      padding-top: 8px;
-      padding-left: 0;
-      align-items: center;
-      justify-content: center;
-      line-height: 1;
+    .chip-snake.is-dense .chip-cell .c-id {
+      font-size: max(0.28rem, calc(var(--chip-size, 20px) * 0.16));
+      opacity: 0.42;
+      top: 0;
     }
-    .chip-cell.chip-compact .c-bot {
-      display: flex;
+    .chip-snake.is-dense .chip-cell .c-main {
+      font-size: calc(var(--chip-size, 20px) * 0.32);
+      top: 14%;
+      bottom: 14%;
+    }
+    .chip-snake.is-tiny .chip-cell .c-id {
+      font-size: max(0.26rem, calc(var(--chip-size, 14px) * 0.15));
+      opacity: 0.4;
+    }
+    .chip-snake.is-tiny .chip-cell .c-main {
+      font-size: calc(var(--chip-size, 14px) * 0.36);
+      top: 12%;
+      bottom: 12%;
+    }
+    .chip-snake.is-tiny .chip-cell .c-bot {
+      display: none;
+    }
+    .chip-cell.empty {
+      opacity: 0.28;
+      color: transparent;
+      text-shadow: none;
+      border-color: transparent;
+    }
+    /* simple / compact: same layout; slightly larger center value */
+    .chip-cell.chip-simple .c-main,
+    .chip-cell.chip-compact .c-main {
+      font-size: max(0.55rem, calc(var(--chip-size, 24px) * 0.34));
+      top: 15%;
+      bottom: 18%;
     }
     .chip-cell.chip-light {
       color: rgba(12, 18, 14, 0.92);
       text-shadow: none;
       border-color: rgba(0, 0, 0, 0.12);
     }
-    .chip-cell.chip-light .c-id { opacity: 0.4; }
-    .chip-cell.chip-light .c-aux { opacity: 0.5; }
-    .chip-cell.chip-light .c-top,
-    .chip-cell.chip-light .c-bot { opacity: 0.8; }
+    .chip-cell.chip-light .c-id { opacity: 0.42; }
+    .chip-cell.chip-light .c-bot { opacity: 0.72; }
     .chip-legend {
       display: flex;
       flex-wrap: wrap;
@@ -998,6 +937,7 @@
     input[type="number"],
     input[type="password"],
     input[type="email"],
+    input[type="time"],
     select,
     textarea {
       width: 100%;
@@ -1010,6 +950,61 @@
       font-size: 0.9rem;
       outline: none;
       transition: border-color 0.15s;
+    }
+
+    /* time fields — same look as text/number; custom clock icon */
+    input[type="time"] {
+      color-scheme: dark;
+      padding-right: 2.1rem;
+      min-height: 2.5rem;
+      box-sizing: border-box;
+    }
+    input[type="time"]::-webkit-calendar-picker-indicator {
+      opacity: 0;
+      position: absolute;
+      right: 0;
+      top: 0;
+      width: 2.25rem;
+      height: 100%;
+      cursor: pointer;
+      margin: 0;
+    }
+    input[type="time"]::-webkit-datetime-edit,
+    input[type="time"]::-webkit-datetime-edit-fields-wrapper,
+    input[type="time"]::-webkit-datetime-edit-hour-field,
+    input[type="time"]::-webkit-datetime-edit-minute-field,
+    input[type="time"]::-webkit-datetime-edit-ampm-field,
+    input[type="time"]::-webkit-datetime-edit-text {
+      color: var(--text);
+      padding: 0;
+    }
+    .time-wrap {
+      position: relative;
+      display: block;
+      width: 100%;
+    }
+    .time-wrap input[type="time"] {
+      position: relative;
+      z-index: 1;
+    }
+    .time-wrap .time-ico {
+      position: absolute;
+      right: 0.65rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 14px;
+      height: 14px;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.75;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238b9bb0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpolyline points='12 7 12 12 15.5 14'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 14px 14px;
+    }
+    .time-wrap:focus-within .time-ico {
+      opacity: 1;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%233d9cf0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpolyline points='12 7 12 12 15.5 14'/%3E%3C/svg%3E");
     }
 
     /* custom chevron — slightly inset from the field edge */
@@ -3059,6 +3054,86 @@
         #d46b1f 100%
       );
     }
+    /* Energy accounting (Miner → Energy) */
+    .energy-live-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+    @media (max-width: 720px) {
+      .energy-live-row { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 420px) {
+      .energy-live-row { grid-template-columns: 1fr; }
+    }
+    .energy-live-item {
+      background: var(--panel2, rgba(255,255,255,0.03));
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm, 8px);
+      padding: 10px 12px;
+    }
+    .energy-live-label {
+      font-size: 0.72rem;
+      color: var(--dim);
+      margin-bottom: 4px;
+    }
+    .energy-live-val {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .energy-live-val small {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .energy-period-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 900px) {
+      .energy-period-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 420px) {
+      .energy-period-grid { grid-template-columns: 1fr; }
+    }
+    .energy-period-card {
+      background: var(--panel2, rgba(255,255,255,0.03));
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm, 8px);
+      padding: 12px 12px 10px;
+      min-width: 0;
+    }
+    .energy-period-title {
+      font-size: 0.75rem;
+      color: var(--dim);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    .energy-period-kwh {
+      font-size: 1.2rem;
+      font-weight: 650;
+      color: var(--text);
+      line-height: 1.2;
+    }
+    .energy-period-kwh small {
+      font-size: 0.72rem;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .energy-period-cost {
+      margin-top: 4px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--accent, #3d9cf0);
+    }
+    .energy-period-avg {
+      margin-top: 4px;
+      font-size: 0.72rem;
+      color: var(--dim);
+    }
+
     /* Power measured: energy gradient on left tab */
     .temp-card.power-meas::before {
       width: 4px;
@@ -3446,14 +3521,16 @@
       box-shadow: 0 0 0 3px rgba(61, 156, 240, 0.12);
     }
     .dash-fab[hidden] { display: none !important; }
+    /* 6-col grid: normal=2 (1/3), half=3 (1/2), full=6 */
     .dash-board {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 12px;
       align-items: stretch;
     }
     @media (max-width: 960px) {
-      .dash-board { grid-template-columns: 1fr 1fr; }
+      /* 4-col: normal/half both half-row; full = full row */
+      .dash-board { grid-template-columns: repeat(4, 1fr); }
     }
     @media (max-width: 520px) {
       .dash-board { grid-template-columns: 1fr; }
@@ -3461,9 +3538,53 @@
     .dash-item {
       min-width: 0;
       position: relative;
+      grid-column: span 2;
+    }
+    .dash-item.dash-span-half {
+      grid-column: span 3;
     }
     .dash-item.dash-span-full {
       grid-column: 1 / -1;
+    }
+    /*
+     * Reflow on window width change:
+     *  - widgets: left→right, top→bottom (snake / row)
+     *  - half-width charts: top→bottom left, then top→bottom right (column)
+     */
+    #dash-board {
+      grid-auto-flow: row;
+    }
+    .dash-charts-pack {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-auto-flow: column; /* ↓ left column, then ↓ right column */
+      gap: 12px;
+      align-items: stretch;
+      min-width: 0;
+    }
+    .dash-charts-pack > .dash-item {
+      grid-column: auto !important;
+      min-width: 0;
+    }
+    @media (max-width: 960px) {
+      .dash-item { grid-column: span 2; }
+      .dash-item.dash-span-half { grid-column: span 2; }
+      .dash-item.dash-span-full { grid-column: 1 / -1; }
+      .dash-charts-pack {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+    @media (max-width: 520px) {
+      .dash-item,
+      .dash-item.dash-span-half,
+      .dash-item.dash-span-full {
+        grid-column: 1 / -1;
+      }
+      .dash-charts-pack {
+        grid-template-columns: 1fr;
+        grid-auto-flow: row; /* single column: just top→bottom */
+      }
     }
     /* layout hide — stronger than [hidden] quirks inside grid */
     .dash-item.is-layout-hidden {
@@ -3475,6 +3596,92 @@
       height: 100%;
       margin: 0;
     }
+
+    /*
+     * Dashboard load stages:
+     *  1) is-dash-structure — empty shells only (layout/size positions)
+     *  2) is-dash-loading   — shimmer inside those shells
+     *  3) neither           — real content after /api/live
+     */
+    #dash-board.is-dash-structure .dash-item > .temp-card,
+    #dash-board.is-dash-structure .dash-item > .card,
+    #dash-board.is-dash-loading .dash-item > .temp-card,
+    #dash-board.is-dash-loading .dash-item > .card {
+      position: relative;
+      min-height: 108px;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    #dash-board.is-dash-structure .dash-item.dash-span-full > .card,
+    #dash-board.is-dash-loading .dash-item.dash-span-full > .card {
+      min-height: 160px;
+    }
+    /* stage 1: hide content, no shimmer — just light card frames */
+    #dash-board.is-dash-structure .dash-item > .temp-card > *,
+    #dash-board.is-dash-structure .dash-item > .card > *,
+    #dash-board.is-dash-loading .dash-item > .temp-card > *,
+    #dash-board.is-dash-loading .dash-item > .card > * {
+      visibility: hidden;
+    }
+    #dash-board.is-dash-structure .dash-item > .temp-card,
+    #dash-board.is-dash-structure .dash-item > .card {
+      background: var(--panel);
+      box-shadow: none;
+    }
+    /* stage 2: shimmer bars */
+    #dash-board.is-dash-loading .dash-item > .temp-card::before,
+    #dash-board.is-dash-loading .dash-item > .card::before {
+      content: "";
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      top: 16px;
+      height: 10px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.05);
+      z-index: 2;
+      max-width: 42%;
+    }
+    #dash-board.is-dash-loading .dash-item > .temp-card::after,
+    #dash-board.is-dash-loading .dash-item > .card::after {
+      content: "";
+      position: absolute;
+      left: 14px;
+      right: 14px;
+      top: 38px;
+      bottom: 16px;
+      border-radius: 10px;
+      background: linear-gradient(
+        100deg,
+        rgba(255, 255, 255, 0.03) 0%,
+        rgba(255, 255, 255, 0.03) 35%,
+        rgba(255, 255, 255, 0.09) 50%,
+        rgba(255, 255, 255, 0.03) 65%,
+        rgba(255, 255, 255, 0.03) 100%
+      );
+      background-size: 220% 100%;
+      animation: dash-skel-shimmer 1.15s ease-in-out infinite;
+      z-index: 2;
+    }
+    /* edit mode: real cards, no structure/loading chrome */
+    #dash-board.is-dash-structure.dash-edit-mode .dash-item > .temp-card > *,
+    #dash-board.is-dash-structure.dash-edit-mode .dash-item > .card > *,
+    #dash-board.is-dash-loading.dash-edit-mode .dash-item > .temp-card > *,
+    #dash-board.is-dash-loading.dash-edit-mode .dash-item > .card > * {
+      visibility: visible;
+    }
+    #dash-board.is-dash-loading.dash-edit-mode .dash-item > .temp-card::before,
+    #dash-board.is-dash-loading.dash-edit-mode .dash-item > .card::before,
+    #dash-board.is-dash-loading.dash-edit-mode .dash-item > .temp-card::after,
+    #dash-board.is-dash-loading.dash-edit-mode .dash-item > .card::after {
+      display: none;
+      animation: none;
+    }
+    @keyframes dash-skel-shimmer {
+      0% { background-position: 100% 0; }
+      100% { background-position: -100% 0; }
+    }
+
     .dash-board.dash-edit-mode .dash-item {
       cursor: grab;
     }
@@ -3498,10 +3705,10 @@
     .dash-board.dash-edit-mode .dash-item-tools {
       display: block;
     }
-    .dash-item-tools .dash-hide-btn {
+    .dash-item-tools .dash-hide-btn,
+    .dash-item-tools .dash-width-btn {
       position: absolute;
       top: 8px;
-      right: 8px;
       width: 26px;
       height: 26px;
       border-radius: 50%;
@@ -3512,10 +3719,57 @@
       align-items: center;
       justify-content: center;
       cursor: pointer;
-      font-size: 0.78rem;
+      font-size: 0.72rem;
+      font-weight: 600;
       padding: 0;
       line-height: 1;
       pointer-events: auto;
+    }
+    .dash-item-tools .dash-hide-btn {
+      right: 8px;
+    }
+    .dash-item-tools .dash-width-btn {
+      right: 40px;
+    }
+    /* layout icons: half = two columns · full = one wide bar */
+    .dash-item-tools .dash-width-btn .dw-ico {
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      gap: 2px;
+      width: 12px;
+      height: 10px;
+      pointer-events: none;
+    }
+    .dash-item-tools .dash-width-btn .dw-ico i {
+      display: block;
+      flex: 1 1 0;
+      min-width: 0;
+      border: 1.5px solid currentColor;
+      border-radius: 1.5px;
+      box-sizing: border-box;
+    }
+    .dash-item-tools .dash-width-btn .dw-ico-half {
+      /* two vertical panes */
+    }
+    .dash-item-tools .dash-width-btn .dw-ico-full {
+      /* single wide rectangle */
+      display: block;
+      width: 12px;
+      height: 10px;
+      border: 1.5px solid currentColor;
+      border-radius: 1.5px;
+      box-sizing: border-box;
+      pointer-events: none;
+    }
+    .dash-item-tools .dash-width-btn.is-half {
+      color: var(--accent, #3d9cf0);
+      border-color: rgba(61, 156, 240, 0.55);
+      background: rgba(61, 156, 240, 0.14);
+    }
+    .dash-item-tools .dash-width-btn:hover {
+      color: var(--accent, #3d9cf0);
+      border-color: rgba(61, 156, 240, 0.45);
     }
     /* left-edge laconic grip (full card height) in edit mode */
     .dash-item-tools .dash-grip {
@@ -3738,60 +3992,116 @@
 
     /* hash2cash-style brush + scroll */
     .chart-nav {
-      margin-top: 10px;
-      padding: 0 2px;
+      margin-top: 12px;
+      padding: 0;
     }
+    /* Highcharts-like range navigator */
     .chart-brush-wrap {
-      height: 56px;
+      height: 64px;
       border: 1px solid var(--border);
-      border-radius: 8px;
-      background: #0c1016;
+      border-radius: 10px;
+      background: #0a0e14;
       overflow: hidden;
-      cursor: ew-resize;
+      cursor: crosshair;
       user-select: none;
+      touch-action: none;
+      position: relative;
     }
     .chart-brush-wrap canvas {
       display: block;
       width: 100%;
       height: 100%;
     }
-    .chart-scroll {
-      margin-top: 8px;
-      height: 14px;
-      position: relative;
-      padding: 0 2px;
-    }
-    .chart-scroll[hidden] { display: none !important; }
-    .chart-scroll-track {
-      position: relative;
-      height: 10px;
-      margin-top: 2px;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--border) 80%, #000);
-      cursor: pointer;
-    }
-    .chart-scroll-thumb {
-      position: absolute;
-      top: 0;
-      left: 0;
-      height: 100%;
-      min-width: 20px;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--accent) 55%, var(--border));
-      border: 1px solid rgba(61, 156, 240, 0.45);
-      cursor: grab;
-      box-sizing: border-box;
-    }
-    .chart-scroll-thumb:active { cursor: grabbing; }
     .chart-zoom-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 10px 14px;
-      margin-bottom: 12px;
+      gap: 10px 12px;
+      margin-bottom: 10px;
     }
-    .chart-zoom-row label.field {
-      min-width: 140px;
+    /* compact zoom pill + menu (like pool hashrate chart) */
+    .chart-zoom-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .chart-zoom-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--border2);
+      background: var(--panel2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      min-width: 3.2rem;
+      line-height: 1;
+    }
+    .chart-zoom-toggle:hover { border-color: var(--accent); }
+    .chart-zoom-toggle .chev {
+      font-size: 0.55rem;
+      opacity: 0.7;
+      color: var(--muted);
+    }
+    .chart-zoom-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 40;
+      min-width: 88px;
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid var(--border2);
+      background: #121820;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
+    .chart-zoom-menu[hidden] { display: none !important; }
+    .chart-zoom-menu button {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 550;
+      padding: 7px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .chart-zoom-menu button:hover {
+      background: rgba(61, 156, 240, 0.12);
+    }
+    .chart-zoom-menu button.is-active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .chart-zoom-menu button .chk {
+      font-size: 0.75rem;
+      opacity: 0;
+      margin-left: 10px;
+    }
+    .chart-zoom-menu button.is-active .chk { opacity: 1; }
+    .chart-sync-lbl {
+      color: var(--muted);
+      user-select: none;
+      white-space: nowrap;
+    }
+    .chart-sync-lbl input {
+      accent-color: var(--accent);
+    }
+    .hist-meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin-bottom: 8px;
     }
 
     .lang-select {
@@ -3821,13 +4131,14 @@
           <h1>poolheat_WM</h1>
           <p id="brand-devices">Keenetic —</p>
           <script>
-            /* instant paint from last Info cache (localStorage) */
+            /* instant paint from last Info cache (localStorage) + document title */
             (function () {
               try {
                 var raw = localStorage.getItem("poolheat_wm_info_cache");
                 if (!raw) return;
                 var d = JSON.parse(raw);
                 var el = document.getElementById("brand-devices");
+                var kn = "";
                 if (el) {
                   // header: only Keenetic (never Whatsminer — that is LIVE strip)
                   var bt = (d && d.brandText) ? String(d.brandText) : "";
@@ -3835,12 +4146,32 @@
                   if (d && d.router) {
                     var code = String(d.router.model_code || "").trim();
                     var rawM = String(d.router.model || d.router.device_tree_model || "");
-                    var kn = code.match(/^KN-/i) ? code : (rawM.match(/KN-[0-9A-Za-z]+/i) || [])[0];
-                    if (kn) bt = "Keenetic " + String(kn).toUpperCase();
-                    else if (!bt || /whatsminer/i.test(bt)) bt = "Keenetic —";
+                    kn = code.match(/^KN-/i) ? code : (rawM.match(/KN-[0-9A-Za-z]+/i) || [])[0];
+                    if (kn) {
+                      kn = String(kn).toUpperCase();
+                      bt = "Keenetic " + kn;
+                    } else if (!bt || /whatsminer/i.test(bt)) bt = "Keenetic —";
                   }
                   if (bt) el.textContent = bt;
                 }
+                var pname =
+                  (d && (d.project_name || (d.poolheat && d.poolheat.project_name))) ||
+                  (d && d.body && d.body.poolheat && d.body.poolheat.project_name) ||
+                  "";
+                pname = String(pname || "").trim();
+                if (pname) {
+                  var h1 = document.querySelector(".brand h1");
+                  if (h1) h1.textContent = pname;
+                }
+                try {
+                  var titleLeft = pname || "GoraPool";
+                  var titleRight = kn
+                    ? "Keenetic " + kn
+                    : (document.getElementById("brand-devices") &&
+                        document.getElementById("brand-devices").textContent) ||
+                      "Keenetic";
+                  document.title = titleLeft + " · " + titleRight;
+                } catch (_) { /* ignore */ }
                 var ver = d && (d.version || (d.poolheat && d.poolheat.version) ||
                   (d.body && d.body.poolheat && d.body.poolheat.version));
                 if (ver) {
@@ -3947,7 +4278,7 @@
           <div class="dash-add-menu weather-results" id="dash-add-menu" hidden></div>
         </div>
 
-        <div class="dash-board" id="dash-board">
+        <div class="dash-board is-dash-structure" id="dash-board" aria-busy="true">
           <div class="dash-item" data-dash-id="t_ctrl">
             <div class="temp-card liquid-env" id="card-t-ctrl">
               <div class="tc-label tc-label-stack">
@@ -4152,53 +4483,97 @@
             </div>
           </div>
 
-          <div class="dash-item dash-span-full" data-dash-id="history">
-            <div class="card" id="panel-history-charts">
+          <!-- Charts as separate dashboard widgets (reorder / hide independently) -->
+          <div class="dash-item dash-span-full" data-dash-id="chart_temps">
+            <div class="card" id="panel-chart-temps">
               <div class="card-h">
                 <div>
-                  <h2 data-i18n="h2.history">History & charts</h2>
+                  <h2 data-i18n="h2.temps">Temperatures °C</h2>
+                  <div class="sub" data-i18n="sub.chart_temps">history · liquid · env · outdoor · boards · chip</div>
                 </div>
                 <button class="btn" type="button" id="btn-hist-refresh" data-i18n="btn.refresh">Refresh</button>
               </div>
               <div class="card-b">
                 <div class="chart-zoom-row">
-                  <label class="field">Zoom
-                    <select id="chart-zoom" data-fleet-zoom>
-                      <option value="1h">1 hour</option>
-                      <option value="6h">6 hours</option>
-                      <option value="12h">12 hours</option>
-                      <option value="1d" selected>1 day</option>
-                      <option value="2d">2 days</option>
-                      <option value="7d">7 days</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="hist-meta-row">
-                  <span class="hist-meta" id="hist-stats">—</span>
-                  <span class="hist-meta hist-meta-view" id="hist-view-label">view: —</span>
-                </div>
-
-                <div class="card" style="box-shadow:none;margin-bottom:14px">
-                  <div class="card-h"><div><h2 data-i18n="h2.temps">Temperatures °C</h2></div></div>
-                  <div class="card-b" style="height:260px;position:relative">
-                    <canvas id="chart-temp"></canvas>
-                  </div>
-                </div>
-                <div class="card" style="box-shadow:none;margin-bottom:10px">
-                  <div class="card-h"><div><h2 data-i18n="h2.power">Power · Hashrate · J/T</h2></div></div>
-                  <div class="card-b" style="height:240px;position:relative">
-                    <canvas id="chart-power"></canvas>
-                  </div>
-                </div>
-
-                <div class="chart-nav">
-                  <div class="chart-brush-wrap" title="Drag window / edges to zoom">
-                    <canvas id="chart-brush" height="56"></canvas>
-                  </div>
-                  <div class="chart-scroll" id="chart-scroll" hidden>
-                    <div class="chart-scroll-track" id="chart-scroll-track">
-                      <div class="chart-scroll-thumb" id="chart-scroll-thumb"></div>
+                  <div class="chart-zoom-wrap" data-chart-key="temps">
+                    <button type="button" class="chart-zoom-toggle" data-zoom-toggle
+                      aria-haspopup="listbox" aria-expanded="false" title="Zoom">
+                      <span class="chart-zoom-label">1d</span>
+                      <span class="chev" aria-hidden="true">▼</span>
+                    </button>
+                    <div class="chart-zoom-menu" data-zoom-menu hidden role="listbox">
+                      <button type="button" data-zoom="1h">1h <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="6h">6h <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="12h">12h <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="1d" class="is-active">1d <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="1w">1w <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="all">All <span class="chk">✓</span></button>
                     </div>
+                  </div>
+                  <label class="check chart-sync-lbl" style="margin:0;font-size:0.78rem">
+                    <input type="checkbox" class="chart-sync" id="chart-sync" checked />
+                    <span data-i18n="chart.sync">Sync charts</span>
+                  </label>
+                  <span class="hist-meta chart-view-label" data-chart-key="temps">view: —</span>
+                </div>
+                <!-- hidden select kept for fleet / external hooks -->
+                <select id="chart-zoom" data-fleet-zoom hidden aria-hidden="true">
+                  <option value="1h">1h</option>
+                  <option value="6h">6h</option>
+                  <option value="12h">12h</option>
+                  <option value="1d" selected>1d</option>
+                  <option value="1w">1w</option>
+                  <option value="all">All</option>
+                </select>
+                <div style="height:260px;position:relative">
+                  <canvas id="chart-temp"></canvas>
+                </div>
+                <div class="chart-nav">
+                  <div class="chart-brush-wrap" title="Drag selection / edges to zoom · click outside to center">
+                    <canvas id="chart-brush" height="64" data-brush="1" data-chart-key="temps"></canvas>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-item dash-span-full" data-dash-id="chart_power">
+            <div class="card" id="panel-chart-power">
+              <div class="card-h">
+                <div>
+                  <h2 data-i18n="h2.power">Power · Hashrate · J/T</h2>
+                  <div class="sub" data-i18n="sub.chart_power">history · power · limit · hashrate · freq · efficiency</div>
+                </div>
+              </div>
+              <div class="card-b">
+                <div class="chart-zoom-row">
+                  <div class="chart-zoom-wrap" data-chart-key="power">
+                    <button type="button" class="chart-zoom-toggle" data-zoom-toggle
+                      aria-haspopup="listbox" aria-expanded="false" title="Zoom">
+                      <span class="chart-zoom-label">1d</span>
+                      <span class="chev" aria-hidden="true">▼</span>
+                    </button>
+                    <div class="chart-zoom-menu" data-zoom-menu hidden role="listbox">
+                      <button type="button" data-zoom="1h">1h <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="6h">6h <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="12h">12h <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="1d" class="is-active">1d <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="1w">1w <span class="chk">✓</span></button>
+                      <button type="button" data-zoom="all">All <span class="chk">✓</span></button>
+                    </div>
+                  </div>
+                  <label class="check chart-sync-lbl" style="margin:0;font-size:0.78rem">
+                    <input type="checkbox" class="chart-sync" checked />
+                    <span data-i18n="chart.sync">Sync charts</span>
+                  </label>
+                  <span class="hist-meta chart-view-label" data-chart-key="power">view: —</span>
+                </div>
+                <div style="height:240px;position:relative">
+                  <canvas id="chart-power"></canvas>
+                </div>
+                <div class="chart-nav">
+                  <div class="chart-brush-wrap" title="Drag selection / edges to zoom · click outside to center">
+                    <canvas id="chart-brush-power" height="64" data-brush="1" data-chart-key="power"></canvas>
                   </div>
                 </div>
               </div>
@@ -4213,6 +4588,7 @@
       <nav class="subtabs" role="tablist" aria-label="Miner">
         <button type="button" class="active" data-subtab="miner" data-i18n="sub.miner">Miner</button>
         <button type="button" data-subtab="pools" data-i18n="sub.pools">Pools</button>
+        <button type="button" data-subtab="energy" data-i18n="sub.energy">Energy</button>
         <button type="button" data-subtab="chips" data-i18n="sub.chips">Chips</button>
         <button type="button" data-subtab="info" data-i18n="sub.info">Info</button>
       </nav>
@@ -4417,7 +4793,7 @@
           <div class="card-h">
             <div>
               <h2 id="boards-pcb-title" data-i18n="h2.boards">Hashboards</h2>
-              <div class="sub" id="boards-pcb-sub">devs[].Temperature · Upfreq Complete</div>
+              <div class="sub" id="boards-pcb-sub">Upfreq Complete</div>
             </div>
           </div>
           <div class="card-b board-chip-grid" id="boards-grid">
@@ -4521,7 +4897,7 @@
               <h2 data-i18n="h2.chip_poll">Chip map polling</h2>
               <div class="sub" data-i18n="sub.chip_poll">own interval · web admin · separate from live poll</div>
             </div>
-            <button class="btn primary" type="button" id="btn-chipmap-cfg-save">Save</button>
+            <button class="btn primary" type="button" id="btn-chipmap-cfg-save" data-i18n="btn.save">Save</button>
           </div>
           <div class="card-b stack" style="gap:12px">
             <label class="check">
@@ -4818,6 +5194,231 @@
         </div>
       </div>
       </div><!-- /subview-pools -->
+
+      <div class="subview" id="subview-energy">
+      <div class="stack">
+        <div class="card" id="panel-energy-summary">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.energy">Energy accounting</h2>
+              <div class="sub" data-i18n="sub.energy_card">kWh · cost · from history power samples</div>
+            </div>
+            <button class="btn" type="button" id="btn-energy-refresh" data-i18n="btn.refresh">Refresh</button>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <div class="energy-live-row">
+              <div class="energy-live-item">
+                <div class="energy-live-label" data-i18n="energy.live_power">Live power</div>
+                <div class="energy-live-val"><span id="energy-live-w">—</span> <small>W</small></div>
+              </div>
+              <div class="energy-live-item">
+                <div class="energy-live-label" data-i18n="energy.tariff_now">Tariff now</div>
+                <div class="energy-live-val"><span id="energy-tariff-now">—</span></div>
+              </div>
+              <div class="energy-live-item">
+                <div class="energy-live-label" data-i18n="energy.virtual_total">Virtual counter</div>
+                <div class="energy-live-val"><span id="energy-virtual-total">—</span> <small>kWh</small></div>
+              </div>
+            </div>
+            <div class="energy-period-grid" id="energy-period-grid">
+              <div class="energy-period-card" data-period="today">
+                <div class="energy-period-title" data-i18n="energy.today">Today</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+              <div class="energy-period-card" data-period="yesterday">
+                <div class="energy-period-title" data-i18n="energy.yesterday">Yesterday</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+              <div class="energy-period-card" data-period="d7">
+                <div class="energy-period-title" data-i18n="energy.d7">7 days</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+              <div class="energy-period-card" data-period="d30">
+                <div class="energy-period-title" data-i18n="energy.d30">30 days</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-status">—</p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:4px 0 0;line-height:1.45" data-i18n="hint.energy_source">
+              Collection settings: Settings → Advanced → Energy metering.
+            </p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-energy-chart">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
+              <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power · by hour / day / week / month</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:end">
+              <label class="field" style="margin:0;min-width:9rem">
+                <span data-i18n="field.energy_bucket">Sample by</span>
+                <select id="energy-chart-bucket">
+                  <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
+                  <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
+                  <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
+                  <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
+                </select>
+              </label>
+              <label class="field" style="margin:0;min-width:8rem">
+                <span data-i18n="field.energy_range">Range</span>
+                <select id="energy-chart-range">
+                  <option value="24">1d</option>
+                  <option value="48" selected>2d</option>
+                  <option value="168">7d</option>
+                  <option value="720">30d</option>
+                  <option value="2160">90d</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="card-b">
+            <div style="height:280px;position:relative">
+              <canvas id="chart-energy"></canvas>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-chart-meta">—</p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-energy-tariff">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.energy_tariff">Electricity tariff</h2>
+              <div class="sub" data-i18n="sub.energy_tariff">price per kWh · day / night optional</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-energy-save" data-i18n="btn.save">Save</button>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+              <label class="field"><span data-i18n="field.energy_mode">Tariff type</span>
+                <select id="energy-tariff-mode">
+                  <option value="1zone" data-i18n="opt.energy_1zone">1-zone</option>
+                  <option value="2zone" data-i18n="opt.energy_2zone">2-zone</option>
+                  <option value="3zone" data-i18n="opt.energy_3zone">3-zone</option>
+                </select>
+              </label>
+              <label class="field"><span data-i18n="field.energy_currency">Currency</span>
+                <input type="text" id="energy-currency" value="RUB" maxlength="8" autocomplete="off" />
+              </label>
+              <label class="field"><span data-i18n="field.energy_symbol">Symbol</span>
+                <input type="text" id="energy-symbol" value="₽" maxlength="4" autocomplete="off" />
+              </label>
+            </div>
+
+            <!-- 1-zone: single rate -->
+            <div id="energy-1zone-fields" class="energy-zone-fields">
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.energy_price">Price, /kWh</span>
+                  <input type="number" id="energy-price" value="5" min="0" step="0.01" />
+                </label>
+              </div>
+            </div>
+
+            <!-- 2-zone: day + night -->
+            <div id="energy-2zone-fields" class="energy-zone-fields" hidden>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.energy_price_day">Day, /kWh</span>
+                  <input type="number" id="energy-price-day" value="6" min="0" step="0.01" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_price_night">Night, /kWh</span>
+                  <input type="number" id="energy-price-night" value="3" min="0" step="0.01" />
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_night_start">Night from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-start" value="23:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_night_end">Night until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-end" value="07:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4" data-i18n="hint.energy_2zone">
+                Outside the night window the day rate applies. Night may cross midnight.
+              </p>
+            </div>
+
+            <!-- 3-zone: peak + semi-peak (mid) + night; peak has two time windows -->
+            <div id="energy-3zone-fields" class="energy-zone-fields" hidden>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.energy_price_peak">Peak, /kWh</span>
+                  <input type="number" id="energy-price-peak" value="8" min="0" step="0.01" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_price_mid">Semi-peak, /kWh</span>
+                  <input type="number" id="energy-price-mid" value="6" min="0" step="0.01" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_price_night_3">Night, /kWh</span>
+                  <input type="number" id="energy-price-night-3" value="3" min="0" step="0.01" />
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_night_start">Night from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-start-3" value="23:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_night_end">Night until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-end-3" value="07:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_peak1_start">Peak window 1 from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak1-start" value="07:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_peak1_end">Peak window 1 until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak1-end" value="10:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_peak2_start">Peak window 2 from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak2-start" value="17:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_peak2_end">Peak window 2 until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak2-end" value="21:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <p style="font-size:0.72rem;color:var(--dim);margin:10px 0 0;line-height:1.45" data-i18n-html="hint.energy_3zone">
+                <strong>Peak</strong> / <strong>Semi-peak</strong> / <strong>Night</strong> — three rates.<br />
+                <strong>Peak windows 1–2</strong> — when Peak rate applies (same price in both).<br />
+                <strong>Semi-peak</strong> — all other time. Priority: night → peak → semi-peak.
+              </p>
+            </div>
+
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="hint.energy_tariff">
+              Used only for cost estimate. Does not control the miner.
+            </p>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-energy -->
     </section>
 
     <!-- ========== MAP ========== -->
@@ -4837,7 +5438,7 @@
               <h2 data-i18n="h2.zone_map">Zone map · pool heating</h2>
               <div class="sub">Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat · safety separate</div>
             </div>
-            <button class="btn primary" type="button" id="btn-save-map">Save map</button>
+            <button class="btn primary" type="button" id="btn-save-map" data-i18n="btn.save_map">Save map</button>
           </div>
           <div class="card-b">
             <div class="map-note" id="map-note-tctrl">
@@ -4851,32 +5452,32 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.zone_presets">Map presets</h2>
-                  <div class="sub">save · apply · overwrite · delete</div>
+                  <div class="sub" data-i18n="sub.zone_presets">save · apply · overwrite · delete</div>
                 </div>
               </div>
               <div class="card-b">
                 <div class="row" style="grid-template-columns:1fr auto;gap:10px;align-items:end;margin-bottom:10px">
-                  <label class="field" style="margin:0">Preset
+                  <label class="field" style="margin:0"><span data-i18n="field.preset">Preset</span>
                     <select id="zone-preset-select">
                       <option value="">— select —</option>
                     </select>
                   </label>
-                  <button class="btn primary" type="button" id="btn-zone-preset-apply" title="Load preset into active map">
+                  <button class="btn primary" type="button" id="btn-zone-preset-apply" title="Load preset into active map" data-i18n="btn.apply" data-i18n-title="title.zone_preset_apply">
                     Apply
                   </button>
                 </div>
                 <p id="zone-preset-meta" style="font-size:0.75rem;color:var(--dim);margin:0 0 10px">—</p>
                 <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-                  <button class="btn" type="button" id="btn-zone-preset-save" title="Save current map as a new preset">
+                  <button class="btn" type="button" id="btn-zone-preset-save" title="Save current map as a new preset" data-i18n="btn.save_as" data-i18n-title="title.zone_preset_save_as">
                     Save as…
                   </button>
-                  <button class="btn" type="button" id="btn-zone-preset-update" title="Overwrite selected preset with current map">
+                  <button class="btn" type="button" id="btn-zone-preset-update" title="Overwrite selected preset with current map" data-i18n="btn.overwrite" data-i18n-title="title.zone_preset_overwrite">
                     Overwrite
                   </button>
-                  <button class="btn ghost" type="button" id="btn-zone-preset-rename" title="Rename selected preset">
+                  <button class="btn ghost" type="button" id="btn-zone-preset-rename" title="Rename selected preset" data-i18n="btn.rename" data-i18n-title="title.zone_preset_rename">
                     Rename
                   </button>
-                  <button class="btn danger" type="button" id="btn-zone-preset-delete" title="Delete selected preset">
+                  <button class="btn danger" type="button" id="btn-zone-preset-delete" title="Delete selected preset" data-i18n="btn.delete" data-i18n-title="title.zone_preset_delete">
                     Delete
                   </button>
                 </div>
@@ -6032,6 +6633,12 @@
                       <span class="desc" data-i18n="dev.allow_on_suspend_desc">manual On during Suspend</span>
                     </span>
                   </label>
+                  <label class="check" style="grid-column:1 / -1">
+                    <input type="checkbox" id="dev-enforce-desired" />
+                    <span><span data-i18n="dev.enforce_desired">Hold desired state</span>
+                      <span class="desc" data-i18n="dev.enforce_desired_desc">store target ON/OFF · on status check, re-apply if device differs</span>
+                    </span>
+                  </label>
                 </div>
               </div>
 
@@ -6385,7 +6992,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.advanced">Advanced settings</h2>
-              <div class="sub" data-i18n="sub.advanced_card">history · chip map cache · rare options</div>
+              <div class="sub" data-i18n="sub.advanced_card">history · energy metering · chip map cache · rare options</div>
             </div>
           </div>
           <div class="card-b stack" style="gap:18px">
@@ -6405,7 +7012,7 @@
                 <label class="field"><span data-i18n="field.store_days">Keep, days</span>
                   <input type="number" id="hist-retention" value="7" min="1" max="90" />
                 </label>
-                <label class="field"><span class="tip" data-tip-key="hist_interval">Sample interval, sec</span>
+                <label class="field"><span class="tip" data-tip-key="hist_interval" data-i18n="field.interval_sec">Sample interval, sec</span>
                   <input type="number" id="hist-interval" value="30" min="5" max="3600" step="5" />
                 </label>
                 <label class="check" style="padding-bottom:6px">
@@ -6415,10 +7022,62 @@
                   </span>
                 </label>
               </div>
-              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0">
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0" data-i18n="hint.history">
                 After changing “Keep, days”, old points are removed on save.
                 “Clear database” — delete all samples (charts go empty).
               </p>
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
+
+            <!-- Energy metering (virtual counter → energy.db) -->
+            <div id="panel-energy-metering">
+              <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
+                <div>
+                  <div style="font-weight:600;color:var(--text);font-size:0.92rem" data-i18n="section.energy_metering">Energy metering</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.energy_metering">virtual kWh counter · hold power until next sample · energy.db</div>
+                </div>
+                <div class="btn-row" style="gap:8px">
+                  <button class="btn danger ghost" type="button" id="btn-energy-meter-reset" data-i18n="btn.energy_reset">Reset counter</button>
+                  <button class="btn primary" type="button" id="btn-energy-metering-save" data-i18n="btn.save">Save</button>
+                </div>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end">
+                <label class="check" style="padding-bottom:6px">
+                  <input type="checkbox" id="energy-metering-enabled" checked />
+                  <span><span data-i18n="check.energy_metering">Collect energy</span>
+                    <span class="desc" data-i18n="check.energy_metering_desc">write hold samples to energy.db</span>
+                  </span>
+                </label>
+                <label class="check" style="padding-bottom:6px">
+                  <input type="checkbox" id="energy-attach-history" checked />
+                  <span><span data-i18n="check.energy_attach">With history collector</span>
+                    <span class="desc" data-i18n="check.energy_attach_desc">same live poll as charts</span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_integration">Integration</span>
+                  <select id="energy-integration">
+                    <option value="hold" data-i18n="opt.energy_hold">Hold (power until next sample)</option>
+                    <option value="trap" data-i18n="opt.energy_trap">Trapezoid (average)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:14px;align-items:end;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_max_gap">Max gap, sec</span>
+                  <input type="number" id="energy-max-gap" value="900" min="60" max="7200" step="30" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_retention">Keep samples, days</span>
+                  <input type="number" id="energy-retention" value="365" min="1" max="3650" step="1" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_meter_interval">Own interval, sec</span>
+                  <input type="number" id="energy-meter-interval" value="30" min="5" max="3600" step="5" />
+                </label>
+              </div>
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n="hint.energy_metering">
+                Virtual meter: current miner power is held until the next sample (ΔkWh = P × Δt).
+                Tariff and reports: Miner → Energy. Physical meters are reserved for a future release.
+              </p>
+              <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="energy-metering-status">—</p>
             </div>
 
             <hr style="border:none;border-top:1px solid var(--border, rgba(255,255,255,0.08));margin:0" />
@@ -6464,7 +7123,7 @@
                   <span class="desc">chipmap_cache.json · show last map after restart</span>
                 </span>
               </label>
-              <p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0;line-height:1.45">
+              <p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0;line-height:1.45" data-i18n="hint.chip_cache">
                 When enabled, after a successful LuCI poll the map is written to disk
                 and reloaded on service start (stale until the next live poll).
                 When off — cache file is deleted; only the current poll stays in RAM.
@@ -6508,7 +7167,7 @@
                   </select>
                 </label>
               </div>
-              <p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0;line-height:1.45">
+              <p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0;line-height:1.45" data-i18n="hint.remote_auth">
                 Do not raw port-forward :8787 to the Internet. Cloud + token; open forbidden with remote.
               </p>
             </div>
@@ -6524,24 +7183,24 @@
               <label class="check">
                 <input type="checkbox" id="luci-proxy-enabled" />
                 <span><span data-i18n="check.luci_proxy">Enable proxy on port 8788</span>
-                  <span class="desc">http://&lt;router&gt;:8788/ → miner HTTPS LuCI</span>
+                  <span class="desc" data-i18n="check.luci_proxy_desc">http://&lt;router&gt;:8788/ → miner HTTPS LuCI</span>
                 </span>
               </label>
               <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">
-                <label class="field">Listen port
+                <label class="field"><span data-i18n="field.luci_listen_port">Listen port</span>
                   <input type="number" id="luci-proxy-port" value="8788" min="1" max="65535" step="1" />
                 </label>
-                <label class="field">Upstream scheme
+                <label class="field"><span data-i18n="field.luci_upstream_scheme">Upstream scheme</span>
                   <select id="luci-proxy-scheme">
                     <option value="https" selected>https</option>
                     <option value="http">http</option>
                   </select>
                 </label>
-                <label class="field">Upstream port
+                <label class="field"><span data-i18n="field.luci_upstream_port">Upstream port</span>
                   <input type="number" id="luci-proxy-target-port" value="443" min="1" max="65535" step="1" />
                 </label>
               </div>
-              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45">
+              <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n-html="hint.luci_proxy">
                 Module <code>luci_proxy</code>: reverse-proxy to the miner
                 (host from “Whatsminer connection”). Externally — plain HTTP :8788,
                 to miner — HTTPS; cookies <code>Secure</code>/HSTS are stripped.
@@ -6576,8 +7235,9 @@
                 <label class="field">Interface
                   <input type="text" id="sniffer-iface" value="br0" placeholder="br0" autocomplete="off" />
                 </label>
-                <label class="field">BPF filter <span style="color:var(--dim);font-weight:400" data-i18n="field.sniffer_bpf_hint">(empty = host miner)</span>
+                <label class="field">BPF filter
                   <input type="text" id="sniffer-filter" value="" placeholder="host 192.168.1.10" autocomplete="off" />
+                  <span class="desc" data-i18n="field.sniffer_bpf_hint">(empty = miner host)</span>
                 </label>
               </div>
               <div style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.55" data-i18n-html="hint.sniffer">
@@ -6816,6 +7476,75 @@
         "sub.miner": "Miner",
         "sub.pools": "Pools",
         "sub.pools_card": "stratum · Active · shares · Whatsminer pools",
+        "sub.energy": "Energy",
+        "sub.energy_card": "kWh · cost · from history power samples",
+        "sub.energy_tariff": "1 / 2 / 3 zones · rates and time windows",
+        "h2.energy": "Energy accounting",
+        "h2.energy_chart": "Energy consumption",
+        "sub.energy_chart": "kWh bars · avg power · by hour / day / week / month",
+        "field.energy_bucket": "Sample by",
+        "field.energy_range": "Range",
+        "opt.energy_bucket_hour": "Hours",
+        "opt.energy_bucket_day": "Days",
+        "opt.energy_bucket_week": "Weeks",
+        "opt.energy_bucket_month": "Months",
+        "h2.energy_tariff": "Electricity tariff",
+        "energy.live_power": "Live power",
+        "energy.chart_power": "Avg power W",
+        "energy.chart_kwh": "kWh",
+        "energy.tariff_now": "Tariff now",
+        "energy.today": "Today",
+        "energy.yesterday": "Yesterday",
+        "energy.d7": "7 days",
+        "energy.d30": "30 days",
+        "energy.day": "day",
+        "energy.night": "night",
+        "energy.peak": "peak",
+        "energy.mid": "semi-peak",
+        "energy.flat": "flat",
+        "energy.avg_w": "avg {v} W",
+        "hint.energy_source": "Collection settings: Settings → Advanced → Energy metering.",
+        "hint.energy_tariff": "Used only for cost estimate. Does not control the miner.",
+        "section.energy_metering": "Energy metering",
+        "sub.desc.energy_metering": "virtual kWh counter · hold power until next sample · energy.db",
+        "check.energy_metering": "Collect energy",
+        "check.energy_metering_desc": "write hold samples to energy.db",
+        "check.energy_attach": "With history collector",
+        "check.energy_attach_desc": "same live poll as charts",
+        "field.energy_integration": "Integration",
+        "field.energy_max_gap": "Max gap, sec",
+        "field.energy_retention": "Keep samples, days",
+        "field.energy_meter_interval": "Own interval, sec",
+        "opt.energy_hold": "Hold (power until next sample)",
+        "opt.energy_trap": "Trapezoid (average)",
+        "hint.energy_metering": "Virtual meter: current miner power is held until the next sample (ΔkWh = P × Δt). Tariff and reports: Miner → Energy. Physical meters are reserved for a future release.",
+        "btn.energy_reset": "Reset counter",
+        "energy.virtual_total": "Virtual counter",
+        "toast.energy_metering_saved": "Energy metering saved",
+        "toast.energy_meter_reset": "Virtual counter reset",
+        "hint.energy_2zone": "Outside the night window the day rate applies. Night may cross midnight.",
+        "hint.energy_3zone": "<strong>Peak</strong> / <strong>Semi-peak</strong> / <strong>Night</strong> — three rates.<br /><strong>Peak windows 1–2</strong> — when Peak rate applies (same price in both).<br /><strong>Semi-peak</strong> — all other time. Priority: night → peak → semi-peak.",
+        "field.energy_mode": "Tariff type",
+        "field.energy_currency": "Currency",
+        "field.energy_symbol": "Symbol",
+        "field.energy_price": "Price, /kWh",
+        "field.energy_price_day": "Day, /kWh",
+        "field.energy_price_night": "Night, /kWh",
+        "field.energy_price_night_3": "Night, /kWh",
+        "field.energy_price_peak": "Peak, /kWh",
+        "field.energy_price_mid": "Semi-peak, /kWh",
+        "field.energy_night_start": "Night from",
+        "field.energy_night_end": "Night until",
+        "field.energy_peak1_start": "Peak window 1 from",
+        "field.energy_peak1_end": "Peak window 1 until",
+        "field.energy_peak2_start": "Peak window 2 from",
+        "field.energy_peak2_end": "Peak window 2 until",
+        "opt.energy_1zone": "1-zone",
+        "opt.energy_2zone": "2-zone",
+        "opt.energy_3zone": "3-zone",
+        "opt.energy_flat": "1-zone",
+        "opt.energy_day_night": "2-zone",
+        "toast.energy_saved": "Energy tariff saved",
         "sub.chips": "Chips",
         "sub.info": "Info",
         "sub.main": "General",
@@ -6873,6 +7602,8 @@
         "dev.mining_options": "Mining options",
         "dev.auto_on_mining": "Auto On while mining",
         "dev.auto_on_mining_desc": "Resume → device ON",
+        "dev.enforce_desired": "Hold desired state",
+        "dev.enforce_desired_desc": "store target ON/OFF · on status check, re-apply if device differs",
         "dev.auto_off_suspend": "Auto Off on Suspend",
         "dev.auto_off_suspend_desc": "Suspend → device OFF",
         "dev.allow_off_mining": "Allow OFF while mining",
@@ -6946,6 +7677,10 @@
         "toast.sensor_deleted": "Sensor deleted",
         "btn.refresh": "Refresh",
         "btn.save": "Save",
+        "btn.save_map": "Save map",
+        "btn.apply": "Apply",
+        "btn.save_as": "Save as…",
+        "btn.overwrite": "Overwrite",
         "btn.clear_db": "Clear database",
         "btn.download_backup": "Download backup",
         "btn.restore_backup": "Restore backup…",
@@ -6968,6 +7703,29 @@
         "btn.rename": "Rename",
         "btn.save_edits": "Save edits",
         "btn.delete": "Delete",
+        "field.preset": "Preset",
+        "sub.zone_presets": "save · apply · overwrite · delete",
+        "title.zone_preset_apply": "Load preset into active map",
+        "title.zone_preset_save_as": "Save current map as a new preset",
+        "title.zone_preset_overwrite": "Overwrite selected preset with current map",
+        "title.zone_preset_rename": "Rename selected preset",
+        "title.zone_preset_delete": "Delete selected preset",
+        "zone.preset_select_or_save": "Select a preset or save the current map",
+        "zone.preset_empty": "Presets empty — “Save as…”",
+        "zone.preset_active": "active",
+        "zone.preset_name_prompt": "New preset name:",
+        "zone.preset_name_empty": "Name is empty",
+        "zone.preset_select_first": "Select a preset first",
+        "zone.preset_overwrite_confirm": "Overwrite preset “{name}” with current zone map?",
+        "zone.preset_delete_confirm": "Delete preset “{name}”?",
+        "zone.preset_apply_confirm": "Apply preset “{name}”?\n\nThe active zone map will be replaced.",
+        "zone.preset_saved": "Preset saved: {name}",
+        "zone.preset_updated": "Preset updated: {name}",
+        "zone.preset_renamed": "Renamed: {name}",
+        "zone.preset_deleted": "Preset deleted",
+        "zone.preset_applied": "Preset applied: {name}",
+        "zone.map_saved": "Zone map saved",
+        "boards.sub_upfreq": "Upfreq Complete",
         "btn.pcap": "Download pcap",
         "btn.uninstall": "Uninstall",
         "btn.sniffer_install": "Install",
@@ -6976,10 +7734,18 @@
         "check.hist_enabled": "Data collection",
         "check.hist_desc": "write samples to history.db",
         "check.chip_cache": "Save chip map cache",
+        "hint.chip_cache": "When enabled, after a successful LuCI poll the map is written to disk and reloaded on service start (stale until the next live poll). When off — cache file is deleted; only the current poll stays in RAM.",
+        "hint.history": "After changing “Keep, days”, old points are removed on save. “Clear database” — delete all samples (charts go empty).",
+        "hint.remote_auth": "Do not raw port-forward :8787 to the Internet. Cloud + token; open forbidden with remote.",
+        "hint.luci_proxy": "Module <code>luci_proxy</code>: reverse-proxy to the miner (host from “Whatsminer connection”). Externally — plain HTTP :8788, to miner — HTTPS; cookies <code>Secure</code>/HSTS are stripped. Default off. Do not expose :8788 on WAN — LAN / VPN / Cloud only.",
         "check.luci_proxy": "Enable proxy on port 8788",
+        "check.luci_proxy_desc": "http://&lt;router&gt;:8788/ → miner HTTPS LuCI",
+        "field.luci_listen_port": "Listen port",
+        "field.luci_upstream_scheme": "Upstream scheme",
+        "field.luci_upstream_port": "Upstream port",
         "check.sniffer": "Activate capture",
         "check.sniffer_desc": "start/stop tcpdump (only when installed)",
-        "field.sniffer_bpf_hint": "(empty = host miner)",
+        "field.sniffer_bpf_hint": "(empty = miner host)",
         "lang.label": "Interface language",
         "lang.label_short": "Lang",
         "lang.sub": "English · Russian",
@@ -7153,6 +7919,8 @@
         "dash.edit_done": "Done",
         "dash.add_block": "Show hidden block",
         "dash.hide_block": "Hide block",
+        "dash.half_width": "Half width",
+        "dash.full_width": "Full width",
         "dash.no_hidden": "No hidden blocks",
         "dash.widget.t_ctrl": "T_ctrl / Env",
         "dash.widget.weather": "Outdoor",
@@ -7162,6 +7930,11 @@
         "dash.widget.heat_balance": "Heat / cool-down",
         "dash.widget.errors": "Errors",
         "dash.widget.history": "History & charts",
+        "dash.widget.chart_temps": "Temperatures chart",
+        "dash.widget.chart_power": "Power chart",
+        "sub.chart_temps": "history · liquid · env · outdoor · boards · chip",
+        "sub.chart_power": "history · power · limit · hashrate · freq · efficiency",
+        "chart.sync": "Sync charts",
         "dash.hb.surplus": "surplus",
         "dash.hb.deficit": "deficit",
         "dash.hb.balance": "balance",
@@ -7301,7 +8074,7 @@
         "sub.telegram": "policy notifications · /status commands",
         "sub.policy": "dwell · settle · streak · saved with zone map",
         "sub.warmup": "until ready — no point raising the profile",
-        "sub.advanced_card": "history · logs depth · chip map cache · rare options",
+        "sub.advanced_card": "history · energy metering · logs depth · chip map cache · rare options",
         "sub.access": "Remote · auth · LuCI proxy :8788",
         "sub.software": "version · GitHub update check",
         "sub.dry": "auto zones · Safety always · then Save",
@@ -7359,6 +8132,75 @@
         "sub.miner": "Майнер",
         "sub.pools": "Пулы",
         "sub.pools_card": "stratum · Active · shares · пулы Whatsminer",
+        "sub.energy": "Энергия",
+        "sub.energy_card": "кВт·ч · стоимость · из samples history",
+        "sub.energy_tariff": "1 / 2 / 3 зоны · ставки и временные окна",
+        "h2.energy": "Учёт энергопотребления",
+        "h2.energy_chart": "Потребление электроэнергии",
+        "sub.energy_chart": "столбики кВт·ч · средняя мощность · час / день / неделя / месяц",
+        "field.energy_bucket": "Семпл",
+        "field.energy_range": "Период",
+        "opt.energy_bucket_hour": "Часы",
+        "opt.energy_bucket_day": "Дни",
+        "opt.energy_bucket_week": "Недели",
+        "opt.energy_bucket_month": "Месяцы",
+        "h2.energy_tariff": "Тариф на электроэнергию",
+        "energy.live_power": "Мощность сейчас",
+        "energy.chart_power": "Средняя мощность W",
+        "energy.chart_kwh": "кВт·ч",
+        "energy.tariff_now": "Тариф сейчас",
+        "energy.today": "Сегодня",
+        "energy.yesterday": "Вчера",
+        "energy.d7": "7 дней",
+        "energy.d30": "30 дней",
+        "energy.day": "день",
+        "energy.night": "ночь",
+        "energy.peak": "пик",
+        "energy.mid": "полупик",
+        "energy.flat": "однозон.",
+        "energy.avg_w": "ср. {v} W",
+        "hint.energy_source": "Настройки сбора: Настройки → Расширенные → Учёт энергии.",
+        "hint.energy_tariff": "Только для оценки стоимости. На майнер не влияет.",
+        "section.energy_metering": "Учёт энергии",
+        "sub.desc.energy_metering": "виртуальный счётчик кВт·ч · hold мощности · energy.db",
+        "check.energy_metering": "Собирать энергию",
+        "check.energy_metering_desc": "писать hold-сэмплы в energy.db",
+        "check.energy_attach": "Вместе с collector истории",
+        "check.energy_attach_desc": "тот же live-опрос, что и графики",
+        "field.energy_integration": "Интегрирование",
+        "field.energy_max_gap": "Макс. разрыв, сек",
+        "field.energy_retention": "Хранить samples, дней",
+        "field.energy_meter_interval": "Свой интервал, сек",
+        "opt.energy_hold": "Hold (мощность до след. sample)",
+        "opt.energy_trap": "Трапеция (среднее)",
+        "hint.energy_metering": "Виртуальный счётчик: текущая мощность майнера держится до следующего sample (ΔкВт·ч = P × Δt). Тариф и отчёты: Майнер → Энергия. Физические счётчики — задел на будущее.",
+        "btn.energy_reset": "Сбросить счётчик",
+        "energy.virtual_total": "Виртуальный счётчик",
+        "toast.energy_metering_saved": "Учёт энергии сохранён",
+        "toast.energy_meter_reset": "Виртуальный счётчик сброшен",
+        "hint.energy_2zone": "Вне ночного окна действует дневная ставка. Ночь может переходить через полночь.",
+        "hint.energy_3zone": "<strong>Пик</strong> / <strong>Полупик</strong> / <strong>Ночь</strong> — три ставки.<br /><strong>Пик · окна 1–2</strong> — когда действует ставка «Пик» (одна цена в обоих окнах).<br /><strong>Полупик</strong> — всё остальное время. Приоритет: ночь → пик → полупик.",
+        "field.energy_mode": "Тип тарифа",
+        "field.energy_currency": "Валюта",
+        "field.energy_symbol": "Символ",
+        "field.energy_price": "Цена, /кВт·ч",
+        "field.energy_price_day": "День, /кВт·ч",
+        "field.energy_price_night": "Ночь, /кВт·ч",
+        "field.energy_price_night_3": "Ночь, /кВт·ч",
+        "field.energy_price_peak": "Пик, /кВт·ч",
+        "field.energy_price_mid": "Полупик, /кВт·ч",
+        "field.energy_night_start": "Ночь с",
+        "field.energy_night_end": "Ночь до",
+        "field.energy_peak1_start": "Пик · окно 1 с",
+        "field.energy_peak1_end": "Пик · окно 1 до",
+        "field.energy_peak2_start": "Пик · окно 2 с",
+        "field.energy_peak2_end": "Пик · окно 2 до",
+        "opt.energy_1zone": "Однозонный",
+        "opt.energy_2zone": "Двухзонный",
+        "opt.energy_3zone": "Трёхзонный",
+        "opt.energy_flat": "Однозонный",
+        "opt.energy_day_night": "Двухзонный",
+        "toast.energy_saved": "Тариф сохранён",
         "sub.chips": "Чипы",
         "sub.info": "Инфо",
         "sub.main": "Основные",
@@ -7415,6 +8257,8 @@
         "dev.mining_options": "Опции при майнинге",
         "dev.auto_on_mining": "Auto On при майнинге",
         "dev.auto_on_mining_desc": "Resume → устройство ON",
+        "dev.enforce_desired": "Удерживать статус",
+        "dev.enforce_desired_desc": "хранить требуемое вкл/выкл · при сверке, если устройство не совпадает — вернуть",
         "dev.auto_off_suspend": "Auto Off при Suspend",
         "dev.auto_off_suspend_desc": "Suspend → устройство OFF",
         "dev.allow_off_mining": "Разрешить OFF при майнинге",
@@ -7489,6 +8333,10 @@
         "toast.sensor_deleted": "Датчик удалён",
         "btn.refresh": "Обновить",
         "btn.save": "Сохранить",
+        "btn.save_map": "Сохранить карту",
+        "btn.apply": "Применить",
+        "btn.save_as": "Сохранить как…",
+        "btn.overwrite": "Перезаписать",
         "btn.clear_db": "Очистить базу",
         "btn.download_backup": "Скачать бэкап",
         "btn.restore_backup": "Загрузить бэкап…",
@@ -7511,6 +8359,29 @@
         "btn.rename": "Переименовать",
         "btn.save_edits": "Сохранить правки",
         "btn.delete": "Удалить",
+        "field.preset": "Пресет",
+        "sub.zone_presets": "сохранить · применить · перезаписать · удалить",
+        "title.zone_preset_apply": "Загрузить пресет в активную карту",
+        "title.zone_preset_save_as": "Сохранить текущую карту как новый пресет",
+        "title.zone_preset_overwrite": "Перезаписать выбранный пресет текущей картой",
+        "title.zone_preset_rename": "Переименовать выбранный пресет",
+        "title.zone_preset_delete": "Удалить выбранный пресет",
+        "zone.preset_select_or_save": "Выберите пресет или сохраните текущую карту",
+        "zone.preset_empty": "Пресеты пусты — «Сохранить как…»",
+        "zone.preset_active": "активный",
+        "zone.preset_name_prompt": "Имя нового пресета:",
+        "zone.preset_name_empty": "Имя пустое",
+        "zone.preset_select_first": "Сначала выберите пресет",
+        "zone.preset_overwrite_confirm": "Перезаписать пресет «{name}» текущей картой зон?",
+        "zone.preset_delete_confirm": "Удалить пресет «{name}»?",
+        "zone.preset_apply_confirm": "Применить пресет «{name}»?\n\nАктивная карта зон будет заменена.",
+        "zone.preset_saved": "Пресет сохранён: {name}",
+        "zone.preset_updated": "Пресет обновлён: {name}",
+        "zone.preset_renamed": "Переименован: {name}",
+        "zone.preset_deleted": "Пресет удалён",
+        "zone.preset_applied": "Пресет применён: {name}",
+        "zone.map_saved": "Карта зон сохранена",
+        "boards.sub_upfreq": "Upfreq Complete",
         "btn.pcap": "Скачать pcap",
         "btn.uninstall": "Удалить",
         "btn.sniffer_install": "Установить",
@@ -7519,7 +8390,15 @@
         "check.hist_enabled": "Сбор данных",
         "check.hist_desc": "писать samples в history.db",
         "check.chip_cache": "Сохранять кеш карты чипов",
+        "hint.chip_cache": "Если включено — после успешного опроса LuCI карта пишется на диск и подгружается при старте сервиса (до следующего live-опроса может быть устаревшей). Если выключено — файл кеша удаляется; в RAM остаётся только текущий опрос.",
+        "hint.history": "После изменения «Хранить, дней» старые точки удаляются при сохранении. «Очистить базу» — удалить все сэмплы (графики станут пустыми).",
+        "hint.remote_auth": "Не пробрасывайте «сырой» :8787 в интернет. Cloud + token; режим open запрещён при удалённом доступе.",
+        "hint.luci_proxy": "Модуль <code>luci_proxy</code>: reverse-proxy к майнеру (host из «Подключение Whatsminer»). Снаружи — plain HTTP :8788, к майнеру — HTTPS; cookies <code>Secure</code>/HSTS снимаются. По умолчанию выкл. Не открывайте :8788 в WAN — только LAN / VPN / Cloud.",
         "check.luci_proxy": "Включить прокси на порт 8788",
+        "check.luci_proxy_desc": "http://&lt;router&gt;:8788/ → HTTPS LuCI майнера",
+        "field.luci_listen_port": "Порт прослушивания",
+        "field.luci_upstream_scheme": "Схема upstream",
+        "field.luci_upstream_port": "Порт upstream",
         "check.sniffer": "Активировать захват",
         "check.sniffer_desc": "старт/стоп tcpdump (только если установлен)",
         "field.sniffer_bpf_hint": "(пусто = host майнера)",
@@ -7696,6 +8575,8 @@
         "dash.edit_done": "Готово",
         "dash.add_block": "Показать скрытый блок",
         "dash.hide_block": "Скрыть блок",
+        "dash.half_width": "Половина ширины",
+        "dash.full_width": "На всю ширину",
         "dash.no_hidden": "Нет скрытых блоков",
         "dash.widget.t_ctrl": "T_ctrl / Env",
         "dash.widget.weather": "Улица",
@@ -7705,6 +8586,11 @@
         "dash.widget.heat_balance": "Нагрев / остывание",
         "dash.widget.errors": "Ошибки",
         "dash.widget.history": "История и графики",
+        "dash.widget.chart_temps": "График температур",
+        "dash.widget.chart_power": "График мощности",
+        "sub.chart_temps": "история · liquid · env · улица · платы · chip",
+        "sub.chart_power": "история · power · limit · hashrate · freq · J/T",
+        "chart.sync": "Синхронизация",
         "dash.hb.surplus": "избыток",
         "dash.hb.deficit": "дефицит",
         "dash.hb.balance": "баланс",
@@ -7844,7 +8730,7 @@
         "sub.telegram": "уведомления policy · команды /status",
         "sub.policy": "dwell · settle · streak · сохраняется с картой зон",
         "sub.warmup": "пока не ready — нет смысла повышать профиль",
-        "sub.advanced_card": "история · глубина логов · кеш карты чипов · редкие опции",
+        "sub.advanced_card": "история · учёт энергии · глубина логов · кеш карты чипов · редкие опции",
         "sub.access": "Remote · auth · LuCI proxy :8788",
         "sub.software": "версия · проверка обновлений GitHub",
         "sub.dry": "авто-зоны · Safety всегда · после галки — Сохранить",
@@ -8554,6 +9440,7 @@
       "miner",
       "chips",
       "pools",
+      "energy",
       "minerinfo",
       "map",
       "pool",
@@ -8642,7 +9529,7 @@
     }
 
     function setMinerSubtab(subId) {
-      const allowed = { miner: 1, chips: 1, pools: 1, info: 1 };
+      const allowed = { miner: 1, chips: 1, pools: 1, energy: 1, info: 1 };
       const sub = allowed[subId] ? subId : "miner";
       document.querySelectorAll("#view-miner nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
@@ -8653,6 +9540,9 @@
       document.querySelectorAll("#view-miner .subview").forEach((v) => {
         v.classList.toggle("active", v.id === viewId);
       });
+      if (sub === "energy" && typeof loadEnergyPanel === "function") {
+        void loadEnergyPanel();
+      }
       return sub;
     }
 
@@ -8793,6 +9683,9 @@
       } else if (tabId === "pools") {
         mainTab = "miner";
         minerSub = "pools";
+      } else if (tabId === "energy") {
+        mainTab = "miner";
+        minerSub = "energy";
       } else if (tabId === "minerinfo") {
         mainTab = "miner";
         minerSub = "info";
@@ -8873,6 +9766,7 @@
       }
       if (mainTab === "settings" && settingsSub === "advanced") {
         if (typeof loadHistoryConfig === "function") loadHistoryConfig();
+        if (typeof loadEnergyMeteringSettings === "function") loadEnergyMeteringSettings();
         if (typeof loadLogsDepthConfig === "function") loadLogsDepthConfig();
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadLuciProxyConfig === "function") loadLuciProxyConfig();
@@ -9028,6 +9922,7 @@
         const s = btn.dataset.subtab;
         if (s === "chips") activateTab("chips");
         else if (s === "pools") activateTab("pools");
+        else if (s === "energy") activateTab("energy");
         else if (s === "info") activateTab("minerinfo");
         else activateTab("miner");
       });
@@ -9864,7 +10759,7 @@
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "save fail");
         applyZoneMapConfig(body.config);
-        toastSuccess("Zone map saved");
+        toastSuccess(t("zone.map_saved", "Zone map saved"));
         return body.config;
       } catch (e) {
         toastError("Not saved: " + e.message);
@@ -9917,12 +10812,14 @@
       const p = selectedZonePresetMeta();
       if (!p) {
         meta.textContent = (zonePresetsCache.presets || []).length
-          ? "Select a preset or save the current map"
-          : "Presets empty — “Save as…”";
+          ? t("zone.preset_select_or_save", "Select a preset or save the current map")
+          : t("zone.preset_empty", "Presets empty — “Save as…”");
         return;
       }
       const act =
-        p.id === zonePresetsCache.active_id ? " · active" : "";
+        p.id === zonePresetsCache.active_id
+          ? " · " + t("zone.preset_active", "active")
+          : "";
       meta.textContent =
         (p.name || p.id) +
         (p.summary ? " · " + p.summary : "") +
@@ -9963,11 +10860,11 @@
     }
 
     async function zonePresetSaveAs() {
-      const name = window.prompt("New preset name:", "");
+      const name = window.prompt(t("zone.preset_name_prompt", "New preset name:"), "");
       if (name == null) return;
       const n = String(name).trim();
       if (!n) {
-        toastWarn("Name is empty");
+        toastWarn(t("zone.preset_name_empty", "Name is empty"));
         return;
       }
       try {
@@ -9987,7 +10884,7 @@
           if (sel) sel.value = body.id;
           updateZonePresetMetaLine();
         }
-        toastSuccess("Preset saved: " + n);
+        toastSuccess(tf("zone.preset_saved", { name: n }, "Preset saved: {name}"));
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -9996,14 +10893,16 @@
     async function zonePresetUpdate() {
       const p = selectedZonePresetMeta();
       if (!p) {
-        toastWarn("Select a preset first");
+        toastWarn(t("zone.preset_select_first", "Select a preset first"));
         return;
       }
       if (
         !confirm(
-          "Overwrite preset “" +
-            (p.name || p.id) +
-            "” with current zone map?"
+          tf(
+            "zone.preset_overwrite_confirm",
+            { name: p.name || p.id },
+            "Overwrite preset “{name}” with current zone map?"
+          )
         )
       )
         return;
@@ -10023,7 +10922,13 @@
         const sel = document.getElementById("zone-preset-select");
         if (sel) sel.value = p.id;
         updateZonePresetMetaLine();
-        toastSuccess("Preset updated: " + (p.name || p.id));
+        toastSuccess(
+          tf(
+            "zone.preset_updated",
+            { name: p.name || p.id },
+            "Preset updated: {name}"
+          )
+        );
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -10032,14 +10937,17 @@
     async function zonePresetRename() {
       const p = selectedZonePresetMeta();
       if (!p) {
-        toastWarn("Select a preset first");
+        toastWarn(t("zone.preset_select_first", "Select a preset first"));
         return;
       }
-      const name = window.prompt("New preset name:", p.name || "");
+      const name = window.prompt(
+        t("zone.preset_name_prompt", "New preset name:"),
+        p.name || ""
+      );
       if (name == null) return;
       const n = String(name).trim();
       if (!n) {
-        toastWarn("Name is empty");
+        toastWarn(t("zone.preset_name_empty", "Name is empty"));
         return;
       }
       try {
@@ -10059,7 +10967,7 @@
         const sel = document.getElementById("zone-preset-select");
         if (sel) sel.value = p.id;
         updateZonePresetMetaLine();
-        toastSuccess("Renamed: " + n);
+        toastSuccess(tf("zone.preset_renamed", { name: n }, "Renamed: {name}"));
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -10068,10 +10976,19 @@
     async function zonePresetDelete() {
       const p = selectedZonePresetMeta();
       if (!p) {
-        toastWarn("Select a preset first");
+        toastWarn(t("zone.preset_select_first", "Select a preset first"));
         return;
       }
-      if (!confirm("Delete preset «" + (p.name || p.id) + "»?")) return;
+      if (
+        !confirm(
+          tf(
+            "zone.preset_delete_confirm",
+            { name: p.name || p.id },
+            "Delete preset “{name}”?"
+          )
+        )
+      )
+        return;
       try {
         const body = await zonePresetApi({ action: "delete", id: p.id });
         zonePresetsCache = {
@@ -10079,7 +10996,7 @@
           active_id: body.active_id || null,
         };
         renderZonePresetSelect();
-        toastSuccess("Preset deleted");
+        toastSuccess(t("zone.preset_deleted", "Preset deleted"));
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -10088,14 +11005,16 @@
     async function zonePresetApply() {
       const p = selectedZonePresetMeta();
       if (!p) {
-        toastWarn("Select a preset first");
+        toastWarn(t("zone.preset_select_first", "Select a preset first"));
         return;
       }
       if (
         !confirm(
-          "Apply preset “" +
-            (p.name || p.id) +
-            "”?\n\nThe active zone map will be replaced."
+          tf(
+            "zone.preset_apply_confirm",
+            { name: p.name || p.id },
+            "Apply preset “{name}”?\n\nThe active zone map will be replaced."
+          )
         )
       )
         return;
@@ -10108,7 +11027,13 @@
         const sel = document.getElementById("zone-preset-select");
         if (sel && body.id) sel.value = body.id;
         updateZonePresetMetaLine();
-        toastSuccess("Preset applied: " + (body.name || p.name || p.id));
+        toastSuccess(
+          tf(
+            "zone.preset_applied",
+            { name: body.name || p.name || p.id },
+            "Preset applied: {name}"
+          )
+        );
       } catch (e) {
         toastError("Preset: " + e.message);
       }
@@ -11654,10 +12579,26 @@
       "boards",
       "heat_balance",
       "errors",
-      "history",
+      "chart_temps",
+      "chart_power",
     ];
-    const DASH_FULL_SPAN = { errors: 1, history: 1 };
-    let dashLayout = { order: DASH_DEFAULT_ORDER.slice(), hidden: [] };
+    /** Widgets that default to full width and can toggle half in edit mode */
+    const DASH_RESIZABLE = {
+      errors: 1,
+      chart_temps: 1,
+      chart_power: 1,
+      // legacy id from before chart split
+      history: 1,
+    };
+    /** Chart widgets — half-width pack: column-major reflow (↓ left, then ↓ right) */
+    const DASH_CHART_IDS = {
+      chart_temps: 1,
+      chart_power: 1,
+      history: 1,
+    };
+    /** @deprecated use DASH_RESIZABLE; kept as alias for older call sites */
+    const DASH_FULL_SPAN = DASH_RESIZABLE;
+    let dashLayout = { order: DASH_DEFAULT_ORDER.slice(), hidden: [], half: [] };
     let dashEditMode = false;
     let dashSortBound = false;
 
@@ -11665,6 +12606,32 @@
       return typeof t === "function"
         ? t("dash.widget." + id, id)
         : id;
+    }
+
+    /** Migrate old single «history» widget → chart_temps + chart_power */
+    function migrateDashHistoryWidget(order, hidden) {
+      const expand = (arr) => {
+        const out = [];
+        (arr || []).forEach((id) => {
+          if (id === "history") {
+            out.push("chart_temps", "chart_power");
+          } else {
+            out.push(id);
+          }
+        });
+        return out;
+      };
+      const uniq = (arr) => {
+        const u = [];
+        arr.forEach((id) => {
+          if (u.indexOf(id) < 0) u.push(id);
+        });
+        return u;
+      };
+      return {
+        order: uniq(expand(order)),
+        hidden: uniq(expand(hidden)),
+      };
     }
 
     function loadDashLayout() {
@@ -11675,14 +12642,86 @@
         if (!j || typeof j !== "object") return;
         let order = Array.isArray(j.order) ? j.order.map(String) : [];
         let hidden = Array.isArray(j.hidden) ? j.hidden.map(String) : [];
+        let half = Array.isArray(j.half) ? j.half.map(String) : [];
+        ({ order, hidden } = migrateDashHistoryWidget(order, hidden));
+        // migrate half: history → chart_temps + chart_power
+        if (half.indexOf("history") >= 0) {
+          half = half.filter((id) => id !== "history");
+          if (half.indexOf("chart_temps") < 0) half.push("chart_temps");
+          if (half.indexOf("chart_power") < 0) half.push("chart_power");
+        }
         // merge unknown new widgets at end
         DASH_DEFAULT_ORDER.forEach((id) => {
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
         order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
         hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
-        dashLayout = { order, hidden };
+        half = half.filter((id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        dashLayout = { order, hidden, half };
       } catch (_) { /* ignore */ }
+    }
+
+    function dashLayoutIsHalf(id) {
+      return !!(
+        dashLayout &&
+        Array.isArray(dashLayout.half) &&
+        dashLayout.half.indexOf(id) >= 0
+      );
+    }
+
+    /** Icon HTML: half = two panes, full/stretch = one wide bar */
+    function dashWidthIconHtml(half) {
+      // when already half → show stretch icon; when full → show half icon
+      if (half) {
+        return '<span class="dw-ico-full" aria-hidden="true"></span>';
+      }
+      return (
+        '<span class="dw-ico dw-ico-half" aria-hidden="true">' +
+        "<i></i><i></i></span>"
+      );
+    }
+
+    function applyDashItemSpan(el, id) {
+      if (!el || !id) return;
+      const resizable = !!DASH_RESIZABLE[id];
+      const half = resizable && dashLayoutIsHalf(id);
+      el.classList.toggle("dash-span-full", resizable && !half);
+      el.classList.toggle("dash-span-half", half);
+      const wbtn = el.querySelector(".dash-width-btn");
+      if (wbtn) {
+        wbtn.classList.toggle("is-half", half);
+        wbtn.innerHTML = dashWidthIconHtml(half);
+        const label = half
+          ? typeof t === "function"
+            ? t("dash.full_width", "Full width")
+            : "Full width"
+          : typeof t === "function"
+            ? t("dash.half_width", "Half width")
+            : "Half width";
+        wbtn.title = label;
+        wbtn.setAttribute("aria-label", label);
+      }
+    }
+
+    function toggleDashHalfWidth(id) {
+      id = String(id || "");
+      if (!id || !DASH_RESIZABLE[id]) return;
+      if (!Array.isArray(dashLayout.half)) dashLayout.half = [];
+      const i = dashLayout.half.indexOf(id);
+      if (i >= 0) dashLayout.half.splice(i, 1);
+      else dashLayout.half.push(id);
+      saveDashLayout();
+      applyDashLayout();
+      // charts need resize after column span change
+      if (id === "chart_temps" || id === "chart_power" || id === "history") {
+        requestAnimationFrame(() => {
+          try {
+            if (chartTemp) chartTemp.resize();
+            if (chartPower) chartPower.resize();
+            if (typeof drawBrush === "function") drawBrush();
+          } catch (_) { /* ignore */ }
+        });
+      }
     }
 
     function saveDashLayout() {
@@ -11695,35 +12734,164 @@
       return !!(dashLayout && Array.isArray(dashLayout.hidden) && dashLayout.hidden.indexOf(id) >= 0);
     }
 
-    function ensureDashItemTools(item) {
-      if (!item || item.querySelector(".dash-item-tools")) return;
-      const tools = document.createElement("div");
-      tools.className = "dash-item-tools";
-      tools.innerHTML =
-        '<span class="dash-grip" title="Drag" aria-hidden="true"></span>' +
-        '<button type="button" class="dash-hide-btn" title="' +
-        (typeof t === "function" ? t("dash.hide_block", "Hide block") : "Hide") +
-        '" aria-label="Hide">×</button>';
-      tools.querySelector(".dash-hide-btn").addEventListener("click", (e) => {
+    function bindDashWidthBtn(item, wbtn) {
+      if (!wbtn || wbtn._dashWidthBound) return;
+      wbtn._dashWidthBound = true;
+      wbtn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const id = item.getAttribute("data-dash-id");
-        if (!id) return;
-        hideDashWidget(id);
+        const wid = item.getAttribute("data-dash-id");
+        if (!wid) return;
+        toggleDashHalfWidth(wid);
       });
-      item.appendChild(tools);
+      wbtn.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    function ensureDashItemTools(item) {
+      if (!item) return;
+      const id = item.getAttribute("data-dash-id") || "";
+      let tools = item.querySelector(".dash-item-tools");
+      if (!tools) {
+        tools = document.createElement("div");
+        tools.className = "dash-item-tools";
+        let html =
+          '<span class="dash-grip" title="Drag" aria-hidden="true"></span>';
+        if (DASH_RESIZABLE[id]) {
+          html +=
+            '<button type="button" class="dash-width-btn" title="' +
+            (typeof t === "function"
+              ? t("dash.half_width", "Half width")
+              : "Half width") +
+            '" aria-label="Half width">' +
+            dashWidthIconHtml(false) +
+            "</button>";
+        }
+        html +=
+          '<button type="button" class="dash-hide-btn" title="' +
+          (typeof t === "function" ? t("dash.hide_block", "Hide block") : "Hide") +
+          '" aria-label="Hide">×</button>';
+        tools.innerHTML = html;
+        tools.querySelector(".dash-hide-btn").addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const wid = item.getAttribute("data-dash-id");
+          if (!wid) return;
+          hideDashWidget(wid);
+        });
+        item.appendChild(tools);
+      } else if (DASH_RESIZABLE[id] && !tools.querySelector(".dash-width-btn")) {
+        const hideBtn = tools.querySelector(".dash-hide-btn");
+        const wbtn = document.createElement("button");
+        wbtn.type = "button";
+        wbtn.className = "dash-width-btn";
+        wbtn.innerHTML = dashWidthIconHtml(false);
+        wbtn.setAttribute("aria-label", "Half width");
+        if (hideBtn) tools.insertBefore(wbtn, hideBtn);
+        else tools.appendChild(wbtn);
+      }
+      const wbtn = tools.querySelector(".dash-width-btn");
+      if (wbtn) bindDashWidthBtn(item, wbtn);
+    }
+
+    function isDashChartId(id) {
+      return !!(id && DASH_CHART_IDS[id]);
+    }
+
+    /** Unwrap chart packs so board is a flat list of .dash-item again. */
+    function flattenDashChartPacks(board) {
+      if (!board) return;
+      board.querySelectorAll(":scope > .dash-charts-pack").forEach((pack) => {
+        while (pack.firstChild) {
+          board.insertBefore(pack.firstChild, pack);
+        }
+        pack.remove();
+      });
+    }
+
+    /**
+     * Pack consecutive half-width charts into column-major flow:
+     * top→bottom left column, then top→bottom right column.
+     * Widgets / full-width stay on the main board: left→right, top→bottom (snake).
+     * In edit mode packs are flattened so drag-swap sees all .dash-item as siblings.
+     */
+    function packDashHalfCharts(board) {
+      if (!board) return;
+      flattenDashChartPacks(board);
+      // edit mode: keep flat for drag; narrow: single column is already top→bottom
+      if (dashEditMode) return;
+      const narrow =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(max-width: 520px)").matches;
+      if (narrow) return;
+
+      const children = Array.from(board.children);
+      let i = 0;
+      while (i < children.length) {
+        const el = children[i];
+        if (!el || !el.classList || !el.classList.contains("dash-item")) {
+          i++;
+          continue;
+        }
+        const id = el.getAttribute("data-dash-id") || "";
+        const half =
+          isDashChartId(id) &&
+          el.classList.contains("dash-span-half") &&
+          !el.classList.contains("is-layout-hidden") &&
+          !el.hidden;
+        if (!half) {
+          i++;
+          continue;
+        }
+        // collect consecutive half-width visible charts
+        const run = [el];
+        let j = i + 1;
+        while (j < children.length) {
+          const n = children[j];
+          if (!n || !n.classList || !n.classList.contains("dash-item")) break;
+          const nid = n.getAttribute("data-dash-id") || "";
+          const nhalf =
+            isDashChartId(nid) &&
+            n.classList.contains("dash-span-half") &&
+            !n.classList.contains("is-layout-hidden") &&
+            !n.hidden;
+          if (!nhalf) break;
+          run.push(n);
+          j++;
+        }
+        if (run.length >= 2) {
+          const pack = document.createElement("div");
+          pack.className = "dash-charts-pack";
+          // fixed row count so grid-auto-flow:column fills ↓left then ↓right
+          const rows = Math.ceil(run.length / 2);
+          pack.style.gridTemplateRows = "repeat(" + rows + ", auto)";
+          board.insertBefore(pack, run[0]);
+          run.forEach((ch) => {
+            pack.appendChild(ch);
+          });
+          children.splice(i, run.length, pack);
+        }
+        i++;
+      }
     }
 
     function applyDashLayout() {
       const board = document.getElementById("dash-board");
       if (!board) return;
+      flattenDashChartPacks(board);
       const items = {};
       board.querySelectorAll(".dash-item[data-dash-id]").forEach((el) => {
         const id = el.getAttribute("data-dash-id");
         if (!id) return;
         items[id] = el;
         ensureDashItemTools(el);
-        if (DASH_FULL_SPAN[id]) el.classList.add("dash-span-full");
+        applyDashItemSpan(el, id);
+        // clear any stale inline grid placement from older logic
+        if (el.style) {
+          el.style.gridColumn = "";
+          el.style.gridRow = "";
+        }
       });
       // ensure every known widget is in order exactly once
       let order = Array.isArray(dashLayout.order) ? dashLayout.order.slice() : [];
@@ -11736,7 +12904,7 @@
         if (uniq.indexOf(id) < 0) uniq.push(id);
       });
       dashLayout.order = uniq;
-      // reorder DOM
+      // reorder DOM — widgets: source order = row snake (L→R, T→B)
       uniq.forEach((id) => {
         if (items[id]) board.appendChild(items[id]);
       });
@@ -11769,6 +12937,8 @@
           errItem.hidden = true;
         }
       }
+      // half charts: column-major pack (↓ left, then ↓ right)
+      packDashHalfCharts(board);
       updateDashAddButton();
     }
 
@@ -11799,6 +12969,18 @@
         el.hidden = false;
         if (el.style) el.style.display = "";
       }
+      // charts need resize after unhide
+      if (id === "chart_temps" || id === "chart_power" || id === "history") {
+        try {
+          if (typeof loadHistoryCharts === "function") loadHistoryCharts();
+          requestAnimationFrame(() => {
+            try {
+              if (chartTemp) chartTemp.resize();
+              if (chartPower) chartPower.resize();
+            } catch (_) { /* ignore */ }
+          });
+        } catch (_) { /* ignore */ }
+      }
       // if errors re-shown and has rows, ensure panel visible
       if (id === "errors") {
         const panel = document.getElementById("panel-miner-errors");
@@ -11827,10 +13009,14 @@
         if (uniq.indexOf(id) < 0) uniq.push(id);
       });
       dashLayout.order = uniq;
-      // never drop hidden flags here
+      // never drop hidden / half flags here
       if (!Array.isArray(dashLayout.hidden)) dashLayout.hidden = [];
       dashLayout.hidden = dashLayout.hidden.filter(
         (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0
+      );
+      if (!Array.isArray(dashLayout.half)) dashLayout.half = [];
+      dashLayout.half = dashLayout.half.filter(
+        (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
       );
       saveDashLayout();
     }
@@ -11921,8 +13107,14 @@
             : "Edit";
         editBtn.textContent = dashEditMode ? "✓" : "✎";
       }
-      // enable drag only in edit mode
+      // edit: flatten chart packs so drag-swap has flat siblings;
+      // leave edit: re-apply layout (row snake widgets + column pack half charts)
       if (board) {
+        if (dashEditMode) {
+          flattenDashChartPacks(board);
+        } else {
+          applyDashLayout();
+        }
         board.querySelectorAll(".dash-item").forEach((el) => {
           el.setAttribute("draggable", dashEditMode ? "true" : "false");
         });
@@ -11930,9 +13122,11 @@
       // In edit mode, show empty errors slot so it can be reordered/hidden
       if (dashEditMode) {
         const errItem = board && board.querySelector('.dash-item[data-dash-id="errors"]');
-        if (errItem && !dashLayoutIsHidden("errors")) errItem.hidden = false;
+        if (errItem && !dashLayoutIsHidden("errors")) {
+          errItem.classList.remove("is-layout-hidden");
+          errItem.hidden = false;
+        }
       } else {
-        applyDashLayout();
         // re-collapse empty errors if no active faults
         const panel = document.getElementById("panel-miner-errors");
         const tbody = document.getElementById("miner-err-rows");
@@ -11991,7 +13185,10 @@
         }
         const item = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
         if (!item || !board.contains(item)) return;
-        if (e.target.closest && e.target.closest("button, input, select, a, .dash-hide-btn")) {
+        if (
+          e.target.closest &&
+          e.target.closest("button, input, select, a, .dash-hide-btn, .dash-width-btn")
+        ) {
           e.preventDefault();
           return;
         }
@@ -12054,6 +13251,51 @@
       });
     }
 
+    let dashLiveReady = false;
+
+    function setDashStructure(on) {
+      const board = document.getElementById("dash-board");
+      if (!board || dashLiveReady) return;
+      board.classList.toggle("is-dash-structure", !!on);
+      if (on) board.classList.remove("is-dash-loading");
+      board.setAttribute("aria-busy", on || board.classList.contains("is-dash-loading") ? "true" : "false");
+    }
+
+    function setDashLoading(on) {
+      const board = document.getElementById("dash-board");
+      if (!board) return;
+      // after first live, never show skeleton again
+      if (dashLiveReady) {
+        board.classList.remove("is-dash-loading", "is-dash-structure");
+        board.setAttribute("aria-busy", "false");
+        return;
+      }
+      if (on) {
+        board.classList.remove("is-dash-structure");
+        board.classList.add("is-dash-loading");
+        board.setAttribute("aria-busy", "true");
+      } else {
+        board.classList.remove("is-dash-loading");
+        board.setAttribute(
+          "aria-busy",
+          board.classList.contains("is-dash-structure") ? "true" : "false"
+        );
+      }
+    }
+
+    function markDashLiveReady() {
+      dashLiveReady = true;
+      const board = document.getElementById("dash-board");
+      if (board) {
+        board.classList.remove("is-dash-loading", "is-dash-structure");
+        board.setAttribute("aria-busy", "false");
+      }
+    }
+    // failsafe: never leave structure/skeleton forever if /api/live hangs
+    setTimeout(() => {
+      if (!dashLiveReady) markDashLiveReady();
+    }, 8000);
+
     function initDashLayout() {
       loadDashLayout();
       applyDashLayout();
@@ -12074,7 +13316,31 @@
         if (wrap && wrap.contains(e.target)) return;
         hideDashAddMenu();
       });
+      // reflow chart pack (column vs row) when window width crosses breakpoints
+      if (!window.__dashPackResizeBound) {
+        window.__dashPackResizeBound = true;
+        let t = null;
+        window.addEventListener("resize", () => {
+          if (t) clearTimeout(t);
+          t = setTimeout(() => {
+            const board = document.getElementById("dash-board");
+            if (board && typeof packDashHalfCharts === "function") {
+              packDashHalfCharts(board);
+            }
+          }, 120);
+        });
+      }
       setDashEditMode(false);
+      // stage 1: layout shells already (is-dash-structure from HTML / apply)
+      // stage 2: after paint, start shimmer loading on those shells
+      if (!dashLiveReady) {
+        setDashStructure(true);
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (!dashLiveReady) setDashLoading(true);
+          });
+        });
+      }
     }
 
     /**
@@ -12182,7 +13448,27 @@
         sub.textContent = rLastBoardNote;
       }
     }
-    let rLastBoardNote = "devs[].Temperature · Upfreq Complete";
+    let rLastBoardNote = "Upfreq Complete";
+
+    /** Hashboard strip subtitle: Model · Upfreq Complete · HB layout note */
+    function formatBoardLayoutNote(r) {
+      const parts = [];
+      const model =
+        (r && (r.miner_type || r.model)) ||
+        (typeof live !== "undefined" && live && (live.miner_type || live.model)) ||
+        "";
+      if (model) parts.push(String(model));
+      parts.push(
+        typeof t === "function" ? t("boards.sub_upfreq", "Upfreq Complete") : "Upfreq Complete"
+      );
+      const rawNote = (r && r.board_layout_note) || "";
+      if (rawNote) {
+        let note = String(rawNote).trim();
+        if (note && !/^HB\b/i.test(note)) note = "HB " + note;
+        if (note) parts.push(note);
+      }
+      return parts.join(" · ");
+    }
 
     document.addEventListener("poolheat:lang", () => {
       try {
@@ -12196,6 +13482,12 @@
           lab.textContent = open
             ? t("pw.settings_hide", "Hide power settings")
             : t("pw.settings", "Power settings");
+        }
+        // refresh board strip subtitle (model · Upfreq · HB…)
+        if (typeof live !== "undefined" && live) {
+          rLastBoardNote = formatBoardLayoutNote(live);
+          const sub = document.getElementById("boards-pcb-sub");
+          if (sub) sub.textContent = rLastBoardNote;
         }
       } catch (_) { /* ignore */ }
     });
@@ -12302,15 +13594,7 @@
 
     function updateTempDisplay(r) {
       const nB = resolveBoardCount(r);
-      if (r && r.board_layout_note) {
-        rLastBoardNote =
-          "devs[].Temperature · Upfreq Complete" +
-          (r.miner_type ? " · " + r.miner_type : "") +
-          (r.board_layout_note ? " · " + r.board_layout_note : "");
-      } else if (r && r.miner_type) {
-        rLastBoardNote =
-          "devs[].Temperature · Upfreq Complete · " + r.miner_type;
-      }
+      if (r) rLastBoardNote = formatBoardLayoutNote(r);
       ensureBoardsGrid(nB);
       // full sensor catalog from live.temps (model-aware)
       try {
@@ -12813,6 +14097,685 @@
       const b = await loadMiningPools(true);
       if (b && b.ok) toastSuccess("Pools: " + (b.count || (b.pools && b.pools.length) || 0));
       else toastError("Pools: " + ((b && b.error) || "error"));
+    });
+
+    /* ── Energy accounting (Miner → Energy) ──────────────────────── */
+    let energyCache = null;
+
+    function energySym(cfg) {
+      return (cfg && (cfg.currency_symbol || cfg.currency)) || "₽";
+    }
+
+    function fmtEnergyKwh(v) {
+      if (v == null || !Number.isFinite(Number(v))) return "—";
+      const n = Number(v);
+      if (n >= 100) return n.toFixed(1);
+      if (n >= 10) return n.toFixed(2);
+      return n.toFixed(3);
+    }
+
+    function fmtEnergyCost(v, sym) {
+      if (v == null || !Number.isFinite(Number(v))) return "—";
+      const n = Number(v);
+      const s = n >= 100 ? n.toFixed(0) : n.toFixed(2);
+      return s + "\u00a0" + (sym || "₽");
+    }
+
+    function normalizeEnergyMode(mode) {
+      const m = String(mode || "1zone")
+        .toLowerCase()
+        .replace(/-/g, "_")
+        .replace(/\s+/g, "");
+      if (
+        m === "2zone" ||
+        m === "2" ||
+        m === "day_night" ||
+        m === "daynight" ||
+        m === "tou"
+      )
+        return "2zone";
+      if (m === "3zone" || m === "3" || m === "three" || m === "triple") return "3zone";
+      return "1zone";
+    }
+
+    function syncEnergyTariffUi() {
+      const mode = normalizeEnergyMode(
+        document.getElementById("energy-tariff-mode")?.value || "1zone"
+      );
+      const z1 = document.getElementById("energy-1zone-fields");
+      const z2 = document.getElementById("energy-2zone-fields");
+      const z3 = document.getElementById("energy-3zone-fields");
+      if (z1) z1.hidden = mode !== "1zone";
+      if (z2) z2.hidden = mode !== "2zone";
+      if (z3) z3.hidden = mode !== "3zone";
+    }
+
+    function setTimeInput(id, val, fallback) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const v = String(val || fallback || "00:00").slice(0, 5);
+      el.value = v.length >= 4 ? v : fallback || "00:00";
+    }
+
+    function fillEnergyConfigForm(cfg) {
+      if (!cfg) return;
+      const mode = normalizeEnergyMode(cfg.tariff_mode);
+      const modeEl = document.getElementById("energy-tariff-mode");
+      if (modeEl) modeEl.value = mode;
+      const cur = document.getElementById("energy-currency");
+      if (cur) cur.value = cfg.currency || "RUB";
+      const sym = document.getElementById("energy-symbol");
+      if (sym) sym.value = cfg.currency_symbol || "₽";
+      const p = document.getElementById("energy-price");
+      if (p) p.value = cfg.price_kwh != null ? cfg.price_kwh : 5;
+      const pd = document.getElementById("energy-price-day");
+      if (pd) pd.value = cfg.price_day_kwh != null ? cfg.price_day_kwh : 6;
+      const pn = document.getElementById("energy-price-night");
+      if (pn) pn.value = cfg.price_night_kwh != null ? cfg.price_night_kwh : 3;
+      const pn3 = document.getElementById("energy-price-night-3");
+      if (pn3) pn3.value = cfg.price_night_kwh != null ? cfg.price_night_kwh : 3;
+      const pp = document.getElementById("energy-price-peak");
+      if (pp) pp.value = cfg.price_peak_kwh != null ? cfg.price_peak_kwh : 8;
+      const pm = document.getElementById("energy-price-mid");
+      if (pm) pm.value = cfg.price_mid_kwh != null ? cfg.price_mid_kwh : 6;
+      setTimeInput("energy-night-start", cfg.night_start, "23:00");
+      setTimeInput("energy-night-end", cfg.night_end, "07:00");
+      setTimeInput("energy-night-start-3", cfg.night_start, "23:00");
+      setTimeInput("energy-night-end-3", cfg.night_end, "07:00");
+      setTimeInput("energy-peak1-start", cfg.peak1_start, "07:00");
+      setTimeInput("energy-peak1-end", cfg.peak1_end, "10:00");
+      setTimeInput("energy-peak2-start", cfg.peak2_start, "17:00");
+      setTimeInput("energy-peak2-end", cfg.peak2_end, "21:00");
+      syncEnergyTariffUi();
+    }
+
+    function collectEnergyConfigForm() {
+      const mode = normalizeEnergyMode(
+        document.getElementById("energy-tariff-mode")?.value || "1zone"
+      );
+      const payload = {
+        tariff_mode: mode,
+        currency: (document.getElementById("energy-currency")?.value || "RUB").trim(),
+        currency_symbol: (document.getElementById("energy-symbol")?.value || "₽").trim(),
+        price_kwh: Number(document.getElementById("energy-price")?.value),
+        price_day_kwh: Number(document.getElementById("energy-price-day")?.value),
+        price_peak_kwh: Number(document.getElementById("energy-price-peak")?.value),
+        price_mid_kwh: Number(document.getElementById("energy-price-mid")?.value),
+        peak1_start: document.getElementById("energy-peak1-start")?.value || "07:00",
+        peak1_end: document.getElementById("energy-peak1-end")?.value || "10:00",
+        peak2_start: document.getElementById("energy-peak2-start")?.value || "17:00",
+        peak2_end: document.getElementById("energy-peak2-end")?.value || "21:00",
+      };
+      if (mode === "3zone") {
+        payload.price_night_kwh = Number(
+          document.getElementById("energy-price-night-3")?.value
+        );
+        payload.night_start =
+          document.getElementById("energy-night-start-3")?.value || "23:00";
+        payload.night_end =
+          document.getElementById("energy-night-end-3")?.value || "07:00";
+      } else {
+        payload.price_night_kwh = Number(
+          document.getElementById("energy-price-night")?.value
+        );
+        payload.night_start =
+          document.getElementById("energy-night-start")?.value || "23:00";
+        payload.night_end =
+          document.getElementById("energy-night-end")?.value || "07:00";
+      }
+      return payload;
+    }
+
+    function energyInRange(mins, startM, endM) {
+      if (startM === endM) return false;
+      if (startM < endM) return mins >= startM && mins < endM;
+      return mins >= startM || mins < endM;
+    }
+
+    function parseHm(s) {
+      const p = String(s || "0:0").split(":");
+      return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0);
+    }
+
+    function energyZoneNow(cfg) {
+      const mode = normalizeEnergyMode(cfg && cfg.tariff_mode);
+      if (mode === "1zone") return "flat";
+      const now = new Date();
+      const mins = now.getHours() * 60 + now.getMinutes();
+      const ns = parseHm(cfg.night_start);
+      const ne = parseHm(cfg.night_end);
+      if (mode === "2zone") return energyInRange(mins, ns, ne) ? "night" : "day";
+      if (energyInRange(mins, ns, ne)) return "night";
+      const p1s = parseHm(cfg.peak1_start);
+      const p1e = parseHm(cfg.peak1_end);
+      const p2s = parseHm(cfg.peak2_start);
+      const p2e = parseHm(cfg.peak2_end);
+      if (energyInRange(mins, p1s, p1e) || energyInRange(mins, p2s, p2e)) return "peak";
+      return "mid";
+    }
+
+    function energyPriceForZone(cfg, zone) {
+      if (zone === "flat") return cfg.price_kwh;
+      if (zone === "day") return cfg.price_day_kwh;
+      if (zone === "night") return cfg.price_night_kwh;
+      if (zone === "peak") return cfg.price_peak_kwh;
+      if (zone === "mid") return cfg.price_mid_kwh;
+      return cfg.price_kwh;
+    }
+
+    function tariffNowLabel(cfg) {
+      if (!cfg) return "—";
+      const sym = energySym(cfg);
+      const zone = energyZoneNow(cfg);
+      const price = energyPriceForZone(cfg, zone);
+      const tagKey =
+        zone === "flat"
+          ? "energy.flat"
+          : zone === "day"
+            ? "energy.day"
+            : zone === "night"
+              ? "energy.night"
+              : zone === "peak"
+                ? "energy.peak"
+                : "energy.mid";
+      const tag =
+        typeof t === "function"
+          ? t(tagKey, zone)
+          : zone;
+      if (zone === "flat") return fmtEnergyCost(price, sym) + "/kWh";
+      return fmtEnergyCost(price, sym) + "/kWh · " + tag;
+    }
+
+    function fillEnergyMeteringForm(cfg) {
+      if (!cfg) return;
+      const en = document.getElementById("energy-metering-enabled");
+      if (en) en.checked = cfg.metering_enabled !== false;
+      const at = document.getElementById("energy-attach-history");
+      if (at) at.checked = cfg.attach_to_history !== false;
+      const integ = document.getElementById("energy-integration");
+      if (integ) integ.value = cfg.integration === "trap" ? "trap" : "hold";
+      const gap = document.getElementById("energy-max-gap");
+      if (gap) gap.value = cfg.max_gap_sec != null ? cfg.max_gap_sec : 900;
+      const ret = document.getElementById("energy-retention");
+      if (ret) ret.value = cfg.retention_days != null ? cfg.retention_days : 365;
+      const iv = document.getElementById("energy-meter-interval");
+      if (iv) iv.value = cfg.metering_interval_sec != null ? cfg.metering_interval_sec : 30;
+    }
+
+    function collectEnergyMeteringForm() {
+      return {
+        metering_enabled: !!document.getElementById("energy-metering-enabled")?.checked,
+        attach_to_history: !!document.getElementById("energy-attach-history")?.checked,
+        integration: document.getElementById("energy-integration")?.value || "hold",
+        max_gap_sec: Number(document.getElementById("energy-max-gap")?.value),
+        retention_days: Number(document.getElementById("energy-retention")?.value),
+        metering_interval_sec: Number(document.getElementById("energy-meter-interval")?.value),
+      };
+    }
+
+    async function loadEnergyMeteringSettings() {
+      const st = document.getElementById("energy-metering-status");
+      try {
+        const res = await fetch("/api/energy/config", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "fail");
+        fillEnergyMeteringForm(body.config || {});
+        const meters = body.meters || [];
+        const virt = meters.find((m) => m.id === "virtual_miner") || meters[0];
+        if (st) {
+          st.textContent =
+            "energy.db · virtual: " +
+            (virt && virt.total_kwh != null ? fmtEnergyKwh(virt.total_kwh) + " kWh" : "—") +
+            (virt && virt.last_power_w != null
+              ? " · hold " + Math.round(virt.last_power_w) + " W"
+              : "") +
+            (body.energy_db ? " · " + body.energy_db : "");
+        }
+      } catch (e) {
+        if (st) st.textContent = "error: " + (e.message || e);
+      }
+    }
+
+    async function saveEnergyMeteringSettings() {
+      const payload = collectEnergyMeteringForm();
+      try {
+        const res = await fetch("/api/energy/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        fillEnergyMeteringForm(body.config || payload);
+        await loadEnergyMeteringSettings();
+        toastSuccess(
+          typeof t === "function"
+            ? t("toast.energy_metering_saved", "Energy metering saved")
+            : "Energy metering saved"
+        );
+      } catch (e) {
+        toastError("Energy metering: " + (e.message || e));
+      }
+    }
+
+    async function resetEnergyMeter() {
+      if (
+        !confirm(
+          typeof t === "function"
+            ? t(
+                "confirm.energy_reset",
+                "Reset virtual energy counter (total kWh → 0)? Samples can be cleared too if confirmed."
+              )
+            : "Reset virtual energy counter?"
+        )
+      )
+        return;
+      const clearSamples = confirm(
+        typeof t === "function"
+          ? t("confirm.energy_clear_samples", "Also delete energy samples history?")
+          : "Also delete energy samples history?"
+      );
+      try {
+        const res = await fetch("/api/energy/meter/reset", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            meter_id: "virtual_miner",
+            clear_samples: clearSamples,
+          }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "reset fail");
+        await loadEnergyMeteringSettings();
+        if (typeof loadEnergyPanel === "function") await loadEnergyPanel();
+        toastSuccess(
+          typeof t === "function"
+            ? t("toast.energy_meter_reset", "Virtual counter reset")
+            : "Virtual counter reset"
+        );
+      } catch (e) {
+        toastError("Energy reset: " + (e.message || e));
+      }
+    }
+
+    function renderEnergySummary(body) {
+      energyCache = body;
+      const cfg = (body && body.config) || {};
+      const sym = energySym(cfg);
+      const liveEl = document.getElementById("energy-live-w");
+      if (liveEl) {
+        const w = body && body.live_power_w;
+        liveEl.textContent =
+          w != null && Number.isFinite(Number(w)) ? Math.round(Number(w)).toString() : "—";
+      }
+      const tn = document.getElementById("energy-tariff-now");
+      if (tn) tn.textContent = tariffNowLabel(cfg);
+      const vt = document.getElementById("energy-virtual-total");
+      const virt = (body && body.virtual_meter) || {};
+      if (vt) {
+        vt.textContent =
+          virt.total_kwh != null && Number.isFinite(Number(virt.total_kwh))
+            ? fmtEnergyKwh(virt.total_kwh)
+            : "—";
+      }
+      const periods = (body && body.periods) || {};
+      document.querySelectorAll(".energy-period-card[data-period]").forEach((card) => {
+        const key = card.getAttribute("data-period");
+        const p = periods[key] || {};
+        const kwhEl = card.querySelector("[data-kwh]");
+        const costEl = card.querySelector("[data-cost]");
+        const avgEl = card.querySelector("[data-avg]");
+        if (kwhEl) kwhEl.textContent = fmtEnergyKwh(p.kwh);
+        if (costEl) costEl.textContent = fmtEnergyCost(p.cost, sym);
+        if (avgEl) {
+          if (p.avg_w != null && Number.isFinite(Number(p.avg_w))) {
+            const tpl =
+              typeof t === "function" ? t("energy.avg_w", "avg {v} W") : "avg {v} W";
+            avgEl.textContent = tpl.replace("{v}", Math.round(Number(p.avg_w)));
+          } else {
+            avgEl.textContent = "";
+          }
+        }
+      });
+
+      const st = document.getElementById("energy-status");
+      if (st) {
+        const edb = (body && body.energy_db) || {};
+        const meters = (body && body.meters) || [];
+        const phys = meters.filter((m) => m && m.type === "physical").length;
+        const en = edb.metering_enabled === false ? "off" : "on";
+        const integ = edb.integration || (cfg && cfg.integration) || "hold";
+        const n = edb.samples != null ? edb.samples : "—";
+        st.textContent =
+          "metering " +
+          en +
+          " · energy.db · " +
+          integ +
+          " · samples " +
+          n +
+          " · virtual" +
+          (phys > 0 ? " · physical: " + phys : " · physical: — (reserved)");
+      }
+    }
+
+    /* ── Energy consumption chart (Miner → Energy) ─────────────── */
+    let chartEnergy = null;
+    let energyChartBucket = "hour";
+    let energyChartHours = 48;
+
+    function ensureEnergyChart() {
+      const el = document.getElementById("chart-energy");
+      if (!el || typeof Chart === "undefined") return null;
+      if (chartEnergy) return chartEnergy;
+      try {
+        chartDefaults();
+      } catch (_) { /* ignore */ }
+      const lblK =
+        typeof t === "function" ? t("energy.chart_kwh", "kWh") : "kWh";
+      const lblP =
+        typeof t === "function"
+          ? t("energy.chart_power", "Avg power W")
+          : "Avg power W";
+      chartEnergy = new Chart(el, {
+        type: "bar",
+        data: {
+          labels: [],
+          datasets: [
+            {
+              type: "bar",
+              label: lblK,
+              data: [],
+              backgroundColor: "rgba(61, 156, 240, 0.55)",
+              borderColor: "rgba(61, 156, 240, 0.9)",
+              borderWidth: 1,
+              borderRadius: 3,
+              yAxisID: "y",
+              order: 2,
+              maxBarThickness: 36,
+            },
+            {
+              type: "line",
+              label: lblP,
+              data: [],
+              borderColor: "#3ecf8e",
+              backgroundColor: "transparent",
+              yAxisID: "y1",
+              tension: 0.2,
+              pointRadius: 2.5,
+              pointHoverRadius: 4,
+              borderWidth: 2,
+              fill: false,
+              order: 1,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: {
+              labels: { boxWidth: 12, boxHeight: 12, color: "#8b9bb0" },
+            },
+            tooltip: {
+              callbacks: {
+                title: (items) => {
+                  if (!items.length) return "";
+                  const i = items[0].dataIndex;
+                  const pts = chartEnergy && chartEnergy.$energyPts;
+                  if (pts && pts[i] && pts[i].label) return pts[i].label;
+                  return items[0].label || "";
+                },
+                label: (ctx) => {
+                  const v = ctx.parsed.y;
+                  if (v == null || !Number.isFinite(v)) return ctx.dataset.label + ": —";
+                  if (ctx.dataset.yAxisID === "y1") {
+                    return ctx.dataset.label + ": " + Math.round(v) + " W";
+                  }
+                  return (
+                    ctx.dataset.label +
+                    ": " +
+                    (v >= 10 ? v.toFixed(2) : v.toFixed(3)) +
+                    " kWh"
+                  );
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              ticks: {
+                maxRotation: 45,
+                minRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 16,
+                color: "#8b9bb0",
+                font: { size: 10 },
+              },
+              grid: { color: "rgba(42,53,68,0.35)" },
+            },
+            y: {
+              position: "left",
+              beginAtZero: true,
+              title: { display: true, text: "kWh", color: "#8b9bb0" },
+              ticks: { color: "#8b9bb0" },
+              grid: { color: "rgba(42,53,68,0.5)" },
+            },
+            y1: {
+              position: "right",
+              beginAtZero: true,
+              title: { display: true, text: "W", color: "#8b9bb0" },
+              ticks: { color: "#8b9bb0" },
+              grid: { drawOnChartArea: false },
+            },
+          },
+        },
+      });
+      return chartEnergy;
+    }
+
+    function energyChartDefaultsForBucket(bucket) {
+      const b = bucket || "hour";
+      if (b === "day") return 30 * 24;
+      if (b === "week") return 16 * 7 * 24;
+      if (b === "month") return 24 * 30;
+      return 48; // hours
+    }
+
+    function syncEnergyChartRangeOptions(bucket) {
+      const sel = document.getElementById("energy-chart-range");
+      if (!sel) return;
+      const presets = {
+        hour: [
+          [24, "1d"],
+          [48, "2d"],
+          [168, "7d"],
+          [720, "30d"],
+        ],
+        day: [
+          [168, "7d"],
+          [720, "30d"],
+          [2160, "90d"],
+          [4320, "180d"],
+        ],
+        week: [
+          [720, "30d"],
+          [2160, "90d"],
+          [4320, "180d"],
+          [8760, "1y"],
+        ],
+        month: [
+          [2160, "90d"],
+          [4320, "180d"],
+          [8760, "1y"],
+          [17520, "2y"],
+        ],
+      };
+      const list = presets[bucket] || presets.hour;
+      const cur = String(sel.value || "");
+      sel.innerHTML = "";
+      let keep = false;
+      list.forEach(([h, lab]) => {
+        const o = document.createElement("option");
+        o.value = String(h);
+        o.textContent = lab;
+        if (String(h) === cur) keep = true;
+        sel.appendChild(o);
+      });
+      if (keep) sel.value = cur;
+      else {
+        const defH = energyChartDefaultsForBucket(bucket);
+        const match = list.find(([h]) => h === defH) || list[0];
+        sel.value = String(match[0]);
+        energyChartHours = Number(match[0]);
+      }
+    }
+
+    function renderEnergyChart(body) {
+      const ch = ensureEnergyChart();
+      if (!ch) return;
+      const pts = (body && body.points) || [];
+      ch.$energyPts = pts;
+      const labels = pts.map((p) => p.label || "");
+      const kwh = pts.map((p) =>
+        p.kwh != null && Number.isFinite(Number(p.kwh)) ? Number(p.kwh) : 0
+      );
+      const avgW = pts.map((p) =>
+        p.avg_power_w != null && Number.isFinite(Number(p.avg_power_w))
+          ? Number(p.avg_power_w)
+          : null
+      );
+      const lblK =
+        typeof t === "function" ? t("energy.chart_kwh", "kWh") : "kWh";
+      const lblP =
+        typeof t === "function"
+          ? t("energy.chart_power", "Avg power W")
+          : "Avg power W";
+      ch.data.labels = labels;
+      ch.data.datasets[0].label = lblK;
+      ch.data.datasets[0].data = kwh;
+      ch.data.datasets[1].label = lblP;
+      ch.data.datasets[1].data = avgW;
+      ch.update("none");
+      const meta = document.getElementById("energy-chart-meta");
+      if (meta) {
+        const n = body && body.count != null ? body.count : "—";
+        const ret = body && body.returned != null ? body.returned : pts.length;
+        const b = (body && body.bucket) || energyChartBucket;
+        const h = body && body.hours != null ? body.hours : energyChartHours;
+        meta.textContent =
+          "samples " +
+          n +
+          " · buckets " +
+          ret +
+          " · " +
+          b +
+          " · " +
+          h +
+          "h" +
+          (body && body.integration ? " · " + body.integration : "");
+      }
+    }
+
+    async function loadEnergyChart() {
+      const bucketEl = document.getElementById("energy-chart-bucket");
+      const rangeEl = document.getElementById("energy-chart-range");
+      if (bucketEl) energyChartBucket = bucketEl.value || "hour";
+      if (rangeEl) energyChartHours = Number(rangeEl.value) || energyChartHours || 48;
+      const meta = document.getElementById("energy-chart-meta");
+      if (meta) meta.textContent = "…";
+      try {
+        const q =
+          "/api/energy/series?bucket=" +
+          encodeURIComponent(energyChartBucket) +
+          "&hours=" +
+          encodeURIComponent(energyChartHours) +
+          "&max=500";
+        const res = await fetch(q, { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "series fail");
+        renderEnergyChart(body);
+        return body;
+      } catch (e) {
+        if (meta) meta.textContent = "error: " + (e.message || e);
+        return null;
+      }
+    }
+
+    function bindEnergyChartControls() {
+      const bucketEl = document.getElementById("energy-chart-bucket");
+      const rangeEl = document.getElementById("energy-chart-range");
+      if (bucketEl && !bucketEl._bound) {
+        bucketEl._bound = true;
+        bucketEl.addEventListener("change", () => {
+          energyChartBucket = bucketEl.value || "hour";
+          syncEnergyChartRangeOptions(energyChartBucket);
+          void loadEnergyChart();
+        });
+      }
+      if (rangeEl && !rangeEl._bound) {
+        rangeEl._bound = true;
+        rangeEl.addEventListener("change", () => {
+          energyChartHours = Number(rangeEl.value) || 48;
+          void loadEnergyChart();
+        });
+      }
+      syncEnergyChartRangeOptions(energyChartBucket || "hour");
+    }
+
+    async function loadEnergyPanel() {
+      const st = document.getElementById("energy-status");
+      if (st) st.textContent = "…";
+      bindEnergyChartControls();
+      try {
+        const res = await fetch("/api/energy", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "energy fail");
+        fillEnergyConfigForm(body.config || {});
+        renderEnergySummary(body);
+        void loadEnergyChart();
+        return body;
+      } catch (e) {
+        if (st) st.textContent = "error: " + (e.message || e);
+        toastError("Energy: " + (e.message || e));
+        return null;
+      }
+    }
+
+    async function saveEnergyConfig() {
+      const payload = collectEnergyConfigForm();
+      try {
+        const res = await fetch("/api/energy/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        fillEnergyConfigForm(body.config || payload);
+        if (body.summary) renderEnergySummary(body.summary);
+        else await loadEnergyPanel();
+        toastSuccess(
+          typeof t === "function" ? t("toast.energy_saved", "Energy tariff saved") : "Energy tariff saved"
+        );
+      } catch (e) {
+        toastError("Energy: " + (e.message || e));
+      }
+    }
+
+    document.getElementById("btn-energy-refresh")?.addEventListener("click", () => {
+      void loadEnergyPanel();
+    });
+    document.getElementById("btn-energy-save")?.addEventListener("click", () => {
+      void saveEnergyConfig();
+    });
+    document.getElementById("energy-tariff-mode")?.addEventListener("change", syncEnergyTariffUi);
+    document.getElementById("btn-energy-metering-save")?.addEventListener("click", () => {
+      void saveEnergyMeteringSettings();
+    });
+    document.getElementById("btn-energy-meter-reset")?.addEventListener("click", () => {
+      void resetEnergyMeter();
     });
 
     /* ── Pool presets ───────────────────────────────────────────── */
@@ -13574,7 +15537,12 @@
     async function fetchLive(manual) {
       if (!useLive.checked) {
         lastLiveStatusTime = new Date().toLocaleTimeString();
-        recompute();
+        try {
+          recompute();
+        } catch (e) {
+          console.warn("recompute", e);
+        }
+        markDashLiveReady();
         return;
       }
       const tstr = new Date().toLocaleTimeString();
@@ -13597,6 +15565,8 @@
               window.__poolheatModelProfile = body.model;
             }
           } catch (_) { /* ignore */ }
+          // drop skeleton as soon as we have a payload (before heavy recompute/charts)
+          markDashLiveReady();
           if (body.ok === false || !res.ok) {
             liveError = body.error || ("HTTP " + res.status);
             if (manual) toastWarn("Offline · " + minerHostLabel() + (liveError ? " · " + liveError : ""));
@@ -13607,15 +15577,22 @@
         } else {
           live = { ok: false, host: minerHostLabel(), error: "HTTP " + res.status };
           liveError = "HTTP " + res.status;
+          markDashLiveReady();
           if (manual) toastWarn("Offline · HTTP " + res.status);
         }
       } catch (e) {
         // poolheat UI itself unreachable (network) — still Offline, not SIM
         liveError = String(e.message || e);
         live = { ok: false, host: minerHostLabel(), error: liveError };
+        markDashLiveReady();
         if (manual) toastWarn("Offline · " + liveError);
       }
-      recompute();
+      try {
+        recompute();
+      } catch (e) {
+        console.warn("recompute", e);
+        markDashLiveReady();
+      }
       // Policy control runs server-side (serve.py policy_loop) — no client auto-write
       if (live && live.policy && live.policy.last_event) {
         const ev = live.policy.last_event;
@@ -13878,24 +15855,107 @@
       restartLivePollTimer();
     });
 
-    /* ── history / charts (hash2cash-style zoom + brush + scroll) ── */
+    /* ── history / charts (zoom presets + navigators; optional sync) ── */
     let chartTemp = null;
     let chartPower = null;
     let histPoints = [];
     let statusBands = []; // [{start,end,type,label}] offline | suspend | upfreq
     let fullStart = 0; // unix sec
     let fullEnd = 0;
-    let view = { start: 0, end: 0 }; // unix sec
+    // Per-chart time window; when sync is on both stay equal
+    let viewByKey = {
+      temps: { start: 0, end: 0 },
+      power: { start: 0, end: 0 },
+    };
+    let zoomByKey = { temps: "1d", power: "1d" };
     let loadHours = 48;
     let brushBound = false;
+    const CHART_SYNC_KEY = "poolheat_chart_sync_v1";
 
-    const ZOOM_HOURS = { "1h": 1, "6h": 6, "12h": 12, "1d": 24, "2d": 48, "7d": 168 };
+    const ZOOM_HOURS = {
+      "1h": 1,
+      "6h": 6,
+      "12h": 12,
+      "1d": 24,
+      "1w": 168,
+      "7d": 168, // legacy alias
+      "2d": 48, // legacy
+      all: 168,
+    };
     const ZOOM_SEC = {
-      "1h": 3600, "6h": 6 * 3600, "12h": 12 * 3600,
-      "1d": 86400, "2d": 2 * 86400, "7d": 7 * 86400,
+      "1h": 3600,
+      "6h": 6 * 3600,
+      "12h": 12 * 3600,
+      "1d": 86400,
+      "1w": 7 * 86400,
+      "7d": 7 * 86400,
+      "2d": 2 * 86400,
+      all: null, // full data range
     };
 
+    function isChartsSync() {
+      const el = document.getElementById("chart-sync");
+      if (el) return !!el.checked;
+      try {
+        const v = localStorage.getItem(CHART_SYNC_KEY);
+        if (v === "0") return false;
+      } catch (_) { /* ignore */ }
+      return true;
+    }
+
+    function setChartsSync(on, { fromUi } = {}) {
+      on = !!on;
+      document.querySelectorAll("input.chart-sync").forEach((inp) => {
+        inp.checked = on;
+      });
+      try {
+        localStorage.setItem(CHART_SYNC_KEY, on ? "1" : "0");
+      } catch (_) { /* ignore */ }
+      if (on) {
+        // align power to temps window when enabling sync
+        viewByKey.power = { ...viewByKey.temps };
+        zoomByKey.power = zoomByKey.temps;
+        setZoomUi(zoomByKey.temps, "temps");
+        setZoomUi(zoomByKey.temps, "power");
+      }
+      if (!fromUi) return;
+      renderCharts();
+    }
+
+    function chartKeyFromEl(el) {
+      if (!el) return "temps";
+      const k =
+        (el.getAttribute && el.getAttribute("data-chart-key")) ||
+        (el.closest &&
+          el.closest("[data-chart-key]") &&
+          el.closest("[data-chart-key]").getAttribute("data-chart-key")) ||
+        (el.closest &&
+          el.closest("[data-dash-id]") &&
+          el.closest("[data-dash-id]").getAttribute("data-dash-id") ===
+            "chart_power"
+          ? "power"
+          : null);
+      return k === "power" ? "power" : "temps";
+    }
+
+    function getView(key) {
+      if (isChartsSync()) return viewByKey.temps;
+      return viewByKey[key] || viewByKey.temps;
+    }
+
+    function setView(key, next) {
+      const v = clampView(next);
+      if (isChartsSync()) {
+        viewByKey.temps = { ...v };
+        viewByKey.power = { ...v };
+      } else {
+        viewByKey[key || "temps"] = v;
+      }
+      return v;
+    }
+
     function contextHoursForPreset(preset) {
+      if (preset === "all") return 168; // max load window (retention typically ≤7d)
       const viewH = ZOOM_HOURS[preset] ?? 24;
       if (viewH >= 168) return 168;
       if (viewH >= 48) return 168;
@@ -13904,13 +15964,57 @@
       return 48;
     }
 
+    function neededLoadHours() {
+      if (isChartsSync()) return contextHoursForPreset(zoomByKey.temps || "1d");
+      return Math.max(
+        contextHoursForPreset(zoomByKey.temps || "1d"),
+        contextHoursForPreset(zoomByKey.power || "1d")
+      );
+    }
+
+    function setZoomUi(preset, key) {
+      const p = preset || "custom";
+      const keys =
+        isChartsSync() || !key ? ["temps", "power"] : [key === "power" ? "power" : "temps"];
+      keys.forEach((k) => {
+        zoomByKey[k] = p;
+      });
+      const show = p === "custom" ? "…" : p === "all" ? "All" : p;
+      const sel = document.getElementById("chart-zoom");
+      if (sel && p !== "custom") {
+        const v = p === "7d" ? "1w" : p;
+        if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+      }
+      keys.forEach((k) => {
+        document
+          .querySelectorAll('.chart-zoom-wrap[data-chart-key="' + k + '"]')
+          .forEach((wrap) => {
+            const lab = wrap.querySelector(".chart-zoom-label");
+            if (lab) lab.textContent = show;
+            const menu = wrap.querySelector("[data-zoom-menu]");
+            if (menu) {
+              menu.querySelectorAll("button[data-zoom]").forEach((btn) => {
+                const z = btn.getAttribute("data-zoom");
+                btn.classList.toggle(
+                  "is-active",
+                  z === p || (p === "7d" && z === "1w")
+                );
+              });
+            }
+          });
+      });
+    }
+
     function chartDefaults() {
       Chart.defaults.color = "#8b9bb0";
       Chart.defaults.borderColor = "rgba(42,53,68,0.9)";
       Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
     }
 
-    function viewSpan() { return Math.max(view.end - view.start, 60); }
+    function viewSpan(key) {
+      const v = getView(key || "temps");
+      return Math.max(v.end - v.start, 60);
+    }
 
     function clampView(next) {
       let { start, end } = next;
@@ -13931,22 +16035,61 @@
       if (fullEnd <= fullStart) fullEnd = fullStart + 60;
     }
 
-    function applyViewFromPreset(preset, anchorEnd) {
+    function applyViewFromPreset(preset, key, anchorEnd) {
       syncFullRange();
       if (!fullEnd) return;
+      const k = key || "temps";
       const dataSpan = Math.max(fullEnd - fullStart, 60);
+      let next;
+      if (preset === "all" || ZOOM_SEC[preset] == null) {
+        next = { start: fullStart, end: fullEnd };
+        setView(k, next);
+        setZoomUi("all", k);
+        return;
+      }
       const presetSpan = ZOOM_SEC[preset] ?? dataSpan;
       const vSpan = Math.min(presetSpan, dataSpan);
       const end = Math.min(anchorEnd ?? fullEnd, fullEnd);
-      view = clampView({ start: Math.max(fullStart, end - vSpan), end });
+      next = clampView({ start: Math.max(fullStart, end - vSpan), end });
+      setView(k, next);
+      setZoomUi(preset === "7d" ? "1w" : preset, k);
     }
 
-    function fmtViewLabel() {
+    function detectZoomPresetFromView(key) {
+      const v = getView(key || "temps");
+      if (!fullEnd || fullEnd <= fullStart) return "custom";
+      const dataSpan = fullEnd - fullStart;
+      const vSpan = Math.max(v.end - v.start, 60);
+      if (Math.abs(v.start - fullStart) < 30 && Math.abs(v.end - fullEnd) < 30) {
+        return "all";
+      }
+      const candidates = ["1h", "6h", "12h", "1d", "1w"];
+      for (const p of candidates) {
+        const want = ZOOM_SEC[p];
+        if (!want) continue;
+        const target = Math.min(want, dataSpan);
+        if (Math.abs(vSpan - target) / target < 0.08) return p;
+      }
+      return "custom";
+    }
+
+    function fmtViewLabel(key) {
+      const v = getView(key || "temps");
       if (!fullEnd) return "view: —";
-      const s = new Date(view.start * 1000).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-      const e = new Date(view.end * 1000).toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-      const h = ((view.end - view.start) / 3600).toFixed(1);
-      return "view: " + s + " → " + e + " (" + h + "h)";
+      const s = new Date(v.start * 1000).toLocaleString(undefined, {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const e = new Date(v.end * 1000).toLocaleString(undefined, {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const h = ((v.end - v.start) / 3600).toFixed(1);
+      return s + " → " + e + " · " + h + "h";
     }
 
     function xySeries(key, opts) {
@@ -14099,8 +16242,9 @@
         const { ctx, chartArea, scales } = chart;
         const xScale = scales.x;
         if (!chartArea || !xScale) return;
-        const v0 = view.start;
-        const v1 = view.end;
+        // use current scale window (per-chart when sync is off)
+        const v0 = Number.isFinite(xScale.min) ? xScale.min : getView("temps").start;
+        const v1 = Number.isFinite(xScale.max) ? xScale.max : getView("temps").end;
         ctx.save();
         ctx.beginPath();
         ctx.rect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, chartArea.bottom - chartArea.top);
@@ -14140,16 +16284,17 @@
       },
     };
 
-    function xAxisOpts() {
+    function xAxisOpts(key) {
+      const v = getView(key || "temps");
       return {
         type: "linear",
-        min: view.start,
-        max: view.end,
+        min: v.start,
+        max: v.end,
         ticks: {
           maxTicksLimit: 8,
           maxRotation: 0,
-          callback: (v) => {
-            const d = new Date(v * 1000);
+          callback: (tv) => {
+            const d = new Date(tv * 1000);
             return d.toLocaleString(undefined, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
           },
         },
@@ -14159,6 +16304,9 @@
 
     function ensureCharts() {
       chartDefaults();
+      const elTemp = document.getElementById("chart-temp");
+      const elPower = document.getElementById("chart-power");
+      if (!elTemp && !elPower) return;
       const common = {
         responsive: true,
         maintainAspectRatio: false,
@@ -14179,8 +16327,8 @@
         },
       };
 
-      if (!chartTemp) {
-        chartTemp = new Chart(document.getElementById("chart-temp"), {
+      if (!chartTemp && elTemp) {
+        chartTemp = new Chart(elTemp, {
           type: "line",
           data: {
             datasets: [
@@ -14197,7 +16345,7 @@
           options: {
             ...common,
             scales: {
-              x: xAxisOpts(),
+              x: xAxisOpts("temps"),
               y: { title: { display: true, text: "°C" }, grid: { color: "rgba(42,53,68,0.5)" } },
             },
             plugins: { ...common.plugins },
@@ -14205,8 +16353,8 @@
           plugins: [statusBandsPlugin],
         });
       }
-      if (!chartPower) {
-        chartPower = new Chart(document.getElementById("chart-power"), {
+      if (!chartPower && elPower) {
+        chartPower = new Chart(elPower, {
           type: "line",
           data: {
             datasets: [
@@ -14220,7 +16368,7 @@
           options: {
             ...common,
             scales: {
-              x: xAxisOpts(),
+              x: xAxisOpts("power"),
               y: { position: "left", title: { display: true, text: "W" }, grid: { color: "rgba(42,53,68,0.5)" } },
               y1: { position: "right", title: { display: true, text: "TH/s · freq" }, grid: { drawOnChartArea: false } },
               y2: {
@@ -14240,85 +16388,106 @@
     function renderCharts() {
       ensureCharts();
       statusBands = computeStatusBands(histPoints);
+      const hasTemp = !!chartTemp;
+      const hasPower = !!chartPower;
+      if (!hasTemp && !hasPower) return;
+
       if (!histPoints.length) {
-        chartTemp.data.datasets.forEach((d) => { d.data = []; });
-        chartPower.data.datasets.forEach((d) => { d.data = []; });
-        chartTemp.update("none");
-        chartPower.update("none");
+        if (hasTemp) {
+          chartTemp.data.datasets.forEach((d) => { d.data = []; });
+          chartTemp.update("none");
+        }
+        if (hasPower) {
+          chartPower.data.datasets.forEach((d) => { d.data = []; });
+          chartPower.update("none");
+        }
         drawBrush();
         updateScrollUI();
-        document.getElementById("hist-view-label").textContent = "view: no data";
+        document.querySelectorAll(".chart-view-label").forEach((vl) => {
+          vl.textContent = "view: no data";
+        });
         return;
       }
 
-      // outdoor may be present while miner offline
-      chartTemp.data.datasets[0].data = xySeries("liquid");
-      chartTemp.data.datasets[1].data = xySeries("env");
-      chartTemp.data.datasets[2].data = xySeries("outdoor_c", { requireOnline: false });
-      // chart slots from last live snapshot (M63→[0,2], M60S 3-board→[0,1,2])
-      let chartSlots = [0, 2];
-      try {
-        const slots =
-          (window.__lastLive && window.__lastLive.board_chart_slots) ||
-          null;
-        if (Array.isArray(slots) && slots.length >= 1) {
-          chartSlots = slots
-            .map((x) => Number(x))
-            .filter((x) => Number.isFinite(x) && x >= 0 && x <= 7);
-          if (!chartSlots.length) chartSlots = [0, 2];
-        } else {
-          const nb = Number(
-            (window.__lastLive && window.__lastLive.board_count) || 4
-          );
-          if (nb >= 3 && nb < 4) chartSlots = [0, 1, 2];
-          else if (nb < 3) chartSlots = nb >= 2 ? [0, 1] : [0];
-          else chartSlots = [0, 2];
+      if (hasTemp) {
+        // outdoor may be present while miner offline
+        chartTemp.data.datasets[0].data = xySeries("liquid");
+        chartTemp.data.datasets[1].data = xySeries("env");
+        chartTemp.data.datasets[2].data = xySeries("outdoor_c", { requireOnline: false });
+        // chart slots from last live snapshot (M63→[0,2], M60S 3-board→[0,1,2])
+        let chartSlots = [0, 2];
+        try {
+          const slots =
+            (window.__lastLive && window.__lastLive.board_chart_slots) ||
+            null;
+          if (Array.isArray(slots) && slots.length >= 1) {
+            chartSlots = slots
+              .map((x) => Number(x))
+              .filter((x) => Number.isFinite(x) && x >= 0 && x <= 7);
+            if (!chartSlots.length) chartSlots = [0, 2];
+          } else {
+            const nb = Number(
+              (window.__lastLive && window.__lastLive.board_count) || 4
+            );
+            if (nb >= 3 && nb < 4) chartSlots = [0, 1, 2];
+            else if (nb < 3) chartSlots = nb >= 2 ? [0, 1] : [0];
+            else chartSlots = [0, 2];
+          }
+        } catch (_) { /* keep defaults */ }
+        // datasets[3..5] = up to 3 board series; datasets[6] = chip max
+        const boardDs = [
+          chartTemp.data.datasets[3],
+          chartTemp.data.datasets[4],
+          chartTemp.data.datasets[5],
+        ];
+        for (let i = 0; i < boardDs.length; i++) {
+          if (i < chartSlots.length) {
+            const s = chartSlots[i] | 0;
+            boardDs[i].label = "board" + s;
+            boardDs[i].data = xySeries("board" + s);
+            boardDs[i].hidden = false;
+          } else {
+            boardDs[i].label = "board—";
+            boardDs[i].data = [];
+            boardDs[i].hidden = true;
+          }
         }
-      } catch (_) { /* keep defaults */ }
-      // datasets[3..5] = up to 3 board series; datasets[6] = chip max
-      const boardDs = [
-        chartTemp.data.datasets[3],
-        chartTemp.data.datasets[4],
-        chartTemp.data.datasets[5],
-      ];
-      for (let i = 0; i < boardDs.length; i++) {
-        if (i < chartSlots.length) {
-          const s = chartSlots[i] | 0;
-          boardDs[i].label = "board" + s;
-          boardDs[i].data = xySeries("board" + s);
-          boardDs[i].hidden = false;
-        } else {
-          boardDs[i].label = "board—";
-          boardDs[i].data = [];
-          boardDs[i].hidden = true;
-        }
+        chartTemp.data.datasets[6].data = xySeries("chip_max");
+        const vt = getView("temps");
+        chartTemp.options.scales.x.min = vt.start;
+        chartTemp.options.scales.x.max = vt.end;
+        chartTemp.update("none");
       }
-      chartTemp.data.datasets[6].data = xySeries("chip_max");
-      chartPower.data.datasets[0].data = xySeries("power");
-      chartPower.data.datasets[1].data = xySeries("power_limit");
-      chartPower.data.datasets[2].data = xySeries("hashrate_th");
-      chartPower.data.datasets[3].data = xySeries("freq");
-      chartPower.data.datasets[4].data = xyEffSeries();
 
-      chartTemp.options.scales.x.min = view.start;
-      chartTemp.options.scales.x.max = view.end;
-      chartPower.options.scales.x.min = view.start;
-      chartPower.options.scales.x.max = view.end;
+      if (hasPower) {
+        chartPower.data.datasets[0].data = xySeries("power");
+        chartPower.data.datasets[1].data = xySeries("power_limit");
+        chartPower.data.datasets[2].data = xySeries("hashrate_th");
+        chartPower.data.datasets[3].data = xySeries("freq");
+        chartPower.data.datasets[4].data = xyEffSeries();
+        const vp = getView("power");
+        chartPower.options.scales.x.min = vp.start;
+        chartPower.options.scales.x.max = vp.end;
+        chartPower.update("none");
+      }
 
-      chartTemp.update("none");
-      chartPower.update("none");
       drawBrush();
       updateScrollUI();
-      document.getElementById("hist-view-label").textContent = fmtViewLabel();
+      document.querySelectorAll(".chart-view-label").forEach((vl) => {
+        const k = chartKeyFromEl(vl);
+        vl.textContent = fmtViewLabel(k);
+      });
     }
 
-    function drawBrush() {
-      const canvas = document.getElementById("chart-brush");
+    function drawBrushOnCanvas(canvas) {
       if (!canvas) return;
       const parent = canvas.parentElement;
+      if (!parent) return;
+      const chartKey = chartKeyFromEl(canvas);
+      const view = getView(chartKey);
       const dpr = window.devicePixelRatio || 1;
       const w = parent.clientWidth || 600;
-      const h = parent.clientHeight || 56;
+      const h = parent.clientHeight || 64;
       canvas.width = Math.floor(w * dpr);
       canvas.height = Math.floor(h * dpr);
       canvas.style.width = w + "px";
@@ -14327,25 +16496,27 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const pad = { l: 8, r: 8, t: 6, b: 4 };
+      const pad = { l: 6, r: 6, t: 4, b: 4 };
       const plotW = w - pad.l - pad.r;
       const plotH = h - pad.t - pad.b;
-      ctx.fillStyle = "#0c1016";
-      ctx.fillRect(pad.l, pad.t, plotW, plotH);
+      // base
+      ctx.fillStyle = "#0a0e14";
+      ctx.fillRect(0, 0, w, h);
 
       if (!histPoints.length || fullEnd <= fullStart) return;
       const fullSpan = fullEnd - fullStart;
       const series = histPoints.filter((p) => p.power != null || p.liquid != null);
       if (!series.length) return;
 
-      // prefer power for brush silhouette, fallback liquid
+      // silhouette: prefer power (matches power chart), fallback liquid
       const key = series.some((p) => p.power != null) ? "power" : "liquid";
       const vals = series.map((p) => Number(p[key])).filter((v) => Number.isFinite(v));
       const maxV = Math.max(...vals, 0.001);
       const toX = (ts) => pad.l + ((ts - fullStart) / fullSpan) * plotW;
-      const toY = (v) => pad.t + plotH - (v / maxV) * plotH;
+      const toY = (v) => pad.t + plotH - (Math.max(0, v) / maxV) * plotH * 0.92;
       const y0 = pad.t + plotH;
 
+      // area fill under curve
       ctx.beginPath();
       ctx.moveTo(toX(series[0].ts), y0);
       series.forEach((p) => {
@@ -14354,7 +16525,7 @@
       });
       ctx.lineTo(toX(series[series.length - 1].ts), y0);
       ctx.closePath();
-      ctx.fillStyle = "rgba(61,156,240,0.25)";
+      ctx.fillStyle = "rgba(61,156,240,0.22)";
       ctx.fill();
 
       ctx.beginPath();
@@ -14362,154 +16533,227 @@
       series.forEach((p) => {
         const v = Number(p[key]);
         if (!Number.isFinite(v)) return;
-        const x = toX(p.ts), y = toY(v);
-        if (!started) { ctx.moveTo(x, y); started = true; }
-        else ctx.lineTo(x, y);
+        const x = toX(p.ts);
+        const y = toY(v);
+        if (!started) {
+          ctx.moveTo(x, y);
+          started = true;
+        } else ctx.lineTo(x, y);
       });
-      ctx.strokeStyle = "#3d9cf0";
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = "rgba(125, 180, 240, 0.85)";
+      ctx.lineWidth = 1.25;
       ctx.stroke();
 
+      // selection window (Highcharts navigator style)
       const x1 = toX(Math.max(fullStart, view.start));
       const x2 = toX(Math.min(fullEnd, view.end));
-      ctx.fillStyle = "rgba(0,0,0,0.42)";
+      const selW = Math.max(x2 - x1, 6);
+
+      // dim outside
+      ctx.fillStyle = "rgba(0,0,0,0.48)";
       ctx.fillRect(pad.l, pad.t, Math.max(0, x1 - pad.l), plotH);
       ctx.fillRect(x2, pad.t, Math.max(0, pad.l + plotW - x2), plotH);
-      ctx.fillStyle = "rgba(61,156,240,0.22)";
-      ctx.fillRect(x1, pad.t, Math.max(x2 - x1, 4), plotH);
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.fillRect(x1 - 2, pad.t, 3, plotH);
-      ctx.fillRect(x2 - 1, pad.t, 3, plotH);
+
+      // selected band
+      ctx.fillStyle = "rgba(61,156,240,0.16)";
+      ctx.fillRect(x1, pad.t, selW, plotH);
+      ctx.strokeStyle = "rgba(61,156,240,0.55)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x1 + 0.5, pad.t + 0.5, selW - 1, plotH - 1);
+
+      // edge handles (grabbers)
+      const handleW = 7;
+      const drawHandle = (cx) => {
+        const hx = cx - handleW / 2;
+        ctx.fillStyle = "rgba(232,238,246,0.88)";
+        ctx.fillRect(hx, pad.t + 2, handleW, plotH - 4);
+        ctx.fillStyle = "rgba(30,40,55,0.55)";
+        const midY = pad.t + plotH / 2;
+        for (let i = -1; i <= 1; i++) {
+          ctx.fillRect(cx - 0.6, midY + i * 4 - 3, 1.2, 6);
+        }
+      };
+      drawHandle(x1);
+      drawHandle(x2);
+    }
+
+    function drawBrush() {
+      document.querySelectorAll("canvas[data-brush]").forEach((c) => drawBrushOnCanvas(c));
     }
 
     function updateScrollUI() {
-      const wrap = document.getElementById("chart-scroll");
-      const track = document.getElementById("chart-scroll-track");
-      const thumb = document.getElementById("chart-scroll-thumb");
-      if (!wrap || !track || !thumb) return;
-      syncFullRange();
-      const fullSpan = fullEnd - fullStart;
-      const vSpan = viewSpan();
-      const panSpan = fullSpan - vSpan;
-      if (panSpan > 60 && fullSpan > 0) {
-        wrap.hidden = false;
-        const trackW = track.clientWidth || track.offsetWidth;
-        const thumbW = Math.max(20, Math.round((vSpan / fullSpan) * trackW));
-        const maxLeft = Math.max(0, trackW - thumbW);
-        const left = panSpan > 0 ? Math.round(((view.start - fullStart) / panSpan) * maxLeft) : 0;
-        thumb.style.width = thumbW + "px";
-        thumb.style.left = left + "px";
-      } else {
-        wrap.hidden = true;
-      }
+      // legacy scrollbar removed — navigator brush is the pan control
     }
 
     const drag = {
-      mode: null, // left | right | pan | scroll
+      mode: null, // left | right | pan
       startX: 0,
       startView: null,
-      scrollStartLeft: 0,
+      canvas: null,
     };
+
+    function brushHitTest(canvas, clientX) {
+      syncFullRange();
+      const chartKey = chartKeyFromEl(canvas);
+      const view = getView(chartKey);
+      const rect = canvas.getBoundingClientRect();
+      const padL = 6;
+      const padR = 6;
+      const plotW = Math.max(1, rect.width - padL - padR);
+      const fullSpan = Math.max(fullEnd - fullStart, 1);
+      const toX = (ts) => padL + ((ts - fullStart) / fullSpan) * plotW;
+      const x = clientX - rect.left;
+      const vx1 = toX(view.start);
+      const vx2 = toX(view.end);
+      const handle = 10;
+      if (Math.abs(x - vx1) <= handle)
+        return { mode: "left", plotW, fullSpan, padL, chartKey };
+      if (Math.abs(x - vx2) <= handle)
+        return { mode: "right", plotW, fullSpan, padL, chartKey };
+      if (x > vx1 && x < vx2)
+        return { mode: "pan", plotW, fullSpan, padL, chartKey };
+      return { mode: "jump", plotW, fullSpan, padL, x, chartKey };
+    }
+
+    function onBrushPointerDown(e, canvas) {
+      if (!histPoints.length || !canvas) return;
+      e.preventDefault();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const hit = brushHitTest(canvas, clientX);
+      const key = hit.chartKey || "temps";
+      if (hit.mode === "jump") {
+        const ratio = Math.min(1, Math.max(0, (hit.x - hit.padL) / hit.plotW));
+        const clickTs = fullStart + ratio * hit.fullSpan;
+        const half = viewSpan(key) / 2;
+        setView(key, { start: clickTs - half, end: clickTs + half });
+        setZoomUi(detectZoomPresetFromView(key), key);
+        renderCharts();
+        return;
+      }
+      drag.mode = hit.mode;
+      drag.startX = clientX;
+      drag.startView = { ...getView(key) };
+      drag.canvas = canvas;
+      drag.chartKey = key;
+      drag.plotW = hit.plotW;
+      drag.fullSpan = hit.fullSpan;
+    }
+
+    function onBrushPointerMove(e) {
+      if (!drag.mode || !drag.startView) return;
+      e.preventDefault();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      syncFullRange();
+      const key = drag.chartKey || "temps";
+      const plotW = drag.plotW || 100;
+      const fullSpan = Math.max(drag.fullSpan || fullEnd - fullStart, 1);
+      const dx = clientX - drag.startX;
+      const dTs = (dx / plotW) * fullSpan;
+      const minSpan = Math.max(
+        60,
+        Math.min(drag.startView.end - drag.startView.start, fullSpan * 0.02)
+      );
+      let { start, end } = drag.startView;
+      if (drag.mode === "left") start = Math.min(end - minSpan, start + dTs);
+      else if (drag.mode === "right") end = Math.max(start + minSpan, end + dTs);
+      else {
+        start += dTs;
+        end += dTs;
+      }
+      setView(key, { start, end });
+      setZoomUi(detectZoomPresetFromView(key), key);
+      renderCharts();
+    }
+
+    function onBrushPointerUp() {
+      if (drag.mode) {
+        const key = drag.chartKey || "temps";
+        drag.mode = null;
+        drag.canvas = null;
+        setZoomUi(detectZoomPresetFromView(key), key);
+      }
+    }
 
     function bindBrushScroll() {
       if (brushBound) return;
       brushBound = true;
-      const brushCanvas = document.getElementById("chart-brush");
-      const track = document.getElementById("chart-scroll-track");
-      const thumb = document.getElementById("chart-scroll-thumb");
 
-      brushCanvas.addEventListener("mousedown", (e) => {
-        if (!histPoints.length) return;
-        syncFullRange();
-        const rect = brushCanvas.getBoundingClientRect();
-        const padL = 8, padR = 8;
-        const plotW = rect.width - padL - padR;
-        const fullSpan = Math.max(fullEnd - fullStart, 1);
-        const toX = (ts) => padL + ((ts - fullStart) / fullSpan) * plotW;
-        const x = e.clientX - rect.left;
-        const vx1 = toX(view.start);
-        const vx2 = toX(view.end);
-        const handle = 8;
-        if (Math.abs(x - vx1) <= handle) drag.mode = "left";
-        else if (Math.abs(x - vx2) <= handle) drag.mode = "right";
-        else if (x > vx1 && x < vx2) drag.mode = "pan";
-        else {
-          const ratio = Math.min(1, Math.max(0, (x - padL) / plotW));
-          const clickTs = fullStart + ratio * fullSpan;
-          const half = viewSpan() / 2;
-          view = clampView({ start: clickTs - half, end: clickTs + half });
-          renderCharts();
-          return;
-        }
-        drag.startX = e.clientX;
-        drag.startView = { ...view };
+      document.querySelectorAll("canvas[data-brush]").forEach((canvas) => {
+        canvas.addEventListener("mousedown", (e) => onBrushPointerDown(e, canvas));
+        canvas.addEventListener(
+          "touchstart",
+          (e) => onBrushPointerDown(e, canvas),
+          { passive: false }
+        );
       });
 
-      thumb.addEventListener("mousedown", (e) => {
-        const wrap = document.getElementById("chart-scroll");
-        if (wrap.hidden) return;
-        e.preventDefault();
-        drag.mode = "scroll";
-        drag.startX = e.clientX;
-        drag.startView = { ...view };
-        drag.scrollStartLeft = thumb.offsetLeft;
-      });
-
-      track.addEventListener("mousedown", (e) => {
-        if (e.target === thumb) return;
-        const wrap = document.getElementById("chart-scroll");
-        if (wrap.hidden) return;
-        syncFullRange();
-        const rect = track.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const trackW = rect.width;
-        const thumbW = thumb.offsetWidth;
-        const fullSpan = fullEnd - fullStart;
-        const vSpan = viewSpan();
-        const panSpan = fullSpan - vSpan;
-        if (panSpan <= 0) return;
-        const maxLeft = Math.max(0, trackW - thumbW);
-        const left = Math.min(maxLeft, Math.max(0, x - thumbW / 2));
-        const start = fullStart + (left / maxLeft) * panSpan;
-        view = clampView({ start, end: start + vSpan });
+      window.addEventListener("mousemove", onBrushPointerMove);
+      window.addEventListener("touchmove", onBrushPointerMove, { passive: false });
+      window.addEventListener("mouseup", onBrushPointerUp);
+      window.addEventListener("touchend", onBrushPointerUp);
+      window.addEventListener("resize", () => {
         renderCharts();
       });
 
-      window.addEventListener("mousemove", (e) => {
-        if (!drag.mode) return;
-        syncFullRange();
-        if (drag.mode === "scroll") {
-          const trackW = track.clientWidth;
-          const thumbW = thumb.offsetWidth;
-          const maxLeft = Math.max(0, trackW - thumbW);
-          const fullSpan = fullEnd - fullStart;
-          const vSpan = drag.startView.end - drag.startView.start;
-          const panSpan = fullSpan - vSpan;
-          if (panSpan <= 0 || maxLeft <= 0) return;
-          const dx = e.clientX - drag.startX;
-          const left = Math.min(maxLeft, Math.max(0, drag.scrollStartLeft + dx));
-          const start = fullStart + (left / maxLeft) * panSpan;
-          view = clampView({ start, end: start + vSpan });
-          renderCharts();
-          return;
-        }
-        const brushCanvas = document.getElementById("chart-brush");
-        const rect = brushCanvas.getBoundingClientRect();
-        const plotW = rect.width - 16;
-        const fullSpan = Math.max(fullEnd - fullStart, 1);
-        const dx = e.clientX - drag.startX;
-        const dTs = (dx / plotW) * fullSpan;
-        const minSpan = Math.min(drag.startView.end - drag.startView.start, fullSpan * 0.02);
-        let { start, end } = drag.startView;
-        if (drag.mode === "left") start = Math.min(end - minSpan, start + dTs);
-        else if (drag.mode === "right") end = Math.max(start + minSpan, end + dTs);
-        else { start += dTs; end += dTs; }
-        view = clampView({ start, end });
-        renderCharts();
+      // zoom menus (temps + power widgets share one zoom state)
+      document.querySelectorAll("[data-zoom-toggle]").forEach((toggle) => {
+        const wrap = toggle.closest(".chart-zoom-wrap");
+        const menu = wrap && wrap.querySelector("[data-zoom-menu]");
+        if (!menu) return;
+        toggle.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // close other menus
+          document.querySelectorAll("[data-zoom-menu]").forEach((m) => {
+            if (m !== menu) m.hidden = true;
+          });
+          document.querySelectorAll("[data-zoom-toggle]").forEach((t) => {
+            if (t !== toggle) t.setAttribute("aria-expanded", "false");
+          });
+          const open = menu.hidden;
+          menu.hidden = !open;
+          toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        });
+        menu.querySelectorAll("button[data-zoom]").forEach((btn) => {
+          btn.addEventListener("click", (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const z = btn.getAttribute("data-zoom") || "1d";
+            const key = chartKeyFromEl(wrap);
+            document.querySelectorAll("[data-zoom-menu]").forEach((m) => {
+              m.hidden = true;
+            });
+            document.querySelectorAll("[data-zoom-toggle]").forEach((t) => {
+              t.setAttribute("aria-expanded", "false");
+            });
+            applyZoomPreset(z, key);
+          });
+        });
+      });
+      document.addEventListener("click", (e) => {
+        if (e.target.closest && e.target.closest(".chart-zoom-wrap")) return;
+        document.querySelectorAll("[data-zoom-menu]").forEach((m) => {
+          m.hidden = true;
+        });
+        document.querySelectorAll("[data-zoom-toggle]").forEach((t) => {
+          t.setAttribute("aria-expanded", "false");
+        });
       });
 
-      window.addEventListener("mouseup", () => { drag.mode = null; });
-      window.addEventListener("resize", () => { renderCharts(); });
+      // sync checkbox (both widgets)
+      try {
+        const saved = localStorage.getItem(CHART_SYNC_KEY);
+        if (saved === "0" || saved === "1") {
+          document.querySelectorAll("input.chart-sync").forEach((inp) => {
+            inp.checked = saved === "1";
+          });
+        }
+      } catch (_) { /* ignore */ }
+      document.querySelectorAll("input.chart-sync").forEach((inp) => {
+        inp.addEventListener("change", () => {
+          setChartsSync(inp.checked, { fromUi: true });
+        });
+      });
     }
 
     async function loadHistoryConfig() {
@@ -14521,13 +16765,9 @@
         document.getElementById("hist-enabled").checked = !!c.enabled;
         document.getElementById("hist-retention").value = c.retention_days ?? 7;
         document.getElementById("hist-interval").value = c.sample_interval_sec ?? 30;
-        const st = body.stats || {};
-        document.getElementById("hist-stats").textContent =
-          "points: " + (st.count || 0) +
-          (st.oldest_iso ? " · with " + st.oldest_iso : "") +
-          (st.db_size_bytes != null ? " · db " + Math.round(st.db_size_bytes / 1024) + " KB" : "");
+        // hist-stats line removed from dashboard (kept silent)
       } catch (e) {
-        document.getElementById("hist-stats").textContent = "config error: " + e.message;
+        /* ignore config load noise on dash */
       }
     }
 
@@ -14553,40 +16793,73 @@
       }
     }
 
-    async function loadHistoryCharts(preset) {
+    async function loadHistoryCharts(preset, key) {
       await loadHistoryConfig();
       bindBrushScroll();
       const zoomEl = document.getElementById("chart-zoom");
-      const z = preset || zoomEl.value || "1d";
-      zoomEl.value = z;
-      const nextLoad = contextHoursForPreset(z);
+      let z =
+        preset ||
+        (zoomEl && zoomEl.value) ||
+        zoomByKey[key || "temps"] ||
+        "1d";
+      if (z === "7d") z = "1w";
+      if (z === "2d") z = "1d";
+      if (zoomEl && [...zoomEl.options].some((o) => o.value === z)) zoomEl.value = z;
+      // seed zoom keys before computing load hours
+      if (isChartsSync() || !key) {
+        zoomByKey.temps = z;
+        zoomByKey.power = z;
+      } else {
+        zoomByKey[key] = z;
+      }
+      setZoomUi(z, key);
+      const nextLoad = neededLoadHours();
       loadHours = nextLoad;
       try {
-        const res = await fetch("/api/history?hours=" + loadHours + "&max=5000");
+        // cap points so Overview first paint stays responsive on Keenetic RAM
+        const maxPts = Math.min(2500, Math.max(400, Math.floor(Number(loadHours || 48) * 40)));
+        const res = await fetch(
+          "/api/history?hours=" + loadHours + "&max=" + maxPts
+        );
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "history fail");
         histPoints = body.points || [];
-        document.getElementById("hist-stats").textContent =
-          "loaded: " + histPoints.length +
-          " · db: " + ((body.stats && body.stats.count) || 0) +
-          " · context " + loadHours + "h · zoom " + z;
-
         syncFullRange();
-        applyViewFromPreset(z);
+        if (isChartsSync() || !key) {
+          applyViewFromPreset(z, "temps");
+        } else {
+          applyViewFromPreset(z, key);
+          // ensure other chart still has a valid window
+          const other = key === "power" ? "temps" : "power";
+          const ov = getView(other);
+          if (!ov.end || ov.end <= ov.start) {
+            applyViewFromPreset(zoomByKey[other] || "1d", other);
+          }
+        }
         renderCharts();
       } catch (e) {
-        document.getElementById("hist-stats").textContent = "history error: " + e.message;
         toastError("History: " + e.message);
       }
     }
 
-    function applyZoomPreset(preset) {
-      const nextLoad = contextHoursForPreset(preset);
-      if (nextLoad !== loadHours || !histPoints.length) {
-        void loadHistoryCharts(preset);
+    function applyZoomPreset(preset, key) {
+      let z = preset || "1d";
+      if (z === "7d") z = "1w";
+      if (z === "2d") z = "1d";
+      const k = key || "temps";
+      if (isChartsSync() || !key) {
+        zoomByKey.temps = z;
+        zoomByKey.power = z;
+      } else {
+        zoomByKey[k] = z;
+      }
+      setZoomUi(z, key);
+      const nextLoad = neededLoadHours();
+      if (nextLoad > loadHours || !histPoints.length) {
+        void loadHistoryCharts(z, key);
         return;
       }
-      applyViewFromPreset(preset);
+      applyViewFromPreset(z, k);
       renderCharts();
     }
 
@@ -14610,8 +16883,7 @@
       loadHistoryCharts().then(() => toastSuccess("Charts updated"));
     });
     document.getElementById("btn-hist-save").addEventListener("click", saveHistoryConfig);
-    document.getElementById("chart-zoom").addEventListener("change", (e) => {
-      toastInfo("Zoom: " + e.target.value, 1600);
+    document.getElementById("chart-zoom")?.addEventListener("change", (e) => {
       applyZoomPreset(e.target.value);
     });
 
@@ -14700,9 +16972,19 @@
         if (pn) pn.value = c.project_name || "poolheat_WM";
         const pollEl = document.getElementById("settings-poll-interval");
         if (pollEl && c.poll_interval_sec != null) pollEl.value = c.poll_interval_sec;
-        // header brand
+        // header brand + tab title
         const brandH = document.querySelector(".brand h1");
         if (brandH && c.project_name) brandH.textContent = c.project_name;
+        try {
+          updateDocumentTitle(null, c.project_name);
+          // merge with last known router from cache if title only has project so far
+          const raw = localStorage.getItem("poolheat_wm_info_cache");
+          if (raw) {
+            const d = JSON.parse(raw);
+            const r = (d && d.router) || (d && d.body && d.body.router) || null;
+            if (r) updateDocumentTitle(r, c.project_name);
+          }
+        } catch (_) { /* ignore */ }
         if (dryRunEl && typeof c.dry_run === "boolean") {
           dryRunServer = !!c.dry_run;
           dryRunEl.checked = dryRunServer;
@@ -14776,6 +17058,15 @@
         if (typeof updateSrcBar === "function") updateSrcBar(live || {});
         const brandH = document.querySelector(".brand h1");
         if (brandH) brandH.textContent = c.project_name || projectName;
+        try {
+          updateDocumentTitle(null, c.project_name || projectName);
+          const raw = localStorage.getItem("poolheat_wm_info_cache");
+          if (raw) {
+            const d = JSON.parse(raw);
+            const r = (d && d.router) || (d && d.body && d.body.router) || null;
+            if (r) updateDocumentTitle(r, c.project_name || projectName);
+          }
+        } catch (_) { /* ignore */ }
         if (typeof restartLivePollTimer === "function") restartLivePollTimer();
         toastSuccess(
           "Saved: " +
@@ -16080,10 +18371,24 @@
         const ph = body.poolheat || {};
         // header shows router only; miner is on LIVE strip
         const brandText = fmtRouterBrand(router);
+        try {
+          const pname =
+            (ph && ph.project_name) ||
+            (document.querySelector(".brand h1") &&
+              document.querySelector(".brand h1").textContent) ||
+            "";
+          updateDocumentTitle(router, pname);
+        } catch (_) { /* ignore */ }
+        const project_name =
+          (ph && ph.project_name) ||
+          (document.querySelector(".brand h1") &&
+            document.querySelector(".brand h1").textContent) ||
+          null;
         localStorage.setItem(
           INFO_CACHE_KEY,
           JSON.stringify({
             brandText,
+            project_name: project_name ? String(project_name).trim() : null,
             router,
             miner,
             resources: body.resources || {},
@@ -16104,14 +18409,38 @@
         );
       } catch (_) { /* ignore quota */ }
     }
+    function updateDocumentTitle(router, projectName) {
+      try {
+        const pname =
+          String(
+            projectName ||
+              (document.querySelector(".brand h1") &&
+                document.querySelector(".brand h1").textContent) ||
+              "GoraPool"
+          ).trim() || "GoraPool";
+        let right = "Keenetic";
+        if (router && typeof router === "object") {
+          const code = String(router.model_code || "").trim();
+          const rawM = String(router.model || router.device_tree_model || "");
+          const kn = code.match(/^KN-/i)
+            ? code
+            : (rawM.match(/KN-[0-9A-Za-z]+/i) || [])[0];
+          if (kn) right = "Keenetic " + String(kn).toUpperCase();
+          else {
+            const bt = fmtRouterBrand(router);
+            if (bt && !/^Keenetic\s*[—\-]?$/i.test(bt)) right = bt;
+          }
+        }
+        document.title = pname + " · " + right;
+      } catch (_) { /* ignore */ }
+    }
+
     function updateBrandDevices(router, miner, version) {
       const el = document.getElementById("brand-devices");
       // top: only system host "Keenetic KN-xxxx" — never Whatsminer
       const brandText = fmtRouterBrand(router);
       if (el) el.textContent = brandText;
-      try {
-        document.title = "poolheat_WM · " + brandText;
-      } catch (_) { /* ignore */ }
+      updateDocumentTitle(router);
       if (version) setFooterVersion(version);
       try {
         if (miner && miner.miner_type)
@@ -16736,20 +19065,8 @@
         if (raw) {
           notesEl.hidden = false;
           notesEl.classList.add("is-visible");
-          if (bodyEl) {
-            bodyEl.textContent = raw;
-            // subtle hint when RU requested but only EN body exists
-            if (
-              uiLang === "ru" &&
-              chk.notes_fallback &&
-              !chk.notes_ru &&
-              (chk.notes_en || chk.notes)
-            ) {
-              bodyEl.textContent =
-                raw +
-                "\n\n—\n(Русской версии release notes нет — показан английский текст.)";
-            }
-          }
+          // show EN notes as-is when RU is missing — no disclaimer
+          if (bodyEl) bodyEl.textContent = raw;
         } else {
           notesEl.hidden = true;
           notesEl.classList.remove("is-visible");
@@ -19686,34 +22003,29 @@
     }
 
     /**
-     * Cell layout:
-     * - temp / gradient / outliers → °C · # top-right
-     * - nonce_def → deficit % · # top-right
-     * - freq → vol+mV top-left · # top-right · MHz center
-     * - nonce_rate / nonce / est_th → freq top-left · # top-right · value center
+     * Cell layout (all modes):
+     * - top: chip # only, centered
+     * - center: metric value
+     * - bottom: err / crc / x / repeat
+     * - vol/freq only in tooltip (not on cell)
      */
     function chipmapMakeCell(c, id, metric, metricRange, analysis) {
       const cell = document.createElement("div");
       cell.className = "chip-cell";
       const simple = chipmapIsTempSimpleMetric(metric);
-      // aux top-left: vol only on Frequency; Freq on other hash modes
-      let auxKind = null; // "vol" | "freq" | null
-      if (metric === "freq") auxKind = "vol";
-      else if (
+      const compact =
+        metric === "freq" ||
         metric === "nonce_rate" ||
         metric === "nonce" ||
-        metric === "est_th"
-      )
-        auxKind = "freq";
-      const compact = !!auxKind;
+        metric === "est_th";
       if (simple) cell.classList.add("chip-simple");
       if (compact) cell.classList.add("chip-compact");
       if (!c) {
         cell.classList.add("empty");
         cell.innerHTML =
-          '<span class="c-aux"></span><span class="c-id">' +
+          '<span class="c-id">' +
           id +
-          '</span><span class="c-top"></span><span class="c-main">—</span><span class="c-bot"></span>';
+          '</span><span class="c-main">—</span><span class="c-bot"></span>';
         return cell;
       }
       const v = chipmapChipValue(c, metric, analysis);
@@ -19737,14 +22049,6 @@
         }
       }
       const chipNo = c.id != null ? c.id : id;
-      const freq =
-        c.freq != null && Number.isFinite(Number(c.freq))
-          ? String(Math.round(Number(c.freq)))
-          : "—";
-      const vol =
-        c.vol != null && Number.isFinite(Number(c.vol))
-          ? String(Math.round(Number(c.vol)))
-          : "—";
       const err = c.err != null ? String(c.err | 0) : "0";
       const crc = c.crc != null ? String(c.crc | 0) : "0";
       const x = c.x != null ? String(c.x | 0) : "0";
@@ -19755,13 +22059,6 @@
             ? String(c.x2 | 0)
             : "0";
       const mainHtml = chipmapMainHtml(c, metric, analysis);
-      let auxHtml = "";
-      if (auxKind === "vol" && vol !== "—") {
-        // domain voltage from Miner API Log — millivolts
-        auxHtml = vol + '<span class="c-unit">mV</span>';
-      } else if (auxKind === "freq") {
-        auxHtml = freq;
-      }
       const bot =
         '<span class="c-bot"><span>' +
         err +
@@ -19773,13 +22070,9 @@
         rep +
         "</span></span>";
       cell.innerHTML =
-        '<span class="c-aux">' +
-        auxHtml +
-        "</span>" +
         '<span class="c-id">' +
         chipNo +
         "</span>" +
-        '<span class="c-top"></span>' +
         '<span class="c-main">' +
         mainHtml +
         "</span>" +
@@ -22105,6 +24398,15 @@
           if (d.inverted) tags.push(t("dev.inverted_tag", "inv"));
           if (d.show_in_bot) tags.push(t("dev.bot_tag", "bot"));
           if (d.auto_on_mining) tags.push("auto↑");
+          if (d.enforce_desired) {
+            const des =
+              d.desired_on === true
+                ? "hold:ON"
+                : d.desired_on === false
+                  ? "hold:OFF"
+                  : "hold";
+            tags.push(des);
+          }
           if (d.auto_off_suspend) tags.push("auto↓");
           const tagTxt = tags.length ? " · " + tags.join(" · ") : "";
           const icon = d.icon || "🔌";
@@ -22312,6 +24614,7 @@
         auto_off_suspend: false,
         allow_off_while_mining: false,
         allow_on_while_suspend: false,
+        enforce_desired: false,
       };
       document.getElementById("device-id").value = d.id || "";
       document.getElementById("device-alias").value = d.alias || "";
@@ -22442,6 +24745,8 @@
       }
       document.getElementById("dev-auto-mining").checked = !!d.auto_on_mining;
       document.getElementById("dev-auto-suspend").checked = !!d.auto_off_suspend;
+      const enf = document.getElementById("dev-enforce-desired");
+      if (enf) enf.checked = !!d.enforce_desired;
       document.getElementById("dev-allow-off-mining").checked = !!d.allow_off_while_mining;
       document.getElementById("dev-allow-on-suspend").checked = !!d.allow_on_while_suspend;
       // expand mining panel if any flag set
@@ -22449,7 +24754,8 @@
         d.auto_on_mining ||
         d.auto_off_suspend ||
         d.allow_off_while_mining ||
-        d.allow_on_while_suspend;
+        d.allow_on_while_suspend ||
+        d.enforce_desired;
       setDevMiningOpen(!!anyMining);
       syncDeviceBackendUi();
       renderDeviceIconPicker();
@@ -22562,6 +24868,7 @@
         auto_off_suspend: !!document.getElementById("dev-auto-suspend")?.checked,
         allow_off_while_mining: !!document.getElementById("dev-allow-off-mining")?.checked,
         allow_on_while_suspend: !!document.getElementById("dev-allow-on-suspend")?.checked,
+        enforce_desired: !!document.getElementById("dev-enforce-desired")?.checked,
       };
       if (!payload.id) delete payload.id;
       // empty secrets → omit so server keeps saved
@@ -23091,14 +25398,35 @@
       renderDevicesList();
     });
 
-    loadChipmapConfig();
-    scheduleChipmapPoll();
-    // LuCI proxy status → LIVE strip IP link when proxy is listening
-    if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
-    if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
     if (typeof initDashLayout === "function") initDashLayout();
-    loadHistoryCharts(); // charts on Overview
-    loadMinerErrorLog();
+    // Live first (clears dash skeleton); heavy charts/chipmap deferred so Overview paints
+    // (history can be ~1MB+ and blocks main thread while parsing)
+    const deferHeavy = (fn, ms) => {
+      const run = () => {
+        try {
+          fn();
+        } catch (e) {
+          console.warn("deferred init", e);
+        }
+      };
+      if (typeof requestIdleCallback === "function") {
+        requestIdleCallback(run, { timeout: ms + 500 });
+      } else {
+        setTimeout(run, ms);
+      }
+    };
+    deferHeavy(() => {
+      if (typeof loadHistoryCharts === "function") loadHistoryCharts();
+    }, 400);
+    deferHeavy(() => {
+      if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+      if (typeof scheduleChipmapPoll === "function") scheduleChipmapPoll();
+    }, 800);
+    deferHeavy(() => {
+      if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
+      if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
+      if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
+    }, 600);
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
     Promise.all([
       loadPoolConfig(),
@@ -23111,7 +25439,9 @@
       .catch(() => { updateHeatLoss(); });
     // weather poll interval from config (default 10 min) — see scheduleWeatherRefresh()
     // refresh error journal periodically (collector may add rows)
-    setInterval(() => { loadMinerErrorLog(); }, 60 * 1000);
+    setInterval(() => {
+      if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
+    }, 60 * 1000);
   </script>
 </body>
 </html>
