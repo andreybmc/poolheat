@@ -15134,13 +15134,24 @@ def _resolve_miner_errors(
 
         if key in cache and cache[key].get("cause"):
             cached = cache[key]["cause"]
-            # refresh if cache still holds useless placeholder
-            if cached and str(cached).strip().lower() not in (
+            c_ok = cached and str(cached).strip().lower() not in (
                 f"error code {code}".lower(),
                 f"error {code}".lower(),
-            ):
+            )
+            n_ok = cause and str(cause).strip().lower() not in (
+                f"error code {code}".lower(),
+                f"error {code}".lower(),
+            )
+            # Prefer richer live Cause (LuCI often has vin:/U1- details)
+            # over a shorter frozen map string from first sight.
+            if n_ok and c_ok:
+                if len(str(cause).strip()) >= len(str(cached).strip()):
+                    pass  # keep native
+                else:
+                    cause = cached
+            elif c_ok and not n_ok:
                 cause = cached
-            elif not cause:
+            elif not n_ok:
                 cause = None
 
         if not cause:
