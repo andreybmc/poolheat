@@ -8680,7 +8680,7 @@
         "sub.chart_temps": "history · liquid · env · outdoor · boards · chip",
         "dash.chart_series": "Chart series",
         "dash.chart_temps_settings": "Temperature series",
-        "dash.chart_temps_settings_sub": "Choose which temperatures to show on the dashboard chart.",
+        "dash.chart_temps_settings_sub": "These series appear in the chart legend. You can still hide/show them by clicking the legend.",
         "dash.chart_series_min": "Select at least one series",
         "dash.chart_series_saved": "Chart series updated",
         "btn.reset_defaults": "Defaults",
@@ -9370,7 +9370,7 @@
         "sub.chart_temps": "история · liquid · env · улица · платы · chip",
         "dash.chart_series": "Серии графика",
         "dash.chart_temps_settings": "Температуры на графике",
-        "dash.chart_temps_settings_sub": "Выберите, какие температуры показывать на графике дашборда.",
+        "dash.chart_temps_settings_sub": "Эти серии попадают в легенду графика. Временно скрыть/показать — клик по легенде.",
         "dash.chart_series_min": "Выберите хотя бы одну серию",
         "dash.chart_series_saved": "Серии графика обновлены",
         "btn.reset_defaults": "По умолчанию",
@@ -17272,7 +17272,13 @@
             saveTempChartSeriesVis(next);
             closeTempChartSeriesModal();
             try {
-              applyTempChartSeriesVisibility();
+              // force membership rebuild from settings (legend list = settings)
+              if (chartTemp && chartTemp.data) {
+                chartTemp.data.datasets = [];
+              }
+              if (typeof syncTempChartToSettings === "function") {
+                syncTempChartToSettings();
+              }
               if (typeof renderCharts === "function") renderCharts();
             } catch (_) { /* ignore */ }
             if (typeof toastSuccess === "function") {
@@ -17347,14 +17353,90 @@
       }
     }
 
-    function applyTempChartSeriesVisibility() {
-      if (!chartTemp || !chartTemp.data || !chartTemp.data.datasets) return;
-      const vis = getTempChartSeriesVis();
-      TEMP_CHART_SERIES.forEach((s, i) => {
-        const ds = chartTemp.data.datasets[i];
-        if (!ds) return;
-        ds.label = seriesLabel(s);
-        ds.hidden = vis[s.id] === false;
+    /** Series enabled in block settings (legend list comes from this). */
+    function activeTempChartSeries() {
+      return TEMP_CHART_SERIES.filter((s) => isTempSeriesOn(s.id));
+    }
+
+    function makeTempDataset(s, opts) {
+      const keepHidden = !!(opts && opts.keepHidden);
+      const ds = {
+        _seriesId: s.id,
+        label: seriesLabel(s),
+        data: [],
+        borderColor: s.color,
+        tension: 0.15,
+        pointRadius: 0,
+        borderWidth: s.id === "liquid" || s.id === "chip_max" ? 2 : 1.5,
+        fill: false,
+        // legend click toggles this; settings control membership, not hidden
+        hidden: keepHidden,
+      };
+      if (s.id === "liquid") {
+        ds.backgroundColor = "rgba(61,156,240,0.1)";
+      }
+      if (s.id === "outdoor") {
+        ds.borderDash = [6, 3];
+        ds.borderWidth = 2;
+      }
+      return ds;
+    }
+
+    /**
+     * Rebuild Chart.js datasets to match settings list.
+     * - Settings ON → series is in chart + legend
+     * - Legend click → temporary hide (dataset.hidden) without removing from list
+     * - Settings OFF → series removed from chart/legend entirely
+     */
+    function syncTempChartToSettings() {
+      if (!chartTemp || !chartTemp.data) return;
+      let want = activeTempChartSeries();
+      if (!want.length) {
+        // fallback: at least liquid so chart is never empty of axes
+        const liq = TEMP_CHART_SERIES.find((s) => s.id === "liquid");
+        if (liq) want = [liq];
+      }
+      const wantIds = want.map((s) => s.id);
+      const have = chartTemp.data.datasets || [];
+      const haveIds = have.map((d) => d._seriesId).filter(Boolean);
+      const same =
+        wantIds.length === haveIds.length &&
+        wantIds.every((id, i) => id === haveIds[i]);
+      // preserve legend-toggle state for series that stay in the list
+      const wasHidden = {};
+      have.forEach((d) => {
+        if (d && d._seriesId) wasHidden[d._seriesId] = !!d.hidden;
+      });
+      if (!same) {
+        chartTemp.data.datasets = want.map((s) =>
+          makeTempDataset(s, { keepHidden: !!wasHidden[s.id] })
+        );
+      } else {
+        want.forEach((s, i) => {
+          const ds = chartTemp.data.datasets[i];
+          if (ds) {
+            ds._seriesId = s.id;
+            ds.label = seriesLabel(s);
+            ds.borderColor = s.color;
+          }
+        });
+      }
+    }
+
+    function fillTempChartData() {
+      if (!chartTemp || !chartTemp.data) return;
+      (chartTemp.data.datasets || []).forEach((ds) => {
+        const s = TEMP_CHART_SERIES.find((x) => x.id === ds._seriesId);
+        if (!s) {
+          ds.data = [];
+          return;
+        }
+        const field = s.field || s.id;
+        if (s.id === "outdoor" || field === "outdoor_c") {
+          ds.data = xySeries("outdoor_c", { requireOnline: false });
+        } else {
+          ds.data = xySeries(field);
+        }
       });
     }
     let chartPower = null;
@@ -17800,12 +17882,12 @@
       const elTemp = document.getElementById("chart-temp");
       const elPower = document.getElementById("chart-power");
       if (!elTemp && !elPower) return;
-      // rebuild temps chart if series catalog changed (old 7-ds → 10-ds)
+      // rebuild if missing _seriesId (old chart without settings membership)
       if (
         chartTemp &&
         chartTemp.data &&
         Array.isArray(chartTemp.data.datasets) &&
-        chartTemp.data.datasets.length !== TEMP_CHART_SERIES.length
+        chartTemp.data.datasets.some((d) => !d || !d._seriesId)
       ) {
         try {
           chartTemp.destroy();
@@ -17820,7 +17902,21 @@
         normalized: true,
         interaction: { mode: "nearest", axis: "x", intersect: false },
         plugins: {
-          legend: { labels: { boxWidth: 12, boxHeight: 12 } },
+          legend: {
+            labels: { boxWidth: 12, boxHeight: 12 },
+            // click toggles visibility; list itself = settings-enabled series only
+            onClick: (e, legendItem, legend) => {
+              const ci = legend.chart;
+              const i = legendItem.datasetIndex;
+              if (ci.isDatasetVisible(i)) {
+                ci.hide(i);
+                legendItem.hidden = true;
+              } else {
+                ci.show(i);
+                legendItem.hidden = false;
+              }
+            },
+          },
           tooltip: {
             callbacks: {
               title: (items) => {
@@ -17834,30 +17930,16 @@
 
       if (!chartTemp && elTemp) {
         loadTempChartSeriesVis();
-        const tempDatasets = TEMP_CHART_SERIES.map((s) => {
-          const on = isTempSeriesOn(s.id);
-          const ds = {
-            label: seriesLabel(s),
-            data: [],
-            borderColor: s.color,
-            tension: 0.15,
-            pointRadius: 0,
-            borderWidth: s.id === "liquid" || s.id === "chip_max" ? 2 : 1.5,
-            fill: false,
-            hidden: !on,
-          };
-          if (s.id === "liquid") {
-            ds.backgroundColor = "rgba(61,156,240,0.1)";
-          }
-          if (s.id === "outdoor") {
-            ds.borderDash = [6, 3];
-            ds.borderWidth = 2;
-          }
-          return ds;
-        });
+        let want = activeTempChartSeries();
+        if (!want.length) {
+          const liq = TEMP_CHART_SERIES.find((s) => s.id === "liquid");
+          if (liq) want = [liq];
+        }
         chartTemp = new Chart(elTemp, {
           type: "line",
-          data: { datasets: tempDatasets },
+          data: {
+            datasets: want.map((s) => makeTempDataset(s)),
+          },
           options: {
             ...common,
             scales: {
@@ -17926,18 +18008,9 @@
       }
 
       if (hasTemp) {
-        // Fill each series from history; visibility from dashboard series settings
-        applyTempChartSeriesVisibility();
-        TEMP_CHART_SERIES.forEach((s, i) => {
-          const ds = chartTemp.data.datasets[i];
-          if (!ds) return;
-          const field = s.field || s.id;
-          if (s.id === "outdoor" || field === "outdoor_c") {
-            ds.data = xySeries("outdoor_c", { requireOnline: false });
-          } else {
-            ds.data = xySeries(field);
-          }
-        });
+        // Membership = settings; legend click only toggles hidden on those series
+        syncTempChartToSettings();
+        fillTempChartData();
         const vt = getView("temps");
         chartTemp.options.scales.x.min = vt.start;
         chartTemp.options.scales.x.max = vt.end;
