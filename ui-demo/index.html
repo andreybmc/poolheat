@@ -1678,12 +1678,53 @@
       letter-spacing: 0.02em;
     }
 
-    /* —— Errors + Events panel (same shell as chart cards on dash) —— */
-    .card.errors-card {
-      margin-bottom: 16px;
+    /*
+     * Errors & Events — same band height as chart widgets (e.g. energy ~header+260px).
+     * Always full-width so it never sits in a half-row hole and “drops” when last.
+     * Long lists scroll inside the body.
+     */
+    .dash-item[data-dash-id="errors"] {
+      grid-column: 1 / -1 !important;
+      align-self: start; /* don't stretch into sparse grid row height */
+      min-width: 0;
+    }
+    .dash-item[data-dash-id="errors"] > .card.errors-card {
+      /* chart_energy-like: header ~56px + body 260px + paddings */
+      height: 372px;
+      min-height: 372px;
+      max-height: 372px;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .card.errors-card .card-h {
+      flex: 0 0 auto;
     }
     .card.errors-card .card-h h2 {
       color: inherit;
+    }
+    .card.errors-card > .card-b {
+      flex: 1 1 auto;
+      min-height: 0;
+      padding-top: 12px;
+      padding-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .card.errors-card .errors-scroll {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-x: auto;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      display: block;
+      padding-right: 2px;
+    }
+    #miner-errors-section,
+    #miner-events-section {
+      min-width: 640px; /* floor width when card narrows — scroll horizontally */
     }
     /* keep error codes readable; events stay accent */
     .card.errors-card .err-table:not(.events-table) .col-code {
@@ -1695,45 +1736,67 @@
       text-transform: uppercase;
       letter-spacing: 0.06em;
       color: var(--dim);
-      margin: 4px 0 8px;
+      margin: 0 0 8px;
     }
     #miner-events-section {
-      margin-top: 14px;
+      margin-top: 12px;
       padding-top: 12px;
       border-top: 1px solid rgba(42, 53, 68, 0.55);
     }
-    #miner-events-section[hidden],
-    #miner-errors-section[hidden] {
-      display: none !important;
+    .err-empty {
+      font-size: 0.8rem;
+      color: var(--dim);
+      padding: 8px 0 4px;
+      line-height: 1.4;
     }
-    #miner-errors-section[hidden] + #miner-events-section {
-      margin-top: 0;
-      padding-top: 0;
-      border-top: none;
+    /* Events table: keep columns readable (screenshot floor ≈ 640px+) */
+    .card.errors-card .err-table {
+      width: 100%;
+      min-width: 640px;
+      table-layout: fixed;
+    }
+    .card.errors-card .err-table.events-table {
+      min-width: 720px;
     }
     .err-table.events-table .col-code {
       color: var(--accent, #3d9cf0);
+      width: 5.5rem;
+      white-space: nowrap;
+    }
+    .err-table.events-table .col-cause {
+      width: auto;
+      min-width: 14rem;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.35;
     }
     .err-table .col-action {
-      width: 7.5rem;
+      width: 8rem;
       color: var(--muted);
       white-space: nowrap;
       text-align: center;
       font-size: 0.78rem;
     }
     .err-table .col-count {
-      width: 3.5rem;
+      width: 4rem;
       color: var(--muted);
       text-align: center;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
     }
-    @media (max-width: 640px) {
-      .err-table.events-table .col-action,
-      .err-table.events-table .col-count {
-        width: auto;
-        display: inline-block;
-        margin-right: 10px;
-      }
+    .card.errors-card .err-table .col-time {
+      width: 9.5rem;
+      white-space: nowrap;
+    }
+    .card.errors-card .err-table:not(.events-table) {
+      min-width: 520px;
+    }
+    .card.errors-card .err-table:not(.events-table) .col-code {
+      width: 5.5rem;
+      white-space: nowrap;
+    }
+    .card.errors-card .err-table:not(.events-table) .col-cause {
+      min-width: 12rem;
     }
 
     /* —— Firmware library (compact list) —— */
@@ -3653,7 +3716,11 @@
     /*
      * Reflow on window width change:
      *  - widgets: left→right, top→bottom (snake / row)
-     *  - half-width charts: top→bottom left, then top→bottom right (column)
+     *  - half-width charts (linear order 1..n):
+     *      wide: column-major  →  1 3    (↓ left, then ↓ right)
+     *                            2 4
+     *      narrow 1-col:        1,2,3,4 top→bottom (same linear order)
+     *  - full-width charts break the pack (stay full row)
      */
     #dash-board {
       grid-auto-flow: row;
@@ -3662,14 +3729,40 @@
       grid-column: 1 / -1;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-auto-flow: column; /* ↓ left column, then ↓ right column */
+      /* placement set in JS (column-major); auto-flow as fallback */
+      grid-auto-flow: column;
       gap: 12px;
       align-items: stretch;
       min-width: 0;
     }
     .dash-charts-pack > .dash-item {
-      grid-column: auto !important;
       min-width: 0;
+      /* override board half/full span — cells use explicit col/row from JS */
+      grid-column: auto;
+    }
+    .dash-charts-pack > .dash-item.dash-span-half,
+    .dash-charts-pack > .dash-item.dash-span-full {
+      grid-column: auto;
+    }
+    /* edit: linear order badge (source of truth for 1-col reflow) */
+    .dash-board.dash-edit-mode .dash-item[data-order-n]::after {
+      content: attr(data-order-n);
+      position: absolute;
+      left: 10px;
+      bottom: 10px;
+      z-index: 6;
+      min-width: 1.35rem;
+      height: 1.35rem;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: rgba(61, 156, 240, 0.92);
+      color: #0b1220;
+      font-size: 0.68rem;
+      font-weight: 800;
+      line-height: 1.35rem;
+      text-align: center;
+      pointer-events: none;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
     }
     @media (max-width: 960px) {
       .dash-item { grid-column: span 2; }
@@ -3687,7 +3780,11 @@
       }
       .dash-charts-pack {
         grid-template-columns: 1fr;
-        grid-auto-flow: row; /* single column: just top→bottom */
+        grid-auto-flow: row; /* 1-col: linear order top→bottom */
+      }
+      .dash-charts-pack > .dash-item {
+        grid-column: auto !important;
+        grid-row: auto !important;
       }
     }
     /* layout hide — stronger than [hidden] quirks inside grid */
@@ -4564,42 +4661,46 @@
           </div>
 
           <div class="dash-item dash-span-full" data-dash-id="errors">
-            <div class="card errors-card" id="panel-miner-errors" style="display:none" hidden role="alert">
+            <div class="card errors-card" id="panel-miner-errors">
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.errors">Errors & Events</h2>
                   <div class="sub" data-i18n="sub.errors_events">active errors · miner events · ErrorCode · EventCode</div>
                 </div>
-                <span class="pill danger" id="pill-err-count" style="display:none"><span class="dot"></span> 0</span>
+                <span class="pill" id="pill-err-count" style="display:none"><span class="dot"></span> 0</span>
               </div>
-              <div class="card-b" style="padding-top:12px;padding-bottom:8px">
-                <div id="miner-errors-section" hidden>
-                  <div class="err-section-label" data-i18n="label.miner_errors">Errors</div>
-                  <table class="err-table">
-                    <thead>
-                      <tr>
-                        <th class="col-code">ErrorCode</th>
-                        <th class="col-cause">Cause</th>
-                        <th class="col-time">Time</th>
-                      </tr>
-                    </thead>
-                    <tbody id="miner-err-rows"></tbody>
-                  </table>
-                </div>
-                <div id="miner-events-section" hidden>
-                  <div class="err-section-label" data-i18n="label.miner_events">Events</div>
-                  <table class="err-table events-table">
-                    <thead>
-                      <tr>
-                        <th class="col-code">EventCode</th>
-                        <th class="col-cause">EventCause</th>
-                        <th class="col-action">EventAction</th>
-                        <th class="col-count">Count</th>
-                        <th class="col-time">LastTime</th>
-                      </tr>
-                    </thead>
-                    <tbody id="miner-event-rows"></tbody>
-                  </table>
+              <div class="card-b">
+                <div class="errors-scroll">
+                  <div id="miner-errors-section">
+                    <div class="err-section-label" data-i18n="label.miner_errors">Errors</div>
+                    <table class="err-table">
+                      <thead>
+                        <tr>
+                          <th class="col-code">ErrorCode</th>
+                          <th class="col-cause">Cause</th>
+                          <th class="col-time">Time</th>
+                        </tr>
+                      </thead>
+                      <tbody id="miner-err-rows"></tbody>
+                    </table>
+                    <div class="err-empty" id="miner-err-empty" data-i18n="errors.empty">No active errors</div>
+                  </div>
+                  <div id="miner-events-section">
+                    <div class="err-section-label" data-i18n="label.miner_events">Events</div>
+                    <table class="err-table events-table">
+                      <thead>
+                        <tr>
+                          <th class="col-code">EventCode</th>
+                          <th class="col-cause">EventCause</th>
+                          <th class="col-action">EventAction</th>
+                          <th class="col-count">Count</th>
+                          <th class="col-time">LastTime</th>
+                        </tr>
+                      </thead>
+                      <tbody id="miner-event-rows"></tbody>
+                    </table>
+                    <div class="err-empty" id="miner-event-empty" data-i18n="events.empty">No events</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4707,7 +4808,7 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-                  <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power · by hour / day / week / month</div>
+                  <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power</div>
                 </div>
                 <div class="btn-row energy-chart-toolbar" style="align-items:end">
                   <label class="field energy-chart-field">
@@ -5428,7 +5529,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-              <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power · by hour / day / week / month</div>
+              <div class="sub" data-i18n="sub.energy_chart">kWh bars · avg power</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:end">
               <label class="field" style="margin:0;min-width:9rem">
@@ -7837,7 +7938,7 @@
         "sub.energy_tariff": "1 / 2 / 3 zones · rates and time windows",
         "h2.energy": "Energy accounting",
         "h2.energy_chart": "Energy consumption",
-        "sub.energy_chart": "kWh bars · avg power · by hour / day / week / month",
+        "sub.energy_chart": "kWh bars · avg power",
         "field.energy_bucket": "Sample by",
         "field.energy_range": "Range",
         "opt.energy_bucket_hour": "Hours",
@@ -8295,6 +8396,8 @@
         "dash.widget.errors": "Errors & Events",
         "sub.errors_events": "active errors · miner events · ErrorCode · EventCode",
         "label.miner_errors": "Errors",
+        "errors.empty": "No active errors",
+        "events.empty": "No events",
         "label.miner_events": "Events",
         "dash.widget.history": "History & charts",
         "dash.widget.chart_temps": "Temperatures chart",
@@ -8505,7 +8608,7 @@
         "sub.energy_tariff": "1 / 2 / 3 зоны · ставки и временные окна",
         "h2.energy": "Учёт энергопотребления",
         "h2.energy_chart": "Потребление электроэнергии",
-        "sub.energy_chart": "столбики кВт·ч · средняя мощность · час / день / неделя / месяц",
+        "sub.energy_chart": "столбики кВт·ч · средняя мощность",
         "field.energy_bucket": "Семпл",
         "field.energy_range": "Период",
         "opt.energy_bucket_hour": "Часы",
@@ -8963,6 +9066,8 @@
         "dash.widget.errors": "Ошибки и события",
         "sub.errors_events": "активные ошибки · события майнера · ErrorCode · EventCode",
         "label.miner_errors": "Ошибки",
+        "errors.empty": "Нет активных ошибок",
+        "events.empty": "Нет событий",
         "label.miner_events": "События",
         "dash.widget.history": "История и графики",
         "dash.widget.chart_temps": "График температур",
@@ -10658,87 +10763,67 @@
       return out || String(ts).trim();
     }
 
-    /** True if Errors or Events tables currently have rows. */
-    function minerErrorsPanelHasContent() {
-      const tbody = document.getElementById("miner-err-rows");
-      const evBody = document.getElementById("miner-event-rows");
-      const nErr = tbody ? tbody.children.length : 0;
-      const nEv = evBody ? evBody.children.length : 0;
-      return nErr + nEv > 0;
-    }
-
+    /** Always-visible Errors & Events panel (height like chart widgets). */
     function renderMinerErrors(live) {
       const panel = document.getElementById("panel-miner-errors");
       const tbody = document.getElementById("miner-err-rows");
       const evBody = document.getElementById("miner-event-rows");
-      const errSec = document.getElementById("miner-errors-section");
-      const evSec = document.getElementById("miner-events-section");
+      const errEmpty = document.getElementById("miner-err-empty");
+      const evEmpty = document.getElementById("miner-event-empty");
       const pill = document.getElementById("pill-err-count");
       if (!panel || !tbody) return;
 
-      const esc = (s) => String(s == null ? "" : s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+      const esc = (s) =>
+        String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/"/g, "&quot;");
 
       // real get_error_code + LuCI Events table (no Hash Stable soft-alerts)
-      const errs = (live && Array.isArray(live.miner_errors)) ? live.miner_errors : [];
-      const events = (live && Array.isArray(live.miner_events)) ? live.miner_events : [];
+      const errs = live && Array.isArray(live.miner_errors) ? live.miner_errors : [];
+      const events =
+        live && Array.isArray(live.miner_events) ? live.miner_events : [];
       const total = errs.length + events.length;
 
-      if (!total) {
-        panel.style.display = "none";
-        panel.hidden = true;
-        tbody.innerHTML = "";
-        if (evBody) evBody.innerHTML = "";
-        if (errSec) errSec.hidden = true;
-        if (evSec) evSec.hidden = true;
-        if (pill) pill.style.display = "none";
-        // collapse outer dash cell when not editing (avoid empty full-width gap)
-        const errItem = panel.closest(".dash-item");
-        if (
-          errItem &&
-          !(typeof dashEditMode !== "undefined" && dashEditMode) &&
-          typeof dashLayoutIsHidden === "function" &&
-          !dashLayoutIsHidden("errors")
-        ) {
-          errItem.classList.add("is-layout-hidden");
-          errItem.hidden = true;
-        }
-        return;
-      }
-
-      // Respect dashboard layout: if user hid "errors" block, keep outer item hidden
+      // Always show card; only layout-hide if user hid the widget
       const errItem = panel.closest(".dash-item");
       const layoutHides =
         typeof dashLayoutIsHidden === "function" && dashLayoutIsHidden("errors");
       panel.hidden = false;
-      panel.style.display = "block";
+      panel.style.display = "";
+      panel.removeAttribute("hidden");
       if (errItem && !layoutHides) {
         errItem.classList.remove("is-layout-hidden");
         errItem.removeAttribute("hidden");
         errItem.hidden = false;
       }
+
       if (pill) {
-        pill.style.display = "inline-flex";
-        let pillTxt = String(total);
-        if (errs.length && events.length) {
-          pillTxt = errs.length + " / " + events.length;
-        } else if (events.length && !errs.length) {
-          pillTxt = "E" + events.length;
+        if (total > 0) {
+          pill.style.display = "inline-flex";
+          pill.classList.toggle("danger", errs.length > 0);
+          let pillTxt = String(total);
+          if (errs.length && events.length) {
+            pillTxt = errs.length + " / " + events.length;
+          } else if (events.length && !errs.length) {
+            pillTxt = "E" + events.length;
+          }
+          pill.innerHTML = '<span class="dot"></span> ' + pillTxt;
+          pill.title =
+            (errs.length ? errs.length + " error(s)" : "0 errors") +
+            " · " +
+            (events.length ? events.length + " event(s)" : "0 events");
+        } else {
+          pill.style.display = "none";
         }
-        pill.innerHTML = '<span class="dot"></span> ' + pillTxt;
-        pill.title =
-          (errs.length ? errs.length + " error(s)" : "0 errors") +
-          " · " +
-          (events.length ? events.length + " event(s)" : "0 events");
       }
 
-      if (errSec) errSec.hidden = !errs.length;
       tbody.innerHTML = errs.length
         ? errs
             .map((e) => {
               const code = e.code != null ? String(e.code) : "—";
-              const cause = e.cause || e.message || ("Error code " + code);
-              const tip = e.hint || ("ErrorCode " + code);
+              const cause = e.cause || e.message || "Error code " + code;
+              const tip = e.hint || "ErrorCode " + code;
               const time = e.ts ? formatMinerErrTs(e.ts) : "—";
               return (
                 "<tr>" +
@@ -10758,9 +10843,15 @@
             })
             .join("")
         : "";
+      if (errEmpty) {
+        errEmpty.hidden = !!errs.length;
+        errEmpty.textContent = t("errors.empty", "No active errors");
+      }
+      // hide table header noise when empty? keep structure — empty line under
+      const errTable = tbody.closest("table");
+      if (errTable) errTable.style.display = errs.length ? "" : "none";
 
-      if (evSec && evBody) {
-        evSec.hidden = !events.length;
+      if (evBody) {
         evBody.innerHTML = events.length
           ? events
               .map((e) => {
@@ -10772,7 +10863,8 @@
                     ? String(e.count)
                     : "—";
                 const time = e.ts ? formatMinerErrTs(e.ts) : "—";
-                const tip = [e.source, e.detail].filter(Boolean).join(" · ") || code;
+                const tip =
+                  [e.source, e.detail].filter(Boolean).join(" · ") || code;
                 return (
                   "<tr>" +
                   '<td class="col-code">' +
@@ -10798,8 +10890,14 @@
               .join("")
           : "";
       }
+      if (evEmpty) {
+        evEmpty.hidden = !!events.length;
+        evEmpty.textContent = t("events.empty", "No events");
+      }
+      const evTable = evBody && evBody.closest("table");
+      if (evTable) evTable.style.display = events.length ? "" : "none";
 
-      // refresh journal when active errors appear (new rows may have been logged)
+      // refresh journal when active errors appear
       if (errs.length) loadMinerErrorLog();
     }
 
@@ -13143,12 +13241,16 @@
     ];
     /** Widgets that default to full width and can toggle half in edit mode */
     const DASH_RESIZABLE = {
-      errors: 1,
+      // errors: always full band (fixed chart-like height) — not half-resizable
       chart_temps: 1,
       chart_power: 1,
       chart_energy: 1,
       // legacy id from before chart split
       history: 1,
+    };
+    /** Always full-row band widgets (same as charts when full) */
+    const DASH_ALWAYS_FULL = {
+      errors: 1,
     };
     /** Chart widgets — half-width pack: column-major reflow (↓ left, then ↓ right) */
     const DASH_CHART_IDS = {
@@ -13217,7 +13319,12 @@
         });
         order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
         hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
-        half = half.filter((id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        half = half.filter(
+          (id) =>
+            DASH_RESIZABLE[id] &&
+            !DASH_ALWAYS_FULL[id] &&
+            DASH_DEFAULT_ORDER.indexOf(id) >= 0
+        );
         dashLayout = { order, hidden, half };
       } catch (_) { /* ignore */ }
     }
@@ -13244,6 +13351,18 @@
 
     function applyDashItemSpan(el, id) {
       if (!el || !id) return;
+      // Errors band: always full row (prevents half-row “drop” when last)
+      if (DASH_ALWAYS_FULL[id]) {
+        el.classList.add("dash-span-full");
+        el.classList.remove("dash-span-half");
+        if (el.style) {
+          el.style.gridColumn = "";
+          el.style.gridRow = "";
+        }
+        const wbtn = el.querySelector(".dash-width-btn");
+        if (wbtn) wbtn.remove();
+        return;
+      }
       const resizable = !!DASH_RESIZABLE[id];
       const half = resizable && dashLayoutIsHalf(id);
       el.classList.toggle("dash-span-full", resizable && !half);
@@ -13371,22 +13490,49 @@
       if (!board) return;
       board.querySelectorAll(":scope > .dash-charts-pack").forEach((pack) => {
         while (pack.firstChild) {
-          board.insertBefore(pack.firstChild, pack);
+          const ch = pack.firstChild;
+          if (ch && ch.style) {
+            ch.style.gridColumn = "";
+            ch.style.gridRow = "";
+          }
+          board.insertBefore(ch, pack);
         }
         pack.remove();
       });
     }
 
+    function isDashHalfChartEl(el) {
+      if (!el || !el.classList || !el.classList.contains("dash-item")) return false;
+      if (el.classList.contains("is-layout-hidden") || el.hidden) return false;
+      const id = el.getAttribute("data-dash-id") || "";
+      return (
+        isDashChartId(id) &&
+        el.classList.contains("dash-span-half") &&
+        !el.classList.contains("dash-span-full")
+      );
+    }
+
     /**
-     * Pack consecutive half-width charts into column-major flow:
-     * top→bottom left column, then top→bottom right column.
-     * Widgets / full-width stay on the main board: left→right, top→bottom (snake).
-     * Same packing in view and edit so visual order matches layout order.
+     * Pack consecutive half-width charts into column-major 2-col layout.
+     *
+     * Linear order (dashLayout.order) is the source of truth — same order as
+     * single-column reflow: 1,2,3,4,5…
+     *
+     * On wide screens a run of half charts becomes:
+     *   DOM [1,2,3,4]  →  visual  1 3
+     *                               2 4
+     * Full-width charts break a run and sit alone on a full row.
+     * Example mixed order 1h,2h,3full,4h,5h,6h,7h,8full:
+     *   1 2
+     *   3 (full)
+     *   4 6
+     *   5 7
+     *   8 (full)
      */
     function packDashHalfCharts(board) {
       if (!board) return;
       flattenDashChartPacks(board);
-      // narrow: single column is already top→bottom
+      // narrow: keep flat linear top→bottom (1..n)
       const narrow =
         typeof window.matchMedia === "function" &&
         window.matchMedia("(max-width: 520px)").matches;
@@ -13396,17 +13542,7 @@
       let i = 0;
       while (i < children.length) {
         const el = children[i];
-        if (!el || !el.classList || !el.classList.contains("dash-item")) {
-          i++;
-          continue;
-        }
-        const id = el.getAttribute("data-dash-id") || "";
-        const half =
-          isDashChartId(id) &&
-          el.classList.contains("dash-span-half") &&
-          !el.classList.contains("is-layout-hidden") &&
-          !el.hidden;
-        if (!half) {
+        if (!isDashHalfChartEl(el)) {
           i++;
           continue;
         }
@@ -13415,31 +13551,62 @@
         let j = i + 1;
         while (j < children.length) {
           const n = children[j];
-          if (!n || !n.classList || !n.classList.contains("dash-item")) break;
-          const nid = n.getAttribute("data-dash-id") || "";
-          const nhalf =
-            isDashChartId(nid) &&
-            n.classList.contains("dash-span-half") &&
-            !n.classList.contains("is-layout-hidden") &&
-            !n.hidden;
-          if (!nhalf) break;
+          if (!isDashHalfChartEl(n)) break;
           run.push(n);
           j++;
         }
         if (run.length >= 2) {
           const pack = document.createElement("div");
           pack.className = "dash-charts-pack";
-          // fixed row count so grid-auto-flow:column fills ↓left then ↓right
+          // fixed row count: column-major fill (↓ left, then ↓ right)
           const rows = Math.ceil(run.length / 2);
+          pack.style.gridTemplateColumns = "1fr 1fr";
           pack.style.gridTemplateRows = "repeat(" + rows + ", auto)";
           board.insertBefore(pack, run[0]);
-          run.forEach((ch) => {
+          run.forEach((ch, idx) => {
+            // column-major cell: col = floor(idx/rows), row = idx % rows
+            const row = (idx % rows) + 1;
+            const col = Math.floor(idx / rows) + 1;
+            if (ch.style) {
+              ch.style.gridRow = String(row);
+              ch.style.gridColumn = String(col);
+            }
             pack.appendChild(ch);
           });
           children.splice(i, run.length, pack);
         }
         i++;
       }
+    }
+
+    /**
+     * Swap two widgets in dashLayout.order (linear source of truth),
+     * then rebuild pack so column-major visual stays consistent.
+     * Returns the dragged element after re-layout (or null).
+     */
+    function swapDashOrderAndRelayout(idA, idB) {
+      if (!idA || !idB || idA === idB) return null;
+      let order = Array.isArray(dashLayout.order)
+        ? dashLayout.order.slice()
+        : [];
+      if (order.indexOf(idA) < 0) order.push(idA);
+      if (order.indexOf(idB) < 0) order.push(idB);
+      const ia = order.indexOf(idA);
+      const ib = order.indexOf(idB);
+      if (ia < 0 || ib < 0) return null;
+      order[ia] = idB;
+      order[ib] = idA;
+      dashLayout.order = order;
+      applyDashLayout();
+      const board = document.getElementById("dash-board");
+      if (board && dashEditMode) {
+        board.querySelectorAll(".dash-item").forEach((el) => {
+          el.setAttribute("draggable", "true");
+        });
+      }
+      return board
+        ? board.querySelector('.dash-item[data-dash-id="' + idA + '"]')
+        : null;
     }
 
     function applyDashLayout() {
@@ -13470,39 +13637,38 @@
         if (uniq.indexOf(id) < 0) uniq.push(id);
       });
       dashLayout.order = uniq;
-      // reorder DOM — widgets: source order = row snake (L→R, T→B)
+      // reorder DOM — linear order = 1-col reflow order (and pack input)
       uniq.forEach((id) => {
         if (items[id]) board.appendChild(items[id]);
       });
       Object.keys(items).forEach((id) => {
         if (uniq.indexOf(id) < 0) board.appendChild(items[id]);
       });
-      // visibility: class + hidden attribute
-      Object.keys(items).forEach((id) => {
+      // visibility: class + hidden attribute + edit order badges
+      let orderN = 0;
+      uniq.forEach((id) => {
         const el = items[id];
+        if (!el) return;
         const hide = dashLayoutIsHidden(id);
         el.classList.toggle("is-layout-hidden", hide);
         if (hide) {
           el.setAttribute("hidden", "");
           el.hidden = true;
+          el.removeAttribute("data-order-n");
         } else {
           el.removeAttribute("hidden");
           el.hidden = false;
-          // clear accidental inline display:none on the wrapper
           if (el.style && el.style.display === "none") el.style.display = "";
+          orderN += 1;
+          el.setAttribute("data-order-n", String(orderN));
         }
       });
-      // errors/events: if not layout-hidden but no active rows — collapse outer cell
-      // (except in edit mode so the slot stays manageable)
-      if (!dashEditMode && !dashLayoutIsHidden("errors")) {
-        const errItem = items["errors"];
-        const panel = errItem && errItem.querySelector("#panel-miner-errors");
-        if (errItem && panel && !minerErrorsPanelHasContent()) {
-          errItem.classList.add("is-layout-hidden");
-          errItem.hidden = true;
-        }
-      }
-      // half charts: column-major pack (↓ left, then ↓ right)
+      Object.keys(items).forEach((id) => {
+        if (uniq.indexOf(id) >= 0) return;
+        const el = items[id];
+        if (el) el.removeAttribute("data-order-n");
+      });
+      // half charts: column-major pack from linear order
       packDashHalfCharts(board);
       updateDashAddButton();
     }
@@ -13557,12 +13723,18 @@
           });
         } catch (_) { /* ignore */ }
       }
-      // if errors re-shown and has rows, ensure panel visible
+      // if errors re-shown, ensure panel is visible (always-on block)
       if (id === "errors") {
         const panel = document.getElementById("panel-miner-errors");
-        if (panel && minerErrorsPanelHasContent()) {
+        if (panel) {
           panel.hidden = false;
-          panel.style.display = "block";
+          panel.style.display = "";
+          panel.removeAttribute("hidden");
+        }
+        if (typeof live !== "undefined" && typeof renderMinerErrors === "function") {
+          try {
+            renderMinerErrors(live);
+          } catch (_) { /* ignore */ }
         }
       }
       if (dashEditMode) renderDashAddMenu();
@@ -13689,23 +13861,7 @@
           el.setAttribute("draggable", dashEditMode ? "true" : "false");
         });
       }
-      // In edit mode, show empty errors slot so it can be reordered/hidden
-      if (dashEditMode) {
-        const errItem = board && board.querySelector('.dash-item[data-dash-id="errors"]');
-        if (errItem && !dashLayoutIsHidden("errors")) {
-          errItem.classList.remove("is-layout-hidden");
-          errItem.hidden = false;
-        }
-      } else {
-        // re-collapse empty errors/events if no active rows
-        const panel = document.getElementById("panel-miner-errors");
-        if (panel && !minerErrorsPanelHasContent() && !dashLayoutIsHidden("errors")) {
-          const errItem = panel.closest(".dash-item");
-          if (errItem) errItem.hidden = true;
-          panel.style.display = "none";
-          panel.hidden = true;
-        }
-      }
+      // errors/events stay visible (empty state); layout hide only via user hide
       updateDashAddButton();
       if (!dashEditMode) hideDashAddMenu();
     }
@@ -13714,48 +13870,9 @@
       const board = document.getElementById("dash-board");
       if (!board || dashSortBound) return;
       dashSortBound = true;
-      let dragEl = null;
-      let lastOver = null;
-
-      /**
-       * Swap two dash items (works across .dash-charts-pack boundaries).
-       * Document order of .dash-item = layout order (column-major inside packs).
-       */
-      const swapItems = (a, b) => {
-        if (!a || !b || a === b) return;
-        if (!board.contains(a) || !board.contains(b)) return;
-        const all = Array.from(
-          board.querySelectorAll(".dash-item[data-dash-id]")
-        );
-        const ia = all.indexOf(a);
-        const ib = all.indexOf(b);
-        if (ia < 0 || ib < 0) return;
-        // keep dashLayout.order in sync with visual document order
-        const ids = all.map((el) => el.getAttribute("data-dash-id"));
-        const tmpId = ids[ia];
-        ids[ia] = ids[ib];
-        ids[ib] = tmpId;
-        const seen = {};
-        ids.forEach((id) => {
-          if (id) seen[id] = 1;
-        });
-        const rest = (dashLayout.order || []).filter((id) => !seen[id]);
-        dashLayout.order = ids.concat(rest);
-
-        const aParent = a.parentNode;
-        const bParent = b.parentNode;
-        if (!aParent || !bParent) return;
-        const aNext = a.nextSibling;
-        const bNext = b.nextSibling;
-        if (aNext === b) {
-          aParent.insertBefore(b, a);
-        } else if (bNext === a) {
-          bParent.insertBefore(a, b);
-        } else {
-          aParent.insertBefore(b, aNext);
-          bParent.insertBefore(a, bNext);
-        }
-      };
+      let dragId = null;
+      let lastOverId = null;
+      let swapBusy = false;
 
       const clearSwapHighlight = () => {
         board.querySelectorAll(".dash-item.is-swap-target").forEach((el) => {
@@ -13765,9 +13882,39 @@
 
       const cleanup = () => {
         clearSwapHighlight();
-        if (dragEl) dragEl.classList.remove("is-dragging");
-        dragEl = null;
-        lastOver = null;
+        board.querySelectorAll(".dash-item.is-dragging").forEach((el) => {
+          el.classList.remove("is-dragging");
+        });
+        dragId = null;
+        lastOverId = null;
+        swapBusy = false;
+      };
+
+      /**
+       * User-friendly reorder: swap linear order (1-col source of truth),
+       * rebuild column-major packs so wide layout stays 1 3 / 2 4 etc.
+       */
+      const swapWith = (overEl) => {
+        if (!dragId || !overEl || swapBusy) return;
+        const overId = overEl.getAttribute("data-dash-id");
+        if (!overId || overId === dragId) return;
+        if (overId === lastOverId) return;
+        lastOverId = overId;
+        swapBusy = true;
+        const keptDrag = dragId;
+        const next = swapDashOrderAndRelayout(keptDrag, overId);
+        if (next) {
+          next.classList.add("is-dragging");
+          const overNow = board.querySelector(
+            '.dash-item[data-dash-id="' + overId + '"]'
+          );
+          if (overNow) overNow.classList.add("is-swap-target");
+        }
+        dragId = keptDrag;
+        // allow next target after layout settles
+        requestAnimationFrame(() => {
+          swapBusy = false;
+        });
       };
 
       board.addEventListener("dragstart", (e) => {
@@ -13775,21 +13922,24 @@
           e.preventDefault();
           return;
         }
-        const item = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
+        const item =
+          e.target && e.target.closest ? e.target.closest(".dash-item") : null;
         if (!item || !board.contains(item)) return;
         if (
           e.target.closest &&
-          e.target.closest("button, input, select, a, .dash-hide-btn, .dash-width-btn")
+          e.target.closest(
+            "button, input, select, a, .dash-hide-btn, .dash-width-btn"
+          )
         ) {
           e.preventDefault();
           return;
         }
-        // full-width blocks swap with full-width only? allow any swap for simplicity
-        dragEl = item;
-        lastOver = null;
+        dragId = item.getAttribute("data-dash-id") || null;
+        lastOverId = null;
+        if (!dragId) return;
         try {
           e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", item.getAttribute("data-dash-id") || "x");
+          e.dataTransfer.setData("text/plain", dragId);
           if (e.dataTransfer.setDragImage) {
             e.dataTransfer.setDragImage(item, 28, 20);
           }
@@ -13798,48 +13948,54 @@
       });
 
       board.addEventListener("dragover", (e) => {
-        if (!dragEl) return;
+        if (!dragId) return;
         e.preventDefault();
         try {
           e.dataTransfer.dropEffect = "move";
         } catch (_) { /* ignore */ }
-        const over = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
+        const over =
+          e.target && e.target.closest ? e.target.closest(".dash-item") : null;
         clearSwapHighlight();
         if (
           !over ||
-          over === dragEl ||
           !board.contains(over) ||
           over.hidden ||
           over.classList.contains("is-layout-hidden")
         ) {
           return;
         }
+        const oid = over.getAttribute("data-dash-id");
+        if (!oid || oid === dragId) return;
         over.classList.add("is-swap-target");
-        // Live swap when pointer enters a new card — feels like home-screen tiles
-        if (over !== lastOver) {
-          lastOver = over;
-          swapItems(dragEl, over);
-        }
+        // live swap on enter new tile (home-screen style)
+        if (oid !== lastOverId) swapWith(over);
       });
 
       board.addEventListener("drop", (e) => {
-        if (!dragEl) return;
+        if (!dragId) return;
         e.preventDefault();
         e.stopPropagation();
-        // final swap if drop target differs (safety)
-        const over = e.target && e.target.closest ? e.target.closest(".dash-item") : null;
-        if (over && over !== dragEl && board.contains(over) && !over.hidden) {
-          if (over !== lastOver) swapItems(dragEl, over);
+        const over =
+          e.target && e.target.closest ? e.target.closest(".dash-item") : null;
+        if (over) {
+          const oid = over.getAttribute("data-dash-id");
+          if (oid && oid !== dragId && oid !== lastOverId) swapWith(over);
         }
+        saveDashLayout();
         cleanup();
-        readDashOrderFromDom();
         applyDashLayout();
+        board.querySelectorAll(".dash-item").forEach((el) => {
+          el.setAttribute("draggable", dashEditMode ? "true" : "false");
+        });
       });
 
       board.addEventListener("dragend", () => {
+        if (dragId) saveDashLayout();
         cleanup();
-        readDashOrderFromDom();
         applyDashLayout();
+        board.querySelectorAll(".dash-item").forEach((el) => {
+          el.setAttribute("draggable", dashEditMode ? "true" : "false");
+        });
       });
     }
 
