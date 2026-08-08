@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GoraPool · Keenetic</title>
   <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="/icons/favicon.svg" />
+  <link rel="icon" href="/icons/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+  <link rel="apple-touch-icon" href="/icons/app-icon-192.png" />
+  <meta name="theme-color" content="#152033" />
   <style>
     :root {
       --bg: #0b0f14;
@@ -455,23 +460,24 @@
       margin-top: 2px;
     }
 
-    /* Energy chart controls: compact so Sample + Range + icon fit one row (half-width) */
+    /* Energy chart controls: Sample + Range + refresh always one row */
     .energy-chart-toolbar {
-      flex-wrap: nowrap;
+      display: flex;
+      flex-wrap: nowrap !important;
+      flex-shrink: 0;
       gap: 6px;
       align-items: flex-end;
       min-width: 0;
-      flex: 0 1 auto;
     }
     .energy-chart-toolbar .energy-chart-field {
       margin: 0;
       min-width: 0;
-      flex: 1 1 5.5rem;
-      max-width: 7rem;
+      flex: 0 1 auto;
+      max-width: 6.5rem;
     }
     .energy-chart-toolbar .energy-chart-field-range {
-      flex: 0 1 4.25rem;
-      max-width: 5rem;
+      flex: 0 1 auto;
+      max-width: 4.5rem;
     }
     .energy-chart-toolbar .energy-chart-field select {
       width: 100%;
@@ -488,6 +494,7 @@
     }
     .energy-chart-toolbar .energy-chart-refresh {
       flex: 0 0 auto;
+      align-self: flex-end;
       width: 2.15rem;
       min-width: 2.15rem;
       height: 2.15rem;
@@ -503,12 +510,23 @@
       display: block;
     }
     #panel-chart-energy-dash > .card-h {
-      flex-wrap: wrap;
-      gap: 10px;
+      flex-wrap: nowrap;
+      gap: 8px;
+      align-items: center;
     }
     #panel-chart-energy-dash > .card-h > div:first-child {
       min-width: 0;
-      flex: 1 1 8rem;
+      flex: 1 1 auto;
+    }
+    /* pack / half: keep toolbar on one line */
+    .dash-charts-pack #panel-chart-energy-dash > .card-h {
+      flex-wrap: nowrap;
+    }
+    .dash-charts-pack .energy-chart-toolbar .energy-chart-field {
+      max-width: 5.75rem;
+    }
+    .dash-charts-pack .energy-chart-toolbar .energy-chart-field-range {
+      max-width: 4rem;
     }
 
     .card-b { padding: 16px; }
@@ -1679,24 +1697,46 @@
     }
 
     /*
-     * Errors & Events — same band height as chart widgets (e.g. energy ~header+260px).
-     * Always full-width so it never sits in a half-row hole and “drops” when last.
-     * Long lists scroll inside the body.
+     * Errors & Events — match chart card height (stretch in pack with siblings).
+     * Half packs with half charts (column-major). Body scrolls if many rows.
      */
     .dash-item[data-dash-id="errors"] {
-      grid-column: 1 / -1 !important;
-      align-self: start; /* don't stretch into sparse grid row height */
       min-width: 0;
+      height: 100%;
+      align-self: stretch;
+    }
+    .dash-item[data-dash-id="errors"].dash-span-full {
+      grid-column: 1 / -1;
     }
     .dash-item[data-dash-id="errors"] > .card.errors-card {
-      /* chart_energy-like: header ~56px + body 260px + paddings */
-      height: 372px;
-      min-height: 372px;
-      max-height: 372px;
+      height: 100%;
+      min-height: 372px; /* floor ≈ energy chart band */
+      max-height: none;
       margin: 0;
       display: flex;
       flex-direction: column;
       overflow: hidden;
+    }
+    /* inside pack: fill grid cell so height matches neighbor chart */
+    .dash-charts-pack {
+      align-items: stretch;
+    }
+    .dash-charts-pack > .dash-item {
+      height: 100%;
+      align-self: stretch;
+      display: flex;
+      flex-direction: column;
+    }
+    .dash-charts-pack > .dash-item > .card,
+    .dash-charts-pack > .dash-item > .temp-card {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 0;
+    }
+    .dash-charts-pack > .dash-item[data-dash-id="errors"] > .card.errors-card {
+      height: 100%;
+      min-height: 100%;
+      max-height: none;
     }
     .card.errors-card .card-h {
       flex: 0 0 auto;
@@ -1721,6 +1761,17 @@
       -webkit-overflow-scrolling: touch;
       display: block;
       padding-right: 2px;
+    }
+    /* half: slightly lower table min-width so less empty horizontal scroll */
+    .dash-charts-pack .card.errors-card .err-table.events-table {
+      min-width: 520px;
+    }
+    .dash-charts-pack .card.errors-card .err-table:not(.events-table) {
+      min-width: 420px;
+    }
+    .dash-charts-pack #miner-errors-section,
+    .dash-charts-pack #miner-events-section {
+      min-width: 480px;
     }
     #miner-errors-section,
     #miner-events-section {
@@ -3714,13 +3765,19 @@
       grid-column: 1 / -1;
     }
     /*
-     * Reflow on window width change:
-     *  - widgets: left→right, top→bottom (snake / row)
-     *  - half-width charts (linear order 1..n):
-     *      wide: column-major  →  1 3    (↓ left, then ↓ right)
-     *                            2 4
-     *      narrow 1-col:        1,2,3,4 top→bottom (same linear order)
-     *  - full-width charts break the pack (stay full row)
+     * Charts + Errors band reflow (linear order = 1-col order):
+     *  n = half (narrow), [N] = full (wide, takes both columns)
+     *
+     *   1 3          [1]           1 5
+     *   2 4           2 4          2 6
+     *   [5]           3 5          3 7
+     *   6 7          [6]           4 8
+     *                 7 9          [9]
+     *                 8 10        10 11
+     *
+     * Half runs fill column-major (↓ left, then ↓ right).
+     * Full blocks break the run and span the whole row.
+     * Narrow viewport: same linear order stacked 1…n.
      */
     #dash-board {
       grid-auto-flow: row;
@@ -3729,20 +3786,19 @@
       grid-column: 1 / -1;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      /* placement set in JS (column-major); auto-flow as fallback */
-      grid-auto-flow: column;
       gap: 12px;
       align-items: stretch;
       min-width: 0;
+      /* JS sets each cell's grid-row / grid-column (column-major) */
     }
     .dash-charts-pack > .dash-item {
       min-width: 0;
-      /* override board half/full span — cells use explicit col/row from JS */
-      grid-column: auto;
     }
     .dash-charts-pack > .dash-item.dash-span-half,
     .dash-charts-pack > .dash-item.dash-span-full {
-      grid-column: auto;
+      /* don't use board span-* inside pack — JS places cells */
+      grid-column: unset;
+      grid-row: unset;
     }
     /* edit: linear order badge (source of truth for 1-col reflow) */
     .dash-board.dash-edit-mode .dash-item[data-order-n]::after {
@@ -3780,10 +3836,10 @@
       }
       .dash-charts-pack {
         grid-template-columns: 1fr;
-        grid-auto-flow: row; /* 1-col: linear order top→bottom */
+        grid-template-rows: none;
       }
       .dash-charts-pack > .dash-item {
-        grid-column: auto !important;
+        grid-column: 1 / -1 !important;
         grid-row: auto !important;
       }
     }
@@ -4764,7 +4820,7 @@
             <div class="card" id="panel-chart-power">
               <div class="card-h">
                 <div>
-                  <h2 data-i18n="h2.power">Power · Hashrate · J/T</h2>
+                  <h2 data-i18n="h2.power">Power · Hashrate</h2>
                   <div class="sub" data-i18n="sub.chart_power">history · power · limit · hashrate · freq · efficiency</div>
                 </div>
               </div>
@@ -8229,7 +8285,7 @@
         "live.luci_proxy_title": "Open LuCI via proxy",
         "h2.history": "History & charts",
         "h2.temps": "Temperatures °C",
-        "h2.power": "Power · Hashrate · J/T",
+        "h2.power": "Power · Hashrate",
         "h2.mode": "Miner mode",
         "h2.boards": "Hashboards",
         "boards.title_n": "Hashboards · {n}",
@@ -8899,7 +8955,7 @@
         "live.luci_proxy_title": "Открыть LuCI через proxy",
         "h2.history": "История и графики",
         "h2.temps": "Температуры °C",
-        "h2.power": "Мощность · Хешрейт · J/T",
+        "h2.power": "Мощность · Хешрейт",
         "h2.mode": "Режим майнера",
         "h2.boards": "Хешплаты",
         "boards.title_n": "Хешплаты · {n}",
@@ -13241,18 +13297,24 @@
     ];
     /** Widgets that default to full width and can toggle half in edit mode */
     const DASH_RESIZABLE = {
-      // errors: always full band (fixed chart-like height) — not half-resizable
+      errors: 1,
       chart_temps: 1,
       chart_power: 1,
       chart_energy: 1,
       // legacy id from before chart split
       history: 1,
     };
-    /** Always full-row band widgets (same as charts when full) */
-    const DASH_ALWAYS_FULL = {
+    /** @deprecated reserved; nothing forced full anymore */
+    const DASH_ALWAYS_FULL = {};
+    /** Band widgets that pack together when half (column-major) */
+    const DASH_BAND_IDS = {
       errors: 1,
+      chart_temps: 1,
+      chart_power: 1,
+      chart_energy: 1,
+      history: 1,
     };
-    /** Chart widgets — half-width pack: column-major reflow (↓ left, then ↓ right) */
+    /** Chart widgets (subset of band) */
     const DASH_CHART_IDS = {
       chart_temps: 1,
       chart_power: 1,
@@ -13320,10 +13382,7 @@
         order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
         hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
         half = half.filter(
-          (id) =>
-            DASH_RESIZABLE[id] &&
-            !DASH_ALWAYS_FULL[id] &&
-            DASH_DEFAULT_ORDER.indexOf(id) >= 0
+          (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
         );
         dashLayout = { order, hidden, half };
       } catch (_) { /* ignore */ }
@@ -13351,22 +13410,16 @@
 
     function applyDashItemSpan(el, id) {
       if (!el || !id) return;
-      // Errors band: always full row (prevents half-row “drop” when last)
-      if (DASH_ALWAYS_FULL[id]) {
-        el.classList.add("dash-span-full");
-        el.classList.remove("dash-span-half");
-        if (el.style) {
-          el.style.gridColumn = "";
-          el.style.gridRow = "";
-        }
-        const wbtn = el.querySelector(".dash-width-btn");
-        if (wbtn) wbtn.remove();
-        return;
-      }
       const resizable = !!DASH_RESIZABLE[id];
       const half = resizable && dashLayoutIsHalf(id);
-      el.classList.toggle("dash-span-full", resizable && !half);
-      el.classList.toggle("dash-span-half", half);
+      if (resizable) {
+        // full by default; half when user toggled (errors + charts)
+        el.classList.toggle("dash-span-full", !half);
+        el.classList.toggle("dash-span-half", half);
+      } else if (DASH_BAND_IDS[id] || DASH_ALWAYS_FULL[id]) {
+        el.classList.add("dash-span-full");
+        el.classList.remove("dash-span-half");
+      }
       const wbtn = el.querySelector(".dash-width-btn");
       if (wbtn) {
         wbtn.classList.toggle("is-half", half);
@@ -13397,7 +13450,8 @@
         id === "chart_temps" ||
         id === "chart_power" ||
         id === "chart_energy" ||
-        id === "history"
+        id === "history" ||
+        id === "errors"
       ) {
         requestAnimationFrame(() => {
           try {
@@ -13485,6 +13539,10 @@
       return !!(id && DASH_CHART_IDS[id]);
     }
 
+    function isDashBandId(id) {
+      return !!(id && DASH_BAND_IDS[id]);
+    }
+
     /** Unwrap chart packs so board is a flat list of .dash-item again. */
     function flattenDashChartPacks(board) {
       if (!board) return;
@@ -13492,8 +13550,8 @@
         while (pack.firstChild) {
           const ch = pack.firstChild;
           if (ch && ch.style) {
-            ch.style.gridColumn = "";
-            ch.style.gridRow = "";
+            ch.style.removeProperty("grid-column");
+            ch.style.removeProperty("grid-row");
           }
           board.insertBefore(ch, pack);
         }
@@ -13501,38 +13559,31 @@
       });
     }
 
-    function isDashHalfChartEl(el) {
+    /**
+     * Narrow (half) band cell: half charts OR half errors.
+     * Full-width [N] band items break the pack run.
+     */
+    function isDashNarrowBandEl(el) {
       if (!el || !el.classList || !el.classList.contains("dash-item")) return false;
       if (el.classList.contains("is-layout-hidden") || el.hidden) return false;
       const id = el.getAttribute("data-dash-id") || "";
+      if (!isDashBandId(id)) return false;
       return (
-        isDashChartId(id) &&
         el.classList.contains("dash-span-half") &&
         !el.classList.contains("dash-span-full")
       );
     }
 
     /**
-     * Pack consecutive half-width charts into column-major 2-col layout.
+     * Pack consecutive narrow (half) band widgets into 2-col column-major grid.
+     * Includes half charts and half errors. Full [N] breaks the run.
      *
-     * Linear order (dashLayout.order) is the source of truth — same order as
-     * single-column reflow: 1,2,3,4,5…
-     *
-     * On wide screens a run of half charts becomes:
-     *   DOM [1,2,3,4]  →  visual  1 3
-     *                               2 4
-     * Full-width charts break a run and sit alone on a full row.
-     * Example mixed order 1h,2h,3full,4h,5h,6h,7h,8full:
-     *   1 2
-     *   3 (full)
-     *   4 6
-     *   5 7
-     *   8 (full)
+     *   1n 2n 3n 4n [5] 6n 7n  →  1 3 / 2 4 / [5] / 6 7
      */
     function packDashHalfCharts(board) {
       if (!board) return;
       flattenDashChartPacks(board);
-      // narrow: keep flat linear top→bottom (1..n)
+      // 1-col viewport: keep linear top→bottom (no pack)
       const narrow =
         typeof window.matchMedia === "function" &&
         window.matchMedia("(max-width: 520px)").matches;
@@ -13542,39 +13593,36 @@
       let i = 0;
       while (i < children.length) {
         const el = children[i];
-        if (!isDashHalfChartEl(el)) {
+        if (!isDashNarrowBandEl(el)) {
           i++;
           continue;
         }
-        // collect consecutive half-width visible charts
         const run = [el];
         let j = i + 1;
         while (j < children.length) {
           const n = children[j];
-          if (!isDashHalfChartEl(n)) break;
+          if (!isDashNarrowBandEl(n)) break;
           run.push(n);
           j++;
         }
-        if (run.length >= 2) {
-          const pack = document.createElement("div");
-          pack.className = "dash-charts-pack";
-          // fixed row count: column-major fill (↓ left, then ↓ right)
-          const rows = Math.ceil(run.length / 2);
-          pack.style.gridTemplateColumns = "1fr 1fr";
-          pack.style.gridTemplateRows = "repeat(" + rows + ", auto)";
-          board.insertBefore(pack, run[0]);
-          run.forEach((ch, idx) => {
-            // column-major cell: col = floor(idx/rows), row = idx % rows
-            const row = (idx % rows) + 1;
-            const col = Math.floor(idx / rows) + 1;
-            if (ch.style) {
-              ch.style.gridRow = String(row);
-              ch.style.gridColumn = String(col);
-            }
-            pack.appendChild(ch);
-          });
-          children.splice(i, run.length, pack);
-        }
+        // single narrow also goes in a pack (left cell, right empty)
+        const pack = document.createElement("div");
+        pack.className = "dash-charts-pack";
+        pack.setAttribute("data-pack-count", String(run.length));
+        const rows = Math.max(1, Math.ceil(run.length / 2));
+        pack.style.gridTemplateColumns = "1fr 1fr";
+        pack.style.gridTemplateRows = "repeat(" + rows + ", auto)";
+        board.insertBefore(pack, run[0]);
+        run.forEach((ch, idx) => {
+          const row = (idx % rows) + 1;
+          const col = Math.floor(idx / rows) + 1;
+          if (ch.style) {
+            ch.style.setProperty("grid-row", String(row), "important");
+            ch.style.setProperty("grid-column", String(col), "important");
+          }
+          pack.appendChild(ch);
+        });
+        children.splice(i, run.length, pack);
         i++;
       }
     }
@@ -15991,8 +16039,10 @@
       try {
         toastInfo("Writing pools…", 2000);
         const formCoin = readPoolPresetCoinType();
+        // Always send coin: form override, else preset (was dropped → ASIC stayed BTC)
+        const applyCoin = (formCoin || coin || "").trim();
         const payload = { action: "apply", id: id };
-        if (formCoin) payload.coin_type = formCoin;
+        if (applyCoin) payload.coin_type = applyCoin;
         const body = await poolPresetApi(payload);
         poolPresetsCache = {
           presets: body.presets || poolPresetsCache.presets || [],
@@ -16001,12 +16051,17 @@
         // list may not be in apply response fully
         if (!body.presets) await loadPoolPresets();
         else renderPoolPresetSelect();
+        const appliedCoin =
+          (body.response && body.response.coin_type) ||
+          body.coin_type ||
+          applyCoin ||
+          (p && p.coin_type) ||
+          "";
         toastSuccess(
           "Pools applied" +
             (body.name ? ": " + body.name : "") +
-            (formCoin || (p && p.coin_type)
-              ? " · Coin " + (formCoin || p.coin_type)
-              : "") +
+            (appliedCoin ? " · Coin " + appliedCoin : "") +
+            (body.transport ? " · " + body.transport : "") +
             (body.warning ? " · " + body.warning : "")
         );
         void loadMiningPools(true);

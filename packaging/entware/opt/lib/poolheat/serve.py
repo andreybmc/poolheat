@@ -1834,7 +1834,12 @@ def apply_pool_preset(
             p = get_pool_preset(preset_id) or p
         except Exception as e:
             print(f"[pools] coin persist: {e}")
-    cmd: dict = {"cmd": "update_pools", "pools": pools}
+    cmd: dict = {
+        "cmd": "update_pools",
+        "pools": pools,
+        # Always restart so stratum picks up new pools (LuCI was deferred-only)
+        "restart_mining": True,
+    }
     if coin:
         cmd["coin_type"] = coin
     resp = miner_write_cmd(cmd, pw)
@@ -13639,8 +13644,20 @@ class PoolheatMiner:
     def restart_btminer(self) -> dict:
         return self._m.restart_mining()
 
-    def set_pools(self, pools: list, *, coin_type: str | None = None) -> dict:
-        """pools: [{url,user,pass|password}, …] up to 3."""
+    def set_pools(
+        self,
+        pools: list,
+        *,
+        coin_type: str | None = None,
+        restart_mining: bool = True,
+    ) -> dict:
+        """
+        pools: [{url,user,pass|password}, …] up to 3.
+
+        ``coin_type`` (e.g. DGB from pool preset) is required for LuCI/UCI and
+        must not be dropped — previously update_pools ignored it and ASIC stayed
+        on BTC. ``restart_mining`` defaults True so stratum actually switches.
+        """
         slots = [{"url": "", "user": "", "password": "x"} for _ in range(3)]
         for i, p in enumerate((pools or [])[:3]):
             if not isinstance(p, dict):
@@ -13657,7 +13674,9 @@ class PoolheatMiner:
                 else "x"
             )
             slots[i] = {"url": url, "user": user, "password": pw}
+        coin = str(coin_type or "").strip() or None
         # Prefer universal update_pools (auto transport; NetPacket preferred)
+        # Always thread coin_type + restart so LuCI leg applies them.
         try:
             return self._m.update_pools(
                 slots[0]["url"],
@@ -13669,9 +13688,11 @@ class PoolheatMiner:
                 slots[2]["url"],
                 slots[2]["user"],
                 slots[2]["password"],
+                coin_type=coin,
+                restart_mining=bool(restart_mining),
             )
         except Exception:
-            # LuCI-only fallback with coin_type
+            # LuCI-only fallback with coin_type + restart
             return self._m.set_pools_luci(
                 [
                     {
@@ -13683,7 +13704,8 @@ class PoolheatMiner:
                     for i in range(3)
                     if slots[i]["url"] or slots[i]["user"]
                 ],
-                coin_type=str(coin_type or "BTC"),
+                coin_type=str(coin or "BTC"),
+                restart_mining=bool(restart_mining),
             )
 
     def enable_api_switch(self, enable: bool = True) -> dict:
@@ -13718,7 +13740,16 @@ class PoolheatMiner:
         if cname in ("update_pools", "set_pools"):
             pools = cmd.get("pools") or []
             ct = cmd.get("coin_type") or cmd.get("coin")
-            return self.set_pools(pools, coin_type=str(ct) if ct else None)
+            # restart unless caller explicitly disables (restart_mining=false / 0)
+            rm = cmd.get("restart_mining")
+            if rm is None:
+                rm = cmd.get("restart")
+            restart = True if rm is None else bool(rm)
+            return self.set_pools(
+                pools,
+                coin_type=str(ct) if ct else None,
+                restart_mining=restart,
+            )
         # fall back to TCP privileged path still in serve.py
         return privileged_cmd(cmd, self.api_password, token_attempts=1)
 

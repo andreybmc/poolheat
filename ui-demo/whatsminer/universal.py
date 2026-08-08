@@ -848,7 +848,20 @@ class UniversalMiner:
         pool3: str = "",
         worker3: str = "",
         passwd3: str = "x",
+        *,
+        coin_type: str | None = None,
+        restart_mining: bool = True,
     ) -> dict[str, Any]:
+        """
+        Write up to 3 pool slots (auto transport).
+
+        ``coin_type`` is applied on the LuCI path (form field) and, when the
+        write went NetPacket/public, also via NetPacket SET_COIN / LuCI follow-up
+        so presets like DGB actually stick. LuCI path restarts btminer by
+        default so stratum switches immediately (deferred config is not enough).
+        """
+        coin = str(coin_type or "").strip()
+
         def _pub():
             p = self.public()
             if isinstance(p, WhatsminerV3):
@@ -883,7 +896,17 @@ class UniversalMiner:
             ):
                 if u or w:
                     pools.append({"url": u, "user": w, "password": pw, "index": i})
-            return self.wmt.set_pools(pools)
+            raw = self.wmt.set_pools(pools)
+            # Coin is a separate WMT cmd; best-effort after pools
+            if coin:
+                try:
+                    self.wmt.set_coin_type(coin)
+                    if isinstance(raw, dict):
+                        raw = dict(raw)
+                        raw["coin_type"] = coin
+                except Exception as e:
+                    log.debug("%s set_coin_type(%s) after NP pools: %s", self.host, coin, e)
+            return raw
 
         def _luci():
             pools = []
@@ -897,14 +920,61 @@ class UniversalMiner:
                 pools.append(
                     {"index": i, "url": u, "user": w, "password": pw}
                 )
-            return self.luci.set_pools(pools)
+            # Always pass coin_type when known; LuCI keeps page value only if
+            # caller left default BTC (see luci.update_pools).
+            kw: dict[str, Any] = {"restart_mining": bool(restart_mining)}
+            if coin:
+                kw["coin_type"] = coin
+            return self.luci.set_pools(pools, **kw)
 
-        return self._dispatch_write(
+        result = self._dispatch_write(
             "update_pools",
             public=_pub,
             netpacket=_np,
             luci=_luci,
         )
+
+        # Public/NetPacket may leave coin/stratum stale — finish via LuCI when needed
+        transport = str((result or {}).get("transport") or "")
+        need_coin = bool(coin) and str((result or {}).get("coin_type") or "").upper() != coin.upper()
+        need_restart = bool(restart_mining) and transport in ("netpacket", "v1", "v2", "v3", "public")
+        if (need_coin or need_restart) and transport != "luci":
+            try:
+                pools = []
+                for i, (u, w, pw) in enumerate(
+                    (
+                        (pool1, worker1, passwd1),
+                        (pool2, worker2, passwd2),
+                        (pool3, worker3, passwd3),
+                    )
+                ):
+                    if u or w:
+                        pools.append(
+                            {"index": i, "url": u, "user": w, "password": pw}
+                        )
+                kw2: dict[str, Any] = {
+                    "restart_mining": bool(restart_mining),
+                }
+                if coin:
+                    kw2["coin_type"] = coin
+                luci_out = self.luci.set_pools(pools, **kw2)
+                if isinstance(result, dict):
+                    result = dict(result)
+                    result["coin_followup"] = luci_out
+                    if coin:
+                        result["coin_type"] = coin
+                    result["restart_mining"] = bool(
+                        (luci_out or {}).get("restart_mining") or restart_mining
+                    )
+            except Exception as e:
+                log.debug("%s luci follow-up after %s pools: %s", self.host, transport, e)
+                if isinstance(result, dict) and coin:
+                    result = dict(result)
+                    result["coin_followup_error"] = str(e)
+        elif isinstance(result, dict) and coin and not result.get("coin_type"):
+            result = dict(result)
+            result["coin_type"] = coin
+        return result
 
     def set_api_switch(self, enabled: bool = True) -> dict[str, Any]:
         """
@@ -1022,7 +1092,7 @@ class UniversalMiner:
         pools: list[dict[str, Any]],
         *,
         coin_type: str = "BTC",
-        restart_mining: bool = False,
+        restart_mining: bool = True,
     ) -> dict[str, Any]:
         return self.luci.set_pools(
             pools, coin_type=coin_type, restart_mining=restart_mining
