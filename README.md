@@ -5,6 +5,23 @@ Runs on a PC (dev) or **Keenetic Peak / Entware** router next to the miner.
 
 **Version:** see [`VERSION`](./VERSION) · **Repo:** https://github.com/andreybmc/poolheat
 
+## Architecture (direction)
+
+| Plane | Where | What |
+|-------|--------|------|
+| **Edge** | Router (stays) | ASIC poller, devices poller, LuCI proxy, edge API |
+| **App** | Router **today** → external server later | Web UI, Telegram bot |
+
+Today the install is **all-in-one** on the Keenetic. Roles in `config.json` already name the split so UI/bot can be disabled on the router without removing edge I/O.
+
+Full write-up: **[ARCHITECTURE.md](./ARCHITECTURE.md)** · runtime: `GET /api/roles`
+
+```json
+"roles": { "deployment": "all-in-one" }
+```
+
+Presets: `all-in-one` (default) · `edge` (pollers + proxy, no UI/bot) · `app` (future).
+
 ## Features
 
 - Live temps: liquid, env, PCB boards, chip min/avg/max
@@ -12,6 +29,7 @@ Runs on a PC (dev) or **Keenetic Peak / Entware** router next to the miner.
 - Power Mode / Power Limit / Suspend–Resume
 - History (SQLite) + charts
 - Dry Run, Override, warmup / anti-thrash policy
+- Devices auto on/off with Suspend delay
 - **Check & install updates from GitHub** (Info tab)
 
 ---

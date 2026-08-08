@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-poolheat — Whatsminer thermal controller UI + API + history.
+poolheat — Whatsminer thermal controller: edge pollers + API + (optional) UI/bot.
+
+Architecture (target):
+  EDGE (router, stays): ASIC poller, devices poller, LuCI proxy, edge API
+  APP  (today on router; later cloud): Web UI, Telegram bot
+
+  See ARCHITECTURE.md · roles in config.json · get_roles().
 
 Local:
   cd Documents/poolheat/ui-demo && python3 serve.py
@@ -11,7 +17,8 @@ Entware / Keenetic Peak:
 
 Env overrides:
   POOLHEAT_WWW, POOLHEAT_DATA, POOLHEAT_CONFIG,
-  POOLHEAT_BIND, POOLHEAT_PORT, POOLHEAT_MINER_HOST, POOLHEAT_MINER_PORT
+  POOLHEAT_BIND, POOLHEAT_PORT, POOLHEAT_MINER_HOST, POOLHEAT_MINER_PORT,
+  POOLHEAT_DEPLOYMENT=all-in-one|edge|app
 """
 
 from __future__ import annotations
@@ -140,6 +147,121 @@ def _load_app_config() -> dict:
     }
 
 
+# ── Runtime roles: edge (router) vs app (UI/bot; later cloud) ────────────────
+# Target: Keenetic keeps only pollers + LuCI proxy; UI/bot move off-router.
+# Today default is all-in-one (everything on). See ARCHITECTURE.md.
+DEFAULT_ROLES: dict[str, Any] = {
+    "deployment": "all-in-one",  # all-in-one | edge | app
+    # edge plane
+    "edge_miner_poller": True,
+    "edge_device_poller": True,
+    "edge_luci_proxy": True,
+    "edge_policy": True,
+    "edge_history": True,
+    # app plane (still on router until cloud cutover)
+    "app_ui": True,
+    "app_bot": True,
+}
+
+_DEPLOYMENT_PRESETS: dict[str, dict[str, bool]] = {
+    "all-in-one": {
+        "edge_miner_poller": True,
+        "edge_device_poller": True,
+        "edge_luci_proxy": True,
+        "edge_policy": True,
+        "edge_history": True,
+        "app_ui": True,
+        "app_bot": True,
+    },
+    # Router as thin agent — UI/bot off (cloud will talk to edge API)
+    "edge": {
+        "edge_miner_poller": True,
+        "edge_device_poller": True,
+        "edge_luci_proxy": True,
+        "edge_policy": True,
+        "edge_history": True,
+        "app_ui": False,
+        "app_bot": False,
+    },
+    # Future: process that is mostly UI/bot (edge API remote)
+    "app": {
+        "edge_miner_poller": False,
+        "edge_device_poller": False,
+        "edge_luci_proxy": False,
+        "edge_policy": False,
+        "edge_history": False,
+        "app_ui": True,
+        "app_bot": True,
+    },
+}
+
+
+def _as_role_bool(v, default: bool = True) -> bool:
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("1", "true", "yes", "on", "y"):
+        return True
+    if s in ("0", "false", "no", "off", "n"):
+        return False
+    return default
+
+
+def _normalize_roles(raw: dict | None, *, deployment: str | None = None) -> dict:
+    """Merge deployment preset + per-role overrides + env."""
+    base = dict(DEFAULT_ROLES)
+    dep = str(
+        deployment
+        or (raw or {}).get("deployment")
+        or os.environ.get("POOLHEAT_DEPLOYMENT")
+        or base["deployment"]
+        or "all-in-one"
+    ).strip().lower().replace("_", "-")
+    if dep in ("edge-only", "edge_agent", "agent"):
+        dep = "edge"
+    if dep in ("full", "aio", "all"):
+        dep = "all-in-one"
+    if dep not in _DEPLOYMENT_PRESETS:
+        dep = "all-in-one"
+    out: dict[str, Any] = dict(_DEPLOYMENT_PRESETS[dep])
+    out["deployment"] = dep
+    # file overrides
+    if isinstance(raw, dict):
+        for k in list(out.keys()):
+            if k == "deployment":
+                continue
+            if k in raw:
+                out[k] = _as_role_bool(raw.get(k), bool(out[k]))
+    # env: POOLHEAT_ROLE_APP_UI=0 etc.
+    env_map = {
+        "edge_miner_poller": "POOLHEAT_ROLE_EDGE_MINER_POLLER",
+        "edge_device_poller": "POOLHEAT_ROLE_EDGE_DEVICE_POLLER",
+        "edge_luci_proxy": "POOLHEAT_ROLE_EDGE_LUCI_PROXY",
+        "edge_policy": "POOLHEAT_ROLE_EDGE_POLICY",
+        "edge_history": "POOLHEAT_ROLE_EDGE_HISTORY",
+        "app_ui": "POOLHEAT_ROLE_APP_UI",
+        "app_bot": "POOLHEAT_ROLE_APP_BOT",
+    }
+    for key, envk in env_map.items():
+        if os.environ.get(envk) is not None:
+            out[key] = _as_role_bool(os.environ.get(envk), bool(out[key]))
+    return out
+
+
+def get_roles() -> dict:
+    """Current runtime roles (edge vs app). Safe to call anytime after boot."""
+    return dict(_ROLES)
+
+
+def role_enabled(name: str) -> bool:
+    r = _ROLES
+    if name == "deployment":
+        return True
+    return bool(r.get(name, DEFAULT_ROLES.get(name, True)))
+
+
 _APP = _load_app_config()
 HOST_MINER = _APP["miner_host"]
 PORT_MINER = _APP["miner_port"]
@@ -151,6 +273,11 @@ DATA = _APP["data"]
 PROJECT_NAME = str(
     (_APP.get("file_cfg") or {}).get("project_name") or "poolheat_WM"
 ).strip() or "poolheat_WM"
+_ROLES: dict = _normalize_roles(
+    (_APP.get("file_cfg") or {}).get("roles")
+    if isinstance((_APP.get("file_cfg") or {}).get("roles"), dict)
+    else (_APP.get("file_cfg") or {})
+)
 STATE_FILE = DATA / "last_commands.json"
 DB_FILE = DATA / "history.db"
 ENERGY_DB_FILE = DATA / "energy.db"
@@ -12216,6 +12343,15 @@ def collect_system_info() -> dict:
             "miner_host": f"{HOST_MINER}:{PORT_MINER}",
             "on_usb": bool(usb_info),
             "usb_root": (usb_info or {}).get("usb_root") if usb_info else None,
+            "roles": get_roles(),
+            "architecture": {
+                "planes": {
+                    "edge": "miner poller · devices poller · luci proxy · edge API",
+                    "app": "web UI · telegram bot (later: external server)",
+                },
+                "deployment": get_roles().get("deployment"),
+                "doc": "ARCHITECTURE.md",
+            },
         },
     }
     # full Info snapshot for instant UI (models/versions/boards/resources)
@@ -23219,11 +23355,12 @@ def policy_tick() -> None:
                 need_cmds = []
             desired = desired or "force_stop"
 
-    # Peripherals devices: Auto ON mining / Auto OFF suspend
-    try:
-        devices_sync_with_mining(measured_work)
-    except Exception as e:
-        print(f"[devices] sync: {e}")
+    # Peripherals devices: Auto ON mining / Auto OFF suspend (edge device poller)
+    if role_enabled("edge_device_poller"):
+        try:
+            devices_sync_with_mining(measured_work)
+        except Exception as e:
+            print(f"[devices] sync: {e}")
 
     if not need_cmds:
         # Already matches miner — no write, no notification
@@ -23685,6 +23822,32 @@ class Handler(SimpleHTTPRequestHandler):
                 },
             )
             return
+        if path in ("/api/roles", "/api/architecture"):
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "roles": get_roles(),
+                    "defaults": dict(DEFAULT_ROLES),
+                    "presets": list(_DEPLOYMENT_PRESETS.keys()),
+                    "planes": {
+                        "edge": [
+                            "edge_miner_poller",
+                            "edge_device_poller",
+                            "edge_luci_proxy",
+                            "edge_policy",
+                            "edge_history",
+                        ],
+                        "app": ["app_ui", "app_bot"],
+                    },
+                    "doc": "ARCHITECTURE.md",
+                    "note": (
+                        "Target: router = pollers + luci proxy; "
+                        "UI/bot move to external server. Today all-in-one."
+                    ),
+                },
+            )
+            return
         if path == "/api/update/check":
             try:
                 qs = parse_qs(urlparse(self.path).query)
@@ -23719,6 +23882,20 @@ class Handler(SimpleHTTPRequestHandler):
         }
         seg = path.strip("/").split("/")[0].lower() if path.strip("/") else ""
         if path == "/" or path == "/index.html" or seg in spa_tabs:
+            # App plane: static SPA. When app_ui is off (edge-only deploy),
+            # keep /api/* but do not serve the dashboard.
+            if not role_enabled("app_ui"):
+                self._json_response(
+                    503,
+                    {
+                        "ok": False,
+                        "error": "app_ui role disabled (edge-only deployment)",
+                        "roles": get_roles(),
+                        "hint": "Set roles.app_ui=true or deployment=all-in-one; "
+                        "cloud UI will use edge API instead.",
+                    },
+                )
+                return
             self.path = "/index.html"
         return super().do_GET()
 
@@ -25608,7 +25785,18 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    init_db()
+    roles = get_roles()
+    print(
+        f"roles:             deployment={roles.get('deployment')} · "
+        f"edge_miner={roles.get('edge_miner_poller')} · "
+        f"edge_dev={roles.get('edge_device_poller')} · "
+        f"luci_proxy={roles.get('edge_luci_proxy')} · "
+        f"policy={roles.get('edge_policy')} · "
+        f"history={roles.get('edge_history')} · "
+        f"ui={roles.get('app_ui')} · bot={roles.get('app_bot')}"
+    )
+    if role_enabled("edge_history") or role_enabled("edge_miner_poller"):
+        init_db()
     # backfill error journal miner/component columns from current ASIC Info
     try:
         n = backfill_miner_error_log_identity()
@@ -25638,18 +25826,33 @@ def main() -> None:
         refresh_config_meta(include_router=True)
     except Exception as e:
         print(f"config meta (boot): {e}")
-    threading.Thread(target=_warm_info, name="info-warm", daemon=True).start()
-    t = threading.Thread(target=collector_loop, name="history-collector", daemon=True)
-    t.start()
-    tp = threading.Thread(target=policy_loop, name="policy-control", daemon=True)
-    tp.start()
-    tt = threading.Thread(target=telegram_loop, name="telegram-bot", daemon=True)
-    tt.start()
-    tc = threading.Thread(target=chipmap_loop, name="chipmap-poll", daemon=True)
-    tc.start()
+    if role_enabled("edge_miner_poller"):
+        threading.Thread(target=_warm_info, name="info-warm", daemon=True).start()
+    if role_enabled("edge_history"):
+        t = threading.Thread(target=collector_loop, name="history-collector", daemon=True)
+        t.start()
+    else:
+        print("history:           off (edge_history role disabled)")
+    if role_enabled("edge_policy"):
+        tp = threading.Thread(target=policy_loop, name="policy-control", daemon=True)
+        tp.start()
+    else:
+        print("policy:            off (edge_policy role disabled)")
+    if role_enabled("app_bot"):
+        tt = threading.Thread(target=telegram_loop, name="telegram-bot", daemon=True)
+        tt.start()
+    else:
+        print("telegram:          off (app_bot role disabled)")
+    if role_enabled("edge_miner_poller"):
+        tc = threading.Thread(target=chipmap_loop, name="chipmap-poll", daemon=True)
+        tc.start()
+    else:
+        print("chipmap:           off (edge_miner_poller role disabled)")
 
     # After OTA restart: tell the initiating TG chat that we're back online
     def _boot_update_notify() -> None:
+        if not role_enabled("app_bot"):
+            return
         # wait for telegram_loop to load token / getMe
         for delay in (3.0, 8.0, 15.0):
             time.sleep(delay)
@@ -25662,14 +25865,20 @@ def main() -> None:
             except Exception as e:
                 print(f"[update] boot notify: {e}")
 
-    threading.Thread(
-        target=_boot_update_notify, name="update-restart-notify", daemon=True
-    ).start()
+    if role_enabled("app_bot"):
+        threading.Thread(
+            target=_boot_update_notify, name="update-restart-notify", daemon=True
+        ).start()
 
     server = ThreadingHTTPServer((HTTP_BIND, HTTP_PORT), Handler)
-    print(f"poolheat UI:       http://{HTTP_BIND}:{HTTP_PORT}/")
+    print(f"poolheat API:      http://{HTTP_BIND}:{HTTP_PORT}/  (edge always)")
+    if role_enabled("app_ui"):
+        print(f"poolheat UI:       http://{HTTP_BIND}:{HTTP_PORT}/")
+    else:
+        print(f"poolheat UI:       off (app_ui disabled · edge-only)")
     print(f"www:               {ROOT}")
     print(f"data:              {DATA}")
+    print(f"roles API:         GET  /api/roles")
     print(f"live API:          GET  /api/live")
     print(f"set API:           POST /api/set")
     print(f"history:           GET  /api/history?hours=24")
@@ -25685,16 +25894,19 @@ def main() -> None:
     print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
     print(f"miner models:      GET /api/miner/models · /api/miner/model?type=M63")
     try:
-        lp = get_luci_proxy_cfg()
-        lpc = lp.get("config") or {}
-        lps = lp.get("status") or {}
-        print(
-            f"luci proxy:        "
-            f"{'ON' if lpc.get('enabled') else 'off'} · "
-            f":{lpc.get('listen_port') or 8788} → "
-            f"{(lps.get('target') or (HOST_MINER + '/'))} · "
-            f"{'running' if lps.get('running') else 'stopped'}"
-        )
+        if role_enabled("edge_luci_proxy"):
+            lp = get_luci_proxy_cfg()
+            lpc = lp.get("config") or {}
+            lps = lp.get("status") or {}
+            print(
+                f"luci proxy:        "
+                f"{'ON' if lpc.get('enabled') else 'off'} · "
+                f":{lpc.get('listen_port') or 8788} → "
+                f"{(lps.get('target') or (HOST_MINER + '/'))} · "
+                f"{'running' if lps.get('running') else 'stopped'}"
+            )
+        else:
+            print("luci proxy:        off (edge_luci_proxy role disabled)")
     except Exception as e:
         print(f"luci proxy:        n/a ({e})")
     try:
