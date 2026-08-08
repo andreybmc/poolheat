@@ -71,8 +71,25 @@ start() {
   done
 
   echo "starting poolheat..."
-  "$BIN" >>"$LOG" 2>&1 &
-  echo $! >"$PIDFILE"
+  # Detach from caller TTY/SSH (SIGHUP on session end must not kill poolheatd)
+  # Prefer setsid -f (fork); fall back to double-fork subshell.
+  if command -v setsid >/dev/null 2>&1 && setsid -f true >/dev/null 2>&1; then
+    setsid -f "$BIN" >>"$LOG" 2>&1 </dev/null
+    # find supervisor pid (setsid -f does not set $!)
+    sleep 0.3
+    sup=$(supervisor_from_ps)
+    if [ -n "$sup" ]; then
+      echo "$sup" >"$PIDFILE"
+    fi
+  else
+    ( "$BIN" >>"$LOG" 2>&1 </dev/null & echo $! >"$PIDFILE" )
+    sleep 0.2
+  fi
+  # last resort: any poolheatd we can see
+  if [ ! -f "$PIDFILE" ] || ! is_alive "$(cat "$PIDFILE" 2>/dev/null)"; then
+    sup=$(supervisor_from_ps)
+    [ -n "$sup" ] && echo "$sup" >"$PIDFILE"
+  fi
   # wait for serve.py to appear (import + boot can take a few seconds)
   i=0
   while [ $i -lt 15 ]; do
