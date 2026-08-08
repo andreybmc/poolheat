@@ -15508,6 +15508,8 @@ def _fetch_miner_errors_luci_state(
     """
     Active Errors from LuCI cache.
     Returns (errors, ok) — ok=True means LuCI source is trusted (use even if empty).
+    Cold start (never scraped): one short sync scrape so we do not fall back to
+    the TCP history buffer and show stale codes.
     """
     global _miner_events_refreshing
     now = time.time()
@@ -15515,39 +15517,23 @@ def _fetch_miner_errors_luci_state(
         age = now - float(_miner_errors_luci_cache.get("ts") or 0)
         cached = list(_miner_errors_luci_cache.get("errors") or [])
         ok = bool(_miner_errors_luci_cache.get("ok"))
-        fresh = (
-            (not force)
-            and ok
-            and age < _MINER_ERRORS_LUCI_TTL_S
-            and float(_miner_errors_luci_cache.get("ts") or 0) > 0
-        )
+        has_ts = float(_miner_errors_luci_cache.get("ts") or 0) > 0
+        fresh = (not force) and ok and has_ts and age < _MINER_ERRORS_LUCI_TTL_S
         if fresh:
             return cached, True
-        if ok and cached and not force:
-            # stale but known good — kick refresh via events path
-            pass
-        elif ok and not force:
-            # empty active list is valid
-            if age < _MINER_ERRORS_LUCI_TTL_S:
-                return cached, True
+        # stale but previously successful — serve cache, refresh in background
+        if ok and has_ts and not force:
+            with _miner_events_lock:
+                if not _miner_events_refreshing:
+                    _miner_events_refreshing = True
+                    threading.Thread(
+                        target=_miner_events_bg_refresh,
+                        name="miner-status-luci",
+                        daemon=True,
+                    ).start()
+            return cached, True
 
-    # share refresh thread with events (one LuCI page)
-    with _miner_events_lock:
-        if not _miner_events_refreshing:
-            _miner_events_refreshing = True
-            threading.Thread(
-                target=_miner_events_bg_refresh,
-                name="miner-status-luci",
-                daemon=True,
-            ).start()
-        if force:
-            pass
-        else:
-            with _miner_errors_luci_lock:
-                cached = list(_miner_errors_luci_cache.get("errors") or [])
-                ok = bool(_miner_errors_luci_cache.get("ok"))
-            return cached, ok
-
+    # cold start or force: sync scrape once (must not use TCP buffer as “active”)
     errors, events, err = _scrape_miner_status_luci_once()
     _apply_luci_status_caches(errors, events, err)
     with _miner_errors_luci_lock:
