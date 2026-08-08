@@ -885,7 +885,8 @@ class UniversalMiner:
             )
 
         def _np():
-            # NetPacket set_pools takes structured list
+            # NetPacket SET_POOLS (cmd 2) — same path as WhatsMinerTool.
+            # IMPORTANT: pools= must be keyword; positional list is parsed as url=.
             pools = []
             for i, (u, w, pw) in enumerate(
                 (
@@ -896,16 +897,37 @@ class UniversalMiner:
             ):
                 if u or w:
                     pools.append({"url": u, "user": w, "password": pw, "index": i})
-            raw = self.wmt.set_pools(pools)
-            # Coin is a separate WMT cmd; best-effort after pools
+            if not pools:
+                raise ValueError("set_pools: no non-empty pool slots")
+            raw = self.wmt.set_pools(pools=pools)
+            if isinstance(raw, dict):
+                raw = dict(raw)
+            else:
+                raw = {"ok": True, "result": raw}
+            raw["pools"] = pools
+            # Coin is a separate WMT cmd 6 (SET_COIN)
             if coin:
                 try:
                     self.wmt.set_coin_type(coin)
-                    if isinstance(raw, dict):
-                        raw = dict(raw)
-                        raw["coin_type"] = coin
+                    raw["coin_type"] = coin
                 except Exception as e:
                     log.debug("%s set_coin_type(%s) after NP pools: %s", self.host, coin, e)
+                    raw["coin_error"] = str(e)
+            # WMT applies stratum live; optional restart via NP/public if requested
+            if restart_mining:
+                try:
+                    self.restart_mining()
+                    raw["restart_mining"] = True
+                    raw["active_switch"] = "restart_mining"
+                except Exception as e:
+                    log.debug("%s restart after NP pools: %s", self.host, e)
+                    raw["restart_mining"] = False
+                    raw["restart_error"] = str(e)
+            else:
+                raw["restart_mining"] = False
+                raw["active_switch"] = "netpacket"
+            raw.setdefault("ok", True)
+            raw["source"] = "netpacket"
             return raw
 
         def _luci():
@@ -920,57 +942,40 @@ class UniversalMiner:
                 pools.append(
                     {"index": i, "url": u, "user": w, "password": pw}
                 )
-            # Always pass coin_type when known; LuCI keeps page value only if
-            # caller left default BTC (see luci.update_pools).
             kw: dict[str, Any] = {"restart_mining": bool(restart_mining)}
             if coin:
                 kw["coin_type"] = coin
             return self.luci.set_pools(pools, **kw)
 
-        result = self._dispatch_write(
-            "update_pools",
-            public=_pub,
-            netpacket=_np,
-            luci=_luci,
-        )
+        # Prefer NetPacket first (WMT path). Do NOT follow up with LuCI on success —
+        # LuCI GET /admin/network/btminer is flaky (periodic 403) and was the
+        # failure mode when NP was mis-called with positional list.
+        prev_pref = bool(self.prefer_netpacket)
+        self.prefer_netpacket = True
+        try:
+            result = self._dispatch_write(
+                "update_pools",
+                public=_pub,
+                netpacket=_np,
+                luci=_luci,
+            )
+        finally:
+            self.prefer_netpacket = prev_pref
 
-        # Public/NetPacket may leave coin/stratum stale — finish via LuCI when needed
         transport = str((result or {}).get("transport") or "")
-        need_coin = bool(coin) and str((result or {}).get("coin_type") or "").upper() != coin.upper()
-        need_restart = bool(restart_mining) and transport in ("netpacket", "v1", "v2", "v3", "public")
-        if (need_coin or need_restart) and transport != "luci":
-            try:
-                pools = []
-                for i, (u, w, pw) in enumerate(
-                    (
-                        (pool1, worker1, passwd1),
-                        (pool2, worker2, passwd2),
-                        (pool3, worker3, passwd3),
-                    )
-                ):
-                    if u or w:
-                        pools.append(
-                            {"index": i, "url": u, "user": w, "password": pw}
-                        )
-                kw2: dict[str, Any] = {
-                    "restart_mining": bool(restart_mining),
-                }
-                if coin:
-                    kw2["coin_type"] = coin
-                luci_out = self.luci.set_pools(pools, **kw2)
-                if isinstance(result, dict):
-                    result = dict(result)
-                    result["coin_followup"] = luci_out
-                    if coin:
+        # Only if write went public API (not NP), optional LuCI coin/restart
+        # finish — never after successful NetPacket.
+        if transport in ("v1", "v2", "v3") and coin:
+            need_coin = str((result or {}).get("coin_type") or "").upper() != coin.upper()
+            if need_coin:
+                try:
+                    self.wmt.set_coin_type(coin)
+                    if isinstance(result, dict):
+                        result = dict(result)
                         result["coin_type"] = coin
-                    result["restart_mining"] = bool(
-                        (luci_out or {}).get("restart_mining") or restart_mining
-                    )
-            except Exception as e:
-                log.debug("%s luci follow-up after %s pools: %s", self.host, transport, e)
-                if isinstance(result, dict) and coin:
-                    result = dict(result)
-                    result["coin_followup_error"] = str(e)
+                        result["coin_via"] = "netpacket"
+                except Exception as e:
+                    log.debug("%s coin after public pools: %s", self.host, e)
         elif isinstance(result, dict) and coin and not result.get("coin_type"):
             result = dict(result)
             result["coin_type"] = coin
