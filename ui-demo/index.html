@@ -584,13 +584,13 @@
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235c6b7e' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     }
 
-    /* Energy chart controls: Sample + Range + refresh always one row */
+    /* Energy chart controls: Sample + Range + refresh — one row with title */
     .energy-chart-toolbar {
       display: flex;
       flex-wrap: nowrap !important;
       flex-shrink: 0;
       gap: 6px;
-      align-items: flex-end;
+      align-items: center;
       min-width: 0;
     }
     .energy-chart-toolbar .energy-chart-field {
@@ -598,7 +598,7 @@
       min-width: 0;
       flex: 0 1 auto;
       max-width: 6.5rem;
-      gap: 3px;
+      gap: 0;
     }
     .energy-chart-toolbar .energy-chart-field-range {
       flex: 0 1 auto;
@@ -608,17 +608,16 @@
       width: 100%;
       min-width: 0;
     }
-    .energy-chart-toolbar .energy-chart-field > span {
-      font-size: 0.65rem;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      line-height: 1.2;
-      color: var(--dim);
+    /* labels live in title/aria — hide in card-h so header matches other charts */
+    .energy-chart-toolbar .energy-chart-field > span,
+    #panel-chart-energy-dash > .card-h .energy-chart-field > span,
+    #panel-energy-chart > .card-h .energy-chart-field > span,
+    #panel-energy-chart > .card-h .btn-row > .field > span {
+      display: none;
     }
     .energy-chart-toolbar .energy-chart-refresh {
       flex: 0 0 auto;
-      align-self: flex-end;
+      align-self: center;
       width: 28px;
       min-width: 28px;
       height: 28px;
@@ -659,18 +658,16 @@
       max-width: 3.75rem;
     }
     /* Pool → Energy chart header (same pills as dash) */
+    #panel-energy-chart > .card-h {
+      align-items: center;
+    }
     #panel-energy-chart > .card-h .btn-row {
-      align-items: flex-end;
+      align-items: center;
       gap: 6px;
     }
     #panel-energy-chart > .card-h .btn-row > .field {
-      gap: 3px;
+      gap: 0;
       margin: 0;
-    }
-    #panel-energy-chart > .card-h .btn-row > .field > span {
-      font-size: 0.65rem;
-      color: var(--dim);
-      line-height: 1.2;
     }
 
     .card-b { padding: 16px; }
@@ -5130,7 +5127,14 @@
                 <div class="btn-row energy-chart-toolbar">
                   <label class="field energy-chart-field">
                     <span data-i18n="field.energy_bucket">Sample by</span>
-                    <select id="energy-chart-bucket-dash" class="energy-chart-bucket ui-pill-control">
+                    <select
+                      id="energy-chart-bucket-dash"
+                      class="energy-chart-bucket ui-pill-control"
+                      title="Sample by"
+                      aria-label="Sample by"
+                      data-i18n-title="field.energy_bucket"
+                      data-i18n-aria="field.energy_bucket"
+                    >
                       <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
                       <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
                       <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
@@ -5139,7 +5143,14 @@
                   </label>
                   <label class="field energy-chart-field energy-chart-field-range">
                     <span data-i18n="field.energy_range">Range</span>
-                    <select id="energy-chart-range-dash" class="energy-chart-range ui-pill-control">
+                    <select
+                      id="energy-chart-range-dash"
+                      class="energy-chart-range ui-pill-control"
+                      title="Range"
+                      aria-label="Range"
+                      data-i18n-title="field.energy_range"
+                      data-i18n-aria="field.energy_range"
+                    >
                       <option value="24">1d</option>
                       <option value="48" selected>2d</option>
                       <option value="168">7d</option>
@@ -5850,7 +5861,14 @@
             <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
               <label class="field energy-chart-field" style="max-width:7.5rem">
                 <span data-i18n="field.energy_bucket">Sample by</span>
-                <select id="energy-chart-bucket" class="energy-chart-bucket ui-pill-control">
+                <select
+                  id="energy-chart-bucket"
+                  class="energy-chart-bucket ui-pill-control"
+                  title="Sample by"
+                  aria-label="Sample by"
+                  data-i18n-title="field.energy_bucket"
+                  data-i18n-aria="field.energy_bucket"
+                >
                   <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
                   <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
                   <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
@@ -5859,7 +5877,14 @@
               </label>
               <label class="field energy-chart-field energy-chart-field-range" style="max-width:4.5rem">
                 <span data-i18n="field.energy_range">Range</span>
-                <select id="energy-chart-range" class="energy-chart-range ui-pill-control">
+                <select
+                  id="energy-chart-range"
+                  class="energy-chart-range ui-pill-control"
+                  title="Range"
+                  aria-label="Range"
+                  data-i18n-title="field.energy_range"
+                  data-i18n-aria="field.energy_range"
+                >
                   <option value="24">1d</option>
                   <option value="48" selected>2d</option>
                   <option value="168">7d</option>
