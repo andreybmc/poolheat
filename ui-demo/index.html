@@ -5169,10 +5169,12 @@
                       data-i18n-title="field.energy_bucket"
                       data-i18n-aria="field.energy_bucket"
                     >
-                      <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
-                      <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
-                      <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
-                      <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
+                      <optgroup label="Sample by" data-i18n-label="field.energy_bucket">
+                        <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
+                        <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
+                        <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
+                        <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
+                      </optgroup>
                     </select>
                   </label>
                   <label class="field energy-chart-field energy-chart-field-range">
@@ -5185,11 +5187,13 @@
                       data-i18n-title="field.energy_range"
                       data-i18n-aria="field.energy_range"
                     >
-                      <option value="24">1d</option>
-                      <option value="48" selected>2d</option>
-                      <option value="168">7d</option>
-                      <option value="720">30d</option>
-                      <option value="2160">90d</option>
+                      <optgroup label="Range" data-i18n-label="field.energy_range">
+                        <option value="24">1d</option>
+                        <option value="48" selected>2d</option>
+                        <option value="168">7d</option>
+                        <option value="720">30d</option>
+                        <option value="2160">90d</option>
+                      </optgroup>
                     </select>
                   </label>
                   <button
@@ -5903,10 +5907,12 @@
                   data-i18n-title="field.energy_bucket"
                   data-i18n-aria="field.energy_bucket"
                 >
-                  <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
-                  <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
-                  <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
-                  <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
+                  <optgroup label="Sample by" data-i18n-label="field.energy_bucket">
+                    <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
+                    <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
+                    <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
+                    <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
+                  </optgroup>
                 </select>
               </label>
               <label class="field energy-chart-field energy-chart-field-range" style="max-width:4.5rem">
@@ -5919,11 +5925,13 @@
                   data-i18n-title="field.energy_range"
                   data-i18n-aria="field.energy_range"
                 >
-                  <option value="24">1d</option>
-                  <option value="48" selected>2d</option>
-                  <option value="168">7d</option>
-                  <option value="720">30d</option>
-                  <option value="2160">90d</option>
+                  <optgroup label="Range" data-i18n-label="field.energy_range">
+                    <option value="24">1d</option>
+                    <option value="48" selected>2d</option>
+                    <option value="168">7d</option>
+                    <option value="720">30d</option>
+                    <option value="2160">90d</option>
+                  </optgroup>
                 </select>
               </label>
             </div>
@@ -9907,6 +9915,12 @@
         if (!key) return;
         const val = t(key, null);
         if (val != null) el.setAttribute("title", val);
+      });
+      document.querySelectorAll("[data-i18n-label]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-label");
+        if (!key) return;
+        const val = t(key, null);
+        if (val != null) el.setAttribute("label", val);
       });
       document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
         const key = el.getAttribute("data-i18n-aria");
@@ -16194,12 +16208,19 @@
       document.querySelectorAll("select.energy-chart-range").forEach((sel) => {
         const cur = String(sel.value || "");
         sel.innerHTML = "";
+        const grp = document.createElement("optgroup");
+        grp.setAttribute("data-i18n-label", "field.energy_range");
+        grp.label =
+          typeof t === "function"
+            ? t("field.energy_range", "Range")
+            : "Range";
         list.forEach(([h, lab]) => {
           const o = document.createElement("option");
           o.value = String(h);
           o.textContent = lab;
-          sel.appendChild(o);
+          grp.appendChild(o);
         });
+        sel.appendChild(grp);
         const want = String(hours);
         if (list.some(([h]) => String(h) === want)) sel.value = want;
         else if (list.some(([h]) => String(h) === cur)) sel.value = cur;
