@@ -5984,8 +5984,10 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
     """
     Mining policy: Auto ON on Resume / Auto OFF on Suspend (per-device flags).
 
-    Sets desired + reported via device_set (force). Uses reported (last_on)
-    to decide if a command is still needed. Runs only in devices poller.
+    Uses **reported** last_on (like legacy filtration), not desired:
+    while mining + auto_on_mining → ensure physical ON even if desired was
+    already True (stale shadow) or device was added after poller start.
+    Config is reloaded every poller tick — start-before-add is fine.
     """
     work = str(measured_work or "").lower()
     if work not in ("resume", "suspend", "sleep", "mining"):
@@ -6006,6 +6008,11 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
         if not cfg.get("enabled"):
             continue
         if not _device_ready(cfg):
+            print(
+                f"[devices] sync skip {cfg.get('alias') or cfg.get('id')}: "
+                f"not ready (backend/credentials)",
+                flush=True,
+            )
             continue
         did = str(cfg.get("id") or "")
         if not did:
@@ -6013,12 +6020,9 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
         auto_on = bool(cfg.get("auto_on_mining", False))
         auto_off = bool(cfg.get("auto_off_suspend", False))
         delay = _device_off_delay_sec(cfg.get("auto_off_suspend_delay_sec"))
-        # prefer desired when enforce is on, else reported
+        # physical truth for auto policy (not desired — that blocked auto_on)
         reported = cfg.get("last_on")
         desired = cfg.get("desired_on")
-        cur = desired if (
-            bool(cfg.get("enforce_desired")) and desired is not None
-        ) else reported
         last_err = cfg.get("last_error")
         last_act = str(cfg.get("last_action") or "")
         if last_err and last_act.endswith("_fail"):
@@ -6033,25 +6037,39 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
                 continue
         want: bool | None = None
         src = "auto"
+        alias = str(cfg.get("alias") or did)
 
         if work == "resume":
             # mining back on → cancel any pending Auto Off
             if did in _devices_suspend_off_deadline:
                 _devices_suspend_off_deadline.pop(did, None)
                 print(
-                    f"[devices] suspend-off cancelled {cfg.get('alias') or did} "
-                    f"(mining resume)",
+                    f"[devices] suspend-off cancelled {alias} (mining resume)",
                     flush=True,
                 )
-            if auto_on and cur is not True:
-                want = True
-                src = "auto_mining"
+            if auto_on:
+                # ensure ON while mining (reported unknown or OFF)
+                if reported is not True:
+                    want = True
+                    src = "auto_mining"
+                elif desired is not True:
+                    # already ON, but shadow desired stale — fix state only
+                    def _mut_des(d, _on=True):
+                        d["desired_on"] = _on
+
+                    _device_update_in_store(did, _mut_des)
         elif work in ("suspend", "sleep") and auto_off:
             # already off → nothing pending
-            if cur is False:
+            if reported is False:
                 _devices_suspend_off_deadline.pop(did, None)
+                if desired is not False:
+
+                    def _mut_off(d):
+                        d["desired_on"] = False
+
+                    _device_update_in_store(did, _mut_off)
             else:
-                # device on (or unknown) → schedule / fire delayed OFF
+                # device on or unknown → schedule / fire delayed OFF
                 deadline = _devices_suspend_off_deadline.get(did)
                 if deadline is None:
                     if delay <= 0:
@@ -6060,8 +6078,7 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
                     else:
                         _devices_suspend_off_deadline[did] = now + float(delay)
                         print(
-                            f"[devices] suspend-off in {delay}s "
-                            f"{cfg.get('alias') or did}",
+                            f"[devices] suspend-off in {delay}s {alias}",
                             flush=True,
                         )
                 elif now >= float(deadline):
@@ -6078,9 +6095,15 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
             continue
         _devices_sync_ts[did] = now
         try:
+            print(
+                f"[devices] sync {alias}: work={work} → "
+                f"{'ON' if want else 'OFF'} ({src}) "
+                f"reported={reported} desired={desired}",
+                flush=True,
+            )
             _device_set_with_timeout(did, want, source=src)
         except Exception as e:
-            print(f"[devices] sync {cfg.get('alias')}: {e}", flush=True)
+            print(f"[devices] sync {alias}: {e}", flush=True)
 
 
 def devices_poll_all_status() -> dict:
@@ -6196,9 +6219,15 @@ def devices_poller_loop() -> None:
         t0 = time.time()
         pol = dict(DEFAULT_DEVICES_POLLER)
         try:
-            # pick up UI/API config changes from main process
+            # pick up UI/API config changes from main process (every tick)
             _load_devices_cfg()
             pol = get_devices_poller_cfg()
+            n_dev = 0
+            try:
+                with _devices_cfg_lock:
+                    n_dev = len(_devices_cfg.get("devices") or [])
+            except Exception:
+                n_dev = 0
             if not pol.get("enabled", True):
                 print("[devices-poller] disabled in config — idle", flush=True)
             else:
@@ -6208,7 +6237,8 @@ def devices_poller_loop() -> None:
                     print(
                         f"[devices-poller] status "
                         f"ok={summary.get('probed', 0)} "
-                        f"err={summary.get('errors', 0)}",
+                        f"err={summary.get('errors', 0)} "
+                        f"cfg={n_dev}",
                         flush=True,
                     )
                 # 3) mining auto policy (optional; uses mining_work snapshot)
@@ -6218,6 +6248,15 @@ def devices_poller_loop() -> None:
                     work = _mining_work_state()
                 if work:
                     devices_sync_with_mining(work)
+                else:
+                    # isolated process: without mining_work.json auto policy is blind
+                    # (throttle log — every ~60s)
+                    if int(time.time()) % 60 < max(3, int(pol.get("interval_sec") or 5)):
+                        print(
+                            f"[devices-poller] no mining_work "
+                            f"(snapshot stale/missing, cfg={n_dev})",
+                            flush=True,
+                        )
             _save_devices_deadlines()
         except Exception as e:
             print(f"[devices-poller] tick: {e}", flush=True)
