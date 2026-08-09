@@ -9036,6 +9036,10 @@
         "dash.chart_power_settings_sub": "Choose series for the power chart. Status areas tint Suspend / Tuning / Offline periods.",
         "dash.chart_energy_settings": "Energy series",
         "dash.chart_energy_settings_sub": "Choose series for the energy chart. Avg power stays in the tooltip.",
+        "dash.chart_display": "Display",
+        "dash.chart_show_legend": "Show legend",
+        "dash.chart_show_y_axis": "Show value scale",
+        "dash.chart_show_x_axis": "Show time axis",
         "dash.chart_series_min": "Select at least one series",
         "dash.chart_series_saved": "Chart series updated",
         "dash.chart_bands": "Status areas",
@@ -9813,6 +9817,10 @@
         "dash.chart_power_settings_sub": "Серии графика мощности. Области подсвечивают периоды Suspend / Tuning / Offline.",
         "dash.chart_energy_settings": "Серии энергопотребления",
         "dash.chart_energy_settings_sub": "Серии графика энергии. Средняя мощность — только в подсказке.",
+        "dash.chart_display": "Отображение",
+        "dash.chart_show_legend": "Показывать легенду",
+        "dash.chart_show_y_axis": "Показывать шкалу значений",
+        "dash.chart_show_x_axis": "Показывать ось времени",
         "dash.chart_series_min": "Выберите хотя бы одну серию",
         "dash.chart_series_saved": "Серии графика обновлены",
         "dash.chart_bands": "Области статуса",
@@ -16182,7 +16190,7 @@
         typeof t === "function"
           ? t("energy.chart_power", "Avg power W")
           : "Avg power W";
-      return new Chart(el, {
+      const ch = new Chart(el, {
         type: "bar",
         data: {
           labels: [],
@@ -16239,25 +16247,7 @@
           animation: false,
           interaction: { mode: "index", intersect: false },
           plugins: {
-            legend: {
-              labels: {
-                boxWidth: 12,
-                boxHeight: 12,
-                color: "#8b9bb0",
-                // hide avg (idx 2) + series turned off in settings
-                filter: (item, chartData) => {
-                  if (!item || item.datasetIndex === 2) return false;
-                  try {
-                    const ds =
-                      chartData &&
-                      chartData.datasets &&
-                      chartData.datasets[item.datasetIndex];
-                    if (ds && ds.hidden) return false;
-                  } catch (_) { /* ignore */ }
-                  return true;
-                },
-              },
-            },
+            legend: chartLegendPluginOpts("energy"),
             tooltip: {
               callbacks: {
                 title: (items) => {
@@ -16333,6 +16323,12 @@
           },
         },
       });
+      try {
+        if (typeof applyChartDisplayOptions === "function") {
+          applyChartDisplayOptions(ch, "energy");
+        }
+      } catch (_) { /* ignore */ }
+      return ch;
     }
 
     /** Tooltip title: bucket range «from – to» (local time, UI date/time prefs). */
@@ -18115,6 +18111,144 @@
     };
     let chartStatusBandsVis = null; // { temps: {...}, power: {...}, energy: {...} }
 
+    /* ── Chart display: legend + axis scales (per chart kind) ── */
+    const CHART_DISPLAY_KEY = "poolheat_chart_display_v1";
+    const CHART_DISPLAY_DEFAULT = {
+      legend: true,
+      y_axis: true,
+      x_axis: true,
+    };
+    let chartDisplayOpts = null; // { temps: {...}, power: {...}, energy: {...} }
+
+    function _normalizeChartDisplay(src) {
+      const base = Object.assign({}, CHART_DISPLAY_DEFAULT);
+      if (!src || typeof src !== "object") return base;
+      ["legend", "y_axis", "x_axis"].forEach((k) => {
+        if (typeof src[k] === "boolean") base[k] = src[k];
+      });
+      return base;
+    }
+
+    function loadChartDisplayOpts() {
+      const all = { temps: null, power: null, energy: null };
+      try {
+        const raw = localStorage.getItem(CHART_DISPLAY_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            ["temps", "power", "energy"].forEach((k) => {
+              all[k] = _normalizeChartDisplay(j[k]);
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+      ["temps", "power", "energy"].forEach((k) => {
+        if (!all[k]) all[k] = _normalizeChartDisplay(null);
+      });
+      chartDisplayOpts = all;
+      return all;
+    }
+
+    function getChartDisplayOpts(kind) {
+      if (!chartDisplayOpts) loadChartDisplayOpts();
+      const k = kind === "power" || kind === "energy" ? kind : "temps";
+      return chartDisplayOpts[k] || _normalizeChartDisplay(null);
+    }
+
+    function saveChartDisplayOpts(kind, opts) {
+      if (!chartDisplayOpts) loadChartDisplayOpts();
+      const k = kind === "power" || kind === "energy" ? kind : "temps";
+      chartDisplayOpts[k] = _normalizeChartDisplay(opts);
+      try {
+        localStorage.setItem(CHART_DISPLAY_KEY, JSON.stringify(chartDisplayOpts));
+      } catch (_) { /* ignore */ }
+      return chartDisplayOpts[k];
+    }
+
+    /**
+     * Legend like checkboxes: filled box = on, empty border = off.
+     * Never use Chart.js strikethrough (hidden:false on labels).
+     */
+    function chartLegendPluginOpts(kind) {
+      const k = kind === "power" || kind === "energy" ? kind : "temps";
+      const disp = getChartDisplayOpts(k);
+      return {
+        display: disp.legend !== false,
+        labels: {
+          boxWidth: 13,
+          boxHeight: 13,
+          padding: 10,
+          color: "#8b9bb0",
+          usePointStyle: false,
+          generateLabels: (chart) => {
+            const out = [];
+            const datasets = (chart && chart.data && chart.data.datasets) || [];
+            datasets.forEach((ds, i) => {
+              if (!ds) return;
+              // energy: avg is tooltip-only
+              if (ds.$energyKind === "avg" || ds._legendSkip) return;
+              // membership: series off in settings → not listed
+              if (k === "power" && ds._seriesId && !isPowerSeriesOn(ds._seriesId))
+                return;
+              if (k === "energy" && ds._seriesId && !isEnergySeriesOn(ds._seriesId))
+                return;
+              if (k === "temps" && ds._seriesId && !isTempSeriesOn(ds._seriesId))
+                return;
+              let meta = null;
+              try {
+                meta = chart.getDatasetMeta(i);
+              } catch (_) { /* ignore */ }
+              const hidden =
+                (meta && meta.hidden === true) ||
+                (meta && meta.hidden == null && ds.hidden === true);
+              let color = ds.borderColor || ds.backgroundColor || "#8b9bb0";
+              if (Array.isArray(color)) color = color[0];
+              if (typeof color !== "string") color = "#8b9bb0";
+              out.push({
+                text: String(ds.label || ""),
+                fillStyle: hidden ? "rgba(0,0,0,0)" : color,
+                strokeStyle: color,
+                lineWidth: hidden ? 1.75 : 0,
+                hidden: false, // no line-through
+                datasetIndex: i,
+                fontColor: hidden ? "#5c6b7e" : "#8b9bb0",
+              });
+            });
+            return out;
+          },
+        },
+        onClick: (_e, legendItem, legend) => {
+          const ci = legend.chart;
+          const i = legendItem.datasetIndex;
+          if (i == null || !ci) return;
+          if (ci.isDatasetVisible(i)) ci.hide(i);
+          else ci.show(i);
+          try {
+            ci.update("none");
+          } catch (_) { /* ignore */ }
+        },
+      };
+    }
+
+    function applyChartDisplayOptions(chart, kind) {
+      if (!chart || !chart.options) return;
+      const k = kind === "power" || kind === "energy" ? kind : "temps";
+      const disp = getChartDisplayOpts(k);
+      if (!chart.options.plugins) chart.options.plugins = {};
+      chart.options.plugins.legend = chartLegendPluginOpts(k);
+      const scales = chart.options.scales || {};
+      Object.keys(scales).forEach((sid) => {
+        const sc = scales[sid];
+        if (!sc || typeof sc !== "object") return;
+        const isX = sid === "x" || sc.axis === "x" || sc.type === "time";
+        const show = isX ? disp.x_axis !== false : disp.y_axis !== false;
+        sc.display = show;
+        if (sc.title && typeof sc.title === "object") {
+          sc.title.display = show && sc.title.text != null && sc.title.text !== "";
+        }
+      });
+    }
+
     function _normalizeBandVis(src) {
       const base = Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON);
       if (!src || typeof src !== "object") return base;
@@ -18530,6 +18664,9 @@
           ?.addEventListener("click", () => {
             const k = backdrop._chartKind || "temps";
             const m = chartSettingsMeta(k);
+            // preview defaults in form only (persist on Apply)
+            if (!chartDisplayOpts) loadChartDisplayOpts();
+            chartDisplayOpts[k] = Object.assign({}, CHART_DISPLAY_DEFAULT);
             fillChartSeriesList(
               k,
               m.defaultOn,
@@ -18576,6 +18713,15 @@
               });
               saveChartStatusBandsVis(k, nextBands);
             }
+            // legend + axis scales
+            saveChartDisplayOpts(k, {
+              legend: !!list?.querySelector('input[data-display="legend"]')
+                ?.checked,
+              y_axis: !!list?.querySelector('input[data-display="y_axis"]')
+                ?.checked,
+              x_axis: !!list?.querySelector('input[data-display="x_axis"]')
+                ?.checked,
+            });
             closeChartSeriesModal();
             try {
               if (k === "temps") {
@@ -18594,6 +18740,24 @@
                 } else if (energyChartLastBody && typeof renderEnergyChart === "function") {
                   renderEnergyChart(energyChartLastBody);
                 }
+              }
+              // re-apply display opts to live charts
+              if (k === "temps" && chartTemp) {
+                applyChartDisplayOptions(chartTemp, "temps");
+                chartTemp.update("none");
+              }
+              if (k === "power" && chartPower) {
+                applyChartDisplayOptions(chartPower, "power");
+                chartPower.update("none");
+              }
+              if (k === "energy") {
+                [chartEnergy, chartEnergyDash].forEach((ch) => {
+                  if (!ch) return;
+                  applyChartDisplayOptions(ch, "energy");
+                  try {
+                    ch.update("none");
+                  } catch (_) { /* ignore */ }
+                });
               }
             } catch (_) { /* ignore */ }
             if (typeof toastSuccess === "function") {
@@ -18654,6 +18818,11 @@
         typeof t === "function"
           ? t("dash.chart_bands", "Status areas")
           : "Status areas";
+      const displayTitle =
+        typeof t === "function"
+          ? t("dash.chart_display", "Display")
+          : "Display";
+      const disp = getChartDisplayOpts(meta.kind);
 
       function rowHtml(s) {
         const on = v[s.id] !== false;
@@ -18722,6 +18891,50 @@
           );
         }).join("");
       }
+      // Legend + axis scales
+      const dispRows = [
+        {
+          id: "legend",
+          lab:
+            typeof t === "function"
+              ? t("dash.chart_show_legend", "Show legend")
+              : "Show legend",
+        },
+        {
+          id: "y_axis",
+          lab:
+            typeof t === "function"
+              ? t("dash.chart_show_y_axis", "Show value scale")
+              : "Show value scale",
+        },
+        {
+          id: "x_axis",
+          lab:
+            typeof t === "function"
+              ? t("dash.chart_show_x_axis", "Show time axis")
+              : "Show time axis",
+        },
+      ];
+      html +=
+        '<div class="chart-series-section-title">' +
+        displayTitle.replace(/</g, "&lt;") +
+        "</div>";
+      html += dispRows
+        .map((r) => {
+          const on = disp[r.id] !== false;
+          return (
+            '<label class="check">' +
+            '<input type="checkbox" data-display="' +
+            r.id +
+            '"' +
+            (on ? " checked" : "") +
+            " />" +
+            "<span>" +
+            r.lab.replace(/</g, "&lt;") +
+            "</span></label>"
+          );
+        })
+        .join("");
       list.innerHTML = html;
     }
 
@@ -19367,21 +19580,7 @@
         normalized: true,
         interaction: { mode: "nearest", axis: "x", intersect: false },
         plugins: {
-          legend: {
-            labels: { boxWidth: 12, boxHeight: 12 },
-            // click toggles visibility; list itself = settings-enabled series only
-            onClick: (e, legendItem, legend) => {
-              const ci = legend.chart;
-              const i = legendItem.datasetIndex;
-              if (ci.isDatasetVisible(i)) {
-                ci.hide(i);
-                legendItem.hidden = true;
-              } else {
-                ci.show(i);
-                legendItem.hidden = false;
-              }
-            },
-          },
+          legend: chartLegendPluginOpts("temps"),
           tooltip: {
             callbacks: {
               title: (items) => {
@@ -19411,11 +19610,15 @@
               x: xAxisOpts("temps"),
               y: { title: { display: true, text: "°C" }, grid: { color: "rgba(42,53,68,0.5)" } },
             },
-            plugins: { ...common.plugins },
+            plugins: {
+              ...common.plugins,
+              legend: chartLegendPluginOpts("temps"),
+            },
           },
           plugins: [statusBandsPlugin],
         });
         chartTemp.$chartKey = "temps";
+        applyChartDisplayOptions(chartTemp, "temps");
       }
       if (!chartPower && elPower) {
         loadPowerChartSeriesVis();
@@ -19504,11 +19707,15 @@
                 offset: true,
               },
             },
-            plugins: { ...common.plugins },
+            plugins: {
+              ...common.plugins,
+              legend: chartLegendPluginOpts("power"),
+            },
           },
           plugins: [statusBandsPlugin],
         });
         chartPower.$chartKey = "power";
+        applyChartDisplayOptions(chartPower, "power");
       }
     }
 
@@ -19543,6 +19750,7 @@
         const vt = getView("temps");
         chartTemp.options.scales.x.min = vt.start;
         chartTemp.options.scales.x.max = vt.end;
+        applyChartDisplayOptions(chartTemp, "temps");
         chartTemp.update("none");
       }
 
@@ -19556,6 +19764,7 @@
         const vp = getView("power");
         chartPower.options.scales.x.min = vp.start;
         chartPower.options.scales.x.max = vp.end;
+        applyChartDisplayOptions(chartPower, "power");
         chartPower.update("none");
       }
 
