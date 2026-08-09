@@ -12619,6 +12619,30 @@ def _energy_bucket_key(ts: float, bucket: str) -> tuple:
     return key, label, float(start), float(end)
 
 
+# energy_series response cache (query key → {ts, body})
+_energy_series_cache_lock = threading.Lock()
+_energy_series_cache: dict[tuple, dict] = {}
+_ENERGY_SERIES_CACHE_TTL_SEC = 30.0
+_ENERGY_SERIES_CACHE_MAX = 24
+
+
+def _energy_series_bucket_sql_expr(bucket: str) -> str:
+    """
+    SQLite expression for local-time bucket key (string).
+    hour → 'YYYY-MM-DD HH'; day → 'YYYY-MM-DD'; week → 'YYYY-Www'; month → 'YYYY-MM'
+    """
+    b = bucket if bucket in ("hour", "day", "week", "month") else "hour"
+    base = "ts, 'unixepoch', 'localtime'"
+    if b == "hour":
+        return f"strftime('%Y-%m-%d %H', {base})"
+    if b == "day":
+        return f"strftime('%Y-%m-%d', {base})"
+    if b == "week":
+        # ISO year-week (matches Python %G-W%V style key loosely)
+        return f"strftime('%G-W%V', {base})"
+    return f"strftime('%Y-%m', {base})"
+
+
 def energy_series(
     *,
     hours: float | None = None,
@@ -12632,6 +12656,11 @@ def energy_series(
     bucket: hour | day | week | month
     Each point: bar kWh (sum of hold deltas) + avg_power_w (continuous mean)
     + max_power_w (peak hold power in bucket — "full power" line on chart).
+
+    Optimizations:
+      1) SQL GROUP BY bucket (not full raw fetch + Python loop)
+      2) 30s response cache
+      3) tariff/cost once per bucket (not per sample)
     """
     cfg = get_energy_cfg()
     now = time.time()
@@ -12666,44 +12695,130 @@ def energy_series(
     except (TypeError, ValueError):
         max_points = 500
 
-    since = now - hours * 3600.0
+    # stabilize cache window (30s slots) so concurrent UI polls hit the same key
+    cache_slot = int(now // _ENERGY_SERIES_CACHE_TTL_SEC)
+    until = float(cache_slot * _ENERGY_SERIES_CACHE_TTL_SEC) + (
+        _ENERGY_SERIES_CACHE_TTL_SEC - 0.001
+    )
+    # don't go past real now
+    until = min(until, now + 1.0)
+    since = until - hours * 3600.0
+    cache_key = (
+        str(meter_id),
+        b,
+        round(float(hours), 3),
+        int(max_points),
+        int(cache_slot),
+    )
+    with _energy_series_cache_lock:
+        hit = _energy_series_cache.get(cache_key)
+        if (
+            isinstance(hit, dict)
+            and (now - float(hit.get("ts") or 0)) < _ENERGY_SERIES_CACHE_TTL_SEC
+            and isinstance(hit.get("body"), dict)
+        ):
+            body = dict(hit["body"])
+            body["cache"] = "HIT"
+            return body
+
     _ensure_energy_db()
+    b_expr = _energy_series_bucket_sql_expr(b)
+    sample_count = 0
+    agg_rows: list[dict] = []
     with _energy_db_lock:
         conn = _energy_db_connect()
         try:
-            rows = conn.execute(
-                """
-                SELECT ts, power_w, delta_kwh
+            # total raw samples in window (for UI meta) — cheap COUNT
+            try:
+                sample_count = int(
+                    conn.execute(
+                        """
+                        SELECT COUNT(*) FROM energy_samples
+                        WHERE meter_id = ? AND ts >= ? AND ts <= ?
+                        """,
+                        (meter_id, since, until),
+                    ).fetchone()[0]
+                    or 0
+                )
+            except Exception:
+                sample_count = 0
+            # SQL aggregate: one row per local-time bucket
+            sql = f"""
+                SELECT
+                    {b_expr} AS bkey,
+                    MIN(ts) AS first_ts,
+                    MAX(ts) AS last_ts,
+                    SUM(CASE
+                        WHEN delta_kwh IS NOT NULL AND delta_kwh > 0
+                        THEN delta_kwh ELSE 0 END) AS kwh,
+                    SUM(CASE
+                        WHEN power_w IS NOT NULL AND power_w >= 0
+                        THEN power_w ELSE 0 END) AS pw_sum,
+                    SUM(CASE
+                        WHEN power_w IS NOT NULL AND power_w >= 0
+                             AND delta_kwh IS NOT NULL AND delta_kwh > 0
+                        THEN power_w * delta_kwh ELSE 0 END) AS pw_wsum,
+                    SUM(CASE
+                        WHEN power_w IS NOT NULL AND power_w >= 0
+                             AND delta_kwh IS NOT NULL AND delta_kwh > 0
+                        THEN delta_kwh ELSE 0 END) AS pw_w,
+                    MAX(power_w) AS pw_max,
+                    COUNT(*) AS n
                 FROM energy_samples
                 WHERE meter_id = ? AND ts >= ? AND ts <= ?
-                ORDER BY ts ASC
-                """,
-                (meter_id, since, now + 1),
-            ).fetchall()
-            raw: list[tuple[float, float, float | None]] = []
+                GROUP BY bkey
+                ORDER BY bkey ASC
+            """
+            rows = conn.execute(sql, (meter_id, since, until)).fetchall()
             for r in rows:
                 try:
-                    ts = float(r["ts"])
+                    first_ts = float(r["first_ts"])
+                    last_ts = float(r["last_ts"])
+                    kwh = float(r["kwh"] or 0)
+                    n = int(r["n"] or 0)
                 except (TypeError, ValueError):
                     continue
+                if not math.isfinite(kwh):
+                    kwh = 0.0
                 try:
-                    d_kwh = float(r["delta_kwh"] or 0)
+                    pw_sum = float(r["pw_sum"] or 0)
                 except (TypeError, ValueError):
-                    d_kwh = 0.0
+                    pw_sum = 0.0
                 try:
-                    pw = float(r["power_w"]) if r["power_w"] is not None else None
+                    pw_wsum = float(r["pw_wsum"] or 0)
                 except (TypeError, ValueError):
-                    pw = None
-                if not math.isfinite(d_kwh):
-                    d_kwh = 0.0
-                if pw is not None and not math.isfinite(pw):
-                    pw = None
-                raw.append((ts, d_kwh, pw))
+                    pw_wsum = 0.0
+                try:
+                    pw_w = float(r["pw_w"] or 0)
+                except (TypeError, ValueError):
+                    pw_w = 0.0
+                try:
+                    pw_max = (
+                        float(r["pw_max"])
+                        if r["pw_max"] is not None
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    pw_max = None
+                if pw_max is not None and not math.isfinite(pw_max):
+                    pw_max = None
+                agg_rows.append(
+                    {
+                        "first_ts": first_ts,
+                        "last_ts": last_ts,
+                        "kwh": max(0.0, kwh),
+                        "n": n,
+                        "pw_sum": pw_sum,
+                        "pw_wsum": pw_wsum,
+                        "pw_w": pw_w,
+                        "pw_max": pw_max,
+                    }
+                )
         finally:
             conn.close()
 
-    if not raw:
-        return {
+    if not agg_rows:
+        body = {
             "ok": True,
             "points": [],
             "bucket": b,
@@ -12716,83 +12831,65 @@ def energy_series(
             "from_iso": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
             "to_iso": datetime.fromtimestamp(now).isoformat(timespec="seconds"),
             "integration": cfg.get("integration") or "hold",
+            "cache": "MISS",
         }
-
-    # aggregate into buckets
-    buckets: dict[tuple, dict] = {}
-    order: list[tuple] = []
-    for ts, d_kwh, pw in raw:
-        key, label, b_start, b_end = _energy_bucket_key(ts, b)
-        if key not in buckets:
-            buckets[key] = {
-                "key": key,
-                "label": label,
-                "ts": b_start,  # bar position = bucket start
-                "ts_end": min(b_end, now),
-                "kwh": 0.0,
-                "cost": 0.0,
-                "n": 0,
-                "pw_sum": 0.0,
-                "pw_wsum": 0.0,  # energy-weighted power
-                "pw_w": 0.0,
-                "pw_max": None,  # peak hold power in bucket
-                "first_ts": ts,
-                "last_ts": ts,
-            }
-            order.append(key)
-        bk = buckets[key]
-        bk["kwh"] += max(0.0, d_kwh)
-        bk["n"] += 1
-        bk["first_ts"] = min(bk["first_ts"], ts)
-        bk["last_ts"] = max(bk["last_ts"], ts)
-        if pw is not None and pw >= 0:
-            bk["pw_sum"] += pw
-            w = max(d_kwh, 0.0)
-            if w > 0:
-                bk["pw_wsum"] += pw * w
-                bk["pw_w"] += w
-            if bk["pw_max"] is None or pw > bk["pw_max"]:
-                bk["pw_max"] = pw
-        try:
-            price = _energy_price_at(ts, cfg)
-            bk["cost"] += max(0.0, d_kwh) * price
-        except Exception:
-            pass
+        with _energy_series_cache_lock:
+            _energy_series_cache[cache_key] = {"ts": now, "body": dict(body)}
+        return body
 
     points: list[dict] = []
-    for key in order:
-        bk = buckets[key]
-        # duration of actual coverage in bucket (not empty calendar span)
-        span_h = max((bk["last_ts"] - bk["first_ts"]) / 3600.0, 1.0 / 60.0)
-        # also cap by nominal bucket end so incomplete current bucket is fair
-        nom_h = max((bk["ts_end"] - bk["ts"]) / 3600.0, 1e-6)
-        # continuous average: kWh / hours_covered * 1000
-        avg_from_energy = (bk["kwh"] / span_h) * 1000.0 if bk["kwh"] > 0 else None
-        if bk["pw_w"] > 0:
-            avg_w = bk["pw_wsum"] / bk["pw_w"]
+    for row in agg_rows:
+        first_ts = row["first_ts"]
+        last_ts = row["last_ts"]
+        # calendar bucket bounds from first sample (local time) — once per bucket
+        _key, label, b_start, b_end = _energy_bucket_key(first_ts, b)
+        b_end_use = min(float(b_end), now)
+        kwh = float(row["kwh"])
+        n = int(row["n"])
+        # cost: one tariff lookup at bucket mid (not per sample)
+        mid_ts = (float(b_start) + float(b_end_use)) / 2.0
+        try:
+            price = _energy_price_at(mid_ts, cfg)
+            cost = kwh * float(price)
+        except Exception:
+            cost = 0.0
+        span_h = max((last_ts - first_ts) / 3600.0, 1.0 / 60.0)
+        nom_h = max((b_end_use - float(b_start)) / 3600.0, 1e-6)
+        avg_from_energy = (kwh / span_h) * 1000.0 if kwh > 0 else None
+        pw_w = float(row["pw_w"] or 0)
+        pw_wsum = float(row["pw_wsum"] or 0)
+        pw_sum = float(row["pw_sum"] or 0)
+        if pw_w > 0:
+            avg_w = pw_wsum / pw_w
         elif avg_from_energy is not None:
             avg_w = avg_from_energy
-        elif bk["n"] > 0 and bk["pw_sum"] > 0:
-            avg_w = bk["pw_sum"] / bk["n"]
+        elif n > 0 and pw_sum > 0:
+            avg_w = pw_sum / n
         else:
             avg_w = None
-        # if coverage is most of the bucket, prefer energy/nominal for "sample avg power"
-        if bk["kwh"] > 0 and nom_h >= 0.25 and span_h >= nom_h * 0.5:
-            avg_w = (bk["kwh"] / nom_h) * 1000.0
-        max_w = bk["pw_max"]
-        # if no sample max but we have continuous avg, fall back so line still draws
+        if kwh > 0 and nom_h >= 0.25 and span_h >= nom_h * 0.5:
+            avg_w = (kwh / nom_h) * 1000.0
+        max_w = row["pw_max"]
         if max_w is None and avg_w is not None:
             max_w = avg_w
         points.append(
             {
-                "ts": bk["ts"],
-                "ts_end": bk["ts_end"],
-                "label": bk["label"],
-                "kwh": round(bk["kwh"], 4),
-                "cost": round(bk["cost"], 2),
-                "avg_power_w": round(avg_w, 1) if avg_w is not None and math.isfinite(avg_w) else None,
-                "max_power_w": round(max_w, 1) if max_w is not None and math.isfinite(max_w) else None,
-                "samples": bk["n"],
+                "ts": float(b_start),
+                "ts_end": b_end_use,
+                "label": label,
+                "kwh": round(kwh, 4),
+                "cost": round(cost, 2),
+                "avg_power_w": (
+                    round(avg_w, 1)
+                    if avg_w is not None and math.isfinite(avg_w)
+                    else None
+                ),
+                "max_power_w": (
+                    round(max_w, 1)
+                    if max_w is not None and math.isfinite(max_w)
+                    else None
+                ),
+                "samples": n,
             }
         )
 
@@ -12800,12 +12897,12 @@ def energy_series(
     if len(points) > max_points:
         points = points[-max_points:]
 
-    return {
+    body = {
         "ok": True,
         "points": points,
         "bucket": b,
         "hours": hours,
-        "count": len(raw),
+        "count": sample_count,
         "returned": len(points),
         "meter_id": meter_id,
         "from_ts": since,
@@ -12813,7 +12910,20 @@ def energy_series(
         "from_iso": datetime.fromtimestamp(since).isoformat(timespec="seconds"),
         "to_iso": datetime.fromtimestamp(now).isoformat(timespec="seconds"),
         "integration": cfg.get("integration") or "hold",
+        "cache": "MISS",
     }
+    with _energy_series_cache_lock:
+        _energy_series_cache[cache_key] = {"ts": now, "body": dict(body)}
+        # bound memory
+        if len(_energy_series_cache) > _ENERGY_SERIES_CACHE_MAX:
+            # drop oldest entries
+            items = sorted(
+                _energy_series_cache.items(),
+                key=lambda kv: float((kv[1] or {}).get("ts") or 0),
+            )
+            for k, _ in items[: max(0, len(items) - _ENERGY_SERIES_CACHE_MAX)]:
+                _energy_series_cache.pop(k, None)
+    return body
 
 
 def _sum_energy_period(
