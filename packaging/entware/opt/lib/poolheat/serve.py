@@ -26568,20 +26568,23 @@ class Handler(SimpleHTTPRequestHandler):
             since_f = float(since) if since not in (None, "") else None
             until_f = float(until) if until not in (None, "") else None
 
-            # Resolve window (same as query_history) for HTTP cache key
             now = time.time()
-            if since_f is None:
-                h = 24.0 if hours_f is None else float(hours_f)
-                since_f = now - h * 3600.0
-            if until_f is None:
-                until_f = now
             max_points = max(10, min(20000, int(max_points)))
-            http_key = (
-                int(float(since_f) // 30) * 30,
-                int(float(until_f) // 30) * 30,
-                int(max_points),
-            )
-            # Warm path: pre-serialized JSON (avoids multi-second dumps on ARM)
+            q_since = float(since) if since not in (None, "") else None
+            q_until = float(until) if until not in (None, "") else None
+            # Cache key: hours+max is stable across slow cold requests
+            # (until=now would change every second and never HIT)
+            if q_since is None and q_until is None:
+                h_key = 24.0 if hours_f is None else float(hours_f)
+                http_key = ("h", round(h_key, 3), int(max_points))
+            else:
+                http_key = (
+                    "r",
+                    int((q_since or 0) // 60) * 60,
+                    int((q_until or now) // 60) * 60,
+                    int(max_points),
+                )
+            # Warm path: pre-serialized JSON (skip dumps on ARM)
             with _history_http_cache_lock:
                 hit = _history_http_cache.get(http_key)
                 if (
@@ -26598,7 +26601,10 @@ class Handler(SimpleHTTPRequestHandler):
                         self.send_header("Content-Length", str(len(data)))
                         self.send_header("X-Poolheat-History-Cache", "HIT")
                         self.end_headers()
-                        self.wfile.write(data)
+                        view = memoryview(data)
+                        step = 65536
+                        for off in range(0, len(data), step):
+                            self.wfile.write(view[off : off + step])
                     except (
                         BrokenPipeError,
                         ConnectionResetError,
@@ -26607,9 +26613,6 @@ class Handler(SimpleHTTPRequestHandler):
                         pass
                     return
 
-            # Prefer explicit since/until when provided; else hours window
-            q_since = float(since) if since not in (None, "") else None
-            q_until = float(until) if until not in (None, "") else None
             points = query_history(
                 hours=hours_f if q_since is None else None,
                 since=q_since,
