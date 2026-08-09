@@ -3718,19 +3718,22 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
 #                                if mining resumes within the window, OFF is cancelled
 #   allow_off_while_mining — manual OFF while mining allowed
 #   allow_on_while_suspend — manual ON while suspend allowed
-# State hold:
-#   enforce_desired       — on status probe, if live ≠ desired_on → re-apply
-#   desired_on            — last intended logical ON/OFF (local)
+# State model (AWS Device Shadow–style):
+#   desired_on            — commanded / target logical ON/OFF (what poolheat wants)
+#   last_on / reported_on — last observed logical ON/OFF from the device
+#   online                — last status probe reached the device
+#   enforce_desired       — ON: if reported ≠ desired → re-apply desired
+#                           OFF: desired tracks reported (accept external app toggles)
 # inverted: logical ON means physical OFF (and vice versa)
 
 # Devices poller process (serve.py --devices-poller) — Advanced settings
 DEFAULT_DEVICES_POLLER: dict = {
     "enabled": True,
-    # how often to re-check mining work + auto on/off
+    # how often to poll device status (+ mining auto policy)
     "interval_sec": 5,
-    # max wait for one device_set (hung Tapo/Shelly)
+    # max wait for one device I/O (status or set; hung Tapo/Shelly)
     "set_timeout_sec": 15,
-    # after a failed auto action, skip that device for N seconds
+    # after a failed poll/action, skip that device for N seconds
     "error_backoff_sec": 20,
     # ignore mining_work.json older than this (policy/collector stopped?)
     "mining_work_max_age_sec": 300,
@@ -4103,11 +4106,17 @@ def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | 
         "allow_on_while_suspend": _as_bool(raw.get("allow_on_while_suspend", False)),
         "enforce_desired": _as_bool(raw.get("enforce_desired", False)),
         **fields,
+        # reported (observed) logical state — also exposed as reported_on in API
         "last_on": last_on,
         "desired_on": (
             None
             if raw.get("desired_on") is None
             else _as_bool(raw.get("desired_on"))
+        ),
+        "online": (
+            None
+            if raw.get("online") is None
+            else _as_bool(raw.get("online"))
         ),
         "last_error": raw.get("last_error"),
         "last_ok_ts": raw.get("last_ok_ts"),
@@ -4161,6 +4170,10 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
         else:
             d["auto_off_suspend_in_sec"] = None
             d["auto_off_suspend_pending"] = False
+        # Device Shadow aliases for UI / API clarity
+        d["reported_on"] = d.get("last_on")
+        d["desired"] = d.get("desired_on")
+        d["reported"] = d.get("last_on")
     if redact:
         for d in devices:
             d["password_set"] = bool(d.get("password"))
@@ -4267,6 +4280,7 @@ def upsert_device(raw: dict) -> dict:
         for rk in (
             "last_on",
             "desired_on",
+            "online",
             "last_error",
             "last_ok_ts",
             "last_action",
@@ -4932,12 +4946,17 @@ _devices_enforce_ts: dict[str, float] = {}
 _DEVICES_ENFORCE_COOLDOWN_SEC = 15.0
 
 
-def _device_enforce_desired(did: str, logical: bool | None) -> dict | None:
+def _device_enforce_desired(
+    did: str,
+    reported: bool | None,
+    *,
+    use_timeout: bool = False,
+) -> dict | None:
     """
-    If enforce_desired is on and live logical state ≠ stored desired_on,
-    re-apply desired_on (force). Returns device_set result or None if skipped.
+    If enforce_desired is on and reported ≠ desired_on, re-apply desired (force).
+    Returns device_set result or None if skipped.
     """
-    if logical is None:
+    if reported is None:
         return None
     cfg = _device_cfg_snapshot(did)
     if not cfg or not cfg.get("enabled"):
@@ -4948,11 +4967,11 @@ def _device_enforce_desired(did: str, logical: bool | None) -> dict | None:
     if desired is None:
         # seed from first successful probe so hold has a target
         def _seed(d):
-            d["desired_on"] = bool(logical)
+            d["desired_on"] = bool(reported)
 
         _device_update_in_store(did, _seed)
         return None
-    if bool(logical) is bool(desired):
+    if bool(reported) is bool(desired):
         return None
     now = time.time()
     last = float(_devices_enforce_ts.get(did) or 0)
@@ -4961,21 +4980,60 @@ def _device_enforce_desired(did: str, logical: bool | None) -> dict | None:
     _devices_enforce_ts[did] = now
     try:
         print(
-            f"[devices] enforce_desired {cfg.get('alias') or did}: "
-            f"live={'ON' if logical else 'OFF'} → desired={'ON' if desired else 'OFF'}"
+            f"[devices] enforce desired {cfg.get('alias') or did}: "
+            f"reported={'ON' if reported else 'OFF'} → "
+            f"desired={'ON' if desired else 'OFF'}",
+            flush=True,
         )
+        if use_timeout:
+            return _device_set_with_timeout(
+                did, bool(desired), source="enforce_desired"
+            )
         return device_set(
             did, bool(desired), source="enforce_desired", force=True
         )
     except Exception as e:
-        print(f"[devices] enforce_desired {cfg.get('alias') or did}: {e}")
+        print(f"[devices] enforce desired {cfg.get('alias') or did}: {e}", flush=True)
         return None
 
 
-def device_test(did: str) -> dict:
+def _device_adopt_reported(did: str, reported: bool | None) -> None:
+    """When enforce is off: desired tracks reported (accept external changes)."""
+    if reported is None:
+        return
+    cfg = _device_cfg_snapshot(did)
+    if not cfg:
+        return
+    if bool(cfg.get("enforce_desired")):
+        return
+    cur = cfg.get("desired_on")
+    if cur is not None and bool(cur) is bool(reported):
+        return
+
+    def _mut(d):
+        d["desired_on"] = bool(reported)
+
+    _device_update_in_store(did, _mut)
+
+
+def device_poll_status(
+    did: str,
+    *,
+    source: str = "poll",
+    apply_policy: bool = True,
+    use_timeout_for_enforce: bool = False,
+) -> dict:
     """
-    Probe live device state. Updates last_on.
-    If enforce_desired is enabled and live ≠ desired_on → re-apply desired.
+    Poll live device status into store.
+
+    Updates:
+      - last_on / reported (observed logical ON/OFF)
+      - online, last_ok_ts / last_error
+      - last_power (W/V/A when backend provides it)
+
+    Policy (apply_policy=True):
+      - enforce_desired ON  → if reported ≠ desired, re-apply desired
+      - enforce_desired OFF → desired follows reported
     """
     cfg = _device_cfg_snapshot(did)
     if not cfg:
@@ -4984,33 +5042,52 @@ def device_test(did: str) -> dict:
     try:
         out = _device_backend_dispatch(None, cfg)
         phys = out.get("on")
-        logical = None
+        reported = None
         if phys is not None:
-            logical = _device_physical_to_logical(bool(phys), bool(cfg.get("inverted")))
+            reported = _device_physical_to_logical(
+                bool(phys), bool(cfg.get("inverted"))
+            )
         power = _power_from_backend_out(out)
 
         def _mut(d):
-            if logical is not None:
-                d["last_on"] = bool(logical)
+            if reported is not None:
+                d["last_on"] = bool(reported)
+            d["online"] = True
             d["last_error"] = None
             d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
-            d["last_action"] = f"test:{be}"
+            d["last_action"] = f"{source}:{be}"
             if power:
                 d["last_power"] = power
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
 
         _device_update_in_store(did, _mut)
+
         enforced = None
-        if logical is not None:
-            enforced = _device_enforce_desired(did, logical)
-            if isinstance(enforced, dict) and enforced.get("ok"):
-                logical = enforced.get("on", logical)
+        if apply_policy and reported is not None:
+            if bool(cfg.get("enforce_desired")):
+                enforced = _device_enforce_desired(
+                    did,
+                    reported,
+                    use_timeout=use_timeout_for_enforce,
+                )
+                if isinstance(enforced, dict) and enforced.get("ok"):
+                    # after re-apply, reported should match desired
+                    if enforced.get("on") is not None:
+                        reported = bool(enforced.get("on"))
+            else:
+                _device_adopt_reported(did, reported)
+
+        snap = _device_cfg_snapshot(did) or cfg
         ret = {
             "ok": True,
             "id": did,
             "backend": be,
-            "on": logical,
+            "on": reported,
+            "reported_on": reported,
+            "desired_on": snap.get("desired_on"),
+            "online": True,
             "physical_on": phys,
+            "enforce_desired": bool(snap.get("enforce_desired")),
             **{k: v for k, v in out.items() if k not in ("on",)},
         }
         if power:
@@ -5026,12 +5103,28 @@ def device_test(did: str) -> dict:
         return ret
     except Exception as e:
         pretty = _device_user_error(e, on=None, backend=be, lang="ru")
+
         def _mut_err(d):
+            d["online"] = False
             d["last_error"] = pretty
-            d["last_action"] = "test_fail"
+            d["last_action"] = f"{source}_fail"
 
         _device_update_in_store(did, _mut_err)
-        return {"ok": False, "id": did, "error": pretty, "backend": be}
+        return {
+            "ok": False,
+            "id": did,
+            "error": pretty,
+            "backend": be,
+            "online": False,
+        }
+
+
+def device_test(did: str) -> dict:
+    """
+    Probe live device state (status poll + enforce/adopt policy).
+    Alias of device_poll_status for API / UI Test button.
+    """
+    return device_poll_status(did, source="test", apply_policy=True)
 
 
 def device_set(
@@ -5123,9 +5216,9 @@ def device_set(
         skipped = bool(out.get("skipped"))
 
         def _mut(d):
-            d["last_on"] = bool(got_logical)
-            # always remember intended state (used by enforce_desired on probe)
-            d["desired_on"] = bool(on)
+            d["last_on"] = bool(got_logical)  # reported
+            d["desired_on"] = bool(on)  # commanded
+            d["online"] = True
             d["last_error"] = None
             d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
             if skipped:
@@ -5141,6 +5234,7 @@ def device_set(
             "ok": True,
             "id": did,
             "on": bool(got_logical),
+            "reported_on": bool(got_logical),
             "physical_on": bool(got_phys),
             "source": source,
             "backend": be,
@@ -5149,6 +5243,7 @@ def device_set(
             "icon": cfg.get("icon"),
             "prev_on": prev,
             "desired_on": bool(on),
+            "online": True,
             **{k: v for k, v in out.items() if k not in ("on",)},
         }
         if power:
@@ -5160,6 +5255,7 @@ def device_set(
         pretty = _device_user_error(e, on=on, backend=be, lang=error_lang)
 
         def _mut_err(d):
+            d["online"] = False
             d["last_error"] = pretty_store
             d["last_action"] = f"{source}_fail"
 
@@ -5297,15 +5393,10 @@ def _device_set_with_timeout(
 
 def devices_sync_with_mining(measured_work: str | None) -> None:
     """
-    Auto ON/OFF devices from mining work state.
+    Mining policy: Auto ON on Resume / Auto OFF on Suspend (per-device flags).
 
-    Runs in the dedicated devices poller process (not policy_tick) so a hung
-    Tapo/Shelly call cannot block API / policy / history.
-
-    Auto Off on Suspend uses ``auto_off_suspend_delay_sec`` (default 60):
-    device stays ON for that long after Suspend; if mining Resumes within
-    the window the pending OFF is cancelled and the device is left as-is
-    (or turned ON if auto_on_mining).
+    Sets desired + reported via device_set (force). Uses reported (last_on)
+    to decide if a command is still needed. Runs only in devices poller.
     """
     work = str(measured_work or "").lower()
     if work not in ("resume", "suspend", "sleep", "mining"):
@@ -5326,7 +5417,12 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
         auto_on = bool(cfg.get("auto_on_mining", False))
         auto_off = bool(cfg.get("auto_off_suspend", False))
         delay = _device_off_delay_sec(cfg.get("auto_off_suspend_delay_sec"))
-        last_on = cfg.get("last_on")
+        # prefer desired when enforce is on, else reported
+        reported = cfg.get("last_on")
+        desired = cfg.get("desired_on")
+        cur = desired if (
+            bool(cfg.get("enforce_desired")) and desired is not None
+        ) else reported
         last_err = cfg.get("last_error")
         last_act = str(cfg.get("last_action") or "")
         if last_err and last_act.endswith("_fail"):
@@ -5351,12 +5447,12 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
                     f"(mining resume)",
                     flush=True,
                 )
-            if auto_on and last_on is not True:
+            if auto_on and cur is not True:
                 want = True
                 src = "auto_mining"
         elif work in ("suspend", "sleep") and auto_off:
             # already off → nothing pending
-            if last_on is False:
+            if cur is False:
                 _devices_suspend_off_deadline.pop(did, None)
             else:
                 # device on (or unknown) → schedule / fire delayed OFF
@@ -5391,10 +5487,112 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
             print(f"[devices] sync {cfg.get('alias')}: {e}", flush=True)
 
 
+def devices_poll_all_status() -> dict:
+    """
+    Poll status for every enabled/ready device (reported, online, power…).
+    Applies enforce_desired / adopt-reported policy per device.
+    """
+    now = time.time()
+    pol = get_devices_poller_cfg()
+    try:
+        backoff = float(pol.get("error_backoff_sec") or 20)
+    except Exception:
+        backoff = 20.0
+    try:
+        timeout = float(pol.get("set_timeout_sec") or 15)
+    except Exception:
+        timeout = 15.0
+    timeout = max(3.0, min(60.0, timeout))
+    backoff = max(5.0, backoff)
+
+    with _devices_cfg_lock:
+        ids = [
+            str(d.get("id") or "")
+            for d in (_devices_cfg.get("devices") or [])
+            if d.get("enabled") is not False and str(d.get("id") or "")
+        ]
+    probed = 0
+    errors = 0
+    for did in ids:
+        if not did:
+            continue
+        cfg = _device_cfg_snapshot(did)
+        if not cfg or not _device_ready(cfg):
+            continue
+        # skip devices still in error backoff
+        last_err = cfg.get("last_error")
+        last_act = str(cfg.get("last_action") or "")
+        if last_err and last_act.endswith("_fail"):
+            last_try = float(_devices_sync_ts.get(did) or 0)
+            if now - last_try < backoff:
+                continue
+        try:
+            # status probe only (no enforce) under hard timeout
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    device_poll_status,
+                    did,
+                    source="poll",
+                    apply_policy=False,
+                )
+                try:
+                    res = fut.result(timeout=timeout)
+                except FuturesTimeout:
+                    def _mut_to(d):
+                        d["online"] = False
+                        d["last_error"] = (
+                            f"status timeout after {timeout:.0f}s"
+                        )
+                        d["last_action"] = "poll_fail"
+
+                    _device_update_in_store(did, _mut_to)
+                    _devices_sync_ts[did] = now
+                    errors += 1
+                    print(
+                        f"[devices-poller] status timeout "
+                        f"{cfg.get('alias') or did}",
+                        flush=True,
+                    )
+                    continue
+            if not res.get("ok"):
+                errors += 1
+                _devices_sync_ts[did] = now
+                continue
+            probed += 1
+            reported = res.get("reported_on")
+            if reported is None:
+                reported = res.get("on")
+            # desired policy after successful probe
+            cfg2 = _device_cfg_snapshot(did) or cfg
+            if bool(cfg2.get("enforce_desired")):
+                try:
+                    _device_enforce_desired(
+                        did, reported, use_timeout=True
+                    )
+                except Exception as ee:
+                    print(
+                        f"[devices-poller] enforce "
+                        f"{cfg2.get('alias') or did}: {ee}",
+                        flush=True,
+                    )
+            else:
+                _device_adopt_reported(did, reported)
+        except Exception as e:
+            errors += 1
+            _devices_sync_ts[did] = now
+            print(
+                f"[devices-poller] status {cfg.get('alias') or did}: {e}",
+                flush=True,
+            )
+    return {"probed": probed, "errors": errors}
+
+
 def devices_poller_loop() -> None:
     """
-    Dedicated loop: reload devices cfg from disk, read mining work snapshot,
-    sync auto on/off. Isolated process entry — see devices_poller_main().
+    Dedicated loop (isolated process):
+      1) poll each device → reported / online / power
+      2) enforce desired OR adopt reported
+      3) mining Auto ON/OFF policy
     """
     print("[devices-poller] loop start", flush=True)
     _load_devices_deadlines()
@@ -5408,10 +5606,19 @@ def devices_poller_loop() -> None:
             if not pol.get("enabled", True):
                 print("[devices-poller] disabled in config — idle", flush=True)
             else:
+                # 1–2) status poll + desired/reported policy
+                summary = devices_poll_all_status()
+                if summary.get("probed") or summary.get("errors"):
+                    print(
+                        f"[devices-poller] status "
+                        f"ok={summary.get('probed', 0)} "
+                        f"err={summary.get('errors', 0)}",
+                        flush=True,
+                    )
+                # 3) mining auto policy (optional; uses mining_work snapshot)
                 max_age = float(pol.get("mining_work_max_age_sec") or 300)
                 work = read_mining_work_snapshot(max_age_sec=max_age)
                 if work is None:
-                    # fallback: in-process cache (same process only) or skip
                     work = _mining_work_state()
                 if work:
                     devices_sync_with_mining(work)
@@ -5570,7 +5777,7 @@ def get_device_status(did: str, *, probe_live: bool = False) -> dict:
 def devices_probe_live(*, max_devices: int = 24) -> dict:
     """
     Best-effort live status + power for ready devices (used by Refresh).
-    Does not raise; returns summary.
+    Same path as poller status tick (reported / enforce / adopt).
     """
     probed = 0
     errors = 0
@@ -5585,8 +5792,11 @@ def devices_probe_live(*, max_devices: int = 24) -> dict:
         if not cfg or not _device_ready(cfg):
             continue
         try:
-            device_test(did)
-            probed += 1
+            res = device_poll_status(did, source="probe", apply_policy=True)
+            if res.get("ok"):
+                probed += 1
+            else:
+                errors += 1
         except Exception:
             errors += 1
     return {"probed": probed, "errors": errors}

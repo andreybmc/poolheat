@@ -3491,10 +3491,91 @@
       background: rgba(61, 156, 240, 0.1);
       color: var(--accent2, #3d9cf0);
     }
+    .dev-edit-btn.is-active,
+    .dev-edit-btn[aria-expanded="true"] {
+      border-color: var(--accent);
+      background: rgba(61, 156, 240, 0.16);
+      color: var(--accent2, #3d9cf0);
+    }
     .dev-edit-btn svg {
       width: 15px;
       height: 15px;
       display: block;
+    }
+    /* Device editor expands from the list row (inline accordion) */
+    #device-editor-park {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      pointer-events: none;
+    }
+    #devices-list .device-item {
+      overflow: hidden;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    #devices-list .device-item.is-editing {
+      border-color: rgba(61, 156, 240, 0.5);
+      box-shadow:
+        0 0 0 1px rgba(61, 156, 240, 0.18),
+        0 8px 24px rgba(0, 0, 0, 0.22);
+    }
+    #devices-list .device-item.is-new > .periph-item-body {
+      background: rgba(61, 156, 240, 0.06);
+    }
+    #devices-list .device-item-editor-host {
+      display: none;
+      border-top: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.14);
+    }
+    #devices-list .device-item.is-editing > .device-item-editor-host {
+      display: block;
+      animation: device-editor-expand 0.2s ease-out;
+    }
+    @keyframes device-editor-expand {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+    /* Nested editor loses outer card chrome */
+    #devices-list .device-item-editor-host #panel-device-editor {
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      margin: 0;
+    }
+    #devices-list .device-item-editor-host #panel-device-editor > .card-h {
+      background: transparent;
+      border-bottom: 1px solid var(--border);
+      min-height: 0;
+      height: auto;
+      padding: 10px 12px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    #devices-list .device-item-editor-host #panel-device-editor > .card-h h2 {
+      font-size: 0.85rem;
+    }
+    #devices-list .device-item-editor-host #panel-device-editor > .card-b {
+      padding: 12px;
+    }
+    #devices-list .device-item-summary {
+      cursor: pointer;
+    }
+    #devices-list .device-item-summary .dev-actions,
+    #devices-list .device-item-summary .drag-handle,
+    #devices-list .device-item-summary .dev-switch {
+      cursor: auto;
+    }
+    #devices-list .device-item-summary .drag-handle {
+      cursor: grab;
     }
     .temp-card.board-chip .tc-pcb {
       color: var(--alum);
@@ -7008,9 +7089,8 @@
             <div class="card-b stack" style="gap:10px">
               <div id="devices-list" class="stack" style="gap:8px"></div>
               <p style="font-size:0.75rem;color:var(--dim);margin:0" id="devices-status">—</p>
-            </div>
-          </div>
-
+              <!-- editor parks here when closed; opens inside a device row -->
+              <div id="device-editor-park" aria-hidden="true">
           <div class="card" id="panel-device-editor" hidden>
             <div class="card-h">
               <div>
@@ -7365,8 +7445,8 @@
                   </label>
                   <label class="check" style="grid-column:1 / -1">
                     <input type="checkbox" id="dev-enforce-desired" />
-                    <span><span data-i18n="dev.enforce_desired">Hold desired state</span>
-                      <span class="desc" data-i18n="dev.enforce_desired_desc">store target ON/OFF · on status check, re-apply if device differs</span>
+                    <span><span data-i18n="dev.enforce_desired">Enforce desired</span>
+                      <span class="desc" data-i18n="dev.enforce_desired_desc">ON: keep reported = desired. OFF: desired follows reported (accept external toggles)</span>
                     </span>
                   </label>
                 </div>
@@ -7378,7 +7458,10 @@
                 <span id="device-editor-status" style="font-size:0.78rem;color:var(--muted)">—</span>
               </div>
             </div>
-          </div>
+          </div><!-- /panel-device-editor -->
+              </div><!-- /device-editor-park -->
+            </div>
+          </div><!-- /panel-periph-devices -->
         </div>
       </div><!-- /subview-periph-devices -->
     </section>
@@ -7847,7 +7930,7 @@
               <div class="btn-row" style="gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;margin-bottom:10px">
                 <div>
                   <div style="font-weight:600;color:var(--text);font-size:0.92rem" data-i18n="section.devices_poller">Devices poller</div>
-                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.devices_poller">separate process · Auto ON mining / Auto OFF suspend · not blocking API</div>
+                  <div style="font-size:0.72rem;color:var(--dim);margin-top:2px" data-i18n="sub.desc.devices_poller">status poll · desired / reported · Auto ON/OFF · isolated process</div>
                 </div>
                 <button class="btn primary" type="button" id="btn-devices-poller-save" data-i18n="btn.save">Save</button>
               </div>
@@ -7874,11 +7957,11 @@
                 </label>
               </div>
               <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n="hint.devices_poller">
-                Interval — how often to check mining work and apply Auto ON/OFF.
-                Timeout — max wait per device command (hung plug).
-                Backoff — skip a failed device for N sec.
-                Mining age — ignore stale work snapshot if policy/history stopped.
-                Per-device Auto flags remain in Peripherals → Devices.
+                Interval — how often to poll each device (on/off, online, power…) and refresh reported state.
+                Timeout — max wait per device I/O (hung plug).
+                Backoff — skip a device for N sec after errors.
+                Mining age — ignore stale mining_work if policy/history stopped.
+                Per device: Enforce desired + Auto ON/OFF in Peripherals → Devices.
               </p>
               <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="devices-poller-status">—</p>
             </div>
@@ -8468,14 +8551,14 @@
         "check.energy_metering": "Collect energy",
         "check.energy_metering_desc": "write hold samples to energy.db",
         "section.devices_poller": "Devices poller",
-        "sub.desc.devices_poller": "separate process · Auto ON mining / Auto OFF suspend · not blocking API",
+        "sub.desc.devices_poller": "status poll · desired / reported · Auto ON/OFF · isolated process",
         "check.dev_poller": "Run poller",
-        "check.dev_poller_desc": "auto device sync process",
+        "check.dev_poller_desc": "device status + policy process",
         "field.dev_poller_interval": "Interval, sec",
-        "field.dev_poller_timeout": "Command timeout, sec",
+        "field.dev_poller_timeout": "I/O timeout, sec",
         "field.dev_poller_backoff": "Error backoff, sec",
         "field.dev_poller_work_age": "Mining state max age, sec",
-        "hint.devices_poller": "Interval — how often to check mining work and apply Auto ON/OFF. Timeout — max wait per device command (hung plug). Backoff — skip a failed device for N sec. Mining age — ignore stale work snapshot if policy/history stopped. Per-device Auto flags remain in Peripherals → Devices.",
+        "hint.devices_poller": "Interval — how often to poll each device (on/off, online, power…) and refresh reported state. Timeout — max wait per device I/O (hung plug). Backoff — skip a device for N sec after errors. Mining age — ignore stale mining_work if policy/history stopped. Per device: Enforce desired + Auto ON/OFF in Peripherals → Devices.",
         "toast.devices_poller_saved": "Devices poller saved",
         "check.energy_attach": "With history collector",
         "check.energy_attach_desc": "same live poll as charts",
@@ -8570,8 +8653,13 @@
         "dev.mining_options": "Mining options",
         "dev.auto_on_mining": "Auto On while mining",
         "dev.auto_on_mining_desc": "Resume → device ON",
-        "dev.enforce_desired": "Hold desired state",
-        "dev.enforce_desired_desc": "store target ON/OFF · on status check, re-apply if device differs",
+        "dev.enforce_desired": "Enforce desired",
+        "dev.enforce_desired_desc": "ON: keep reported = desired (re-apply if changed externally). OFF: desired follows reported (accept external toggles).",
+        "dev.tag_hold": "hold",
+        "dev.tag_drift": "drift",
+        "dev.tag_offline": "offline",
+        "dev.tag_desired_on": "desired:ON",
+        "dev.tag_desired_off": "desired:OFF",
         "dev.auto_off_suspend": "Auto Off on Suspend",
         "dev.auto_off_suspend_desc": "Suspend → device OFF after delay",
         "dev.auto_off_delay": "Off delay after Suspend",
@@ -9216,14 +9304,14 @@
         "check.energy_metering": "Собирать энергию",
         "check.energy_metering_desc": "писать hold-сэмплы в energy.db",
         "section.devices_poller": "Поллер устройств",
-        "sub.desc.devices_poller": "отдельный процесс · Auto ON при майнинге / Auto OFF при suspend · не блокирует API",
+        "sub.desc.devices_poller": "опрос статуса · desired / reported · Auto ON/OFF · отдельный процесс",
         "check.dev_poller": "Запускать поллер",
-        "check.dev_poller_desc": "авто-синхронизация устройств",
+        "check.dev_poller_desc": "статус устройств + политика",
         "field.dev_poller_interval": "Интервал, сек",
-        "field.dev_poller_timeout": "Таймаут команды, сек",
+        "field.dev_poller_timeout": "Таймаут I/O, сек",
         "field.dev_poller_backoff": "Пауза после ошибки, сек",
         "field.dev_poller_work_age": "Макс. возраст mining state, сек",
-        "hint.devices_poller": "Интервал — как часто проверять майнинг и применять Auto ON/OFF. Таймаут — макс. ожидание одной команды (зависшая розетка). Backoff — не трогать устройство N сек после ошибки. Mining age — игнорировать устаревший снимок, если policy/history встали. Флаги Auto — в Периферия → Устройства.",
+        "hint.devices_poller": "Интервал — как часто опрашивать каждое устройство (вкл/выкл, online, мощность…) и обновлять reported. Таймаут — макс. ожидание I/O (зависшая розетка). Backoff — не трогать устройство N сек после ошибки. Mining age — игнорировать устаревший mining_work, если policy/history встали. На устройстве: Enforce desired + Auto ON/OFF — Периферия → Устройства.",
         "toast.devices_poller_saved": "Поллер устройств сохранён",
         "check.energy_attach": "Вместе с collector истории",
         "check.energy_attach_desc": "тот же live-опрос, что и графики",
@@ -9317,8 +9405,13 @@
         "dev.mining_options": "Опции при майнинге",
         "dev.auto_on_mining": "Auto On при майнинге",
         "dev.auto_on_mining_desc": "Resume → устройство ON",
-        "dev.enforce_desired": "Удерживать статус",
-        "dev.enforce_desired_desc": "хранить требуемое вкл/выкл · при сверке, если устройство не совпадает — вернуть",
+        "dev.enforce_desired": "Удерживать desired",
+        "dev.enforce_desired_desc": "Вкл: reported = desired (если сменили во внешнем приложении — вернуть). Выкл: desired следует за reported (внешние переключения принимаются).",
+        "dev.tag_hold": "hold",
+        "dev.tag_drift": "drift",
+        "dev.tag_offline": "offline",
+        "dev.tag_desired_on": "desired:ON",
+        "dev.tag_desired_off": "desired:OFF",
         "dev.auto_off_suspend": "Auto Off при Suspend",
         "dev.auto_off_suspend_desc": "Suspend → OFF после задержки",
         "dev.auto_off_delay": "Задержка OFF после Suspend",
@@ -26226,7 +26319,17 @@
           if (
             e.target &&
             e.target.closest &&
-            e.target.closest("button, input, select, textarea, a, label.field")
+            e.target.closest(
+              "button, input, select, textarea, a, label.field, label.check, .device-item-editor-host, .dev-switch, .dev-actions"
+            )
+          ) {
+            e.preventDefault();
+            return;
+          }
+          // expanded inline editor: only drag from the handle
+          if (
+            el.classList.contains("is-editing") &&
+            !(e.target.closest && e.target.closest(".drag-handle"))
           ) {
             e.preventDefault();
             return;
@@ -27095,6 +27198,119 @@
     let deviceNameBi = { en: "", ru: "" };
     let deviceDescBi = { en: "", ru: "" };
 
+    function deviceEscAttr(id) {
+      return String(id || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    }
+
+    function parkDeviceEditorPanel() {
+      const panel = document.getElementById("panel-device-editor");
+      const park = document.getElementById("device-editor-park");
+      if (panel && park && panel.parentElement !== park) {
+        park.appendChild(panel);
+      }
+    }
+
+    function clearDeviceEditingUi() {
+      document
+        .querySelectorAll("#devices-list .device-item.is-editing")
+        .forEach((el) => el.classList.remove("is-editing"));
+      document
+        .querySelectorAll("#devices-list .dev-edit-btn.is-active")
+        .forEach((btn) => {
+          btn.classList.remove("is-active");
+          btn.setAttribute("aria-expanded", "false");
+        });
+      document.getElementById("device-item-new")?.remove();
+    }
+
+    function mountDeviceEditorInCard(card) {
+      const panel = document.getElementById("panel-device-editor");
+      if (!panel || !card) return;
+      document
+        .querySelectorAll("#devices-list .device-item.is-editing")
+        .forEach((el) => {
+          if (el !== card) el.classList.remove("is-editing");
+        });
+      document
+        .querySelectorAll("#devices-list .dev-edit-btn.is-active")
+        .forEach((btn) => {
+          if (!card.contains(btn)) {
+            btn.classList.remove("is-active");
+            btn.setAttribute("aria-expanded", "false");
+          }
+        });
+      let slot = card.querySelector(".device-item-editor-host");
+      if (!slot) {
+        slot = document.createElement("div");
+        slot.className = "device-item-editor-host";
+        card.appendChild(slot);
+      }
+      slot.appendChild(panel);
+      panel.hidden = false;
+      card.classList.add("is-editing");
+      const editBtn = card.querySelector("[data-device-edit]");
+      if (editBtn) {
+        editBtn.classList.add("is-active");
+        editBtn.setAttribute("aria-expanded", "true");
+      }
+    }
+
+    function ensureNewDeviceRow() {
+      const box = document.getElementById("devices-list");
+      if (!box) return null;
+      let card = document.getElementById("device-item-new");
+      if (card) return card;
+      // drop empty-state copy if list was empty
+      if (!box.querySelector(".device-item")) {
+        box.innerHTML = "";
+      }
+      card = document.createElement("div");
+      card.className = "card device-item is-new";
+      card.id = "device-item-new";
+      card.setAttribute("data-id", "");
+      card.style.cssText = "margin:0;background:var(--panel2)";
+      card.innerHTML =
+        '<div class="card-b periph-item-body device-item-summary">' +
+        '<div class="btn-row" style="justify-content:space-between;align-items:center;gap:8px;margin-top:0">' +
+        '<div style="font-weight:650;font-size:0.92rem">' +
+        '<span style="font-size:1.1rem;margin-right:5px">➕</span>' +
+        t("btn.device_new", "New device") +
+        ' <span style="color:var(--dim);font-weight:500;font-size:0.78rem">· ' +
+        t("sub.device_edit", "backend · mining · bot") +
+        "</span></div>" +
+        '<button class="dev-edit-btn is-active" type="button" data-device-edit-close="1" title="' +
+        t("btn.cancel", "Cancel") +
+        '" aria-label="' +
+        t("btn.cancel", "Cancel") +
+        '" aria-expanded="true">' +
+        '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">' +
+        '<path d="M6 6l12 12M18 6L6 18"/>' +
+        "</svg></button></div></div>" +
+        '<div class="device-item-editor-host"></div>';
+      box.insertBefore(card, box.firstChild);
+      card
+        .querySelector("[data-device-edit-close]")
+        ?.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeDeviceEditor();
+        });
+      return card;
+    }
+
+    function remountDeviceEditorIfOpen() {
+      if (!deviceEditorOpen) return;
+      const id = (document.getElementById("device-id")?.value || "").trim();
+      let card = null;
+      if (id) {
+        card = document.querySelector(
+          '#devices-list .device-item[data-id="' + deviceEscAttr(id) + '"]'
+        );
+      } else {
+        card = ensureNewDeviceRow();
+      }
+      if (card) mountDeviceEditorInCard(card);
+    }
+
     function deviceUiLang() {
       return typeof getUiLang === "function" && getUiLang() === "ru" ? "ru" : "en";
     }
@@ -27289,6 +27505,8 @@
       const box = document.getElementById("devices-list");
       const st = document.getElementById("devices-status");
       if (!box) return;
+      // keep #panel-device-editor out of destroyed innerHTML
+      parkDeviceEditorPanel();
       const list = devicesCache || [];
       if (!list.length) {
         box.innerHTML =
@@ -27296,6 +27514,7 @@
           t("periph.devices_empty", "No devices yet.") +
           "</p>";
         if (st) st.textContent = "0";
+        remountDeviceEditorIfOpen();
         return;
       }
       box.innerHTML = list
@@ -27310,14 +27529,22 @@
           if (d.inverted) tags.push(t("dev.inverted_tag", "inv"));
           if (d.show_in_bot) tags.push(t("dev.bot_tag", "bot"));
           if (d.auto_on_mining) tags.push("auto↑");
+          if (d.online === false) {
+            tags.push(t("dev.tag_offline", "offline"));
+          }
           if (d.enforce_desired) {
-            const des =
-              d.desired_on === true
-                ? "hold:ON"
-                : d.desired_on === false
-                  ? "hold:OFF"
-                  : "hold";
-            tags.push(des);
+            tags.push(t("dev.tag_hold", "hold"));
+            if (d.desired_on === true) tags.push(t("dev.tag_desired_on", "desired:ON"));
+            else if (d.desired_on === false)
+              tags.push(t("dev.tag_desired_off", "desired:OFF"));
+            // reported ≠ desired
+            if (
+              d.desired_on != null &&
+              d.last_on != null &&
+              !!d.desired_on !== !!d.last_on
+            ) {
+              tags.push(t("dev.tag_drift", "drift"));
+            }
           }
           if (d.auto_off_suspend_pending && d.auto_off_suspend_in_sec != null) {
             tags.push("auto↓ " + Number(d.auto_off_suspend_in_sec) + "s");
@@ -27383,12 +27610,12 @@
             '<span class="dev-switch-track" aria-hidden="true">' +
             '<span class="dev-switch-thumb"></span></span></label>';
           return (
-            '<div class="card sortable-item" data-id="' +
+            '<div class="card sortable-item device-item" data-id="' +
             idEsc +
             '" style="margin:0;background:var(--panel2)">' +
-            '<div class="card-b periph-item-body">' +
+            '<div class="card-b periph-item-body device-item-summary">' +
             '<div class="btn-row" style="justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:0">' +
-            '<div style="display:flex;gap:6px;align-items:flex-start;min-width:0;flex:1">' +
+            '<div class="device-item-main" style="display:flex;gap:6px;align-items:flex-start;min-width:0;flex:1">' +
             '<span class="drag-handle" title="' +
             t("btn.drag_reorder", "Drag to reorder") +
             '" aria-label="Drag"></span>' +
@@ -27418,20 +27645,41 @@
             t("btn.edit", "Edit") +
             '" aria-label="' +
             t("btn.edit", "Edit") +
-            '">' +
+            '" aria-expanded="false">' +
             // sliders / tune — clear “settings” affordance
             '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round">' +
             '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/>' +
             '<path d="M1 14h6M9 8h6M17 16h6"/>' +
             "</svg>" +
             "</button>" +
-            "</div></div></div></div>"
+            "</div></div></div>" +
+            '<div class="device-item-editor-host"></div>' +
+            "</div>"
           );
         })
         .join("");
       box.querySelectorAll("[data-device-edit]").forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
           const id = btn.getAttribute("data-device-edit");
+          const d = devicesCache.find((x) => x.id === id);
+          if (d) openDeviceEditor(d);
+        });
+      });
+      // click on summary (except switch/drag/actions) expands editor
+      box.querySelectorAll(".device-item-summary").forEach((row) => {
+        row.addEventListener("click", (e) => {
+          if (
+            e.target.closest &&
+            e.target.closest(
+              ".dev-actions, .drag-handle, .dev-switch, button, input, label"
+            )
+          ) {
+            return;
+          }
+          const card = row.closest(".device-item");
+          const id = card && card.getAttribute("data-id");
+          if (!id) return;
           const d = devicesCache.find((x) => x.id === id);
           if (d) openDeviceEditor(d);
         });
@@ -27452,6 +27700,7 @@
         },
       });
       if (st) st.textContent = list.length + " · " + list.filter((d) => d.enabled !== false).length + " on";
+      remountDeviceEditorIfOpen();
     }
 
     function applyDeviceSwitchUi(id, on, { pending = false } = {}) {
@@ -27513,9 +27762,17 @@
     }
 
     function openDeviceEditor(device) {
+      const wantId = device && device.id ? String(device.id) : "";
+      // toggle: same row already open → collapse
+      if (deviceEditorOpen) {
+        const cur = (document.getElementById("device-id")?.value || "").trim();
+        if ((!wantId && !cur) || (wantId && cur === wantId)) {
+          closeDeviceEditor();
+          return;
+        }
+      }
       deviceEditorOpen = true;
       const panel = document.getElementById("panel-device-editor");
-      if (panel) panel.hidden = false;
       const d = device || {
         id: "",
         alias: "",
@@ -27690,19 +27947,48 @@
       setDevMiningOpen(!!anyMining);
       syncDeviceBackendUi();
       renderDeviceIconPicker();
+      const titleEl = document.getElementById("device-editor-title");
+      if (titleEl) {
+        titleEl.textContent = wantId
+          ? t("h2.device_edit", "Edit device")
+          : t("btn.device_new", "New device");
+      }
       const est = document.getElementById("device-editor-status");
       if (est) {
         let s = d.last_on === true ? "ON" : d.last_on === false ? "OFF" : "—";
         if (d.last_error) s += " · " + String(d.last_error).slice(0, 80);
         est.textContent = s;
       }
-      panel?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      // expand editor from the device row (or a draft "new" row)
+      document.getElementById("device-item-new")?.remove();
+      let card = null;
+      if (wantId) {
+        card = document.querySelector(
+          '#devices-list .device-item[data-id="' + deviceEscAttr(wantId) + '"]'
+        );
+        if (!card) {
+          renderDevicesList();
+          card = document.querySelector(
+            '#devices-list .device-item[data-id="' + deviceEscAttr(wantId) + '"]'
+          );
+        }
+      } else {
+        card = ensureNewDeviceRow();
+      }
+      if (card) mountDeviceEditorInCard(card);
+      else if (panel) panel.hidden = false;
+      // scroll so the expanded form is in view
+      requestAnimationFrame(() => {
+        (card || panel)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
     }
 
     function closeDeviceEditor() {
       deviceEditorOpen = false;
       const panel = document.getElementById("panel-device-editor");
+      parkDeviceEditorPanel();
       if (panel) panel.hidden = true;
+      clearDeviceEditingUi();
     }
 
     function setDevMiningOpen(open) {
