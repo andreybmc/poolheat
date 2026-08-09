@@ -2161,6 +2161,37 @@ _FILTRATION_BACKEND_IDS = {b["id"] for b in FILTRATION_BACKENDS}
 # Devices also accept smartlife alias for tuya; mi / mihome → xiaomi
 _DEVICE_BACKEND_EXTRA = {"smartlife", "smart_life", "mi", "mihome", "mi_home", "miio"}
 
+# Short English driver names for DEVICE event log (Tapo, Smart Life, …)
+_DEVICE_DRIVER_LABELS: dict[str, str] = {
+    "tapo": "Tapo",
+    "ewelink": "eWeLink",
+    "webhook": "Webhook",
+    "shelly": "Shelly",
+    "homeassistant": "Home Assistant",
+    "tuya": "Smart Life",
+    "smartlife": "Smart Life",
+    "smart_life": "Smart Life",
+    "xiaomi": "Xiaomi",
+    "mi": "Xiaomi",
+    "mihome": "Xiaomi",
+    "mi_home": "Xiaomi",
+    "miio": "Xiaomi",
+}
+
+
+def _device_driver_label(backend: str | None) -> str:
+    """Human driver label for logs, e.g. Tapo / Smart Life / Shelly."""
+    be = str(backend or "").strip().lower()
+    if not be:
+        return ""
+    if be in _DEVICE_DRIVER_LABELS:
+        return _DEVICE_DRIVER_LABELS[be]
+    for b in FILTRATION_BACKENDS:
+        if b.get("id") == be:
+            lab = str(b.get("label") or be).split("/")[0].strip()
+            return lab or be
+    return be
+
 DEFAULT_FILTRATION_CFG: dict = {
     "enabled": False,
     "backend": "tapo",
@@ -5099,11 +5130,14 @@ def _device_enforce_desired(
         .strip()
         or alias
     )
+    driver = _device_driver_label(cfg.get("backend"))
+    who = f"{name} ({driver})" if driver else name
     want_on = bool(desired)
     was_on = bool(reported)
     try:
         print(
-            f"[devices] enforce desired {alias}: "
+            f"[devices] enforce desired {alias}"
+            f"{f'/{driver}' if driver else ''}: "
             f"reported={'ON' if was_on else 'OFF'} → "
             f"desired={'ON' if want_on else 'OFF'}",
             flush=True,
@@ -5122,24 +5156,32 @@ def _device_enforce_desired(
             was_s = "ON" if was_on else "OFF"
             _devices_event_log(
                 "device",
-                f"{name}: restored {want_s} "
+                f"{who}: restored {want_s} "
                 f"(was {was_s}, external change)",
                 source="enforce_desired",
                 device_id=did,
                 alias=alias,
+                backend=str(cfg.get("backend") or "") or None,
+                driver=driver or None,
                 desired_on=want_on,
                 reported_on=was_on,
             )
         return res
     except Exception as e:
-        print(f"[devices] enforce desired {alias}: {e}", flush=True)
+        print(
+            f"[devices] enforce desired {alias}"
+            f"{f'/{driver}' if driver else ''}: {e}",
+            flush=True,
+        )
         _devices_event_log(
             "err",
-            f"{name}: failed to restore "
+            f"{who}: failed to restore "
             f"{'ON' if want_on else 'OFF'}: {e}",
             source="enforce_desired",
             device_id=did,
             alias=alias,
+            backend=str(cfg.get("backend") or "") or None,
+            driver=driver or None,
         )
         return None
 

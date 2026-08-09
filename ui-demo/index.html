@@ -18303,13 +18303,95 @@
       };
     }
 
+    /**
+     * Power chart Y axes: all on the left, unit-colored, compact type.
+     * W (green) · TH/s+freq (purple) · J/T (orange).
+     */
+    function powerChartYScaleOpts() {
+      const tickFont = { size: 9 };
+      const titleFont = { size: 10, weight: "600" };
+      return {
+        y: {
+          position: "left",
+          title: {
+            display: true,
+            text: "W",
+            color: "#3ecf8e",
+            font: titleFont,
+            padding: { top: 0, bottom: 2 },
+          },
+          ticks: {
+            color: "#3ecf8e",
+            font: tickFont,
+            maxTicksLimit: 6,
+            padding: 2,
+          },
+          grid: { color: "rgba(42,53,68,0.5)" },
+          border: { color: "rgba(62, 207, 142, 0.35)" },
+        },
+        y1: {
+          position: "left",
+          offset: true,
+          title: {
+            display: true,
+            text: "TH/s",
+            color: "#c792ea",
+            font: titleFont,
+            padding: { top: 0, bottom: 2 },
+          },
+          ticks: {
+            color: "#c792ea",
+            font: tickFont,
+            maxTicksLimit: 6,
+            padding: 2,
+          },
+          grid: { drawOnChartArea: false },
+          border: { color: "rgba(199, 146, 234, 0.4)" },
+        },
+        y2: {
+          position: "left",
+          offset: true,
+          title: {
+            display: true,
+            text: "J/T",
+            color: "#ff9f43",
+            font: titleFont,
+            padding: { top: 0, bottom: 2 },
+          },
+          ticks: {
+            color: "#ff9f43",
+            font: tickFont,
+            maxTicksLimit: 6,
+            padding: 2,
+          },
+          grid: { drawOnChartArea: false },
+          border: { color: "rgba(255, 159, 67, 0.4)" },
+        },
+      };
+    }
+
     function applyChartDisplayOptions(chart, kind) {
       if (!chart || !chart.options) return;
       const k = kind === "power" || kind === "energy" ? kind : "temps";
       const disp = getChartDisplayOpts(k);
       if (!chart.options.plugins) chart.options.plugins = {};
       chart.options.plugins.legend = chartLegendPluginOpts(k);
-      const scales = chart.options.scales || {};
+      if (!chart.options.scales) chart.options.scales = {};
+      const scales = chart.options.scales;
+      // keep power Y layout compact / left-stacked even on existing chart instances
+      if (k === "power") {
+        const yOpts = powerChartYScaleOpts();
+        ["y", "y1", "y2"].forEach((sid) => {
+          const prev = scales[sid] && typeof scales[sid] === "object" ? scales[sid] : {};
+          const next = Object.assign({}, prev, yOpts[sid]);
+          // preserve runtime min/max if set (don't write undefined)
+          ["min", "max", "suggestedMin", "suggestedMax"].forEach((pk) => {
+            if (prev[pk] != null) next[pk] = prev[pk];
+            else delete next[pk];
+          });
+          scales[sid] = next;
+        });
+      }
       Object.keys(scales).forEach((sid) => {
         const sc = scales[sid];
         if (!sc || typeof sc !== "object") return;
@@ -19771,14 +19853,7 @@
             ...common,
             scales: {
               x: xAxisOpts("power"),
-              y: { position: "left", title: { display: true, text: "W" }, grid: { color: "rgba(42,53,68,0.5)" } },
-              y1: { position: "right", title: { display: true, text: "TH/s · freq" }, grid: { drawOnChartArea: false } },
-              y2: {
-                position: "right",
-                title: { display: true, text: "J/TH" },
-                grid: { drawOnChartArea: false },
-                offset: true,
-              },
+              ...powerChartYScaleOpts(),
             },
             plugins: {
               ...common.plugins,
