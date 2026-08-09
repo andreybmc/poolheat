@@ -4810,7 +4810,7 @@
       margin-top: 12px;
       padding: 0;
     }
-    /* Highcharts-like range navigator */
+    /* Highcharts-like range navigator — margins set in JS to match chartArea */
     .chart-brush-wrap {
       height: 64px;
       border: 1px solid var(--border);
@@ -4821,11 +4821,22 @@
       user-select: none;
       touch-action: none;
       position: relative;
+      box-sizing: border-box;
     }
     .chart-brush-wrap canvas {
       display: block;
       width: 100%;
       height: 100%;
+    }
+    /* main chart canvases fill the host so plot can reach the right edge */
+    #panel-chart-temps .card-b > div[style*="height"],
+    #panel-chart-power .card-b > div[style*="height"] {
+      width: 100%;
+    }
+    #chart-temp,
+    #chart-power {
+      width: 100% !important;
+      max-width: 100%;
     }
     .chart-zoom-row {
       display: flex;
@@ -20299,6 +20310,7 @@
         chartTemp.options.scales.x.min = vt.start;
         chartTemp.options.scales.x.max = vt.end;
         applyChartDisplayOptions(chartTemp, "temps");
+        tightenChartHorizontalPadding(chartTemp);
         chartTemp.update("none");
       }
 
@@ -20313,9 +20325,12 @@
         chartPower.options.scales.x.min = vp.start;
         chartPower.options.scales.x.max = vp.end;
         applyChartDisplayOptions(chartPower, "power");
+        tightenChartHorizontalPadding(chartPower);
         chartPower.update("none");
       }
 
+      alignBrushToChart("temps");
+      alignBrushToChart("power");
       drawBrush();
       updateScrollUI();
       document.querySelectorAll(".chart-view-label").forEach((vl) => {
@@ -20422,8 +20437,67 @@
       drawHandle(x2);
     }
 
+    /**
+     * Tighten right padding so plot extends to the canvas edge,
+     * then inset the brush navigator to match chartArea left/right
+     * (Y-axis labels stay outside the brush; right edges align).
+     */
+    function tightenChartHorizontalPadding(chart) {
+      if (!chart || !chart.options) return;
+      if (!chart.options.layout) chart.options.layout = {};
+      const pad = chart.options.layout.padding;
+      let obj;
+      if (pad == null || typeof pad === "number") {
+        const n = typeof pad === "number" ? pad : 0;
+        obj = { top: Math.max(4, n), right: 2, bottom: n, left: n };
+      } else {
+        obj = Object.assign({ top: 4, right: 2, bottom: 0, left: 0 }, pad);
+        obj.right = Math.min(2, obj.right != null ? obj.right : 2);
+      }
+      chart.options.layout.padding = obj;
+      const x = chart.options.scales && chart.options.scales.x;
+      if (x) {
+        if (!x.ticks || typeof x.ticks !== "object") x.ticks = {};
+        // last/first labels sit inside plot — less reserved right gutter
+        if (x.ticks.align == null) x.ticks.align = "inner";
+        if (x.ticks.autoSkipPadding == null) x.ticks.autoSkipPadding = 0;
+      }
+    }
+
+    function alignBrushToChart(chartKey) {
+      const key = chartKey === "power" ? "power" : "temps";
+      const chart = key === "power" ? chartPower : chartTemp;
+      const brushCanvas = document.querySelector(
+        'canvas[data-brush][data-chart-key="' + key + '"]'
+      );
+      if (!brushCanvas) return;
+      const wrap =
+        brushCanvas.closest(".chart-brush-wrap") || brushCanvas.parentElement;
+      if (!wrap) return;
+      if (!chart || !chart.chartArea) {
+        wrap.style.marginLeft = "";
+        wrap.style.marginRight = "";
+        return;
+      }
+      const ca = chart.chartArea;
+      const cw =
+        (typeof chart.width === "number" && chart.width > 0
+          ? chart.width
+          : chart.canvas && chart.canvas.clientWidth) || 0;
+      if (!(cw > 0)) return;
+      const left = Math.max(0, Math.round(ca.left));
+      const right = Math.max(0, Math.round(cw - ca.right));
+      wrap.style.marginLeft = left + "px";
+      wrap.style.marginRight = right + "px";
+    }
+
     function drawBrush() {
-      document.querySelectorAll("canvas[data-brush]").forEach((c) => drawBrushOnCanvas(c));
+      // ensure navigator width matches plot before painting
+      alignBrushToChart("temps");
+      alignBrushToChart("power");
+      document
+        .querySelectorAll("canvas[data-brush]")
+        .forEach((c) => drawBrushOnCanvas(c));
     }
 
     function updateScrollUI() {
