@@ -20057,6 +20057,59 @@
       return "ASIC Offline";
     }
 
+    /** Bands covering timestamp (for chart tooltips). Order: offline → suspend → tuning. */
+    function statusBandsAtTs(ts, chartKind) {
+      const bands = statusBands || [];
+      if (!bands.length || !Number.isFinite(ts)) return [];
+      const kind =
+        chartKind === "power" || chartKind === "energy" ? chartKind : "temps";
+      const order = { offline: 0, suspend: 1, tuning: 2 };
+      const seen = new Set();
+      const hits = [];
+      for (let i = 0; i < bands.length; i++) {
+        const b = bands[i];
+        if (!b) continue;
+        const bandKey = b.type === "upfreq" ? "tuning" : b.type;
+        if (bandKey !== "offline" && bandKey !== "suspend" && bandKey !== "tuning")
+          continue;
+        if (typeof isStatusBandOn === "function" && !isStatusBandOn(bandKey, kind))
+          continue;
+        if (ts < b.start || ts > b.end) continue;
+        if (seen.has(bandKey)) continue;
+        seen.add(bandKey);
+        hits.push({
+          type: bandKey,
+          label: b.label || statusBandLabel(bandKey),
+        });
+      }
+      hits.sort(
+        (a, b) => (order[a.type] != null ? order[a.type] : 9) - (order[b.type] != null ? order[b.type] : 9)
+      );
+      return hits;
+    }
+
+    /** Chart.js tooltip title: datetime + active status band(s). */
+    function chartTooltipTitleWithStatus(items) {
+      if (!items || !items.length) return "";
+      const ts = items[0].parsed && items[0].parsed.x;
+      const dateStr = Number.isFinite(ts)
+        ? new Date(ts * 1000).toLocaleString()
+        : "";
+      if (!Number.isFinite(ts)) return dateStr;
+      const chart = items[0].chart;
+      const kind =
+        (chart && chart.$chartKey) ||
+        (chart &&
+          chart.canvas &&
+          chart.canvas.id === "chart-power"
+          ? "power"
+          : "temps");
+      const hits = statusBandsAtTs(ts, kind);
+      if (!hits.length) return dateStr;
+      // multi-line: date, then each status (Suspend / Tuning / Offline)
+      return [dateStr].concat(hits.map((h) => h.label));
+    }
+
     /**
      * Status bands like hash2cash offline:
      * - ASIC Offline: online=0 samples or large gaps in history
@@ -20248,10 +20301,7 @@
           legend: chartLegendPluginOpts("temps"),
           tooltip: {
             callbacks: {
-              title: (items) => {
-                if (!items.length) return "";
-                return new Date(items[0].parsed.x * 1000).toLocaleString();
-              },
+              title: (items) => chartTooltipTitleWithStatus(items),
             },
           },
         },
