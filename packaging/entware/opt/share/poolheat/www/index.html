@@ -556,6 +556,15 @@
       line-height: 1.2;
     }
 
+    /* Header toolbars: kill default .btn-row top margin so buttons sit mid-header */
+    .card-h > .btn-row,
+    .card-h .btn-row {
+      margin-top: 0;
+      align-items: center;
+      align-self: center;
+      flex-shrink: 0;
+    }
+
     /*
      * Unified header strip for dash charts + errors (+ miner energy chart).
      * Same min-height / padding so half-width packs line up.
@@ -2327,6 +2336,13 @@
     .temps-table td {
       text-align: left;
       font-variant-numeric: tabular-nums;
+    }
+    /* °C · Group · Source — center values + headers */
+    .temps-table th:nth-child(n + 2),
+    .temps-table td.col-val,
+    .temps-table td.col-group,
+    .temps-table td.col-src {
+      text-align: center;
     }
     .temps-table .col-val {
       font-weight: 600;
@@ -15525,8 +15541,8 @@
             '">' +
             esc(val) +
             "</td>" +
-            '<td class="' +
-            grpClass +
+            '<td class="col-group' +
+            (grpClass ? " " + grpClass : "") +
             '">' +
             esc(grp) +
             "</td>" +
