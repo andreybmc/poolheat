@@ -5139,9 +5139,8 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.errors">Errors & Events</h2>
-                  <div class="sub" data-i18n="sub.errors_events">active errors · miner events</div>
+                  <div class="sub" id="errors-events-sub">active errors: 0 · miner events: 0</div>
                 </div>
-                <span class="pill" id="pill-err-count" style="display:none"><span class="dot"></span> 0</span>
               </div>
               <div class="card-b">
                 <div class="errors-scroll">
@@ -5186,7 +5185,7 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.temps">Temperatures °C</h2>
-                  <div class="sub" data-i18n="sub.chart_temps">history · liquid · env · outdoor · boards · chip · sensors</div>
+                  <div class="sub chart-view-label" data-chart-key="temps">—</div>
                 </div>
                 <div class="chart-header-toolbar">
                   <div class="chart-zoom-wrap" data-chart-key="temps">
@@ -5227,7 +5226,6 @@
                 </div>
               </div>
               <div class="card-b">
-                <div class="chart-view-meta hist-meta chart-view-label" data-chart-key="temps">view: —</div>
                 <!-- hidden select kept for fleet / external hooks -->
                 <select id="chart-zoom" data-fleet-zoom hidden aria-hidden="true">
                   <option value="1h">1h</option>
@@ -5254,7 +5252,7 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.power">Power · Hashrate</h2>
-                  <div class="sub" data-i18n="sub.chart_power">history · power · limit · hashrate · freq · efficiency</div>
+                  <div class="sub chart-view-label" data-chart-key="power">—</div>
                 </div>
                 <div class="chart-header-toolbar">
                   <div class="chart-zoom-wrap" data-chart-key="power">
@@ -5284,7 +5282,6 @@
                 </div>
               </div>
               <div class="card-b">
-                <div class="chart-view-meta hist-meta chart-view-label" data-chart-key="power">view: —</div>
                 <div style="height:240px;position:relative">
                   <canvas id="chart-power"></canvas>
                 </div>
@@ -5302,6 +5299,7 @@
               <div class="card-h">
                 <div>
                   <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
+                  <div class="sub energy-chart-range-sub">—</div>
                 </div>
                 <div class="btn-row energy-chart-toolbar">
                   <label class="field energy-chart-field">
@@ -5358,7 +5356,7 @@
                 <div style="height:260px;position:relative">
                   <canvas id="chart-energy-dash"></canvas>
                 </div>
-                <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-chart-meta-dash" class="energy-chart-meta">—</p>
+                <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4;display:none" id="energy-chart-meta-dash" class="energy-chart-meta">—</p>
               </div>
             </div>
           </div>
@@ -6040,6 +6038,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
+              <div class="sub energy-chart-range-sub">—</div>
             </div>
             <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
               <label class="field energy-chart-field" style="max-width:7.5rem">
@@ -6085,7 +6084,7 @@
             <div style="height:280px;position:relative">
               <canvas id="chart-energy"></canvas>
             </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-chart-meta" class="energy-chart-meta">—</p>
+            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4;display:none" id="energy-chart-meta" class="energy-chart-meta">—</p>
           </div>
         </div>
 
@@ -7445,8 +7444,8 @@
                   </label>
                   <label class="check" style="grid-column:1 / -1">
                     <input type="checkbox" id="dev-enforce-desired" />
-                    <span><span data-i18n="dev.enforce_desired">Enforce desired</span>
-                      <span class="desc" data-i18n="dev.enforce_desired_desc">ON: keep reported = desired. OFF: desired follows reported (accept external toggles)</span>
+                    <span><span data-i18n="dev.enforce_desired">Keep state</span>
+                      <span class="desc" data-i18n="dev.enforce_desired_desc">On: if toggled in the vendor app, restore the intended on/off. Off: accept the real device state.</span>
                     </span>
                   </label>
                 </div>
@@ -8653,13 +8652,13 @@
         "dev.mining_options": "Mining options",
         "dev.auto_on_mining": "Auto On while mining",
         "dev.auto_on_mining_desc": "Resume → device ON",
-        "dev.enforce_desired": "Enforce desired",
-        "dev.enforce_desired_desc": "ON: keep reported = desired (re-apply if changed externally). OFF: desired follows reported (accept external toggles).",
-        "dev.tag_hold": "hold",
-        "dev.tag_drift": "drift",
+        "dev.enforce_desired": "Keep state",
+        "dev.enforce_desired_desc": "On: if the plug was toggled in the vendor app, restore the intended on/off. Off: accept the real device state (external changes stick).",
+        "dev.tag_hold": "keep",
+        "dev.tag_drift": "mismatch",
         "dev.tag_offline": "offline",
-        "dev.tag_desired_on": "desired:ON",
-        "dev.tag_desired_off": "desired:OFF",
+        "dev.tag_desired_on": "want:ON",
+        "dev.tag_desired_off": "want:OFF",
         "dev.auto_off_suspend": "Auto Off on Suspend",
         "dev.auto_off_suspend_desc": "Suspend → device OFF after delay",
         "dev.auto_off_delay": "Off delay after Suspend",
@@ -8999,6 +8998,7 @@
         "dash.widget.heat_balance": "Heat / cool-down",
         "dash.widget.errors": "Errors & Events",
         "sub.errors_events": "active errors · miner events",
+        "sub.errors_events_counts": "active errors: {e} · miner events: {v}",
         "label.miner_errors": "Errors",
         "errors.empty": "No active errors",
         "events.empty": "No active events",
@@ -9405,13 +9405,13 @@
         "dev.mining_options": "Опции при майнинге",
         "dev.auto_on_mining": "Auto On при майнинге",
         "dev.auto_on_mining_desc": "Resume → устройство ON",
-        "dev.enforce_desired": "Удерживать desired",
-        "dev.enforce_desired_desc": "Вкл: reported = desired (если сменили во внешнем приложении — вернуть). Выкл: desired следует за reported (внешние переключения принимаются).",
-        "dev.tag_hold": "hold",
-        "dev.tag_drift": "drift",
+        "dev.enforce_desired": "Удерживать состояние",
+        "dev.enforce_desired_desc": "Вкл: если розетку переключили во внешнем приложении — вернуть нужное вкл/выкл. Выкл: принимать фактическое состояние.",
+        "dev.tag_hold": "держать",
+        "dev.tag_drift": "расхожд.",
         "dev.tag_offline": "offline",
-        "dev.tag_desired_on": "desired:ON",
-        "dev.tag_desired_off": "desired:OFF",
+        "dev.tag_desired_on": "нужно:ON",
+        "dev.tag_desired_off": "нужно:OFF",
         "dev.auto_off_suspend": "Auto Off при Suspend",
         "dev.auto_off_suspend_desc": "Suspend → OFF после задержки",
         "dev.auto_off_delay": "Задержка OFF после Suspend",
@@ -9752,6 +9752,7 @@
         "dash.widget.heat_balance": "Нагрев / остывание",
         "dash.widget.errors": "Ошибки и события",
         "sub.errors_events": "активные ошибки · события майнера",
+        "sub.errors_events_counts": "активные ошибки: {e} · события майнера: {v}",
         "label.miner_errors": "Ошибки",
         "errors.empty": "Нет активных ошибок",
         "events.empty": "Нет активных событий",
@@ -11531,7 +11532,7 @@
       const evBody = document.getElementById("miner-event-rows");
       const errEmpty = document.getElementById("miner-err-empty");
       const evEmpty = document.getElementById("miner-event-empty");
-      const pill = document.getElementById("pill-err-count");
+      const subEl = document.getElementById("errors-events-sub");
       if (!panel || !tbody) return;
 
       const esc = (s) =>
@@ -11563,7 +11564,6 @@
         }
         return true;
       });
-      const total = errs.length + events.length;
 
       // Always show card; only layout-hide if user hid the widget
       const errItem = panel.closest(".dash-item");
@@ -11578,24 +11578,17 @@
         errItem.hidden = false;
       }
 
-      if (pill) {
-        if (total > 0) {
-          pill.style.display = "inline-flex";
-          pill.classList.toggle("danger", errs.length > 0);
-          let pillTxt = String(total);
-          if (errs.length && events.length) {
-            pillTxt = errs.length + " / " + events.length;
-          } else if (events.length && !errs.length) {
-            pillTxt = "E" + events.length;
-          }
-          pill.innerHTML = '<span class="dot"></span> ' + pillTxt;
-          pill.title =
-            (errs.length ? errs.length + " error(s)" : "0 errors") +
-            " · " +
-            (events.length ? events.length + " event(s)" : "0 events");
-        } else {
-          pill.style.display = "none";
-        }
+      if (subEl) {
+        const fmt =
+          typeof t === "function"
+            ? t(
+                "sub.errors_events_counts",
+                "active errors: {e} · miner events: {v}"
+              )
+            : "active errors: {e} · miner events: {v}";
+        subEl.textContent = fmt
+          .replace(/\{e\}/g, String(errs.length))
+          .replace(/\{v\}/g, String(events.length));
       }
 
       tbody.innerHTML = errs.length
@@ -16535,10 +16528,30 @@
           console.warn("renderEnergyChart update", err);
         }
       });
+      const h = body && body.hours != null ? body.hours : energyChartHours;
+      // header sub: same range style as temps/power charts
+      let rangeText = "—";
+      let t0 = Number(body && body.from_ts);
+      let t1 = Number(body && body.to_ts);
+      if ((!Number.isFinite(t0) || !Number.isFinite(t1)) && pts.length >= 1) {
+        t0 = Number(pts[0].ts);
+        t1 = Number(pts[pts.length - 1].ts_end || pts[pts.length - 1].ts);
+      }
+      if (Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0) {
+        if (t0 > 1e12) t0 = t0 / 1000;
+        if (t1 > 1e12) t1 = t1 / 1000;
+        rangeText = fmtChartRangeSec(t0, t1);
+      } else if (Number.isFinite(Number(h)) && Number(h) > 0) {
+        const end = Date.now() / 1000;
+        rangeText = fmtChartRangeSec(end - Number(h) * 3600, end);
+      }
+      document.querySelectorAll(".energy-chart-range-sub").forEach((el) => {
+        el.textContent = rangeText;
+      });
+      // keep legacy meta element updated but hidden
       const n = body && body.count != null ? body.count : "—";
       const ret = body && body.returned != null ? body.returned : pts.length;
       const b = (body && body.bucket) || energyChartBucket;
-      const h = body && body.hours != null ? body.hours : energyChartHours;
       const metaText =
         "samples " +
         n +
@@ -16567,6 +16580,9 @@
       document.querySelectorAll(".energy-chart-meta").forEach((meta) => {
         meta.textContent = "…";
       });
+      document.querySelectorAll(".energy-chart-range-sub").forEach((el) => {
+        el.textContent = "…";
+      });
       try {
         const q =
           "/api/energy/series?bucket=" +
@@ -16583,6 +16599,9 @@
       } catch (e) {
         document.querySelectorAll(".energy-chart-meta").forEach((meta) => {
           meta.textContent = "error: " + (e.message || e);
+        });
+        document.querySelectorAll(".energy-chart-range-sub").forEach((el) => {
+          el.textContent = "—";
         });
         return null;
       }
@@ -18961,23 +18980,34 @@
       return "custom";
     }
 
+    /** Chart header range: «08.08, 13:13 → 09.08, 13:13 · 24.0h» */
+    function fmtChartRangeSec(startSec, endSec) {
+      const a = Number(startSec);
+      const b = Number(endSec);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return "—";
+      const fmt = (ts) => {
+        const d = new Date(ts * 1000);
+        if (!Number.isFinite(d.getTime())) return "—";
+        const mo = _pad2(d.getMonth() + 1);
+        const day = _pad2(d.getDate());
+        const df = typeof getUiDateFormat === "function" ? getUiDateFormat() : "dmy";
+        let datePart = day + "." + mo;
+        if (df === "mdy") datePart = mo + "/" + day;
+        else if (df === "ymd") datePart = mo + "-" + day;
+        const time =
+          typeof formatUiDateTime === "function"
+            ? formatUiDateTime(d, { timeOnly: true })
+            : _pad2(d.getHours()) + ":" + _pad2(d.getMinutes());
+        return datePart + ", " + time;
+      };
+      const h = ((b - a) / 3600).toFixed(1);
+      return fmt(a) + " → " + fmt(b) + " · " + h + "h";
+    }
+
     function fmtViewLabel(key) {
       const v = getView(key || "temps");
-      if (!fullEnd) return "view: —";
-      const s = new Date(v.start * 1000).toLocaleString(undefined, {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const e = new Date(v.end * 1000).toLocaleString(undefined, {
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-      const h = ((v.end - v.start) / 3600).toFixed(1);
-      return s + " → " + e + " · " + h + "h";
+      if (!fullEnd) return "—";
+      return fmtChartRangeSec(v.start, v.end);
     }
 
     function xySeries(key, opts) {
@@ -19431,7 +19461,7 @@
         drawBrush();
         updateScrollUI();
         document.querySelectorAll(".chart-view-label").forEach((vl) => {
-          vl.textContent = "view: no data";
+          vl.textContent = "—";
         });
         return;
       }

@@ -4978,23 +4978,122 @@ def _device_enforce_desired(
     if now - last < _DEVICES_ENFORCE_COOLDOWN_SEC:
         return None
     _devices_enforce_ts[did] = now
+    alias = str(cfg.get("alias") or did)
+    name = (
+        str(cfg.get("name_ru") or cfg.get("name") or cfg.get("name_en") or alias)
+        .strip()
+        or alias
+    )
+    want_on = bool(desired)
+    was_on = bool(reported)
     try:
         print(
-            f"[devices] enforce desired {cfg.get('alias') or did}: "
-            f"reported={'ON' if reported else 'OFF'} → "
-            f"desired={'ON' if desired else 'OFF'}",
+            f"[devices] enforce desired {alias}: "
+            f"reported={'ON' if was_on else 'OFF'} → "
+            f"desired={'ON' if want_on else 'OFF'}",
             flush=True,
         )
         if use_timeout:
-            return _device_set_with_timeout(
-                did, bool(desired), source="enforce_desired"
+            res = _device_set_with_timeout(
+                did, want_on, source="enforce_desired"
             )
-        return device_set(
-            did, bool(desired), source="enforce_desired", force=True
-        )
+        else:
+            res = device_set(
+                did, want_on, source="enforce_desired", force=True
+            )
+        # event log (UI Events) when restore actually ran
+        if isinstance(res, dict) and res.get("ok") and not res.get("skipped"):
+            want_s = "вкл" if want_on else "выкл"
+            was_s = "вкл" if was_on else "выкл"
+            _devices_event_log(
+                "device",
+                f"{name}: восстановлено {want_s} "
+                f"(было {was_s}, внешнее изменение)",
+                source="enforce_desired",
+                device_id=did,
+                alias=alias,
+                desired_on=want_on,
+                reported_on=was_on,
+            )
+        return res
     except Exception as e:
-        print(f"[devices] enforce desired {cfg.get('alias') or did}: {e}", flush=True)
+        print(f"[devices] enforce desired {alias}: {e}", flush=True)
+        _devices_event_log(
+            "err",
+            f"{name}: не удалось восстановить "
+            f"{'вкл' if want_on else 'выкл'}: {e}",
+            source="enforce_desired",
+            device_id=did,
+            alias=alias,
+        )
         return None
+
+
+def _devices_event_log(kind: str, msg: str, **extra) -> None:
+    """
+    Append to policy Events log. Safe for devices-poller process:
+    merges with policy_events.json on disk so we don't wipe main-process events.
+    """
+    ev = {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "kind": str(kind or "device"),
+        "msg": str(msg or "")[:400],
+        **{k: v for k, v in extra.items() if v is not None},
+    }
+    print(f"[devices] {ev['ts']} {ev['kind']}: {ev['msg']}", flush=True)
+    try:
+        mx = 200
+        try:
+            mx = int(get_event_log_max())
+        except Exception:
+            try:
+                mx = int(POLICY_EVENTS_MAX_DEFAULT)
+            except Exception:
+                mx = 200
+        mx = max(20, min(5000, mx))
+        # merge disk + in-memory (main) so poller/main don't clobber each other
+        disk_evs: list = []
+        try:
+            raw = _load_json(POLICY_EVENTS_FILE, {})
+            if isinstance(raw, dict) and isinstance(raw.get("events"), list):
+                disk_evs = [e for e in raw["events"] if isinstance(e, dict)]
+        except Exception:
+            disk_evs = []
+        mem_evs: list = []
+        try:
+            with _policy_lock:
+                mem_evs = [
+                    e
+                    for e in (_policy_ctrl.get("events") or [])
+                    if isinstance(e, dict)
+                ]
+        except Exception:
+            mem_evs = []
+        # newest first; de-dupe by ts+kind+msg
+        seen: set[str] = set()
+        merged: list = []
+        for e in [ev] + mem_evs + disk_evs:
+            key = (
+                f"{e.get('ts')}|{e.get('kind')}|{e.get('msg')}"
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(e)
+            if len(merged) >= mx:
+                break
+        try:
+            with _policy_lock:
+                _policy_ctrl["events"] = list(merged)
+                _policy_ctrl["last_event"] = merged[0] if merged else None
+        except Exception:
+            pass
+        try:
+            _save_json(POLICY_EVENTS_FILE, {"events": merged, "max": mx})
+        except Exception as se:
+            print(f"[devices] event log save: {se}", flush=True)
+    except Exception as e:
+        print(f"[devices] event log: {e}", flush=True)
 
 
 def _device_adopt_reported(did: str, reported: bool | None) -> None:
@@ -23578,18 +23677,74 @@ def _load_policy_events() -> None:
             print(f"[policy] rewrite save: {e}")
 
 
+_policy_events_mtime: float = 0.0
+
+
 def _save_policy_events() -> None:
     """Persist ring buffer to DATA/policy_events.json."""
+    global _policy_events_mtime
     mx = get_event_log_max()
     with _policy_lock:
         evs = list(_policy_ctrl.get("events") or [])[:mx]
     try:
         _save_json(POLICY_EVENTS_FILE, {"events": evs, "max": mx})
+        try:
+            _policy_events_mtime = float(POLICY_EVENTS_FILE.stat().st_mtime)
+        except Exception:
+            pass
     except Exception as e:
         print(f"[policy] save events: {e}")
 
 
+def _reload_policy_events_if_stale() -> None:
+    """
+    If devices-poller (or another process) wrote policy_events.json,
+    merge disk into in-memory ring so UI Events stays current.
+    """
+    global _policy_events_mtime
+    try:
+        if not POLICY_EVENTS_FILE.is_file():
+            return
+        mtime = float(POLICY_EVENTS_FILE.stat().st_mtime)
+    except Exception:
+        return
+    if mtime <= float(_policy_events_mtime or 0) + 0.001:
+        return
+    try:
+        raw = _load_json(POLICY_EVENTS_FILE, {})
+        disk = raw.get("events") if isinstance(raw, dict) else None
+        if not isinstance(disk, list):
+            _policy_events_mtime = mtime
+            return
+        mx = get_event_log_max()
+        disk_evs = [e for e in disk if isinstance(e, dict)]
+        with _policy_lock:
+            mem = [
+                e for e in (_policy_ctrl.get("events") or []) if isinstance(e, dict)
+            ]
+            seen: set[str] = set()
+            merged: list = []
+            for e in disk_evs + mem:
+                key = f"{e.get('ts')}|{e.get('kind')}|{e.get('msg')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(e)
+                if len(merged) >= mx:
+                    break
+            _policy_ctrl["events"] = merged
+            _policy_ctrl["last_event"] = merged[0] if merged else None
+        _policy_events_mtime = mtime
+    except Exception as e:
+        print(f"[policy] reload events: {e}")
+
+
 def _policy_log(kind: str, msg: str, **extra) -> None:
+    # pick up events from devices-poller before we rewrite the file
+    try:
+        _reload_policy_events_if_stale()
+    except Exception:
+        pass
     ev = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "kind": kind,
@@ -23617,6 +23772,11 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
 
 _load_logs_cfg()
 _load_policy_events()
+try:
+    if POLICY_EVENTS_FILE.is_file():
+        _policy_events_mtime = float(POLICY_EVENTS_FILE.stat().st_mtime)
+except Exception:
+    pass
 
 
 def _place_heat_zone(liq: float, t0: float, t1: float, t2: float) -> str:
@@ -24121,6 +24281,11 @@ def _policy_apply_commands(cmds: list[tuple[str, object]], source: str) -> bool:
 
 def get_policy_status() -> dict:
     now = time.time()
+    # pick up Events written by devices-poller (separate process)
+    try:
+        _reload_policy_events_if_stale()
+    except Exception:
+        pass
     with _policy_lock:
         ctrl = dict(_policy_ctrl)
         events = list(ctrl.get("events") or [])
