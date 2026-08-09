@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bisect
 import hashlib
 import json
 import math
@@ -10210,10 +10211,8 @@ def insert_sample(row: dict) -> None:
             conn.commit()
         finally:
             conn.close()
-    try:
-        _invalidate_history_query_cache()
-    except Exception:
-        pass
+    # Do not invalidate query cache on every sample — P1 TTL (10s) is enough.
+    # Stats are lightly stale until TTL; full invalidate on prune/clear only.
 
 
 def prune_old(retention_days: int) -> int:
@@ -10434,19 +10433,18 @@ def history_sensor_series_meta(*, use_cache: bool = True) -> list[dict]:
 def _merge_sensor_samples_into_points(
     points: list[dict], since: float, until: float
 ) -> list[dict]:
-    """Attach sensor_samples as s_<alias> on each history point (same ts preferred)."""
+    """Attach sensor_samples as s_<alias> on each history point (bisect nearest)."""
     if not points:
         return points
     meta = history_sensor_series_meta()
     aliases = [m["alias"] for m in meta if m.get("alias")]
     if not aliases:
         return points
-    # Load all sensor samples in range for these aliases
+    # Load sensor samples in range for these aliases
     by_alias: dict[str, list[tuple[float, float]]] = {a: [] for a in aliases}
     with _db_lock:
         conn = _db_connect()
         try:
-            # table may be empty / missing on very old DBs
             try:
                 ph = ",".join("?" * len(aliases))
                 cur = conn.execute(
@@ -10474,37 +10472,26 @@ def _merge_sensor_samples_into_points(
         finally:
             conn.close()
 
-    # index for exact ts match, plus nearest-left fallback within half interval
-    exact: dict[str, dict[float, float]] = {
-        a: {ts: v for ts, v in series} for a, series in by_alias.items()
-    }
-    sorted_series: dict[str, list[tuple[float, float]]] = {
-        a: list(series) for a, series in by_alias.items()
-    }
+    # bisect-ready: parallel ts[] / val[] per alias
+    import bisect
+
+    series_tv: dict[str, tuple[list[float], list[float]]] = {}
+    for a, series in by_alias.items():
+        if not series:
+            continue
+        series_tv[a] = ([t for t, _ in series], [v for _, v in series])
 
     def _lookup(alias: str, ts: float) -> float | None:
-        ex = exact.get(alias) or {}
-        # exact (float keys can be picky — match within 0.05s)
-        if ts in ex:
-            return ex[ts]
-        for k, v in ex.items():
-            if abs(k - ts) < 0.05:
-                return v
-        # nearest sample not after ts, gap ≤ 2× typical interval (90s)
-        series = sorted_series.get(alias) or []
-        if not series:
+        pair = series_tv.get(alias)
+        if not pair:
             return None
-        best = None
-        best_dt = 1e18
-        for sts, sv in series:
-            dt = ts - sts
-            if dt < -0.05:
-                break
-            if dt < best_dt:
-                best_dt = dt
-                best = sv
-        if best is not None and best_dt <= 90.0:
-            return best
+        tss, vals = pair
+        i = bisect.bisect_right(tss, ts + 0.05) - 1
+        if i < 0:
+            return None
+        dt = ts - tss[i]
+        if dt <= 90.0:
+            return vals[i]
         return None
 
     for p in points:
@@ -10551,10 +10538,10 @@ _history_sensor_meta_cache: dict = {"ts": 0.0, "data": None}
 def _history_query_cache_key(
     since: float, until: float, max_points: int
 ) -> tuple:
-    # quantize window so nearby refreshes hit cache
+    # quantize window so nearby refreshes hit cache (30s — matches sample cadence)
     return (
-        int(float(since) // 5) * 5,
-        int(float(until) // 5) * 5,
+        int(float(since) // 30) * 30,
+        int(float(until) // 30) * 30,
         int(max_points),
     )
 
@@ -10661,7 +10648,11 @@ def query_history(
                         (since, until, since, bucket, max_points),
                     )
                     rows = cur.fetchall()
-                    points = [dict(r) for r in rows]
+                    # drop nulls — cuts JSON size a lot (unused sm*/boards)
+                    points = [
+                        {k: r[k] for k in r.keys() if r[k] is not None}
+                        for r in rows
+                    ]
                 except Exception as e:
                     # Fallback: strided fetch without loading every column twice
                     print(f"[history] bucket query fallback: {e}", flush=True)
@@ -10680,7 +10671,8 @@ def query_history(
                             1, (len(all_rows) + max_points - 1) // max_points
                         )
                         points = [
-                            dict(r) for r in all_rows[::stride][:max_points]
+                            {k: r[k] for k in r.keys() if r[k] is not None}
+                            for r in all_rows[::stride][:max_points]
                         ]
         finally:
             conn.close()
