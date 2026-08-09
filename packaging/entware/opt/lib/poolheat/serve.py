@@ -301,10 +301,14 @@ DEVICES_CFG_FILE = DATA / "devices_config.json"
 DEVICES_STATE_FILE = DATA / "devices_state.json"
 # Shared mining work snapshot for devices poller process (policy/collector write)
 MINING_WORK_FILE = DATA / "mining_work.json"
+# ASIC live snapshot (miner-poller process → UI/policy process file IPC)
+LIVE_CACHE_FILE = DATA / "live_cache.json"
 # Suspend→OFF deadlines for devices poller (process-local file, survives reloads)
 DEVICES_DEADLINES_FILE = DATA / "devices_suspend_deadlines.json"
 DEVICES_POLLER_PIDFILE = DATA / "devices_poller.pid"
 DEVICES_POLLER_LOG = DATA / "devices_poller.log"
+MINER_POLLER_PIDFILE = DATA / "miner_poller.pid"
+MINER_POLLER_LOG = DATA / "miner_poller.log"
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
@@ -6381,6 +6385,187 @@ def stop_devices_poller_process() -> None:
     except Exception:
         pass
 
+
+def miner_live_loop() -> None:
+    """
+    Fast ASIC live poll (control interval). Writes live_cache.json + mining_work
+    so UI/policy/devices processes stay off :4028 for reads.
+    """
+    print("[miner-poller] live loop start", flush=True)
+    while not _miner_poller_stop.is_set():
+        t0 = time.time()
+        try:
+            live = fetch_live()
+            publish_live_snapshot(live)
+            try:
+                write_mining_work_snapshot(_live_work(live), source="miner-poller")
+            except Exception:
+                pass
+            try:
+                tg_note_live_poll_ok()
+            except Exception:
+                pass
+        except Exception as e:
+            print(
+                f"[miner-poller] live: {datetime.now().isoformat(timespec='seconds')} {e}",
+                flush=True,
+            )
+            try:
+                tg_note_live_poll_fail(e)
+            except Exception:
+                pass
+            # still stamp offline for history consumer via empty? leave last cache
+        with _miner_cfg_lock:
+            interval = max(2, int(POLL_INTERVAL_SEC))
+        spent = time.time() - t0
+        _miner_poller_stop.wait(timeout=max(1.0, float(interval) - spent))
+    print("[miner-poller] live loop stop", flush=True)
+
+
+def miner_poller_main() -> None:
+    """
+    Entry for ``python serve.py --miner-poller``.
+
+    Isolated process: ASIC live poll + history collector + chipmap.
+    UI process only serves HTTP and hydrates from live_cache.json.
+    """
+    _miner_poller_stop.clear()
+    _collector_stop.clear()
+    _chipmap_stop.clear()
+
+    def _sig(_signum=None, _frame=None) -> None:
+        _miner_poller_stop.set()
+        _collector_stop.set()
+        _chipmap_stop.set()
+
+    try:
+        signal.signal(signal.SIGTERM, _sig)
+        signal.signal(signal.SIGINT, _sig)
+    except Exception:
+        pass
+    try:
+        MINER_POLLER_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception:
+        pass
+    print(
+        f"[miner-poller] pid={os.getpid()} data={DATA} miner={HOST_MINER}:{PORT_MINER}",
+        flush=True,
+    )
+    try:
+        init_db()
+    except Exception as e:
+        print(f"[miner-poller] init_db: {e}", flush=True)
+    threads: list[threading.Thread] = []
+    # Always keep a fast live loop (policy/UI cache)
+    tl = threading.Thread(target=miner_live_loop, name="miner-live", daemon=True)
+    tl.start()
+    threads.append(tl)
+    # History + energy samples (uses fetch_live; shares _miner_io_lock with live loop)
+    if role_enabled("edge_history"):
+        th = threading.Thread(
+            target=collector_loop, name="history-collector", daemon=True
+        )
+        th.start()
+        threads.append(th)
+        print("[miner-poller] history collector on", flush=True)
+    else:
+        print("[miner-poller] history collector off", flush=True)
+    if role_enabled("edge_miner_poller"):
+        tc = threading.Thread(target=chipmap_loop, name="chipmap-poll", daemon=True)
+        tc.start()
+        threads.append(tc)
+        print("[miner-poller] chipmap on", flush=True)
+    else:
+        print("[miner-poller] chipmap off", flush=True)
+    try:
+        while not _miner_poller_stop.is_set():
+            _miner_poller_stop.wait(timeout=2.0)
+    finally:
+        _collector_stop.set()
+        _chipmap_stop.set()
+        try:
+            if MINER_POLLER_PIDFILE.is_file():
+                MINER_POLLER_PIDFILE.unlink()
+        except Exception:
+            pass
+        print("[miner-poller] exit", flush=True)
+
+
+def start_miner_poller_process() -> None:
+    """Spawn isolated ASIC poller (live + history + chipmap)."""
+    global _miner_poller_proc
+    if not (
+        role_enabled("edge_miner_poller") or role_enabled("edge_history")
+    ):
+        print("miner-poller:      off (edge_miner/history roles disabled)")
+        return
+    try:
+        if MINER_POLLER_PIDFILE.is_file():
+            old = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
+            if old > 0 and old != os.getpid():
+                try:
+                    os.kill(old, signal.SIGTERM)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    script = str(Path(__file__).resolve())
+    logf = None
+    try:
+        logf = open(MINER_POLLER_LOG, "a", encoding="utf-8")
+        logf.write(
+            f"\n--- start {datetime.now().isoformat(timespec='seconds')} ---\n"
+        )
+        logf.flush()
+    except Exception:
+        logf = None
+    try:
+        _miner_poller_proc = subprocess.Popen(
+            [sys.executable, script, "--miner-poller"],
+            cwd=str(Path(__file__).resolve().parent),
+            env=os.environ.copy(),
+            stdout=logf or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        print(
+            f"miner-poller:      pid {_miner_poller_proc.pid} · log {MINER_POLLER_LOG}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"miner-poller:      failed to start: {e}", flush=True)
+        _miner_poller_proc = None
+        if logf:
+            try:
+                logf.close()
+            except Exception:
+                pass
+
+
+def stop_miner_poller_process() -> None:
+    global _miner_poller_proc
+    proc = _miner_poller_proc
+    _miner_poller_proc = None
+    if proc is None:
+        try:
+            if MINER_POLLER_PIDFILE.is_file():
+                pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
+                if pid > 0:
+                    os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=8)
+            except Exception:
+                proc.kill()
+    except Exception:
+        pass
+
+
 def get_device_status(did: str, *, probe_live: bool = False) -> dict:
     d = get_device_by_id(did, redact=True)
     if not d:
@@ -8976,6 +9161,8 @@ CACHE_TTL = 2.0
 LIVE_HTTP_WAIT_SEC = 3.5
 # Stale-but-ok cache still preferred over hard error up to this age.
 LIVE_STALE_MAX_SEC = 120.0
+# Disk live_cache from miner-poller process (UI may only read this).
+LIVE_DISK_MAX_AGE_SEC = 30.0
 # Single-flight live fetch so concurrent UI tabs share one miner poll.
 _live_fetch_lock = threading.Lock()
 _live_fetch_future = None  # concurrent.futures.Future | None
@@ -8983,6 +9170,83 @@ _live_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-poll
 # Serialize TCP 4028 access so live poll / collector / privileged writes
 # do not race and exhaust Whatsminer "over max connect" sessions.
 _miner_io_lock = threading.RLock()
+# Miner poller subprocess (ASIC live + history collector + chipmap)
+_miner_poller_proc: subprocess.Popen | None = None
+_miner_poller_stop = threading.Event()
+
+
+def publish_live_snapshot(live: dict | None) -> None:
+    """
+    Update in-process RAM cache and write live_cache.json for other processes
+    (UI/API, devices poller mining_work consumers).
+    """
+    global _cache, _cache_ts
+    if not isinstance(live, dict):
+        return
+    now = time.time()
+    with _cache_lock:
+        _cache = live
+        _cache_ts = now
+    try:
+        payload = {
+            "ts": now,
+            "live": live,
+            "host": f"{HOST_MINER}:{PORT_MINER}",
+            "pid": os.getpid(),
+        }
+        LIVE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LIVE_CACHE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(LIVE_CACHE_FILE)
+    except Exception as e:
+        print(f"[live-cache] write: {e}", flush=True)
+
+
+def hydrate_live_from_disk(*, max_age_sec: float | None = None) -> dict | None:
+    """
+    Load live_cache.json into RAM if fresh enough. Returns live dict or None.
+    Used by UI process when ASIC poller runs out-of-process.
+    """
+    global _cache, _cache_ts
+    max_age = (
+        float(LIVE_DISK_MAX_AGE_SEC)
+        if max_age_sec is None
+        else float(max_age_sec)
+    )
+    try:
+        if not LIVE_CACHE_FILE.is_file():
+            return None
+        raw = json.loads(LIVE_CACHE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return None
+        ts = float(raw.get("ts") or 0)
+        if ts <= 0 or (time.time() - ts) > max_age:
+            return None
+        live = raw.get("live")
+        if not isinstance(live, dict) or not live.get("ok"):
+            return None
+        with _cache_lock:
+            # only replace if disk is newer than RAM
+            if ts >= float(_cache_ts or 0):
+                _cache = live
+                _cache_ts = ts
+        return dict(live)
+    except Exception:
+        return None
+
+
+def miner_poller_process_alive() -> bool:
+    """True if miner-poller pidfile points to a live process (not us)."""
+    try:
+        if not MINER_POLLER_PIDFILE.is_file():
+            return False
+        pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
+        if pid <= 0 or pid == os.getpid():
+            return False
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
 
 _state_lock = threading.Lock()
 _state: dict = {
@@ -21554,10 +21818,13 @@ def _tg_live_snapshot(
 
     if force:
         try:
+            # Prefer forcing a fresh poll only if we own ASIC I/O (no miner-poller)
+            if miner_poller_process_alive():
+                live = hydrate_live_from_disk(max_age_sec=LIVE_DISK_MAX_AGE_SEC)
+                if isinstance(live, dict) and live.get("ok"):
+                    return live, True, None
             live = fetch_live()
-            with _cache_lock:
-                _cache = live
-                _cache_ts = time.time()
+            publish_live_snapshot(live)
             return live, True, None
         except Exception as e:
             # fall through to last-good if any
@@ -25712,12 +25979,19 @@ def policy_tick() -> None:
         streak_count = int(_policy_ctrl.get("streak_count") or 0)
         last_apply_ts = float(_policy_ctrl.get("last_apply_ts") or 0)
 
+    # Prefer ASIC poller disk cache (separate process); fall back to local fetch
+    live = None
     try:
-        live = fetch_live()
-        with _cache_lock:
-            global _cache, _cache_ts
-            _cache = live
-            _cache_ts = time.time()
+        max_age = max(8.0, float(POLL_INTERVAL_SEC) * 3)
+        live = hydrate_live_from_disk(max_age_sec=max_age)
+        if live is None and not miner_poller_process_alive():
+            live = fetch_live()
+            publish_live_snapshot(live)
+        elif live is None:
+            # poller should be writing cache — wait one short cycle, re-read
+            live = hydrate_live_from_disk(max_age_sec=max_age * 2)
+        if not isinstance(live, dict) or not live.get("ok"):
+            raise RuntimeError("no live snapshot from miner-poller")
         tg_note_live_poll_ok()
     except Exception as e:
         _policy_log("warn", f"live poll fail: {e}")
@@ -26215,12 +26489,11 @@ def collector_loop() -> None:
         live = None
         if enabled or (metering_on and attach):
             try:
-                live = fetch_live()
-                # refresh cache too
-                global _cache, _cache_ts
-                with _cache_lock:
-                    _cache = live
-                    _cache_ts = time.time()
+                # Prefer snapshot from miner_live_loop (same process) to avoid double :4028
+                live = hydrate_live_from_disk(max_age_sec=max(5.0, float(interval)))
+                if live is None:
+                    live = fetch_live()
+                    publish_live_snapshot(live)
                 if enabled:
                     sample = live_to_sample(live)
                     insert_sample(sample)
@@ -27256,62 +27529,83 @@ class Handler(SimpleHTTPRequestHandler):
         stale: dict | None = None
         stale_age = 0.0
 
+        # Prefer disk snapshot from miner-poller process (keeps UI off :4028)
+        disk_live = hydrate_live_from_disk(max_age_sec=LIVE_DISK_MAX_AGE_SEC)
+        if isinstance(disk_live, dict) and disk_live.get("ok"):
+            body = dict(disk_live)
+
         with _cache_lock:
-            if (
+            if body is None and (
                 _cache is not None
                 and (now - _cache_ts) < CACHE_TTL
                 and _cache.get("ok")
             ):
                 body = dict(_cache)
-            elif _cache is not None:
+            elif body is None and _cache is not None:
                 stale = dict(_cache)
                 stale_age = max(0.0, now - float(_cache_ts or 0))
 
         if body is None:
-            # Single-flight: one worker polls miner; others wait briefly or take stale
-            with _live_fetch_lock:
-                fut = _live_fetch_future
-                if fut is None or fut.done():
-
-                    def _do_fetch() -> dict:
-                        global _cache, _cache_ts
-                        snap = fetch_live()
-                        with _cache_lock:
-                            _cache = snap
-                            _cache_ts = time.time()
-                        return snap
-
-                    fut = _live_executor.submit(_do_fetch)
-                    _live_fetch_future = fut
-            try:
-                body = fut.result(timeout=LIVE_HTTP_WAIT_SEC)
-            except FuturesTimeout:
-                # Poll continues in background; prefer last-good for responsiveness
-                if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
+            # Miner-poller owns ASIC polls when running — do not double-hit :4028
+            if miner_poller_process_alive():
+                disk2 = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC)
+                if isinstance(disk2, dict) and disk2.get("ok"):
+                    body = dict(disk2)
+                    body["stale"] = True
+                    body["error"] = "waiting for miner-poller snapshot"
+                elif stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
                     body = dict(stale)
                     body["stale"] = True
-                    body["error"] = "miner poll slow · last good snapshot"
                     body["stale_age_sec"] = round(stale_age, 1)
                 else:
                     body = {
                         "ok": False,
-                        "error": "miner poll timeout",
+                        "error": "miner-poller has no live snapshot yet",
                         "ts": datetime.now().isoformat(timespec="seconds"),
                         "host": f"{HOST_MINER}:{PORT_MINER}",
                     }
-            except Exception as e:
-                if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
-                    body = dict(stale)
-                    body["stale"] = True
-                    body["error"] = str(e)
-                    body["stale_age_sec"] = round(stale_age, 1)
-                else:
-                    body = {
-                        "ok": False,
-                        "error": str(e),
-                        "ts": datetime.now().isoformat(timespec="seconds"),
-                        "host": f"{HOST_MINER}:{PORT_MINER}",
-                    }
+            else:
+                # Single-flight: one worker polls miner; others wait briefly or take stale
+                with _live_fetch_lock:
+                    fut = _live_fetch_future
+                    if fut is None or fut.done():
+
+                        def _do_fetch() -> dict:
+                            snap = fetch_live()
+                            publish_live_snapshot(snap)
+                            return snap
+
+                        fut = _live_executor.submit(_do_fetch)
+                        _live_fetch_future = fut
+                try:
+                    body = fut.result(timeout=LIVE_HTTP_WAIT_SEC)
+                except FuturesTimeout:
+                    # Poll continues in background; prefer last-good for responsiveness
+                    if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
+                        body = dict(stale)
+                        body["stale"] = True
+                        body["error"] = "miner poll slow · last good snapshot"
+                        body["stale_age_sec"] = round(stale_age, 1)
+                    else:
+                        body = {
+                            "ok": False,
+                            "error": "miner poll timeout",
+                            "ts": datetime.now().isoformat(timespec="seconds"),
+                            "host": f"{HOST_MINER}:{PORT_MINER}",
+                        }
+                except Exception as e:
+                    if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
+                        body = dict(stale)
+                        body["stale"] = True
+                        body["error"] = str(e)
+                        body["stale_age_sec"] = round(stale_age, 1)
+                    else:
+                        body = {
+                            "ok": False,
+                            "error": str(e),
+                            "ts": datetime.now().isoformat(timespec="seconds"),
+                            "host": f"{HOST_MINER}:{PORT_MINER}",
+                        }
 
         if not isinstance(body, dict):
             body = {
@@ -28773,13 +29067,16 @@ def main() -> None:
         refresh_config_meta(include_router=True)
     except Exception as e:
         print(f"config meta (boot): {e}")
-    if role_enabled("edge_miner_poller"):
-        threading.Thread(target=_warm_info, name="info-warm", daemon=True).start()
-    if role_enabled("edge_history"):
-        t = threading.Thread(target=collector_loop, name="history-collector", daemon=True)
-        t.start()
+    # ASIC plane — separate process (live + history + chipmap) so UI can leave the router later
+    if role_enabled("edge_miner_poller") or role_enabled("edge_history"):
+        start_miner_poller_process()
+        # light identity warm still in UI process (LuCI/info; not continuous :4028)
+        if role_enabled("edge_miner_poller"):
+            threading.Thread(target=_warm_info, name="info-warm", daemon=True).start()
     else:
-        print("history:           off (edge_history role disabled)")
+        print("miner-poller:      off (edge_miner/history roles disabled)")
+        print("history:           off")
+        print("chipmap:           off")
     if role_enabled("edge_policy"):
         tp = threading.Thread(target=policy_loop, name="policy-control", daemon=True)
         tp.start()
@@ -28790,11 +29087,6 @@ def main() -> None:
         tt.start()
     else:
         print("telegram:          off (app_bot role disabled)")
-    if role_enabled("edge_miner_poller"):
-        tc = threading.Thread(target=chipmap_loop, name="chipmap-poll", daemon=True)
-        tc.start()
-    else:
-        print("chipmap:           off (edge_miner_poller role disabled)")
 
     # Devices auto ON/OFF — separate process so hangs never block API/policy
     if role_enabled("edge_device_poller"):
@@ -28832,7 +29124,8 @@ def main() -> None:
     print(f"www:               {ROOT}")
     print(f"data:              {DATA}")
     print(f"roles API:         GET  /api/roles")
-    print(f"live API:          GET  /api/live")
+    print(f"live API:          GET  /api/live  (from live_cache.json when miner-poller on)")
+    print(f"live cache:        {LIVE_CACHE_FILE}")
     print(f"set API:           POST /api/set")
     print(
         f"history:           GET  /api/history?hours=24&chart=dash|power|temps&fmt=cols"
@@ -28899,7 +29192,8 @@ def main() -> None:
     print(f"policy poll:       every {POLL_INTERVAL_SEC}s")
     print(f"db:                {DB_FILE}")
     print(
-        f"collector:         every {_hist_cfg['sample_interval_sec']}s · "
+        f"collector:         miner-poller process · "
+        f"every {_hist_cfg['sample_interval_sec']}s · "
         f"keep {_hist_cfg['retention_days']}d"
     )
     try:
@@ -28909,7 +29203,9 @@ def main() -> None:
         _policy_stop.set()
         _tg_stop.set()
         _devices_poller_stop.set()
+        _miner_poller_stop.set()
         stop_devices_poller_process()
+        stop_miner_poller_process()
         print("\nstop")
 
 
@@ -28920,5 +29216,12 @@ if __name__ == "__main__":
         "devices-poller",
     ):
         devices_poller_main()
+    elif len(sys.argv) > 1 and sys.argv[1] in (
+        "--miner-poller",
+        "--asic-poller",
+        "miner-poller",
+        "asic-poller",
+    ):
+        miner_poller_main()
     else:
         main()
