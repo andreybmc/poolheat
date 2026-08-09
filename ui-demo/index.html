@@ -20449,6 +20449,46 @@
       }
     }
 
+    /**
+     * Expand columnar history payload (fmt=cols) → list of point objects.
+     * Server P2: smaller JSON for Keenetic.
+     */
+    function historyBodyToPoints(body) {
+      if (!body) return [];
+      if (
+        body.fmt === "cols" &&
+        body.cols &&
+        typeof body.cols === "object"
+      ) {
+        const cols = body.cols;
+        const keys = Array.isArray(body.keys) && body.keys.length
+          ? body.keys
+          : Object.keys(cols);
+        const n =
+          body.count != null
+            ? Number(body.count)
+            : cols.ts
+              ? cols.ts.length
+              : keys[0] && cols[keys[0]]
+                ? cols[keys[0]].length
+                : 0;
+        const pts = new Array(Math.max(0, n));
+        for (let i = 0; i < n; i++) {
+          const p = {};
+          for (let k = 0; k < keys.length; k++) {
+            const key = keys[k];
+            const arr = cols[key];
+            if (!arr) continue;
+            const v = arr[i];
+            if (v != null && v !== "") p[key] = v;
+          }
+          pts[i] = p;
+        }
+        return pts;
+      }
+      return Array.isArray(body.points) ? body.points : [];
+    }
+
     async function loadHistoryCharts(preset, key) {
       await loadHistoryConfig();
       bindBrushScroll();
@@ -20474,12 +20514,17 @@
       try {
         // cap points so Overview first paint stays responsive on Keenetic RAM
         const maxPts = Math.min(2500, Math.max(400, Math.floor(Number(loadHours || 48) * 40)));
+        // P2: dash columns + columnar JSON (much smaller than chart=all objects)
         const res = await fetch(
-          "/api/history?hours=" + loadHours + "&max=" + maxPts
+          "/api/history?hours=" +
+            loadHours +
+            "&max=" +
+            maxPts +
+            "&chart=dash&fmt=cols"
         );
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "history fail");
-        histPoints = body.points || [];
+        histPoints = historyBodyToPoints(body);
         // Peripherals sensors with History on → Temperatures °C series
         try {
           if (Array.isArray(body.sensor_series) && body.sensor_series.length) {

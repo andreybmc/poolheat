@@ -10505,6 +10505,28 @@ def _merge_sensor_samples_into_points(
 
 
 # Chart-facing columns only (no SELECT *) — order stable for SELECT list
+HISTORY_STATUS_COLUMNS: tuple[str, ...] = (
+    "ts",
+    "online",
+    "work_state",
+    "upfreq_ok",
+)
+HISTORY_POWER_COLUMNS: tuple[str, ...] = HISTORY_STATUS_COLUMNS + (
+    "power",
+    "power_limit",
+    "power_limit_set",
+    "power_pct_cmd",
+    "freq",
+    "hashrate_th",
+    "mode",
+    "hash_stable",
+    "eff_jt",
+)
+HISTORY_TEMPS_COLUMNS: tuple[str, ...] = HISTORY_STATUS_COLUMNS + HISTORY_TEMP_COLUMNS
+# Overview dash: power + temps (no ts_iso / unused export fields)
+HISTORY_DASH_COLUMNS: tuple[str, ...] = tuple(
+    dict.fromkeys([*HISTORY_POWER_COLUMNS, *HISTORY_TEMPS_COLUMNS])
+)
 HISTORY_CHART_COLUMNS: tuple[str, ...] = (
     "ts",
     "ts_iso",
@@ -10523,6 +10545,55 @@ HISTORY_CHART_COLUMNS: tuple[str, ...] = (
     "eff_jt",
 )
 
+
+def _history_columns_for_chart(chart: str | None) -> tuple[str, ...]:
+    """P2: column set by chart kind."""
+    c = str(chart or "all").strip().lower()
+    if c in ("power", "pw", "hash"):
+        return HISTORY_POWER_COLUMNS
+    if c in ("temps", "temp", "temperature", "t"):
+        return HISTORY_TEMPS_COLUMNS
+    if c in ("dash", "dashboard", "overview", "ui"):
+        return HISTORY_DASH_COLUMNS
+    return HISTORY_CHART_COLUMNS
+
+
+def _history_want_sensors(chart: str | None) -> bool:
+    c = str(chart or "all").strip().lower()
+    return c not in ("power", "pw", "hash")
+
+
+def _points_to_columnar(points: list[dict]) -> tuple[list[str], dict]:
+    """Dense columnar payload — much smaller JSON than list-of-objects."""
+    if not points:
+        return [], {}
+    keys: list[str] = []
+    seen: set[str] = set()
+    for p in points:
+        if not isinstance(p, dict):
+            continue
+        for k in p.keys():
+            if k not in seen:
+                seen.add(k)
+                keys.append(str(k))
+    cols: dict[str, list] = {k: [] for k in keys}
+    for p in points:
+        if not isinstance(p, dict):
+            for k in keys:
+                cols[k].append(None)
+            continue
+        for k in keys:
+            cols[k].append(p.get(k))
+    # drop all-null columns
+    keys_out: list[str] = []
+    cols_out: dict[str, list] = {}
+    for k in keys:
+        arr = cols[k]
+        if any(v is not None and v != "" for v in arr):
+            keys_out.append(k)
+            cols_out[k] = arr
+    return keys_out, cols_out
+
 # P1 caches — avoid full-table stats + re-query on every chart paint
 _HISTORY_STATS_TTL_SEC = 15.0
 _history_stats_cache: dict = {"ts": 0.0, "data": None}
@@ -10538,13 +10609,17 @@ _history_http_cache_lock = threading.Lock()
 
 
 def _history_query_cache_key(
-    since: float, until: float, max_points: int
+    since: float,
+    until: float,
+    max_points: int,
+    chart: str = "all",
 ) -> tuple:
     # quantize window so nearby refreshes hit cache (30s — matches sample cadence)
     return (
         int(float(since) // 30) * 30,
         int(float(until) // 30) * 30,
         int(max_points),
+        str(chart or "all"),
     )
 
 
@@ -10564,14 +10639,17 @@ def _samples_existing_columns(conn) -> set[str]:
         return set()
 
 
-def _history_select_column_list(conn) -> list[str]:
+def _history_select_column_list(
+    conn, chart: str | None = "all"
+) -> list[str]:
     """Intersect chart columns with real table (migrations / older DBs)."""
     existing = _samples_existing_columns(conn)
     if not existing:
         return ["ts"]
+    want = _history_columns_for_chart(chart)
     cols: list[str] = []
     seen: set[str] = set()
-    for c in HISTORY_CHART_COLUMNS:
+    for c in want:
         if c in existing and c not in seen:
             seen.add(c)
             cols.append(c)
@@ -10586,11 +10664,15 @@ def query_history(
     until: float | None = None,
     max_points: int = 2000,
     *,
+    chart: str | None = "all",
     use_cache: bool = True,
+    merge_sensors: bool | None = None,
 ) -> list[dict]:
     """
-    History for charts. P0: time-bucket downsample in SQL (not full-table load),
-    explicit column list. P1: short RAM cache of query results.
+    History for charts.
+    P0: SQL time-bucket downsample · explicit columns.
+    P1: short RAM cache.
+    P2: chart=power|temps|dash|all column sets.
     """
     now = time.time()
     if since is None:
@@ -10604,8 +10686,11 @@ def query_history(
     if until < since:
         since, until = until, since
     max_points = max(10, min(20000, int(max_points)))
+    chart_k = str(chart or "all").strip().lower() or "all"
+    if merge_sensors is None:
+        merge_sensors = _history_want_sensors(chart_k)
 
-    cache_key = _history_query_cache_key(since, until, max_points)
+    cache_key = _history_query_cache_key(since, until, max_points, chart_k)
     if use_cache:
         with _history_query_cache_lock:
             hit = _history_query_cache.get(cache_key)
@@ -10624,7 +10709,7 @@ def query_history(
     with _db_lock:
         conn = _db_connect()
         try:
-            cols = _history_select_column_list(conn)
+            cols = _history_select_column_list(conn, chart_k)
             col_sql = ", ".join(f"s.{c}" for c in cols)
             # Fast empty check without COUNT(*) over full range
             cur = conn.execute(
@@ -10681,7 +10766,7 @@ def query_history(
         finally:
             conn.close()
 
-    if points:
+    if points and merge_sensors:
         try:
             points = _merge_sensor_samples_into_points(
                 points, float(since), float(until)
@@ -25506,7 +25591,12 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/live", "/api/status"):
             self._api_live()
             return
-        if path == "/api/history":
+        if path in (
+            "/api/history",
+            "/api/history/power",
+            "/api/history/temps",
+            "/api/history/dash",
+        ):
             self._api_history()
             return
         if path == "/api/history/config":
@@ -26554,7 +26644,15 @@ class Handler(SimpleHTTPRequestHandler):
             )
 
     def _api_history(self) -> None:
-        qs = parse_qs(urlparse(self.path).query)
+        """
+        GET /api/history[?hours&max&chart&fmt]
+        chart=dash|power|temps|all  ·  fmt=cols|objects
+        Aliases: /api/history/power · /api/history/temps
+        """
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        path = parsed.path.rstrip("/") or "/"
+
         def one(key, default=None):
             v = qs.get(key, [default])[0]
             return v
@@ -26565,24 +26663,41 @@ class Handler(SimpleHTTPRequestHandler):
             max_points = int(one("max", "2000") or 2000)
             since = one("since")
             until = one("until")
-            since_f = float(since) if since not in (None, "") else None
-            until_f = float(until) if until not in (None, "") else None
+            chart = str(one("chart", "all") or "all").strip().lower()
+            # path aliases
+            if path.endswith("/history/power"):
+                chart = "power"
+            elif path.endswith("/history/temps"):
+                chart = "temps"
+            elif path.endswith("/history/dash"):
+                chart = "dash"
+            fmt = str(one("fmt", "objects") or "objects").strip().lower()
+            if fmt in ("col", "column", "columnar", "columns"):
+                fmt = "cols"
+            if fmt not in ("cols", "objects"):
+                fmt = "objects"
 
             now = time.time()
             max_points = max(10, min(20000, int(max_points)))
             q_since = float(since) if since not in (None, "") else None
             q_until = float(until) if until not in (None, "") else None
-            # Cache key: hours+max is stable across slow cold requests
-            # (until=now would change every second and never HIT)
             if q_since is None and q_until is None:
                 h_key = 24.0 if hours_f is None else float(hours_f)
-                http_key = ("h", round(h_key, 3), int(max_points))
+                http_key = (
+                    "h",
+                    round(h_key, 3),
+                    int(max_points),
+                    chart,
+                    fmt,
+                )
             else:
                 http_key = (
                     "r",
                     int((q_since or 0) // 60) * 60,
                     int((q_until or now) // 60) * 60,
                     int(max_points),
+                    chart,
+                    fmt,
                 )
             # Warm path: pre-serialized JSON (skip dumps on ARM)
             with _history_http_cache_lock:
@@ -26600,6 +26715,8 @@ class Handler(SimpleHTTPRequestHandler):
                         )
                         self.send_header("Content-Length", str(len(data)))
                         self.send_header("X-Poolheat-History-Cache", "HIT")
+                        self.send_header("X-Poolheat-History-Chart", chart)
+                        self.send_header("X-Poolheat-History-Fmt", fmt)
                         self.end_headers()
                         view = memoryview(data)
                         step = 65536
@@ -26618,31 +26735,42 @@ class Handler(SimpleHTTPRequestHandler):
                 since=q_since,
                 until=q_until,
                 max_points=max_points,
+                chart=chart,
                 use_cache=True,
             )
             with _hist_cfg_lock:
                 cfg = dict(_hist_cfg)
-            try:
-                sensor_series = history_sensor_series_meta(use_cache=True)
-            except Exception:
-                sensor_series = []
+            sensor_series: list = []
+            if _history_want_sensors(chart):
+                try:
+                    sensor_series = history_sensor_series_meta(use_cache=True)
+                except Exception:
+                    sensor_series = []
             try:
                 stats = history_stats(use_cache=True)
             except Exception:
                 stats = {}
-            body = {
+            body: dict = {
                 "ok": True,
                 "count": len(points),
+                "chart": chart,
+                "fmt": fmt,
                 "config": cfg,
                 "stats": stats,
-                "points": points,
                 "sensor_series": sensor_series,
             }
+            if fmt == "cols":
+                keys, cols = _points_to_columnar(points)
+                body["keys"] = keys
+                body["cols"] = cols
+                body["points"] = []  # keep key for old clients; empty when cols
+            else:
+                body["points"] = points
             data = json.dumps(body, ensure_ascii=False, default=str).encode(
                 "utf-8"
             )
             with _history_http_cache_lock:
-                if len(_history_http_cache) > 16:
+                if len(_history_http_cache) > 24:
                     _history_http_cache.clear()
                 _history_http_cache[http_key] = {
                     "ts": time.time(),
@@ -26655,8 +26783,13 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 self.send_header("Content-Length", str(len(data)))
                 self.send_header("X-Poolheat-History-Cache", "MISS")
+                self.send_header("X-Poolheat-History-Chart", chart)
+                self.send_header("X-Poolheat-History-Fmt", fmt)
                 self.end_headers()
-                self.wfile.write(data)
+                view = memoryview(data)
+                step = 65536
+                for off in range(0, len(data), step):
+                    self.wfile.write(view[off : off + step])
             except (
                 BrokenPipeError,
                 ConnectionResetError,
@@ -27977,7 +28110,9 @@ def main() -> None:
     print(f"roles API:         GET  /api/roles")
     print(f"live API:          GET  /api/live")
     print(f"set API:           POST /api/set")
-    print(f"history:           GET  /api/history?hours=24")
+    print(
+        f"history:           GET  /api/history?hours=24&chart=dash|power|temps&fmt=cols"
+    )
     print(f"weather:           GET  /api/weather")
     print(f"energy:            GET  /api/energy · /api/energy/series · config · meters")
     print(f"energy.db:         {ENERGY_DB_FILE}")
