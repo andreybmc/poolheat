@@ -6188,6 +6188,133 @@ def _chipmap_cache_is_persistable(data: dict | None) -> bool:
     return n > 0
 
 
+# Compact chip records for disk/RAM (drop nulls + rarely used UI fields)
+_CHIPMAP_CHIP_KEEP: tuple[str, ...] = (
+    "id",
+    "freq",
+    "vol",
+    "temp",
+    "nonce",
+    "err",
+    "crc",
+    "x",
+    "x2",
+    "repeat",
+    "pct",
+    "pct2",
+    "hash_share",
+    "est_th",
+    "nonce_rate",
+)
+
+
+def _chipmap_compact_chip(c: dict) -> dict:
+    if not isinstance(c, dict):
+        return {}
+    out: dict = {}
+    for k in _CHIPMAP_CHIP_KEEP:
+        if k not in c:
+            continue
+        v = c.get(k)
+        if v is None or v == "":
+            continue
+        out[k] = v
+    return out
+
+
+def _chipmap_compact_payload(data: dict) -> dict:
+    """
+    Smaller boards/chips for disk + RAM.
+    Keeps UI-needed fields; drops nulls and model noise where possible.
+    """
+    if not isinstance(data, dict):
+        return {}
+    out = dict(data)
+    boards_in = out.get("boards")
+    if isinstance(boards_in, list):
+        boards_out: list = []
+        for b in boards_in:
+            if not isinstance(b, dict):
+                continue
+            nb = {
+                k: b.get(k)
+                for k in (
+                    "slot",
+                    "board_freq",
+                    "board_temp",
+                    "chip_count",
+                    "temp_min",
+                    "temp_max",
+                    "temp_avg",
+                    "nonce_sum",
+                )
+                if b.get(k) is not None or k in ("slot", "chip_count")
+            }
+            chips = b.get("chips") if isinstance(b.get("chips"), list) else []
+            nb["chips"] = [
+                _chipmap_compact_chip(c) for c in chips if isinstance(c, dict)
+            ]
+            if "chip_count" not in nb:
+                nb["chip_count"] = len(nb["chips"])
+            boards_out.append(nb)
+        out["boards"] = boards_out
+    # drop huge nested model profiles from cache if present
+    if isinstance(out.get("model"), dict):
+        m = out["model"]
+        out["model"] = {
+            k: m.get(k)
+            for k in (
+                "id",
+                "name",
+                "family",
+                "layout",
+                "cooling",
+                "boards",
+                "chips_per_board",
+                "cpd",
+                "link",
+            )
+            if m.get(k) is not None
+        }
+    return out
+
+
+def _chipmap_summary_only(data: dict) -> dict:
+    """RAM-light status without per-chip arrays (disk holds full map)."""
+    if not isinstance(data, dict):
+        return {}
+    keys = (
+        "ok",
+        "ts",
+        "fetch_ms",
+        "error",
+        "reason",
+        "message",
+        "source",
+        "host",
+        "miner_type",
+        "chip_count",
+        "board_count",
+        "temp_min",
+        "temp_max",
+        "temp_avg",
+        "nonce_total",
+        "hashrate_th",
+        "mining_elapsed",
+        "stale",
+        "from_disk",
+        "persisted",
+        "persisted_at",
+        "last_good_ts",
+        "disk_cache",
+    )
+    out = {k: data.get(k) for k in keys if k in data or k in ("ok", "ts")}
+    out["boards"] = []
+    out["boards_in_ram"] = False
+    out["disk_cache"] = True
+    return out
+
+
 def _clear_chipmap_cache_disk() -> None:
     """Remove on-disk chipmap cache (when persist is turned off)."""
     try:
@@ -6198,16 +6325,36 @@ def _clear_chipmap_cache_disk() -> None:
         print(f"[chipmap] cache unlink: {e}")
 
 
-def _save_chipmap_cache_disk(data: dict | None = None) -> None:
-    """Write last good chipmap to disk (survives service restart)."""
+def _read_chipmap_cache_disk() -> dict | None:
+    """Read full chipmap from disk (no RAM mutation)."""
+    try:
+        if not CHIPMAP_CACHE_FILE.is_file():
+            return None
+        raw = json.loads(CHIPMAP_CACHE_FILE.read_text(encoding="utf-8"))
+        if not _chipmap_cache_is_persistable(raw):
+            return None
+        raw = _chipmap_compact_payload(dict(raw))
+        raw["stale"] = True
+        raw["source"] = raw.get("source") or "disk"
+        raw["from_disk"] = True
+        raw["disk_cache"] = True
+        raw["boards_in_ram"] = True
+        return raw
+    except Exception as e:
+        print(f"[chipmap] cache read: {e}")
+        return None
+
+
+def _save_chipmap_cache_disk(data: dict | None = None) -> bool:
+    """Write last good chipmap to disk (survives service restart). Compact form."""
     try:
         if not _chipmap_persist_cache_enabled():
-            return
+            return False
         with _chipmap_lock:
             payload = dict(data) if isinstance(data, dict) else dict(_chipmap_cache)
         if not _chipmap_cache_is_persistable(payload):
-            return
-        # strip volatile / huge noise if any
+            return False
+        payload = _chipmap_compact_payload(payload)
         to_save = {
             k: payload.get(k)
             for k in (
@@ -6220,6 +6367,7 @@ def _save_chipmap_cache_disk(data: dict | None = None) -> None:
                 "source",
                 "host",
                 "miner_type",
+                "model",
                 "boards",
                 "chip_count",
                 "board_count",
@@ -6236,36 +6384,71 @@ def _save_chipmap_cache_disk(data: dict | None = None) -> None:
         to_save["persisted"] = True
         to_save["persisted_at"] = datetime.now().isoformat(timespec="seconds")
         CHIPMAP_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CHIPMAP_CACHE_FILE.write_text(
+        # atomic write
+        tmp = CHIPMAP_CACHE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(
             json.dumps(to_save, ensure_ascii=False, separators=(",", ":")) + "\n",
             encoding="utf-8",
         )
+        tmp.replace(CHIPMAP_CACHE_FILE)
+        return True
     except Exception as e:
         print(f"[chipmap] cache save: {e}")
+        return False
 
 
-def _load_chipmap_cache_disk() -> None:
-    """Restore last chipmap into RAM on boot (if persist_cache enabled)."""
+def _load_chipmap_cache_disk(*, into_ram: bool = True) -> dict | None:
+    """
+    Restore last chipmap from disk.
+    into_ram=True: full map in RAM (boot / explicit UI need).
+    into_ram=False: only summary in RAM (memory-light).
+    """
     global _chipmap_cache
     try:
         if not _chipmap_persist_cache_enabled():
-            return
-        if not CHIPMAP_CACHE_FILE.is_file():
-            return
-        raw = json.loads(CHIPMAP_CACHE_FILE.read_text(encoding="utf-8"))
-        if not _chipmap_cache_is_persistable(raw):
-            return
-        raw = dict(raw)
-        raw["stale"] = True
-        raw["source"] = raw.get("source") or "disk"
-        raw["from_disk"] = True
-        with _chipmap_lock:
-            _chipmap_cache.clear()
-            _chipmap_cache.update(raw)
+            return None
+        raw = _read_chipmap_cache_disk()
+        if not raw:
+            return None
+        if into_ram:
+            with _chipmap_lock:
+                _chipmap_cache.clear()
+                _chipmap_cache.update(raw)
+                _chipmap_cache["boards_in_ram"] = True
+        else:
+            # summary only — full boards stay on disk until get_chipmap needs them
+            summary = _chipmap_summary_only(raw)
+            summary["stale"] = True
+            summary["from_disk"] = True
+            with _chipmap_lock:
+                _chipmap_cache.clear()
+                _chipmap_cache.update(summary)
         n = raw.get("chip_count") or 0
-        print(f"[chipmap] restored cache from disk · chips {n} · ts {raw.get('ts')}")
+        mode = "full" if into_ram else "summary"
+        print(
+            f"[chipmap] restored disk cache ({mode}) · chips {n} · ts {raw.get('ts')}"
+        )
+        return raw if into_ram else _chipmap_cache
     except Exception as e:
         print(f"[chipmap] cache load: {e}")
+        return None
+
+
+def _chipmap_ensure_boards_in_ram() -> dict:
+    """If RAM has no boards but disk does — hydrate full map into RAM."""
+    with _chipmap_lock:
+        cur = dict(_chipmap_cache)
+        if cur.get("boards"):
+            cur["boards_in_ram"] = True
+            return cur
+    disk = _read_chipmap_cache_disk()
+    if disk and disk.get("boards"):
+        with _chipmap_lock:
+            _chipmap_cache.clear()
+            _chipmap_cache.update(disk)
+            _chipmap_cache["boards_in_ram"] = True
+            return dict(_chipmap_cache)
+    return cur
 
 
 def get_chipmap_cfg(*, redact: bool = True) -> dict:
@@ -6520,7 +6703,10 @@ def _chipmap_is_mining() -> tuple[bool | None, str]:
 
 
 def _chipmap_suspend_payload(*, fetch_ms: int | None = None) -> dict:
-    """Friendly non-error status when ASIC is online but Suspend (no board power)."""
+    """
+    Friendly non-error status when ASIC is online but Suspend (no board power).
+    Memory: do NOT keep 1k+ chips in RAM — full map stays on disk only.
+    """
     msg = (
         "Mining Suspend · карты чипов доступны только при майнинге "
         "(когда есть питание на платах)."
@@ -6540,29 +6726,55 @@ def _chipmap_suspend_payload(*, fetch_ms: int | None = None) -> dict:
         "temp_max": None,
         "temp_avg": None,
         "stale": False,
+        "boards_in_ram": False,
     }
+    # Prefer disk last-good summary (no full boards in RAM during suspend)
+    disk = None
+    if _chipmap_persist_cache_enabled():
+        disk = _read_chipmap_cache_disk()
     with _chipmap_lock:
         prev = dict(_chipmap_cache)
-        # keep last good boards in RAM (and on disk) for after restart / resume
+        meta_src = disk if disk else prev
         if (
-            prev.get("boards")
-            and prev.get("chip_count")
-            and prev.get("reason") != "suspend"
+            meta_src
+            and meta_src.get("chip_count")
+            and meta_src.get("reason") != "suspend"
         ):
-            out["boards"] = prev["boards"]
-            out["board_count"] = prev.get("board_count") or len(prev["boards"])
-            out["chip_count"] = prev.get("chip_count")
-            out["temp_min"] = prev.get("temp_min")
-            out["temp_max"] = prev.get("temp_max")
-            out["temp_avg"] = prev.get("temp_avg")
-            out["miner_type"] = prev.get("miner_type")
+            out["board_count"] = meta_src.get("board_count") or 0
+            out["chip_count"] = meta_src.get("chip_count")
+            out["temp_min"] = meta_src.get("temp_min")
+            out["temp_max"] = meta_src.get("temp_max")
+            out["temp_avg"] = meta_src.get("temp_avg")
+            out["miner_type"] = meta_src.get("miner_type")
             out["stale"] = True
-            out["last_good_ts"] = prev.get("ts")
-            out["message"] = msg + " · показан последний кеш"
+            out["last_good_ts"] = meta_src.get("ts")
+            out["disk_cache"] = bool(disk and disk.get("boards"))
+            out["message"] = (
+                msg
+                + (
+                    " · last map on disk (open Chips to load)"
+                    if out["disk_cache"]
+                    else " · last map cached"
+                )
+            )
+        # Drop heavy boards from RAM — disk keeps them
         _chipmap_cache.clear()
-        _chipmap_cache.update(out)
+        _chipmap_cache.update(_chipmap_summary_only(out))
+        _chipmap_cache["reason"] = "suspend"
+        _chipmap_cache["message"] = out["message"]
+        _chipmap_cache["ok"] = True
     # never overwrite disk with empty suspend payload
-    return dict(out)
+    # If UI needs boards, get_chipmap hydrates from disk
+    if disk and disk.get("boards"):
+        out = dict(disk)
+        out["reason"] = "suspend"
+        out["message"] = msg + " · last map from disk"
+        out["stale"] = True
+        out["ok"] = True
+        out["error"] = None
+        out["fetch_ms"] = fetch_ms if fetch_ms is not None else 0
+        out["from_disk"] = True
+    return out
 
 
 def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
@@ -6698,10 +6910,14 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             except Exception:
                 pass
         out = _chipmap_attach_hash_estimates(out)
+        out = _chipmap_compact_payload(out)
+        out["boards_in_ram"] = True
+        # Disk first (source of truth across restarts / suspend)
+        saved = _save_chipmap_cache_disk(out)
+        out["persisted"] = bool(saved)
         with _chipmap_lock:
             _chipmap_cache.clear()
             _chipmap_cache.update(out)
-        _save_chipmap_cache_disk(out)
         return dict(out)
     except Exception as e:
         ms = int((time.time() - t0) * 1000)
@@ -6709,6 +6925,8 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
         mining3, _ = _chipmap_is_mining()
         if mining3 is False:
             return _chipmap_suspend_payload(fetch_ms=ms)
+        # Prefer last good from disk (no huge prev boards stuck in error state)
+        disk = _read_chipmap_cache_disk() if _chipmap_persist_cache_enabled() else None
         with _chipmap_lock:
             prev = dict(_chipmap_cache)
             _chipmap_cache["ok"] = False
@@ -6717,47 +6935,87 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
             _chipmap_cache["error"] = str(e)
             _chipmap_cache["fetch_ms"] = ms
             _chipmap_cache["ts"] = datetime.now().isoformat(timespec="seconds")
-            # keep last good boards if any
             out = dict(_chipmap_cache)
-            if prev.get("boards") and prev.get("reason") not in ("suspend",):
-                out["boards"] = prev["boards"]
-                out["chip_count"] = prev.get("chip_count")
-                out["board_count"] = prev.get("board_count")
-                out["temp_min"] = prev.get("temp_min")
-                out["temp_max"] = prev.get("temp_max")
-                out["temp_avg"] = prev.get("temp_avg")
-                out["miner_type"] = prev.get("miner_type")
-                out["stale"] = True
-                out["last_good_ts"] = prev.get("ts")
-                _chipmap_cache.update(out)
+        src = None
+        if disk and disk.get("boards"):
+            src = disk
+        elif prev.get("boards") and prev.get("reason") not in ("suspend",):
+            src = prev
+        if src:
+            out = dict(src)
+            out["ok"] = False
+            out["reason"] = "error"
+            out["error"] = str(e)
+            out["fetch_ms"] = ms
+            out["stale"] = True
+            out["last_good_ts"] = src.get("ts")
+            out["message"] = "last map (stale) · " + str(e)[:120]
+            # keep summary in RAM, full boards only if already small / from prev
+            if disk and disk is src:
+                # don't re-inflate RAM with disk boards on every error
+                with _chipmap_lock:
+                    _chipmap_cache.clear()
+                    _chipmap_cache.update(_chipmap_summary_only(out))
+                    _chipmap_cache["error"] = str(e)
+                    _chipmap_cache["reason"] = "error"
+                    _chipmap_cache["ok"] = False
+            else:
+                with _chipmap_lock:
+                    _chipmap_cache.update(out)
         return out
 
 
 def get_chipmap(*, force: bool = False) -> dict:
-    """Return cached chipmap; optionally force refresh."""
+    """
+    Return chipmap for UI.
+    Disk is source of truth; RAM keeps full boards only while mining (active use).
+    Suspend: serve last map from disk without pinning 1k chips in RAM.
+    """
     if force:
         return fetch_chipmap_from_luci(force=True)
+
+    mining, _ = _chipmap_is_mining()
+
     with _chipmap_lock:
-        if _chipmap_cache.get("boards"):
-            out = dict(_chipmap_cache)
-        else:
-            out = None
-    if out is None:
-        return fetch_chipmap_from_luci(force=True)
-    # refresh est_th / nonce_rate from current HR + mining elapsed
-    if out.get("reason") != "suspend":
-        out = _chipmap_attach_hash_estimates(out)
-    # keep miner_type fresh for layout lookup even on cache hit
-    if not out.get("miner_type"):
-        try:
-            ident = get_miner_identity_cached(force=False)
-            if isinstance(ident, dict):
-                mt = (ident.get("miner_type") or ident.get("model") or "").strip()
-                if mt:
-                    out["miner_type"] = mt
-        except Exception:
-            pass
-    return out
+        ram = dict(_chipmap_cache)
+        has_boards = bool(ram.get("boards"))
+
+    if has_boards:
+        out = ram
+        if out.get("reason") != "suspend" and mining is not False:
+            out = _chipmap_attach_hash_estimates(out)
+        return dict(out)
+
+    # No boards in RAM — try disk (compact, persisted)
+    if _chipmap_persist_cache_enabled():
+        disk = _read_chipmap_cache_disk()
+        if disk and disk.get("boards"):
+            if mining is False:
+                # One-shot response from disk; keep summary-only in RAM
+                out = dict(disk)
+                out["reason"] = out.get("reason") or "suspend"
+                out["stale"] = True
+                out["from_disk"] = True
+                out["message"] = (
+                    out.get("message")
+                    or "last chip map from disk · miner not hashing"
+                )
+                with _chipmap_lock:
+                    _chipmap_cache.clear()
+                    _chipmap_cache.update(_chipmap_summary_only(out))
+                    _chipmap_cache["reason"] = "suspend"
+                    _chipmap_cache["ok"] = True
+                return out
+            # Mining: hydrate full map into RAM for subsequent polls
+            with _chipmap_lock:
+                _chipmap_cache.clear()
+                _chipmap_cache.update(disk)
+                _chipmap_cache["boards_in_ram"] = True
+            out = _chipmap_attach_hash_estimates(dict(disk))
+            return out
+
+    # Nothing cached — live scrape
+    return fetch_chipmap_from_luci(force=True)
 
 
 def chipmap_loop() -> None:
@@ -7347,6 +7605,69 @@ def uninstall_sniffer_module(*, remove_captures: bool = True) -> dict:
         "removed_count": len(removed_files),
         "installed": False,
         "enabled": False,
+    }
+
+
+def clear_sniffer_cache(*, keep_current: bool = False) -> dict:
+    """
+    Delete sniffer pcap / capture cache under pcap_dir (tmpfs).
+    Does not uninstall the module. Stops nothing unless module clear requires it.
+    """
+    removed: list[str] = []
+    errors: list[str] = []
+    mod_res: dict | None = None
+    # Prefer module helper if available
+    mod = _sniffer_mod or (
+        _import_miner_sniffer() if _sniffer_module_present() else None
+    )
+    if mod is not None and hasattr(mod, "clear_captures"):
+        try:
+            mod_res = mod.clear_captures(keep_current=bool(keep_current))
+            if isinstance(mod_res, dict):
+                for p in mod_res.get("removed") or []:
+                    if p and str(p) not in removed:
+                        removed.append(str(p))
+        except Exception as e:
+            errors.append(f"module: {e}")
+
+    # Always wipe pcap_dir files (works even without module)
+    try:
+        with _sniffer_cfg_lock:
+            pdir = Path(str(_sniffer_cfg.get("pcap_dir") or "/tmp/poolheat-sniffer"))
+        current_name = None
+        if keep_current and isinstance(mod_res, dict):
+            cur = str(mod_res.get("current") or mod_res.get("pcap") or "")
+            if cur:
+                current_name = Path(cur).name
+        if pdir.is_dir():
+            for p in sorted(pdir.iterdir()):
+                try:
+                    if not p.is_file() and not p.is_symlink():
+                        continue
+                    if keep_current and current_name and p.name == current_name:
+                        continue
+                    # common capture artefacts only
+                    suf = p.suffix.lower()
+                    if (
+                        suf in (".pcap", ".pcapng", ".cap", ".log", ".txt", ".gz")
+                        or p.name.startswith("poolheat")
+                        or p.name.startswith("wmt")
+                        or p.name.startswith("capture")
+                    ):
+                        p.unlink()
+                        removed.append(str(p))
+                except Exception as e:
+                    errors.append(f"{p}: {e}")
+    except Exception as e:
+        errors.append(str(e))
+
+    return {
+        "ok": len(errors) == 0 or bool(removed),
+        "removed": removed[:80],
+        "removed_count": len(removed),
+        "keep_current": bool(keep_current),
+        "error": "; ".join(errors[:5]) if errors else None,
+        "module": mod_res,
     }
 
 
@@ -9541,7 +9862,8 @@ _load_pool_presets()
 _load_filtration_cfg()
 _load_devices_cfg()
 _load_chipmap_cfg()
-_load_chipmap_cache_disk()
+# Boot: summary only in RAM; full boards load on /api/chipmap when needed
+_load_chipmap_cache_disk(into_ram=False)
 _load_luci_proxy_cfg()
 _luci_proxy_sync_runtime()
 _load_sniffer_cfg()
@@ -26183,20 +26505,25 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json_response(400, {"ok": False, "error": str(e)})
             return
-        if path in ("/api/sniffer/clear", "/api/miner_sniffer/clear"):
+        if path in (
+            "/api/sniffer/clear",
+            "/api/sniffer/cache/clear",
+            "/api/miner_sniffer/clear",
+        ):
             try:
-                mod = _sniffer_mod or _import_miner_sniffer()
-                if mod is None:
-                    self._json_response(
-                        400,
-                        {
-                            "ok": False,
-                            "error": _sniffer_import_error or "module not installed",
-                        },
-                    )
-                    return
-                res = mod.clear_captures(keep_current=True)
-                self._json_response(200, res)
+                req: dict = {}
+                try:
+                    raw = self._read_json_body()
+                    if isinstance(raw, dict):
+                        req = raw
+                except Exception:
+                    req = {}
+                keep = req.get("keep_current")
+                if keep is None:
+                    keep = False
+                res = clear_sniffer_cache(keep_current=bool(keep))
+                code = 200 if res.get("ok") else 400
+                self._json_response(code, res)
             except Exception as e:
                 self._json_response(400, {"ok": False, "error": str(e)})
             return

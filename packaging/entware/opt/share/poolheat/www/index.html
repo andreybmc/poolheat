@@ -8157,6 +8157,7 @@
                 </div>
                 <div class="btn-row" style="gap:8px;flex-wrap:wrap">
                   <a class="btn ghost" id="btn-sniffer-download" href="/api/sniffer/download" style="display:none" data-i18n="btn.pcap">Download pcap</a>
+                  <button class="btn ghost" type="button" id="btn-sniffer-clear-cache" data-i18n="btn.sniffer_clear_cache" style="display:none">Clear cache</button>
                   <button class="btn" type="button" id="btn-sniffer-install" data-i18n="btn.sniffer_install">Install</button>
                   <button class="btn danger ghost" type="button" id="btn-sniffer-uninstall" data-i18n="btn.sniffer_uninstall">Uninstall</button>
                   <button class="btn primary" type="button" id="btn-sniffer-save" data-i18n="btn.save">Save</button>
@@ -8853,13 +8854,15 @@
         "boards.sub_upfreq": "Upfreq Complete",
         "btn.pcap": "Download pcap",
         "btn.uninstall": "Uninstall",
+        "btn.sniffer_clear_cache": "Clear cache",
+        "confirm.sniffer_clear_cache": "Delete sniffer capture files (pcap) from /tmp? Capture can continue.",
         "btn.sniffer_install": "Install",
         "btn.sniffer_uninstall": "Uninstall",
         "check.live": "Live",
         "check.hist_enabled": "Data collection",
         "check.hist_desc": "write samples to history.db",
         "check.chip_cache": "Save chip map cache",
-        "hint.chip_cache": "When enabled, after a successful LuCI poll the map is written to disk and reloaded on service start (stale until the next live poll). When off — cache file is deleted; only the current poll stays in RAM.",
+        "hint.chip_cache": "When enabled, a successful LuCI poll writes a compact map to disk (chipmap_cache.json). On suspend, full boards leave RAM and load from disk when you open Chips. Off = delete disk cache; only current poll stays in RAM.",
         "hint.history": "After changing “Keep, days”, old points are removed on save. “Clear database” — delete all samples (charts go empty).",
         "hint.remote_auth": "Do not raw port-forward :8787 to the Internet. Cloud + token; open forbidden with remote.",
         "hint.luci_proxy": "Module <code>luci_proxy</code>: reverse-proxy to the miner (host from “Whatsminer connection”). Externally — plain HTTP :8788, to miner — HTTPS; cookies <code>Secure</code>/HSTS are stripped. Default off. Do not expose :8788 on WAN — LAN / VPN / Cloud only.",
@@ -9639,13 +9642,15 @@
         "boards.sub_upfreq": "Upfreq Complete",
         "btn.pcap": "Скачать pcap",
         "btn.uninstall": "Удалить",
+        "btn.sniffer_clear_cache": "Очистить кеш",
+        "confirm.sniffer_clear_cache": "Удалить файлы захвата (pcap) из /tmp? Захват можно продолжить.",
         "btn.sniffer_install": "Установить",
         "btn.sniffer_uninstall": "Удалить",
         "check.live": "Live",
         "check.hist_enabled": "Сбор данных",
         "check.hist_desc": "писать samples в history.db",
         "check.chip_cache": "Сохранять кеш карты чипов",
-        "hint.chip_cache": "Если включено — после успешного опроса LuCI карта пишется на диск и подгружается при старте сервиса (до следующего live-опроса может быть устаревшей). Если выключено — файл кеша удаляется; в RAM остаётся только текущий опрос.",
+        "hint.chip_cache": "Если включено — успешный опрос LuCI пишет компактную карту на диск (chipmap_cache.json). При Suspend полные boards уходят из RAM и подгружаются с диска при открытии Chips. Выкл — файл кеша удаляется; в RAM только текущий опрос.",
         "hint.history": "После изменения «Хранить, дней» старые точки удаляются при сохранении. «Очистить базу» — удалить все сэмплы (графики станут пустыми).",
         "hint.remote_auth": "Не пробрасывайте «сырой» :8787 в интернет. Cloud + token; режим open запрещён при удалённом доступе.",
         "hint.luci_proxy": "Модуль <code>luci_proxy</code>: reverse-proxy к майнеру (host из «Подключение Whatsminer»). Снаружи — plain HTTP :8788, к майнеру — HTTPS; cookies <code>Secure</code>/HSTS снимаются. По умолчанию выкл. Не открывайте :8788 в WAN — только LAN / VPN / Cloud.",
@@ -26731,6 +26736,16 @@
           dl.style.display = hasPcap ? "" : "none";
           dl.href = "/api/sniffer/download";
         }
+        const clr = document.getElementById("btn-sniffer-clear-cache");
+        if (clr) {
+          const hasCache = !!(
+            (st.pcap_size != null && Number(st.pcap_size) > 0) ||
+            (st.captures_total != null && Number(st.captures_total) > 0) ||
+            (st.disk_usage != null && Number(st.disk_usage) > 0)
+          );
+          clr.style.display = hasCache || installed ? "" : "none";
+          clr.disabled = false;
+        }
         // Install when not installed; Uninstall when installed
         if (inst) {
           inst.style.display = installed ? "none" : "";
@@ -26889,6 +26904,38 @@
       }
     }
 
+    async function clearSnifferCache() {
+      const ru = typeof getUiLang === "function" && getUiLang() === "ru";
+      const ask =
+        (typeof t === "function" && t("confirm.sniffer_clear_cache")) ||
+        (ru
+          ? "Удалить файлы захвата (pcap) из /tmp?"
+          : "Delete sniffer capture files (pcap) from /tmp?");
+      if (!confirm(ask)) return;
+      try {
+        toastInfo(ru ? "Сниффер: очистка кеша…" : "Sniffer: clearing cache…", 2000);
+        const res = await fetch("/api/sniffer/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keep_current: false }),
+        });
+        const body = await res.json();
+        await loadSnifferConfig();
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "clear failed");
+        }
+        const n = body.removed_count != null ? body.removed_count : 0;
+        toastSuccess(
+          (ru ? "Кеш снифера очищен · " : "Sniffer cache cleared · ") +
+            n +
+            (ru ? " файл(ов)" : " file(s)")
+        );
+      } catch (e) {
+        toastError("Sniffer clear: " + e.message);
+        void loadSnifferConfig();
+      }
+    }
+
     async function uninstallSniffer() {
       const ru = typeof getUiLang === "function" && getUiLang() === "ru";
       if (
@@ -27001,6 +27048,9 @@
     document
       .getElementById("btn-sniffer-install")
       ?.addEventListener("click", () => void installSniffer());
+    document
+      .getElementById("btn-sniffer-clear-cache")
+      ?.addEventListener("click", () => void clearSnifferCache());
     document
       .getElementById("btn-sniffer-uninstall")
       ?.addEventListener("click", () => void uninstallSniffer());
