@@ -29,3 +29,16 @@ tools/whatsminer-proxy/*.pcap*
 tools/tuya-local/plg1.env
 tools/tuya-local/devices.json
 tools/tuya-local/tuya-raw.json
+
+# local runtime / secrets (never commit)
+ui-demo/*.db
+ui-demo/*.db-shm
+ui-demo/*.db-wal
+ui-demo/*_config.json
+ui-demo/mode_profiles.json
+ui-demo/pool_presets.json
+ui-demo/schedule_config.json
+ui-demo/telegram_config.json
+ui-demo/energy_config.json
+ui-demo/luci_proxy_config.json
+tools/whatsminer-proxy/config.json

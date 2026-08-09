@@ -1,8 +1,0 @@
-{
-  "enabled": false,
-  "bind": "0.0.0.0",
-  "listen_port": 18791,
-  "target_scheme": "https",
-  "target_port": 443,
-  "verify_tls": false
-}
