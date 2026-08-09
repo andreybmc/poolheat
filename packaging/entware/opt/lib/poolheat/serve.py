@@ -6297,6 +6297,15 @@ def devices_poller_main() -> None:
         )
     except Exception:
         pass
+    try:
+        cl = cleanup_tmp_and_logs()
+        print(
+            f"[devices-poller] tmp cleanup: freed {cl.get('freed_mib')} MiB · "
+            f"removed {cl.get('removed_n')}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[devices-poller] tmp cleanup: {e}", flush=True)
     print(
         f"[devices-poller] pid={os.getpid()} data={DATA}",
         flush=True,
@@ -6447,6 +6456,15 @@ def miner_poller_main() -> None:
         MINER_POLLER_PIDFILE.write_text(str(os.getpid()), encoding="utf-8")
     except Exception:
         pass
+    try:
+        cl = cleanup_tmp_and_logs()
+        print(
+            f"[miner-poller] tmp cleanup: freed {cl.get('freed_mib')} MiB · "
+            f"removed {cl.get('removed_n')}",
+            flush=True,
+        )
+    except Exception as e:
+        print(f"[miner-poller] tmp cleanup: {e}", flush=True)
     print(
         f"[miner-poller] pid={os.getpid()} data={DATA} miner={HOST_MINER}:{PORT_MINER}",
         flush=True,
@@ -6901,7 +6919,8 @@ def _read_chipmap_cache_disk() -> dict | None:
         raw["source"] = raw.get("source") or "disk"
         raw["from_disk"] = True
         raw["disk_cache"] = True
-        raw["boards_in_ram"] = True
+        # full boards live on disk; caller decides whether to pin them in RAM
+        raw["boards_in_ram"] = False
         return raw
     except Exception as e:
         print(f"[chipmap] cache read: {e}")
@@ -6998,19 +7017,17 @@ def _load_chipmap_cache_disk(*, into_ram: bool = True) -> dict | None:
 
 
 def _chipmap_ensure_boards_in_ram() -> dict:
-    """If RAM has no boards but disk does — hydrate full map into RAM."""
+    """
+    Return full map for one-shot use (disk preferred).
+    Does not pin boards into long-lived RAM — summary stays in _chipmap_cache.
+    """
     with _chipmap_lock:
         cur = dict(_chipmap_cache)
         if cur.get("boards"):
-            cur["boards_in_ram"] = True
             return cur
     disk = _read_chipmap_cache_disk()
     if disk and disk.get("boards"):
-        with _chipmap_lock:
-            _chipmap_cache.clear()
-            _chipmap_cache.update(disk)
-            _chipmap_cache["boards_in_ram"] = True
-            return dict(_chipmap_cache)
+        return dict(disk)
     return cur
 
 
@@ -7474,13 +7491,16 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
                 pass
         out = _chipmap_attach_hash_estimates(out)
         out = _chipmap_compact_payload(out)
-        out["boards_in_ram"] = True
-        # Disk first (source of truth across restarts / suspend)
+        # Disk = full map; RAM keeps summary only (1056 chips stay off-heap)
+        out["boards_in_ram"] = False
         saved = _save_chipmap_cache_disk(out)
         out["persisted"] = bool(saved)
         with _chipmap_lock:
             _chipmap_cache.clear()
-            _chipmap_cache.update(out)
+            _chipmap_cache.update(_chipmap_summary_only(out))
+            _chipmap_cache["persisted"] = bool(saved)
+            _chipmap_cache["boards_in_ram"] = False
+        # return full map for this request only (not retained in _chipmap_cache)
         return dict(out)
     except Exception as e:
         ms = int((time.time() - t0) * 1000)
@@ -7531,51 +7551,48 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
 def get_chipmap(*, force: bool = False) -> dict:
     """
     Return chipmap for UI.
-    Disk is source of truth; RAM keeps full boards only while mining (active use).
-    Suspend: serve last map from disk without pinning 1k chips in RAM.
+    Disk is source of truth for full boards; RAM holds summary only
+    (never pin ~1k chips in process memory).
     """
     if force:
         return fetch_chipmap_from_luci(force=True)
 
     mining, _ = _chipmap_is_mining()
 
-    with _chipmap_lock:
-        ram = dict(_chipmap_cache)
-        has_boards = bool(ram.get("boards"))
-
-    if has_boards:
-        out = ram
-        if out.get("reason") != "suspend" and mining is not False:
-            out = _chipmap_attach_hash_estimates(out)
-        return dict(out)
-
-    # No boards in RAM — try disk (compact, persisted)
+    # Always prefer disk for full map response — do not keep boards in RAM
     if _chipmap_persist_cache_enabled():
         disk = _read_chipmap_cache_disk()
         if disk and disk.get("boards"):
+            out = dict(disk)
+            out["from_disk"] = True
+            out["boards_in_ram"] = False
             if mining is False:
-                # One-shot response from disk; keep summary-only in RAM
-                out = dict(disk)
                 out["reason"] = out.get("reason") or "suspend"
                 out["stale"] = True
-                out["from_disk"] = True
                 out["message"] = (
                     out.get("message")
                     or "last chip map from disk · miner not hashing"
                 )
-                with _chipmap_lock:
-                    _chipmap_cache.clear()
-                    _chipmap_cache.update(_chipmap_summary_only(out))
-                    _chipmap_cache["reason"] = "suspend"
-                    _chipmap_cache["ok"] = True
-                return out
-            # Mining: hydrate full map into RAM for subsequent polls
+            else:
+                out = _chipmap_attach_hash_estimates(out)
+            # RAM stays summary-only
             with _chipmap_lock:
                 _chipmap_cache.clear()
-                _chipmap_cache.update(disk)
-                _chipmap_cache["boards_in_ram"] = True
-            out = _chipmap_attach_hash_estimates(dict(disk))
+                _chipmap_cache.update(_chipmap_summary_only(out))
+                if mining is False:
+                    _chipmap_cache["reason"] = "suspend"
+                _chipmap_cache["ok"] = True
+                _chipmap_cache["boards_in_ram"] = False
             return out
+
+    with _chipmap_lock:
+        ram = dict(_chipmap_cache)
+    if ram.get("boards"):
+        # legacy path if something still left boards in RAM
+        out = ram
+        if out.get("reason") != "suspend" and mining is not False:
+            out = _chipmap_attach_hash_estimates(out)
+        return dict(out)
 
     # Nothing cached — live scrape
     return fetch_chipmap_from_luci(force=True)
@@ -14288,6 +14305,292 @@ def _host_memory() -> dict | None:
         return None
 
 
+def _pid_rss_b(pid: int) -> int | None:
+    """VmRSS for pid in bytes."""
+    try:
+        with open(f"/proc/{int(pid)}/status", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    # kB
+                    return int(line.split()[1]) * 1024
+    except Exception:
+        return None
+    return None
+
+
+def _pid_cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{int(pid)}/cmdline").read_bytes()
+        return raw.replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+    except Exception:
+        return ""
+
+
+def _poolheat_process_roles() -> dict:
+    """
+    RSS for poolheat Python processes: main serve, miner-poller, devices-poller.
+    Uses pidfiles + /proc scan fallback.
+
+    Returns dict:
+      processes: [{role, pid, rss_b, rss_mib, cmd}, ...]
+      total_rss_b / total_rss_mib / count
+    """
+    found: dict[str, dict] = {}
+
+    def _add(role: str, pid: int, cmd: str = "") -> None:
+        if pid <= 0:
+            return
+        try:
+            os.kill(pid, 0)
+        except Exception:
+            return
+        rss = _pid_rss_b(pid)
+        if not cmd:
+            cmd = _pid_cmdline(pid)
+        prev = found.get(role)
+        if prev and prev.get("pid") == pid:
+            return
+        found[role] = {
+            "role": role,
+            "pid": pid,
+            "rss_b": rss,
+            "rss_mib": round(rss / (1024 * 1024), 1) if rss is not None else None,
+            "cmd": (cmd or "")[:160],
+        }
+
+    # Self = main HTTP serve (unless we are a poller child)
+    self_cmd = " ".join(sys.argv)
+    self_pid = os.getpid()
+    if "--miner-poller" in self_cmd or "miner-poller" in self_cmd:
+        _add("miner-poller", self_pid, self_cmd)
+    elif "--devices-poller" in self_cmd or "devices-poller" in self_cmd:
+        _add("devices-poller", self_pid, self_cmd)
+    else:
+        _add("serve", self_pid, self_cmd)
+
+    for role, pfile in (
+        ("miner-poller", MINER_POLLER_PIDFILE),
+        ("devices-poller", DEVICES_POLLER_PIDFILE),
+    ):
+        try:
+            if pfile.is_file():
+                pid = int(pfile.read_text().strip() or "0")
+                if pid > 0 and pid != self_pid:
+                    _add(role, pid)
+        except Exception:
+            pass
+
+    # Scan /proc for any serve.py we missed (poolheatd, etc.)
+    try:
+        for ent in Path("/proc").iterdir():
+            if not ent.name.isdigit():
+                continue
+            pid = int(ent.name)
+            if pid == self_pid:
+                continue
+            cmd = _pid_cmdline(pid)
+            if "serve.py" not in cmd and "poolheat" not in cmd:
+                continue
+            if "--miner-poller" in cmd or "miner-poller" in cmd:
+                _add("miner-poller", pid, cmd)
+            elif "--devices-poller" in cmd or "devices-poller" in cmd:
+                _add("devices-poller", pid, cmd)
+            elif "serve.py" in cmd:
+                # only one "serve" — prefer lower pid if conflict
+                if "serve" not in found:
+                    _add("serve", pid, cmd)
+    except Exception:
+        pass
+
+    # stable order
+    order = {"serve": 0, "miner-poller": 1, "devices-poller": 2}
+    procs = sorted(found.values(), key=lambda p: order.get(p["role"], 9))
+    total_rss = sum(int(p["rss_b"] or 0) for p in procs)
+    return {
+        "processes": procs,
+        "total_rss_b": total_rss or None,
+        "total_rss_mib": round(total_rss / (1024 * 1024), 1) if total_rss else None,
+        "count": len(procs),
+    }
+
+
+def cleanup_tmp_and_logs(
+    *,
+    max_log_bytes: int = 2 * 1024 * 1024,
+    max_pcap_age_sec: float = 24 * 3600,
+    max_tmp_age_sec: float = 2 * 24 * 3600,
+) -> dict:
+    """
+    Free RAM-backed /tmp and trim large log files under DATA.
+    Safe to run at boot and via API.
+    """
+    now = time.time()
+    removed: list[dict] = []
+    freed = 0
+    errors: list[str] = []
+
+    def _unlink(path: Path, reason: str) -> None:
+        nonlocal freed
+        try:
+            if not path.is_file() and not path.is_symlink():
+                return
+            sz = 0
+            try:
+                sz = int(path.stat().st_size)
+            except Exception:
+                pass
+            path.unlink(missing_ok=True)
+            freed += max(0, sz)
+            removed.append(
+                {"path": str(path), "bytes": sz, "reason": reason}
+            )
+        except Exception as e:
+            errors.append(f"{path}: {e}")
+
+    def _trim_log(path: Path) -> None:
+        """Keep last ~max_log_bytes/2 of a growing log."""
+        nonlocal freed
+        try:
+            if not path.is_file():
+                return
+            sz = path.stat().st_size
+            if sz <= max_log_bytes:
+                return
+            keep = max(64 * 1024, max_log_bytes // 2)
+            with open(path, "rb") as f:
+                f.seek(max(0, sz - keep))
+                tail = f.read()
+            # drop partial first line
+            nl = tail.find(b"\n")
+            if nl >= 0 and nl + 1 < len(tail):
+                tail = tail[nl + 1 :]
+            path.write_bytes(tail)
+            freed += max(0, sz - len(tail))
+            removed.append(
+                {
+                    "path": str(path),
+                    "bytes": sz - len(tail),
+                    "reason": f"trim_log>{max_log_bytes}",
+                }
+            )
+        except Exception as e:
+            errors.append(f"trim {path}: {e}")
+
+    # 1) sniffer pcap dir (default /tmp/poolheat-sniffer)
+    pcap_dirs: list[Path] = []
+    try:
+        with _sniffer_cfg_lock:
+            pdir = str(_sniffer_cfg.get("pcap_dir") or "/tmp/poolheat-sniffer")
+        pcap_dirs.append(Path(pdir))
+    except Exception:
+        pcap_dirs.append(Path("/tmp/poolheat-sniffer"))
+    pcap_dirs.append(Path("/tmp/poolheat-sniffer"))
+    for pdir in {p.resolve() if p.exists() else p for p in pcap_dirs}:
+        try:
+            if not pdir.is_dir():
+                continue
+            for f in pdir.rglob("*"):
+                if not f.is_file():
+                    continue
+                try:
+                    age = now - f.stat().st_mtime
+                except Exception:
+                    age = 0
+                # always drop old captures; also drop huge files
+                try:
+                    sz = f.stat().st_size
+                except Exception:
+                    sz = 0
+                if age >= max_pcap_age_sec or sz > 8 * 1024 * 1024:
+                    _unlink(f, "pcap_old_or_large")
+        except Exception as e:
+            errors.append(f"pcap {pdir}: {e}")
+
+    # 2) other /tmp poolheat* leftovers
+    try:
+        tmp = Path("/tmp")
+        if tmp.is_dir():
+            for f in tmp.iterdir():
+                name = f.name
+                if not (
+                    name.startswith("poolheat")
+                    or name.startswith("poolheat-")
+                    or "poolheat" in name
+                ):
+                    continue
+                if f.is_dir():
+                    # only known ephemeral dirs
+                    if name == "poolheat-sniffer" or name.startswith("poolheat-upd"):
+                        try:
+                            for sub in f.rglob("*"):
+                                if not sub.is_file():
+                                    continue
+                                try:
+                                    age = now - sub.stat().st_mtime
+                                    sz = sub.stat().st_size
+                                except Exception:
+                                    age, sz = max_tmp_age_sec, 0
+                                # sniffer: age/size; upd temp: wipe all leftovers
+                                if name.startswith("poolheat-upd") or age >= max_pcap_age_sec or sz > 8 * 1024 * 1024:
+                                    _unlink(sub, "tmp_poolheat_dir")
+                        except Exception as e:
+                            errors.append(f"tmpdir {f}: {e}")
+                    continue
+                if f.is_file():
+                    try:
+                        age = now - f.stat().st_mtime
+                        sz = f.stat().st_size
+                    except Exception:
+                        age, sz = 0, 0
+                    if (
+                        age >= max_tmp_age_sec
+                        or sz > max_log_bytes
+                        or name.endswith(".boot.log")
+                    ):
+                        _unlink(f, "tmp_poolheat_file")
+    except Exception as e:
+        errors.append(f"/tmp scan: {e}")
+
+    # 3) DATA logs (USB usually — still free page cache / avoid growth)
+    for logn in (
+        "poolheat.log",
+        "serve.boot.log",
+        "devices_poller.log",
+        "miner_poller.log",
+    ):
+        _trim_log(DATA / logn)
+    for p in (
+        Path("/tmp/poolheat-serve.boot.log"),
+        Path("/opt/var/poolheat/poolheat.log"),
+        Path("/opt/var/poolheat/serve.boot.log"),
+    ):
+        _trim_log(p)
+
+    # optional sniffer module clear (best-effort)
+    try:
+        sn = clear_sniffer_cache(keep_current=False)
+        if isinstance(sn, dict) and sn.get("deleted"):
+            removed.append(
+                {
+                    "path": "sniffer_cache",
+                    "bytes": int(sn.get("freed_bytes") or 0),
+                    "reason": "sniffer_clear",
+                }
+            )
+            freed += int(sn.get("freed_bytes") or 0)
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "freed_b": freed,
+        "freed_mib": round(freed / (1024 * 1024), 2),
+        "removed": removed[:80],
+        "removed_n": len(removed),
+        "errors": errors[:20],
+    }
+
+
 def _host_uptime_sec() -> float | None:
     try:
         with open("/proc/uptime", encoding="utf-8") as f:
@@ -14867,6 +15170,7 @@ def collect_system_info() -> dict:
         "resources": {
             "disks": disks,
             "memory": _host_memory(),
+            "processes": _poolheat_process_roles(),
             "uptime_sec": _host_uptime_sec(),
             "history_db_b": db_size,
             "history_db_path": str(DB_FILE),
@@ -26932,6 +27236,19 @@ class Handler(SimpleHTTPRequestHandler):
                     self._json_response(500, {"ok": False, "error": str(e)})
                 return
             return
+        if path in ("/api/system/cleanup", "/api/cleanup/tmp"):
+            try:
+                body = cleanup_tmp_and_logs()
+                # fresh memory after cleanup
+                try:
+                    body["memory"] = _host_memory()
+                    body["processes"] = _poolheat_process_roles()
+                except Exception:
+                    pass
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
         if path in (
             "/api/firmware",
             "/api/firmware/list",
@@ -27058,6 +27375,18 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/api/set", "/api/control"):
             self._api_set()
+            return
+        if path in ("/api/system/cleanup", "/api/cleanup/tmp"):
+            try:
+                body = cleanup_tmp_and_logs()
+                try:
+                    body["memory"] = _host_memory()
+                    body["processes"] = _poolheat_process_roles()
+                except Exception:
+                    pass
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
             return
         if path == "/api/history/config":
             self._api_history_config_post()
@@ -29146,6 +29475,15 @@ def main() -> None:
         f"history={roles.get('edge_history')} · "
         f"ui={roles.get('app_ui')} · bot={roles.get('app_bot')}"
     )
+    # Free RAM-backed /tmp (pcap, old logs) before heavy workers start
+    try:
+        cl = cleanup_tmp_and_logs()
+        print(
+            f"tmp cleanup:       freed {cl.get('freed_mib')} MiB · "
+            f"removed {cl.get('removed_n')} · errors {len(cl.get('errors') or [])}"
+        )
+    except Exception as e:
+        print(f"tmp cleanup:       {e}")
     if role_enabled("edge_history") or role_enabled("edge_miner_poller"):
         init_db()
     # backfill error journal miner/component columns from current ASIC Info
@@ -29286,7 +29624,8 @@ def main() -> None:
         print(f"sniffer:           n/a ({e})")
     print(f"policy:            GET/POST /api/policy · server-side control")
     print(f"action log:        GET  /api/policy/events · POST /api/policy/events/clear")
-    print(f"system info:       GET  /api/system/info")
+    print(f"system info:       GET  /api/system/info  (resources.processes = RSS by pid)")
+    print(f"tmp cleanup:       GET/POST /api/system/cleanup  (pcap · old logs · /tmp)")
     print(f"version/update:    GET  /api/version · /api/update/check · POST /api/update/apply")
     print(f"app version:       {get_app_version()} · repo {GITHUB_REPO}")
     print(f"miner:             {HOST_MINER}:{PORT_MINER}")

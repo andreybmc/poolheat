@@ -8456,7 +8456,18 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.resources">Resources</h2>
-              <div class="sub" data-i18n="sub.resources">disk · RAM · uptime · history.db</div>
+              <div class="sub" data-i18n="sub.resources">disk · RAM · uptime · processes · history.db</div>
+            </div>
+            <div class="btn-row">
+              <button
+                class="btn"
+                type="button"
+                id="btn-tmp-cleanup"
+                title="Clean /tmp pcap and trim old logs"
+                data-i18n-title="btn.tmp_cleanup"
+              >
+                <span data-i18n="btn.tmp_cleanup">Clean /tmp</span>
+              </button>
             </div>
           </div>
           <div class="card-b stack" style="gap:14px">
@@ -8476,6 +8487,13 @@
                 <div class="val" style="font-size:1.05rem" id="info-db-size">—</div>
                 <div class="hint" id="info-db-path">—</div>
               </div>
+            </div>
+            <!-- Poolheat process RSS (serve / miner-poller / devices-poller) -->
+            <div class="metric" style="margin:0">
+              <label data-i18n="info.processes">Poolheat processes · RSS</label>
+              <div class="val" style="font-size:1.05rem" id="info-proc-total">—</div>
+              <div class="hint" data-i18n="info.processes_hint">serve · miner-poller · devices-poller</div>
+              <div id="info-processes" class="stack" style="gap:6px;margin-top:8px"></div>
             </div>
             <!-- USB free space when install is on stick -->
             <div class="metric" id="info-usb-wrap" style="display:none;margin:0">
@@ -9393,7 +9411,12 @@
         "h2.access": "Access settings",
         "h2.software": "poolheat_WM · software",
         "h2.resources": "Resources",
-        "sub.resources": "disk · RAM · uptime · history.db",
+        "sub.resources": "disk · RAM · uptime · processes · history.db",
+        "info.processes": "Poolheat processes · RSS",
+        "info.processes_hint": "serve · miner-poller · devices-poller",
+        "btn.tmp_cleanup": "Clean /tmp",
+        "msg.tmp_cleanup_ok": "Freed {mib} MiB · removed {n}",
+        "msg.tmp_cleanup_fail": "Cleanup failed",
         "info.usb_free": "USB · free",
         "info.usb_of": "free {free} / {total} · {pct}% used",
         "info.usb_path": "poolheat on USB",
@@ -10182,7 +10205,12 @@
         "h2.access": "Настройки доступа",
         "h2.software": "poolheat_WM · ПО",
         "h2.resources": "Ресурсы",
-        "sub.resources": "диск · RAM · uptime · history.db",
+        "sub.resources": "диск · RAM · uptime · процессы · history.db",
+        "info.processes": "Процессы Poolheat · RSS",
+        "info.processes_hint": "serve · miner-poller · devices-poller",
+        "btn.tmp_cleanup": "Чистить /tmp",
+        "msg.tmp_cleanup_ok": "Освобождено {mib} MiB · удалено {n}",
+        "msg.tmp_cleanup_fail": "Очистка не удалась",
         "info.usb_free": "USB · свободно",
         "info.usb_of": "свободно {free} / {total} · занято {pct}%",
         "info.usb_path": "poolheat на USB",
@@ -22956,6 +22984,65 @@
         setTxt("info-ram", "—");
         setTxt("info-ram-hint", "available —");
       }
+      // Process RSS: serve / miner-poller / devices-poller
+      (function paintProcesses() {
+        const procWrap = document.getElementById("info-processes");
+        const totalEl = document.getElementById("info-proc-total");
+        const raw = resrc.processes;
+        // API returns {processes, total_rss_mib, count} or legacy array
+        const bag =
+          raw && typeof raw === "object" && !Array.isArray(raw)
+            ? raw
+            : { processes: Array.isArray(raw) ? raw : [], total_rss_mib: null };
+        const list = Array.isArray(bag.processes) ? bag.processes : [];
+        if (totalEl) {
+          if (bag.total_rss_mib != null) {
+            totalEl.textContent =
+              bag.total_rss_mib +
+              " MiB" +
+              (bag.count != null ? " · " + bag.count + " proc" : "");
+          } else if (!fromCache) {
+            totalEl.textContent = list.length ? list.length + " proc" : "—";
+          }
+        }
+        if (!procWrap) return;
+        if (!list.length) {
+          if (!fromCache) procWrap.innerHTML = "";
+          return;
+        }
+        const roleLabel = {
+          serve: "serve",
+          "miner-poller": "miner-poller",
+          "devices-poller": "devices-poller",
+        };
+        procWrap.innerHTML = list
+          .map((p) => {
+            const role = roleLabel[p.role] || p.role || "?";
+            const rss =
+              p.rss_mib != null
+                ? p.rss_mib + " MiB"
+                : p.rss_b != null
+                  ? fmtBytes(p.rss_b)
+                  : "—";
+            const pid = p.pid != null ? "pid " + p.pid : "";
+            return (
+              '<div style="display:flex;justify-content:space-between;gap:10px;font-size:0.9rem;padding:4px 0;border-bottom:1px solid var(--border,rgba(255,255,255,0.06))">' +
+              '<span><strong>' +
+              role +
+              "</strong>" +
+              (pid
+                ? ' <span style="opacity:0.6;font-size:0.82rem">' +
+                  pid +
+                  "</span>"
+                : "") +
+              "</span>" +
+              '<span style="font-variant-numeric:tabular-nums">' +
+              rss +
+              "</span></div>"
+            );
+          })
+          .join("");
+      })();
       if (resrc.uptime_sec != null || !fromCache) {
         setTxt("info-uptime", fmtUptime(resrc.uptime_sec));
       }
@@ -23362,6 +23449,39 @@
     }
     document.getElementById("btn-info-refresh")?.addEventListener("click", () => {
       void loadSystemInfo({ forceLive: true });
+    });
+    document.getElementById("btn-tmp-cleanup")?.addEventListener("click", async () => {
+      const btn = document.getElementById("btn-tmp-cleanup");
+      const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch("/api/system/cleanup", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        const mib = body.freed_mib != null ? body.freed_mib : 0;
+        const n = body.removed_n != null ? body.removed_n : 0;
+        const msg = tf(
+          "msg.tmp_cleanup_ok",
+          { mib: mib, n: n },
+          "Freed {mib} MiB · removed {n}"
+        );
+        toastSuccess(msg);
+        // live refresh: RAM + process RSS after free
+        void loadSystemInfo({ forceLive: true });
+      } catch (e) {
+        toastError(
+          tr("msg.tmp_cleanup_fail", "Cleanup failed") + ": " + (e.message || e)
+        );
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
     document.getElementById("btn-update-check")?.addEventListener("click", async () => {
       const btn = document.getElementById("btn-update-check");
