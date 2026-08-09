@@ -18369,7 +18369,7 @@
 
     /**
      * Power chart: compact single-column multi-unit Y rail.
-     * Each unit draws its own ticks at its scale height (spread, not stacked clumps).
+     * Even steps down the axis, cycling W → TH/s → J/T (premium ladder).
      */
     function powerChartYScaleOpts() {
       return {
@@ -18381,18 +18381,18 @@
             maxTicksLimit: 6,
             padding: 0,
           },
-          grid: { color: "rgba(42,53,68,0.5)" },
+          grid: { color: "rgba(42,53,68,0.35)" },
           border: { display: false },
           afterFit(scale) {
-            // numbers + rotated titles
-            scale.width = Math.max(scale.width || 0, 42);
+            // value column + tick notch + rotated titles
+            scale.width = Math.max(scale.width || 0, 44);
           },
         },
         y1: {
           display: false,
           position: "left",
           title: { display: false },
-          ticks: { display: false, maxTicksLimit: 5 },
+          ticks: { display: false, maxTicksLimit: 6 },
           grid: { drawOnChartArea: false },
           border: { display: false },
         },
@@ -18400,7 +18400,7 @@
           display: false,
           position: "left",
           title: { display: false },
-          ticks: { display: false, maxTicksLimit: 4 },
+          ticks: { display: false, maxTicksLimit: 6 },
           grid: { drawOnChartArea: false },
           border: { display: false },
         },
@@ -18420,9 +18420,17 @@
     }
 
     /**
-     * One narrow column: each scale places its values at its own Y pixels
-     * (spread over the full height). Collision filter keeps ≥minGap.
-     * Shared 0 at bottom; unit titles rotated −90°, multi-color.
+     * Premium ladder Y-rail (one column):
+     *
+     *   8000  W     -|
+     *    375  TH/s  -|
+     *     75  J/T   -|
+     *   6000  W     -|
+     *    …          -|
+     *      0        _|____
+     *
+     * Even vertical steps; unit cycles W → TH/s → J/T.
+     * Value = that unit's scale at this height (so height ≈ «this many W/TH/J»).
      */
     const powerCombinedAxisPlugin = {
       id: "powerCombinedAxis",
@@ -18436,45 +18444,69 @@
         if (y.options && y.options.display === false) return;
 
         const ctx = chart.ctx;
-        // priority when two labels would collide (higher first)
-        const cols = [
-          { scale: y, color: "#3ecf8e", unit: "W", key: "y", prio: 3 },
-          { scale: y1, color: "#c792ea", unit: "TH/s", key: "y1", prio: 2 },
-          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2", prio: 1 },
+        const catalog = [
+          { scale: y, color: "#3ecf8e", unit: "W", key: "y" },
+          { scale: y1, color: "#c792ea", unit: "TH/s", key: "y1" },
+          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2" },
         ].filter((c) => c.scale);
 
         const ds = (chart.data && chart.data.datasets) || [];
         const axisOn = (axisId) =>
           ds.some((d) => d && !d.hidden && (d.yAxisID || "y") === axisId);
-        const visible = cols.filter((c) => {
+        const units = catalog.filter((c) => {
           if (c.key === "y") return axisOn("y");
           if (c.key === "y1") return axisOn("y1");
           if (c.key === "y2") return axisOn("y2");
           return true;
         });
-        if (!visible.length) return;
+        if (!units.length) return;
 
-        const numX = area.left - 4;
-        const titleX = Math.max(8, area.left - 33);
-        const minGap = 13; // px between labels — avoids clumping
+        const h = area.bottom - area.top;
+        if (h < 40) return;
+
+        // even ladder: ~1 step per 22–26px, multiple of unit count for clean cycles
+        const stepPx = 24;
+        let nSteps = Math.max(units.length * 2, Math.floor(h / stepPx));
+        // keep full cycles of units + final shared 0
+        nSteps = Math.max(units.length, Math.floor(nSteps / units.length) * units.length);
+        // cap density on tall charts
+        nSteps = Math.min(nSteps, units.length * 4);
+
+        const padTop = 2;
+        const padBot = 2;
+        const usable = h - padTop - padBot;
+        // nSteps value rows + 1 zero row at bottom
+        const rows = nSteps; // 0..nSteps-1 values, then zero separately
+        const numX = area.left - 5;
+        const tickX0 = area.left - 1;
+        const tickX1 = area.left + 4;
+        const titleX = Math.max(7, area.left - 34);
 
         ctx.save();
         ctx.textBaseline = "middle";
 
-        // rotated unit titles (−90°), multi-color
+        // vertical rail
+        ctx.strokeStyle = "rgba(90, 110, 135, 0.4)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(area.left + 0.5, area.top);
+        ctx.lineTo(area.left + 0.5, area.bottom);
+        ctx.stroke();
+
+        // rotated multi-color unit titles (Chart.js style)
         {
           const midY = (area.top + area.bottom) / 2;
-          // title order reading bottom→top after rotate: J/T · TH/s · W
+          // draw so reading bottom→top after −90°: J/T · TH/s · W
           const titleOrder = [
-            visible.find((c) => c.key === "y2"),
-            visible.find((c) => c.key === "y1"),
-            visible.find((c) => c.key === "y"),
+            units.find((c) => c.key === "y2"),
+            units.find((c) => c.key === "y1"),
+            units.find((c) => c.key === "y"),
           ].filter(Boolean);
           ctx.font = "600 9px 'Segoe UI', system-ui, sans-serif";
           ctx.save();
           ctx.translate(titleX, midY);
           ctx.rotate(-Math.PI / 2);
-          const gap = 12;
+          const gap = 14;
           const parts = titleOrder.map((c) => ({
             c,
             w: ctx.measureText(c.unit).width,
@@ -18493,87 +18525,56 @@
           ctx.restore();
         }
 
-        // collect candidates from each scale at its own pixel height
-        const cand = [];
-        visible.forEach((c) => {
-          const ticks = (c.scale && c.scale.ticks) || [];
-          ticks.forEach((t) => {
-            const val = typeof t === "object" ? t.value : t;
-            if (val == null || !Number.isFinite(val)) return;
-            let py;
-            try {
-              py = c.scale.getPixelForValue(val);
-            } catch (_) {
-              return;
-            }
-            if (py < area.top - 2 || py > area.bottom + 2) return;
-            cand.push({
-              py,
-              val,
-              color: c.color,
-              unit: c.unit,
-              prio: c.prio,
-              key: c.key,
-              zero: Math.abs(val) < 0.51,
-            });
-          });
-        });
+        ctx.font =
+          "500 9px ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+        ctx.textAlign = "right";
 
-        // sort top→bottom, then resolve overlaps (keep higher prio)
-        cand.sort((a, b) => a.py - b.py || b.prio - a.prio);
-        const placed = [];
-        cand.forEach((it) => {
-          // shared 0: only one muted zero near bottom
-          if (it.zero) {
-            const nearZero = placed.some(
-              (p) => p.zero && Math.abs(p.py - it.py) < minGap
-            );
-            if (nearZero) return;
-            // prefer neutral common 0
-            it.color = "#8b9bb0";
-            it.val = 0;
+        // evenly spaced ladder rows (top → near bottom)
+        for (let i = 0; i < rows; i++) {
+          // t=0 at top, t=1 just above bottom zero
+          const t = rows <= 1 ? 0 : i / rows;
+          const py = area.top + padTop + t * usable;
+          const u = units[i % units.length];
+          let val = 0;
+          try {
+            val = u.scale.getValueForPixel(py);
+          } catch (_) {
+            continue;
           }
-          const clash = placed.find((p) => Math.abs(p.py - it.py) < minGap);
-          if (clash) {
-            if (it.prio > clash.prio) {
-              // replace weaker label
-              const idx = placed.indexOf(clash);
-              placed[idx] = it;
-            }
-            return;
-          }
-          placed.push(it);
-        });
-        placed.sort((a, b) => a.py - b.py);
+          if (val == null || !Number.isFinite(val)) continue;
+          // skip near-zero (zero drawn once at bottom)
+          if (Math.abs(val) < 0.51) continue;
 
-        // light vertical spread nudge if two remain almost equal (safety)
-        for (let i = 1; i < placed.length; i++) {
-          const gap = placed[i].py - placed[i - 1].py;
-          if (gap > 0 && gap < minGap) {
-            const need = minGap - gap;
-            placed[i].py += need * 0.55;
-            placed[i - 1].py -= need * 0.45;
-          }
+          // tick notch
+          ctx.strokeStyle = u.color;
+          ctx.globalAlpha = 0.55;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(tickX0, py);
+          ctx.lineTo(tickX1, py);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+
+          ctx.fillStyle = u.color;
+          ctx.fillText(
+            _fmtPowerAxisVal(val, u.unit === "W" ? "W" : u.unit),
+            numX,
+            py
+          );
         }
 
-        ctx.font = "9px 'Segoe UI', system-ui, sans-serif";
-        ctx.textAlign = "right";
-        placed.forEach((it) => {
-          if (it.py < area.top - 2 || it.py > area.bottom + 2) return;
-          ctx.fillStyle = it.color;
-          const txt = it.zero
-            ? "0"
-            : _fmtPowerAxisVal(it.val, it.unit === "W" ? "W" : it.unit);
-          ctx.fillText(txt, numX, it.py);
-        });
-
-        // thin rail
-        ctx.strokeStyle = "rgba(90, 110, 135, 0.35)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(area.left, area.top);
-        ctx.lineTo(area.left, area.bottom);
-        ctx.stroke();
+        // shared zero at bottom
+        {
+          const py = area.bottom;
+          ctx.strokeStyle = "rgba(139, 155, 176, 0.55)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(tickX0, py);
+          ctx.lineTo(tickX1, py);
+          ctx.stroke();
+          ctx.fillStyle = "#8b9bb0";
+          ctx.fillText("0", numX, py - 0.5);
+        }
 
         ctx.restore();
       },
@@ -19961,7 +19962,7 @@
         chartTemp = null;
       }
       // rebuild power chart when combined Y-axis layout is outdated
-      if (chartPower && chartPower.$combinedAxis !== 4) {
+      if (chartPower && chartPower.$combinedAxis !== 5) {
         try {
           chartPower.destroy();
         } catch (_) { /* ignore */ }
@@ -20103,7 +20104,7 @@
           plugins: [statusBandsPlugin, powerCombinedAxisPlugin],
         });
         chartPower.$chartKey = "power";
-        chartPower.$combinedAxis = 4;
+        chartPower.$combinedAxis = 5;
         applyChartDisplayOptions(chartPower, "power");
       }
     }
