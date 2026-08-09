@@ -3723,7 +3723,73 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
 #   desired_on            — last intended logical ON/OFF (local)
 # inverted: logical ON means physical OFF (and vice versa)
 
-DEFAULT_DEVICES_CFG: dict = {"version": 1, "devices": []}
+# Devices poller process (serve.py --devices-poller) — Advanced settings
+DEFAULT_DEVICES_POLLER: dict = {
+    "enabled": True,
+    # how often to re-check mining work + auto on/off
+    "interval_sec": 5,
+    # max wait for one device_set (hung Tapo/Shelly)
+    "set_timeout_sec": 15,
+    # after a failed auto action, skip that device for N seconds
+    "error_backoff_sec": 20,
+    # ignore mining_work.json older than this (policy/collector stopped?)
+    "mining_work_max_age_sec": 300,
+}
+
+DEFAULT_DEVICES_CFG: dict = {
+    "version": 1,
+    "poller": dict(DEFAULT_DEVICES_POLLER),
+    "devices": [],
+}
+
+
+def _normalize_devices_poller(raw: dict | None) -> dict:
+    out = dict(DEFAULT_DEVICES_POLLER)
+    if not isinstance(raw, dict):
+        return out
+    out["enabled"] = _as_bool(raw.get("enabled", True))
+    try:
+        out["interval_sec"] = max(3, min(120, int(raw.get("interval_sec", 5))))
+    except (TypeError, ValueError):
+        out["interval_sec"] = 5
+    try:
+        out["set_timeout_sec"] = max(3, min(60, int(raw.get("set_timeout_sec", 15))))
+    except (TypeError, ValueError):
+        out["set_timeout_sec"] = 15
+    try:
+        out["error_backoff_sec"] = max(
+            5, min(600, int(raw.get("error_backoff_sec", 20)))
+        )
+    except (TypeError, ValueError):
+        out["error_backoff_sec"] = 20
+    try:
+        out["mining_work_max_age_sec"] = max(
+            30, min(1800, int(raw.get("mining_work_max_age_sec", 300)))
+        )
+    except (TypeError, ValueError):
+        out["mining_work_max_age_sec"] = 300
+    return out
+
+
+def get_devices_poller_cfg() -> dict:
+    with _devices_cfg_lock:
+        p = _devices_cfg.get("poller")
+        if not isinstance(p, dict):
+            p = dict(DEFAULT_DEVICES_POLLER)
+        return _normalize_devices_poller(p)
+
+
+def apply_devices_poller_cfg(raw: dict | None) -> dict:
+    """Merge poller settings into devices_config.json and return normalized."""
+    pol = _normalize_devices_poller(raw if isinstance(raw, dict) else {})
+    with _devices_cfg_lock:
+        _devices_cfg["poller"] = pol
+        # keep devices list intact
+        if "devices" not in _devices_cfg:
+            _devices_cfg["devices"] = []
+        _devices_cfg["version"] = int(_devices_cfg.get("version") or 1)
+    _save_devices_cfg()
+    return dict(pol)
 
 # Telegram / system aliases that cannot be used as device bot commands
 DEVICE_ALIAS_RESERVED: frozenset[str] = frozenset(
@@ -3848,8 +3914,6 @@ _devices_sync_ts: dict[str, float] = {}
 _devices_suspend_off_deadline: dict[str, float] = {}
 _devices_poller_stop = threading.Event()
 _devices_poller_proc: subprocess.Popen | None = None
-# Max wait for a single device_set inside the poller (isolation from hung Tapo/etc.)
-_DEVICES_SET_TIMEOUT_SEC = 15.0
 
 
 def _device_alias_ok(alias: str) -> bool:
@@ -4073,7 +4137,10 @@ def _load_devices_cfg() -> None:
                 continue
             seen_alias.add(nd["alias"])
             clean.append(nd)
-        _devices_cfg = {"version": 1, "devices": clean}
+        poller = _normalize_devices_poller(
+            raw.get("poller") if isinstance(raw.get("poller"), dict) else None
+        )
+        _devices_cfg = {"version": 1, "poller": poller, "devices": clean}
 
 
 def _save_devices_cfg() -> None:
@@ -4110,6 +4177,7 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
                 d["xiaomi_token"] = ""
     return {
         "version": 1,
+        "poller": get_devices_poller_cfg(),
         "devices": devices,
         "backends": list_filtration_backends(),
         "reserved_aliases": sorted(DEVICE_ALIAS_RESERVED),
@@ -5208,13 +5276,19 @@ def _device_set_with_timeout(
     on: bool,
     *,
     source: str,
-    timeout: float = _DEVICES_SET_TIMEOUT_SEC,
+    timeout: float | None = None,
 ) -> dict:
     """device_set in a worker thread; raise on hang past timeout."""
+    if timeout is None:
+        try:
+            timeout = float(get_devices_poller_cfg().get("set_timeout_sec") or 15)
+        except Exception:
+            timeout = 15.0
+    timeout = max(3.0, min(60.0, float(timeout)))
     with ThreadPoolExecutor(max_workers=1) as ex:
         fut = ex.submit(device_set, did, on, source=source, force=True)
         try:
-            return fut.result(timeout=max(3.0, float(timeout)))
+            return fut.result(timeout=timeout)
         except FuturesTimeout as e:
             raise RuntimeError(
                 f"device_set timeout after {timeout:.0f}s (device may be hung)"
@@ -5257,7 +5331,13 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
         last_act = str(cfg.get("last_action") or "")
         if last_err and last_act.endswith("_fail"):
             last_try = float(_devices_sync_ts.get(did) or 0)
-            if now - last_try < 20.0:
+            try:
+                backoff = float(
+                    get_devices_poller_cfg().get("error_backoff_sec") or 20
+                )
+            except Exception:
+                backoff = 20.0
+            if now - last_try < max(5.0, backoff):
                 continue
         want: bool | None = None
         src = "auto"
@@ -5320,26 +5400,27 @@ def devices_poller_loop() -> None:
     _load_devices_deadlines()
     while not _devices_poller_stop.is_set():
         t0 = time.time()
+        pol = dict(DEFAULT_DEVICES_POLLER)
         try:
             # pick up UI/API config changes from main process
             _load_devices_cfg()
-            work = read_mining_work_snapshot(max_age_sec=300.0)
-            if work is None:
-                # fallback: in-process cache (same process only) or skip
-                work = _mining_work_state()
-            if work:
-                devices_sync_with_mining(work)
+            pol = get_devices_poller_cfg()
+            if not pol.get("enabled", True):
+                print("[devices-poller] disabled in config — idle", flush=True)
             else:
-                # still advance/clear deadlines file periodically
-                pass
+                max_age = float(pol.get("mining_work_max_age_sec") or 300)
+                work = read_mining_work_snapshot(max_age_sec=max_age)
+                if work is None:
+                    # fallback: in-process cache (same process only) or skip
+                    work = _mining_work_state()
+                if work:
+                    devices_sync_with_mining(work)
             _save_devices_deadlines()
         except Exception as e:
             print(f"[devices-poller] tick: {e}", flush=True)
-        # poll interval: reuse miner poll when available, clamp 3–30s
         try:
-            with _miner_cfg_lock:
-                interval = max(3, min(30, int(POLL_INTERVAL_SEC)))
-        except Exception:
+            interval = max(3, min(120, int(pol.get("interval_sec") or 5)))
+        except (TypeError, ValueError):
             interval = 5
         # account for tick duration so delay stays ~interval
         spent = time.time() - t0
@@ -9805,6 +9886,151 @@ def clear_miner_error_log() -> int:
     return n
 
 
+def history_sensor_series_meta() -> list[dict]:
+    """Sensors with history=true — appear on Temperatures °C chart."""
+    out: list[dict] = []
+    try:
+        sensors = list_sensors()
+    except Exception:
+        return out
+    for s in sensors:
+        if not s or not s.get("history"):
+            continue
+        if s.get("enabled", True) is False:
+            continue
+        alias = str(s.get("alias") or "").strip().lower()
+        if not alias or not _sensor_alias_ok(alias):
+            continue
+        unit = str(s.get("unit") or "°C").strip() or "°C"
+        # Temperatures °C chart: skip known non-temp units (rpm, V, W, …)
+        ul = unit.lower().replace(" ", "")
+        _non_temp = (
+            "rpm",
+            "volt",
+            "volts",
+            "watt",
+            "watts",
+            "kw",
+            "kwh",
+            "%",
+            "amp",
+            "amps",
+            "ma",
+            "th/s",
+            "ths",
+            "mhs",
+            "mh/s",
+        )
+        if ul in _non_temp or ul in ("v", "w", "a"):
+            continue
+        name = str(s.get("name") or alias)
+        name_en = str(s.get("name_en") or name or alias)
+        name_ru = str(s.get("name_ru") or name or alias)
+        # field key on history points (prefix avoids collision with liquid/env/…)
+        fid = f"s_{alias}"
+        out.append(
+            {
+                "id": fid,
+                "alias": alias,
+                "field": fid,
+                "label": name,
+                "label_en": name_en,
+                "label_ru": name_ru,
+                "unit": unit,
+                "group": "sensor",
+            }
+        )
+    return out
+
+
+def _merge_sensor_samples_into_points(
+    points: list[dict], since: float, until: float
+) -> list[dict]:
+    """Attach sensor_samples as s_<alias> on each history point (same ts preferred)."""
+    if not points:
+        return points
+    meta = history_sensor_series_meta()
+    aliases = [m["alias"] for m in meta if m.get("alias")]
+    if not aliases:
+        return points
+    # Load all sensor samples in range for these aliases
+    by_alias: dict[str, list[tuple[float, float]]] = {a: [] for a in aliases}
+    with _db_lock:
+        conn = _db_connect()
+        try:
+            # table may be empty / missing on very old DBs
+            try:
+                ph = ",".join("?" * len(aliases))
+                cur = conn.execute(
+                    f"""
+                    SELECT ts, alias, value FROM sensor_samples
+                    WHERE ts >= ? AND ts <= ? AND alias IN ({ph})
+                    ORDER BY ts ASC
+                    """,
+                    (since, until, *aliases),
+                )
+                for row in cur.fetchall():
+                    a = str(row["alias"] or "").strip().lower()
+                    if a not in by_alias:
+                        continue
+                    try:
+                        ts = float(row["ts"])
+                        v = float(row["value"])
+                    except (TypeError, ValueError):
+                        continue
+                    if not math.isfinite(ts) or not math.isfinite(v):
+                        continue
+                    by_alias[a].append((ts, v))
+            except Exception:
+                return points
+        finally:
+            conn.close()
+
+    # index for exact ts match, plus nearest-left fallback within half interval
+    exact: dict[str, dict[float, float]] = {
+        a: {ts: v for ts, v in series} for a, series in by_alias.items()
+    }
+    sorted_series: dict[str, list[tuple[float, float]]] = {
+        a: list(series) for a, series in by_alias.items()
+    }
+
+    def _lookup(alias: str, ts: float) -> float | None:
+        ex = exact.get(alias) or {}
+        # exact (float keys can be picky — match within 0.05s)
+        if ts in ex:
+            return ex[ts]
+        for k, v in ex.items():
+            if abs(k - ts) < 0.05:
+                return v
+        # nearest sample not after ts, gap ≤ 2× typical interval (90s)
+        series = sorted_series.get(alias) or []
+        if not series:
+            return None
+        best = None
+        best_dt = 1e18
+        for sts, sv in series:
+            dt = ts - sts
+            if dt < -0.05:
+                break
+            if dt < best_dt:
+                best_dt = dt
+                best = sv
+        if best is not None and best_dt <= 90.0:
+            return best
+        return None
+
+    for p in points:
+        try:
+            pts = float(p.get("ts"))
+        except (TypeError, ValueError):
+            continue
+        for a in aliases:
+            v = _lookup(a, pts)
+            if v is not None:
+                p[f"s_{a}"] = v
+    return points
+
+
 def query_history(
     hours: float | None = None,
     since: float | None = None,
@@ -9829,6 +10055,7 @@ def query_history(
             )
             total = int(cur.fetchone()["c"])
             if total == 0:
+                # still return empty — sensor-only ranges not supported for brush sync
                 return []
 
             cur = conn.execute(
@@ -9842,9 +10069,15 @@ def query_history(
             all_rows = cur.fetchall()
             stride = max(1, (len(all_rows) + max_points - 1) // max_points)
             rows = all_rows[::stride][:max_points]
-            return [dict(r) for r in rows]
+            points = [dict(r) for r in rows]
         finally:
             conn.close()
+
+    try:
+        points = _merge_sensor_samples_into_points(points, float(since), float(until))
+    except Exception as e:
+        print(f"[history] merge sensor samples: {e}", flush=True)
+    return points
 
 
 def history_stats() -> dict:
@@ -24389,6 +24622,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/devices", "/api/devices/list", "/api/devices/config"):
             self._api_devices_get()
             return
+        if path in ("/api/devices/poller", "/api/devices/poller/config"):
+            self._api_devices_poller_get()
+            return
         if path in ("/api/devices/meta", "/api/devices/catalog"):
             cfg = get_devices_cfg(redact=True)
             self._json_response(
@@ -24398,6 +24634,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "backends": cfg.get("backends") or list_filtration_backends(),
                     "reserved_aliases": cfg.get("reserved_aliases") or [],
                     "icons": cfg.get("icons") or list(DEVICE_ICON_DEFAULTS),
+                    "poller": cfg.get("poller") or get_devices_poller_cfg(),
                 },
             )
             return
@@ -24731,6 +24968,9 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/devices", "/api/devices/save", "/api/devices/config"):
             self._api_devices_post()
+            return
+        if path in ("/api/devices/poller", "/api/devices/poller/config"):
+            self._api_devices_poller_post()
             return
         if path in ("/api/devices/delete", "/api/devices/remove"):
             self._api_devices_delete()
@@ -25409,6 +25649,10 @@ class Handler(SimpleHTTPRequestHandler):
             )
             with _hist_cfg_lock:
                 cfg = dict(_hist_cfg)
+            try:
+                sensor_series = history_sensor_series_meta()
+            except Exception:
+                sensor_series = []
             self._json_response(
                 200,
                 {
@@ -25417,6 +25661,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "config": cfg,
                     "stats": history_stats(),
                     "points": points,
+                    # Peripherals → Sensors with history=true (for Temperatures °C chart)
+                    "sensor_series": sensor_series,
                 },
             )
         except Exception as e:
@@ -25609,6 +25855,42 @@ class Handler(SimpleHTTPRequestHandler):
                     "values": evaluate_all_sensors(),
                 },
             )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_devices_poller_get(self) -> None:
+        try:
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "poller": get_devices_poller_cfg(),
+                    "defaults": dict(DEFAULT_DEVICES_POLLER),
+                    "running": bool(
+                        _devices_poller_proc is not None
+                        and _devices_poller_proc.poll() is None
+                    )
+                    or (
+                        DEVICES_POLLER_PIDFILE.is_file()
+                        and bool(
+                            (DEVICES_POLLER_PIDFILE.read_text(encoding="utf-8") or "")
+                            .strip()
+                            .isdigit()
+                        )
+                    ),
+                },
+            )
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
+    def _api_devices_poller_post(self) -> None:
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            body = req.get("poller") if isinstance(req.get("poller"), dict) else req
+            pol = apply_devices_poller_cfg(body)
+            self._json_response(200, {"ok": True, "poller": pol})
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
