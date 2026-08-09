@@ -18411,9 +18411,73 @@
       return SENSOR_SERIES_COLORS[(h + (idx || 0)) % SENSOR_SERIES_COLORS.length];
     }
 
-    /** Built-in + history-enabled user sensors (for gear list + chart). */
+    function tempSeriesHistField(s) {
+      if (!s) return "";
+      return String(s.field || s.id || "");
+    }
+
+    /** True if loaded history has at least one finite sample for field. */
+    function histHasNumericField(field) {
+      const f = String(field || "");
+      if (!f || !histPoints || !histPoints.length) return false;
+      for (let i = 0; i < histPoints.length; i++) {
+        const p = histPoints[i];
+        if (!p) continue;
+        const v = p[f];
+        if (v != null && v !== "" && Number.isFinite(Number(v))) return true;
+      }
+      return false;
+    }
+
+    /** Live temps catalog / top-level live fields (fallback before history loads). */
+    function liveTempFieldAvailable(id) {
+      const sid = String(id || "");
+      if (!sid) return false;
+      try {
+        if (typeof live === "undefined" || !live) return false;
+        if (live[sid] != null && Number.isFinite(Number(live[sid]))) return true;
+        const temps = live.temps;
+        if (Array.isArray(temps)) {
+          const hit = temps.find((x) => x && String(x.id) === sid);
+          if (
+            hit &&
+            hit.available !== false &&
+            hit.value != null &&
+            Number.isFinite(Number(hit.value))
+          ) {
+            return true;
+          }
+        }
+      } catch (_) { /* ignore */ }
+      return false;
+    }
+
+    /**
+     * Built-in miner series that exist in history (or live, if history empty).
+     * Hides inlet/outlet and other unused series from settings + legend.
+     */
+    function availableMinerTempSeries() {
+      if (!histPoints || !histPoints.length) {
+        // no history yet: keep common series; hide rare optionals without live data
+        return TEMP_CHART_SERIES.filter((s) => {
+          if (!s) return false;
+          if (s.id === "inlet" || s.id === "outlet") {
+            return (
+              histHasNumericField(tempSeriesHistField(s)) ||
+              liveTempFieldAvailable(s.id)
+            );
+          }
+          return true;
+        });
+      }
+      return TEMP_CHART_SERIES.filter((s) =>
+        histHasNumericField(tempSeriesHistField(s))
+      );
+    }
+
+    /** Built-in (history-present) + history-enabled user sensors. */
     function allTempChartSeries() {
-      return TEMP_CHART_SERIES.concat(TEMP_SENSOR_SERIES || []);
+      return availableMinerTempSeries().concat(TEMP_SENSOR_SERIES || []);
     }
 
     /**
@@ -19265,15 +19329,17 @@
       (TEMP_SENSOR_SERIES || []).forEach((s) => {
         if (s && s.id) sensorDefaults[s.id] = true;
       });
+      // only series present in loaded history (inlet/outlet hidden if never sampled)
+      const seriesAvail = allTempChartSeries();
       return {
         kind: "temps",
-        series: allTempChartSeries(),
+        series: seriesAvail,
         defaultOn: Object.assign({}, TEMP_CHART_SERIES_DEFAULT_ON, sensorDefaults),
         getVis: getTempChartSeriesVis,
         titleKey: "dash.chart_temps_settings",
         title: "Temperature series",
         subKey: "dash.chart_temps_settings_sub",
-        sub: "Miner temps plus Peripherals sensors with History on.",
+        sub: "Miner temps plus Peripherals sensors with History on. Empty history series are hidden.",
         hasBands: true,
       };
     }
@@ -19345,6 +19411,15 @@
               );
               next[s.id] = !!(inp && inp.checked);
             });
+            // keep prior prefs for series not listed (e.g. inlet when no history)
+            if (k === "temps") {
+              const prev = getTempChartSeriesVis();
+              TEMP_CHART_SERIES.forEach((s) => {
+                if (s && s.id && next[s.id] === undefined && prev[s.id] != null) {
+                  next[s.id] = prev[s.id];
+                }
+              });
+            }
             if (!Object.keys(next).some((key) => next[key])) {
               if (typeof toastError === "function") {
                 toastError(
