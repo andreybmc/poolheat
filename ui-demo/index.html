@@ -3,7 +3,37 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GoraPool · Keenetic</title>
+  <title>poolheat_WM · Keenetic</title>
+  <script>
+    /* Tab title ASAP: project name from Info cache, else program name */
+    (function () {
+      var APP = "poolheat_WM";
+      try {
+        var raw = localStorage.getItem("poolheat_wm_info_cache");
+        var d = raw ? JSON.parse(raw) : null;
+        var pname =
+          (d && (d.project_name || (d.poolheat && d.poolheat.project_name))) ||
+          (d && d.body && d.body.poolheat && d.body.poolheat.project_name) ||
+          "";
+        pname = String(pname || "").trim() || APP;
+        var right = "Keenetic";
+        if (d && d.router) {
+          var code = String(d.router.model_code || "").trim();
+          var rawM = String(d.router.model || d.router.device_tree_model || "");
+          var kn = code.match(/^KN-/i)
+            ? code
+            : (rawM.match(/KN-[0-9A-Za-z]+/i) || [])[0];
+          if (kn) right = "Keenetic " + String(kn).toUpperCase();
+        } else if (d && d.brandText) {
+          var bt = String(d.brandText).split(/\s*·\s*/)[0].trim();
+          if (bt && !/whatsminer/i.test(bt)) right = bt;
+        }
+        document.title = pname + " · " + right;
+      } catch (_) {
+        document.title = APP + " · Keenetic";
+      }
+    })();
+  </script>
   <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png?v=6" />
   <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png?v=6" />
   <link rel="icon" type="image/png" sizes="48x48" href="/icons/favicon-48.png?v=6" />
@@ -13,7 +43,7 @@
   <link rel="apple-touch-icon" sizes="192x192" href="/icons/app-icon-192.png?v=6" />
   <link rel="apple-touch-icon" sizes="512x512" href="/icons/app-icon-512.png?v=6" />
   <meta name="theme-color" content="#0f1a2b" />
-  <meta name="application-name" content="PoolHeat" />
+  <meta name="application-name" content="poolheat_WM" />
   <style>
     :root {
       --bg: #0b0f14;
@@ -4860,7 +4890,7 @@
                   if (h1) h1.textContent = pname;
                 }
                 try {
-                  var titleLeft = pname || "GoraPool";
+                  var titleLeft = pname || "poolheat_WM";
                   var titleRight = kn
                     ? "Keenetic " + kn
                     : (document.getElementById("brand-devices") &&
@@ -22034,13 +22064,15 @@
     }
     function updateDocumentTitle(router, projectName) {
       try {
+        const APP_NAME = "poolheat_WM";
         const pname =
           String(
             projectName ||
               (document.querySelector(".brand h1") &&
                 document.querySelector(".brand h1").textContent) ||
-              "GoraPool"
-          ).trim() || "GoraPool";
+              APP_NAME
+          ).trim() || APP_NAME;
+        // never leave a hard-coded product alias (old "GoraPool") in the tab
         let right = "Keenetic";
         if (router && typeof router === "object") {
           const code = String(router.model_code || "").trim();
