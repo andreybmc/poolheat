@@ -692,16 +692,18 @@
     .energy-chart-toolbar .energy-chart-field {
       gap: 0;
     }
-    /* icon-only refresh — charts + action log headers */
+    /* icon-only / uniform toolbar buttons — charts + action log headers */
     .energy-chart-toolbar .energy-chart-refresh,
     .chart-header-toolbar .energy-chart-refresh,
     .card-h .energy-chart-refresh,
-    .btn-row .energy-chart-refresh {
+    .btn-row .energy-chart-refresh,
+    .card-h .btn-icon,
+    .btn-row .btn-icon {
       flex: 0 0 auto;
       align-self: center;
-      width: 28px;
-      min-width: 28px;
-      height: 28px;
+      width: 32px;
+      min-width: 32px;
+      height: 32px;
       padding: 0;
       display: inline-flex;
       align-items: center;
@@ -710,20 +712,54 @@
       border-radius: 8px;
       border: 1px solid var(--border2);
       background: var(--panel2);
+      box-sizing: border-box;
     }
     .energy-chart-toolbar .energy-chart-refresh:hover,
     .chart-header-toolbar .energy-chart-refresh:hover,
     .card-h .energy-chart-refresh:hover,
-    .btn-row .energy-chart-refresh:hover {
+    .btn-row .energy-chart-refresh:hover,
+    .card-h .btn-icon:hover,
+    .btn-row .btn-icon:hover {
       border-color: var(--accent);
+    }
+    .card-h .btn-icon.danger,
+    .btn-row .btn-icon.danger {
+      color: var(--danger, #f07178);
+      border-color: rgba(240, 113, 120, 0.45);
+      background: rgba(240, 113, 120, 0.08);
+    }
+    .card-h .btn-icon.danger:hover,
+    .btn-row .btn-icon.danger:hover {
+      border-color: var(--danger, #f07178);
+      background: rgba(240, 113, 120, 0.16);
     }
     .energy-chart-toolbar .energy-chart-refresh .ico-refresh,
     .chart-header-toolbar .energy-chart-refresh .ico-refresh,
     .card-h .energy-chart-refresh .ico-refresh,
-    .btn-row .energy-chart-refresh .ico-refresh {
+    .btn-row .energy-chart-refresh .ico-refresh,
+    .card-h .btn-icon .ico,
+    .btn-row .btn-icon .ico {
       font-size: 0.95rem;
       line-height: 1;
       display: block;
+    }
+    /* text buttons in same toolbar row: match icon height */
+    .card-h .btn-row > .btn:not(.energy-chart-refresh):not(.btn-icon),
+    .action-log-toolbar > .btn:not(.energy-chart-refresh):not(.btn-icon) {
+      height: 32px;
+      min-height: 32px;
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      line-height: 1.1;
+      font-size: 0.78rem;
+    }
+    .action-log-toolbar {
+      gap: 8px !important;
+      align-items: center;
+      margin-top: 0;
     }
     #panel-chart-energy-dash > .card-h {
       flex-wrap: nowrap;
@@ -8351,8 +8387,18 @@
               <h2 data-i18n="h2.action_log">Action log</h2>
               <div class="sub" data-i18n="sub.action_log">policy events · last write · live</div>
             </div>
-            <div class="btn-row" style="gap:8px">
-              <button class="btn danger ghost" type="button" id="btn-clear-log" data-i18n="btn.clear_log">Clear</button>
+            <div class="btn-row action-log-toolbar">
+              <button
+                class="btn btn-icon danger"
+                type="button"
+                id="btn-clear-log"
+                title="Clear"
+                aria-label="Clear"
+                data-i18n-title="btn.clear_log"
+                data-i18n-aria="btn.clear_log"
+              >
+                <span class="ico ico-clear" aria-hidden="true">🗑</span>
+              </button>
               <button
                 class="btn energy-chart-refresh"
                 type="button"
