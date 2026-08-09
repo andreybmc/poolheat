@@ -4979,8 +4979,9 @@ def _device_enforce_desired(
         return None
     _devices_enforce_ts[did] = now
     alias = str(cfg.get("alias") or did)
+    # Event log is English (same as policy log)
     name = (
-        str(cfg.get("name_ru") or cfg.get("name") or cfg.get("name_en") or alias)
+        str(cfg.get("name_en") or cfg.get("name") or cfg.get("name_ru") or alias)
         .strip()
         or alias
     )
@@ -5003,12 +5004,12 @@ def _device_enforce_desired(
             )
         # event log (UI Events) when restore actually ran
         if isinstance(res, dict) and res.get("ok") and not res.get("skipped"):
-            want_s = "вкл" if want_on else "выкл"
-            was_s = "вкл" if was_on else "выкл"
+            want_s = "ON" if want_on else "OFF"
+            was_s = "ON" if was_on else "OFF"
             _devices_event_log(
                 "device",
-                f"{name}: восстановлено {want_s} "
-                f"(было {was_s}, внешнее изменение)",
+                f"{name}: restored {want_s} "
+                f"(was {was_s}, external change)",
                 source="enforce_desired",
                 device_id=did,
                 alias=alias,
@@ -5020,8 +5021,8 @@ def _device_enforce_desired(
         print(f"[devices] enforce desired {alias}: {e}", flush=True)
         _devices_event_log(
             "err",
-            f"{name}: не удалось восстановить "
-            f"{'вкл' if want_on else 'выкл'}: {e}",
+            f"{name}: failed to restore "
+            f"{'ON' if want_on else 'OFF'}: {e}",
             source="enforce_desired",
             device_id=did,
             alias=alias,

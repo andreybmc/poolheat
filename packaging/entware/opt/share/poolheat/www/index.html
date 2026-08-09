@@ -2844,19 +2844,19 @@
     }
 
     /*
-     * Left accent stripe: sit under the 1px border (left/top/bottom -1px)
-     * so the card outline never peeks as a dark hairline beside the ribbon
-     * (weather widget made this obvious on blue gradients).
+     * Left accent ribbon — identical on every dash temp-card (Power is the reference):
+     * 4px, fully inside the border box, clipped by overflow + border-radius.
+     * Never left: -1px / width: 5px (that made weather stick out under the stripe).
      */
     .temp-card::before {
       content: "";
       position: absolute;
-      left: -1px;
-      top: -1px;
-      bottom: -1px;
-      width: 5px; /* 4px visible + 1px under border */
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
       background: var(--dim);
-      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      border-radius: 0;
       z-index: 2;
       pointer-events: none;
     }
@@ -2871,9 +2871,13 @@
         var(--ok) 100%
       );
     }
-    /* outdoor weather: same left stripe as Power / T_ctrl / etc. */
+    /* outdoor weather: same 4px ribbon geometry as Power */
     .temp-card.outdoor::before {
       display: block;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
       background: linear-gradient(180deg, #7ec8f5 0%, #3d9cf0 45%, #1a6bb5 100%);
     }
 
@@ -2884,12 +2888,13 @@
       flex-direction: column;
       gap: 6px;
       min-height: 0;
-      /* match other temp-cards (14px) — was 14/14/12 and looked slightly taller */
       padding: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      /* same outline as other temp-cards — no custom border that shifts the box */
+      border: 1px solid var(--border);
       background:
         radial-gradient(ellipse 90% 80% at 85% 15%, rgba(255, 220, 120, 0.22), transparent 55%),
         linear-gradient(155deg, #1a4a7a 0%, #2a6aa8 42%, #3d8fd4 100%);
+      background-clip: padding-box;
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
       transition: background 0.45s ease, box-shadow 0.3s ease;
       overflow: hidden;
@@ -3156,8 +3161,7 @@
     }
 
     .temp-card.board-chip::before {
-      /* Boards (alum, top) → Chips (silicon, bottom) — same 4px as other widgets */
-      width: 4px;
+      /* Boards (alum, top) → Chips (silicon, bottom) — geometry from .temp-card::before */
       background: linear-gradient(
         180deg,
         var(--alum) 0%,
@@ -3607,7 +3611,6 @@
     }
     /* Heat loss — warm amber/orange left bookmark gradient */
     .temp-card.heat-loss::before {
-      width: 4px;
       background: linear-gradient(
         180deg,
         #f0c14a 0%,
@@ -3743,7 +3746,6 @@
     }
     /* Heat / cool-down — left bookmark gradient (neutral / heating / cooling) */
     .temp-card.heat-balance::before {
-      width: 4px;
       background: linear-gradient(
         180deg,
         #6bb8f0 0%,
