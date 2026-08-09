@@ -297,6 +297,8 @@ POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 # Peripherals → Devices (Tapo / webhook / … actuators)
 DEVICES_CFG_FILE = DATA / "devices_config.json"
+# Runtime Device Shadow (reported/desired/online/power) — NOT settings
+DEVICES_STATE_FILE = DATA / "devices_state.json"
 # Shared mining work snapshot for devices poller process (policy/collector write)
 MINING_WORK_FILE = DATA / "mining_work.json"
 # Suspend→OFF deadlines for devices poller (process-local file, survives reloads)
@@ -3750,13 +3752,42 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
 #                                if mining resumes within the window, OFF is cancelled
 #   allow_off_while_mining — manual OFF while mining allowed
 #   allow_on_while_suspend — manual ON while suspend allowed
-# State model (AWS Device Shadow–style):
+# State model (AWS Device Shadow–style) — live in devices_state.json, NOT config:
 #   desired_on            — commanded / target logical ON/OFF (what poolheat wants)
 #   last_on / reported_on — last observed logical ON/OFF from the device
 #   online                — last status probe reached the device
+#   last_error / last_ok_ts / last_action / last_power — diagnostics
+# Config (devices_config.json) only: credentials, flags, poller.
 #   enforce_desired       — ON: if reported ≠ desired → re-apply desired
 #                           OFF: desired tracks reported (accept external app toggles)
 # inverted: logical ON means physical OFF (and vice versa)
+
+# Runtime keys — never persisted into devices_config.json
+DEVICE_RUNTIME_KEYS: frozenset[str] = frozenset(
+    {
+        "last_on",
+        "desired_on",
+        "online",
+        "last_error",
+        "last_ok_ts",
+        "last_action",
+        "last_power",
+        "last_power_ts",
+        # API-only aliases (never stored)
+        "reported_on",
+        "desired",
+        "reported",
+        "auto_off_suspend_in_sec",
+        "auto_off_suspend_pending",
+        "password_set",
+        "ha_token_set",
+        "tuya_local_key_set",
+        "xiaomi_token_set",
+        "mining",
+        "can_turn_off",
+        "can_turn_on",
+    }
+)
 
 # Devices poller process (serve.py --devices-poller) — Advanced settings
 DEFAULT_DEVICES_POLLER: dict = {
@@ -3948,12 +3979,139 @@ _devices_cfg: dict = {
     "poller": dict(DEFAULT_DEVICES_POLLER),
     "devices": [],
 }
+# Runtime shadow by device id (devices_state.json) — poller writes here only
+_devices_state: dict[str, dict] = {}
 # per-device last-try throttle for auto-sync after errors
 _devices_sync_ts: dict[str, float] = {}
 # Pending Auto Off after Suspend: did → unix deadline (cancel if Resume before)
 _devices_suspend_off_deadline: dict[str, float] = {}
 _devices_poller_stop = threading.Event()
 _devices_poller_proc: subprocess.Popen | None = None
+
+
+def _device_runtime_defaults() -> dict:
+    return {
+        "last_on": None,
+        "desired_on": None,
+        "online": None,
+        "last_error": None,
+        "last_ok_ts": None,
+        "last_action": None,
+        "last_power": None,
+        "last_power_ts": None,
+    }
+
+
+def _extract_device_runtime(raw: dict | None) -> dict:
+    """Pull runtime fields from a mixed dict (legacy config or API body)."""
+    out = _device_runtime_defaults()
+    if not isinstance(raw, dict):
+        return out
+    for k in (
+        "last_on",
+        "desired_on",
+        "online",
+        "last_error",
+        "last_ok_ts",
+        "last_action",
+        "last_power",
+        "last_power_ts",
+    ):
+        if k not in raw:
+            continue
+        if k == "last_power":
+            out[k] = (
+                _normalize_power_metrics(raw.get("last_power"))
+                if isinstance(raw.get("last_power"), dict)
+                else None
+            )
+        elif k in ("last_on", "desired_on", "online"):
+            v = raw.get(k)
+            out[k] = None if v is None else _as_bool(v)
+        else:
+            out[k] = raw.get(k)
+    return out
+
+
+def _strip_device_runtime(d: dict) -> dict:
+    """Config-only device dict (no shadow / diagnostics)."""
+    if not isinstance(d, dict):
+        return {}
+    return {k: v for k, v in d.items() if k not in DEVICE_RUNTIME_KEYS}
+
+
+def _merge_device_runtime(cfg: dict, st: dict | None) -> dict:
+    """Config + runtime for API / policy (copy)."""
+    out = dict(cfg)
+    base = _device_runtime_defaults()
+    if isinstance(st, dict):
+        for k, v in st.items():
+            if k in base or k in (
+                "last_on",
+                "desired_on",
+                "online",
+                "last_error",
+                "last_ok_ts",
+                "last_action",
+                "last_power",
+                "last_power_ts",
+            ):
+                base[k] = v
+    out.update(base)
+    return out
+
+
+def _save_json_atomic(path: Path, data: dict) -> None:
+    """Write JSON via temp + replace (safe for concurrent readers)."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(data, indent=2, ensure_ascii=False)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        print(f"[json] atomic save {path.name}: {e}", flush=True)
+
+
+def _load_devices_state() -> None:
+    """Load devices_state.json into _devices_state (call under _devices_cfg_lock)."""
+    global _devices_state
+    raw = _load_json(DEVICES_STATE_FILE, {"version": 1, "by_id": {}})
+    by_id: dict = {}
+    if isinstance(raw, dict):
+        if isinstance(raw.get("by_id"), dict):
+            by_id = raw["by_id"]
+        elif isinstance(raw.get("devices"), dict):
+            by_id = raw["devices"]
+        elif isinstance(raw.get("devices"), list):
+            for d in raw["devices"]:
+                if isinstance(d, dict) and d.get("id"):
+                    by_id[str(d["id"])] = d
+    clean: dict[str, dict] = {}
+    for did, st in by_id.items():
+        if not did or not isinstance(st, dict):
+            continue
+        clean[str(did)] = _extract_device_runtime(st)
+    _devices_state = clean
+
+
+def _save_devices_state() -> None:
+    """Persist runtime shadow only (poller-safe; does not touch config)."""
+    with _devices_cfg_lock:
+        payload = {
+            "version": 1,
+            "by_id": {
+                did: _extract_device_runtime(st)
+                for did, st in (_devices_state or {}).items()
+                if did
+            },
+        }
+        _save_json_atomic(DEVICES_STATE_FILE, payload)
+
+
+def _device_state_get(did: str) -> dict:
+    with _devices_cfg_lock:
+        return dict(_devices_state.get(str(did) or "") or _device_runtime_defaults())
 
 
 def _device_alias_ok(alias: str) -> bool:
@@ -4219,7 +4377,7 @@ def _device_from_filtration_cfg(filtr: dict | None) -> dict | None:
 
 
 def _load_devices_cfg() -> None:
-    global _devices_cfg
+    global _devices_cfg, _devices_state
     with _devices_cfg_lock:
         raw = _load_json(DEVICES_CFG_FILE, DEFAULT_DEVICES_CFG)
         if not isinstance(raw, dict):
@@ -4227,17 +4385,43 @@ def _load_devices_cfg() -> None:
         devices_in = raw.get("devices") if isinstance(raw.get("devices"), list) else []
         clean: list[dict] = []
         seen_alias: set[str] = set()
+        # runtime lifted out of legacy config blobs
+        lifted: dict[str, dict] = {}
+        had_runtime_in_config = False
         for d in devices_in:
+            if not isinstance(d, dict):
+                continue
+            rt = _extract_device_runtime(d)
+            if any(
+                rt.get(k) is not None
+                for k in (
+                    "last_on",
+                    "desired_on",
+                    "online",
+                    "last_error",
+                    "last_ok_ts",
+                    "last_action",
+                    "last_power",
+                    "last_power_ts",
+                )
+            ):
+                had_runtime_in_config = True
             nd = _normalize_device(d)
             if not nd:
                 continue
             if nd["alias"] in seen_alias:
                 continue
             seen_alias.add(nd["alias"])
-            clean.append(nd)
+            did = str(nd.get("id") or "")
+            if did:
+                lifted[did] = rt
+            # config row: no shadow fields
+            clean.append(_strip_device_runtime(nd))
         # auto-heal: empty multi-device list but legacy filtration outlet present
+        # Only when config file is missing/empty — never after a corrupt wipe of multi-device
         migrated = False
-        if not clean:
+        cfg_missing = not DEVICES_CFG_FILE.is_file()
+        if not clean and cfg_missing:
             try:
                 filtr = _load_json(FILTRATION_CFG_FILE, {})
             except Exception:
@@ -4246,7 +4430,11 @@ def _load_devices_cfg() -> None:
                 filtr if isinstance(filtr, dict) else None
             )
             if mig and mig["alias"] not in seen_alias:
-                clean.append(mig)
+                rt = _extract_device_runtime(mig)
+                mig_cfg = _strip_device_runtime(mig)
+                clean.append(mig_cfg)
+                if mig_cfg.get("id"):
+                    lifted[str(mig_cfg["id"])] = rt
                 migrated = True
                 print(
                     f"[devices] migrated legacy filtration → device "
@@ -4257,16 +4445,47 @@ def _load_devices_cfg() -> None:
             raw.get("poller") if isinstance(raw.get("poller"), dict) else None
         )
         _devices_cfg = {"version": 1, "poller": poller, "devices": clean}
-        if migrated:
+        # load state file, then overlay anything still stuck in old config
+        _load_devices_state()
+        for did, rt in lifted.items():
+            prev = _devices_state.get(did) or _device_runtime_defaults()
+            # prefer existing state file values when set; fill gaps from config lift
+            merged = dict(prev)
+            for k, v in rt.items():
+                if v is not None and merged.get(k) is None:
+                    merged[k] = v
+            _devices_state[did] = _extract_device_runtime(merged)
+        if migrated or had_runtime_in_config:
             try:
-                _save_json(DEVICES_CFG_FILE, dict(_devices_cfg))
+                # rewrite config without runtime; persist state
+                payload = {
+                    "version": 1,
+                    "poller": poller,
+                    "devices": [_strip_device_runtime(d) for d in clean],
+                }
+                _save_json_atomic(DEVICES_CFG_FILE, payload)
+                _save_json_atomic(
+                    DEVICES_STATE_FILE,
+                    {
+                        "version": 1,
+                        "by_id": {
+                            did: _extract_device_runtime(st)
+                            for did, st in _devices_state.items()
+                        },
+                    },
+                )
+                if had_runtime_in_config:
+                    print(
+                        "[devices] migrated runtime fields → devices_state.json",
+                        flush=True,
+                    )
             except Exception as e:
                 print(f"[devices] migrate save: {e}", flush=True)
 
 
 def _save_devices_cfg() -> None:
     """
-    Persist devices_config.json.
+    Persist devices_config.json (settings only — no shadow/status).
     Guard: never overwrite a non-empty on-disk device list with an empty
     in-memory list (protects against race / partial load wipe).
     """
@@ -4294,32 +4513,59 @@ def _save_devices_cfg() -> None:
                         if not nd or nd["alias"] in seen:
                             continue
                         seen.add(nd["alias"])
-                        clean.append(nd)
+                        clean.append(_strip_device_runtime(nd))
                     if clean:
                         _devices_cfg["devices"] = clean
                         return
             except Exception as e:
                 print(f"[devices] save guard: {e}", flush=True)
-        _save_json(DEVICES_CFG_FILE, dict(_devices_cfg))
+        # never write runtime into config
+        payload = {
+            "version": int(_devices_cfg.get("version") or 1),
+            "poller": _normalize_devices_poller(
+                _devices_cfg.get("poller")
+                if isinstance(_devices_cfg.get("poller"), dict)
+                else None
+            ),
+            "devices": [
+                _strip_device_runtime(d)
+                for d in (_devices_cfg.get("devices") or [])
+                if isinstance(d, dict)
+            ],
+        }
+        _devices_cfg["devices"] = payload["devices"]
+        _devices_cfg["poller"] = payload["poller"]
+        _save_json_atomic(DEVICES_CFG_FILE, payload)
 
 
 def get_devices_cfg(*, redact: bool = True) -> dict:
     with _devices_cfg_lock:
-        devices = json.loads(json.dumps(_devices_cfg.get("devices") or []))
-    # live countdown for Auto Off after Suspend (not persisted)
-    for d in devices:
+        # pick up shadow updates written by devices-poller process
+        try:
+            _load_devices_state()
+        except Exception:
+            pass
+        devices_cfg = json.loads(json.dumps(_devices_cfg.get("devices") or []))
+        state_snap = {
+            did: dict(st) for did, st in (_devices_state or {}).items()
+        }
+    devices: list[dict] = []
+    for d in devices_cfg:
         did = str(d.get("id") or "")
+        st = state_snap.get(did) or {}
+        row = _merge_device_runtime(d, st)
         rem = _device_suspend_off_remaining(did) if did else None
         if rem is not None:
-            d["auto_off_suspend_in_sec"] = rem
-            d["auto_off_suspend_pending"] = True
+            row["auto_off_suspend_in_sec"] = rem
+            row["auto_off_suspend_pending"] = True
         else:
-            d["auto_off_suspend_in_sec"] = None
-            d["auto_off_suspend_pending"] = False
+            row["auto_off_suspend_in_sec"] = None
+            row["auto_off_suspend_pending"] = False
         # Device Shadow aliases for UI / API clarity
-        d["reported_on"] = d.get("last_on")
-        d["desired"] = d.get("desired_on")
-        d["reported"] = d.get("last_on")
+        row["reported_on"] = row.get("last_on")
+        row["desired"] = row.get("desired_on")
+        row["reported"] = row.get("last_on")
+        devices.append(row)
     if redact:
         for d in devices:
             d["password_set"] = bool(d.get("password"))
@@ -4371,17 +4617,33 @@ def get_device_by_alias(alias: str, *, redact: bool = True) -> dict | None:
 
 
 def _device_update_in_store(did: str, mutator) -> dict | None:
-    """Apply mutator(device_dict) under lock; save; return redacted copy."""
+    """
+    Apply mutator to **runtime state** only (devices_state.json).
+    Never rewrites devices_config.json — poller-safe.
+    """
+    did = str(did or "").strip()
+    if not did:
+        return None
     with _devices_cfg_lock:
-        devices = list(_devices_cfg.get("devices") or [])
-        idx = next((i for i, d in enumerate(devices) if d.get("id") == did), None)
-        if idx is None:
+        exists = any(
+            str(d.get("id") or "") == did
+            for d in (_devices_cfg.get("devices") or [])
+            if isinstance(d, dict)
+        )
+        if not exists:
             return None
-        d = dict(devices[idx])
-        mutator(d)
-        devices[idx] = d
-        _devices_cfg["devices"] = devices
-    _save_devices_cfg()
+        st = dict(_devices_state.get(did) or _device_runtime_defaults())
+        mutator(st)
+        _devices_state[did] = _extract_device_runtime(st)
+        payload = {
+            "version": 1,
+            "by_id": {
+                k: _extract_device_runtime(v)
+                for k, v in _devices_state.items()
+                if k
+            },
+        }
+        _save_json_atomic(DEVICES_STATE_FILE, payload)
     return get_device_by_id(did, redact=True)
 
 
@@ -4396,6 +4658,7 @@ def upsert_device(raw: dict) -> dict:
         raise ValueError(f"alias reserved: {alias}")
     # merge secrets if UI sent empty password/token and device exists
     existing = None
+    existing_st = None
     did = str(raw.get("id") or "").strip()
     with _devices_cfg_lock:
         for d in _devices_cfg.get("devices") or []:
@@ -4405,6 +4668,10 @@ def upsert_device(raw: dict) -> dict:
             if not did and d.get("alias") == alias:
                 existing = dict(d)
                 break
+        if existing and existing.get("id"):
+            existing_st = dict(
+                _devices_state.get(str(existing["id"])) or _device_runtime_defaults()
+            )
     merged = dict(raw)
     if existing:
         if not did:
@@ -4422,40 +4689,50 @@ def upsert_device(raw: dict) -> dict:
         xtk = merged.get("xiaomi_token") or merged.get("miio_token") or merged.get("token")
         if xtk is None or str(xtk).strip() in ("", "••••", "****", "***"):
             merged["xiaomi_token"] = existing.get("xiaomi_token") or ""
-        # preserve runtime unless explicitly provided
-        for rk in (
-            "last_on",
-            "desired_on",
-            "online",
-            "last_error",
-            "last_ok_ts",
-            "last_action",
-            "last_power",
-            "last_power_ts",
-        ):
-            if rk not in merged or merged.get(rk) is None:
-                merged[rk] = existing.get(rk)
+    # runtime from request or previous state
+    rt_in = _extract_device_runtime(merged)
+    if existing_st:
+        for rk, v in existing_st.items():
+            if rt_in.get(rk) is None and v is not None:
+                rt_in[rk] = v
     nd = _normalize_device(merged)
     if not nd:
         raise ValueError("invalid device (alias / fields)")
+    nd_cfg = _strip_device_runtime(nd)
     # seed desired_on when enabling hold without prior intent
-    if nd.get("enforce_desired") and nd.get("desired_on") is None:
-        if nd.get("last_on") is not None:
-            nd["desired_on"] = bool(nd.get("last_on"))
+    if nd_cfg.get("enforce_desired") and rt_in.get("desired_on") is None:
+        if rt_in.get("last_on") is not None:
+            rt_in["desired_on"] = bool(rt_in.get("last_on"))
     with _devices_cfg_lock:
         devices = list(_devices_cfg.get("devices") or [])
-        idx = next((i for i, d in enumerate(devices) if d.get("id") == nd["id"]), None)
+        idx = next(
+            (i for i, d in enumerate(devices) if d.get("id") == nd_cfg["id"]), None
+        )
         for d in devices:
-            if d.get("alias") == nd["alias"] and d.get("id") != nd["id"]:
-                raise ValueError(f"alias already used: {nd['alias']}")
+            if d.get("alias") == nd_cfg["alias"] and d.get("id") != nd_cfg["id"]:
+                raise ValueError(f"alias already used: {nd_cfg['alias']}")
         if idx is None:
-            devices.append(nd)
+            devices.append(nd_cfg)
         else:
-            devices[idx] = nd
+            devices[idx] = nd_cfg
         _devices_cfg["devices"] = devices
+        did_f = str(nd_cfg.get("id") or "")
+        if did_f:
+            _devices_state[did_f] = _extract_device_runtime(rt_in)
+            _save_json_atomic(
+                DEVICES_STATE_FILE,
+                {
+                    "version": 1,
+                    "by_id": {
+                        k: _extract_device_runtime(v)
+                        for k, v in _devices_state.items()
+                        if k
+                    },
+                },
+            )
     _save_devices_cfg()
-    out = get_device_by_id(nd["id"], redact=True)
-    return out or nd
+    out = get_device_by_id(nd_cfg["id"], redact=True)
+    return out or _merge_device_runtime(nd_cfg, rt_in)
 
 
 def delete_device(did: str) -> bool:
@@ -4466,6 +4743,18 @@ def delete_device(did: str) -> bool:
         if len(new) == len(devices):
             return False
         _devices_cfg["devices"] = new
+        _devices_state.pop(did, None)
+        _save_json_atomic(
+            DEVICES_STATE_FILE,
+            {
+                "version": 1,
+                "by_id": {
+                    k: _extract_device_runtime(v)
+                    for k, v in _devices_state.items()
+                    if k
+                },
+            },
+        )
     _save_devices_cfg()
     _devices_sync_ts.pop(did, None)
     _devices_suspend_off_deadline.pop(did, None)
@@ -4475,14 +4764,54 @@ def delete_device(did: str) -> bool:
 def replace_devices(devices_list: list) -> list[dict]:
     clean: list[dict] = []
     seen: set[str] = set()
+    new_state: dict[str, dict] = {}
     for d in devices_list or []:
+        if not isinstance(d, dict):
+            continue
+        rt = _extract_device_runtime(d)
         nd = _normalize_device(d)
         if not nd or nd["alias"] in seen:
             continue
         seen.add(nd["alias"])
-        clean.append(nd)
+        cfg_row = _strip_device_runtime(nd)
+        clean.append(cfg_row)
+        did = str(cfg_row.get("id") or "")
+        if did:
+            # keep prior state if restore had no runtime
+            with _devices_cfg_lock:
+                prev = _devices_state.get(did) or _device_runtime_defaults()
+            merged_rt = dict(prev)
+            for k, v in rt.items():
+                if v is not None:
+                    merged_rt[k] = v
+            new_state[did] = _extract_device_runtime(merged_rt)
     with _devices_cfg_lock:
         _devices_cfg["devices"] = clean
+        # drop state for removed ids; keep/update for present
+        next_state: dict[str, dict] = {}
+        for d in clean:
+            did = str(d.get("id") or "")
+            if not did:
+                continue
+            if did in new_state:
+                next_state[did] = new_state[did]
+            elif did in _devices_state:
+                next_state[did] = _extract_device_runtime(_devices_state[did])
+            else:
+                next_state[did] = _device_runtime_defaults()
+        _devices_state.clear()
+        _devices_state.update(next_state)
+        _save_json_atomic(
+            DEVICES_STATE_FILE,
+            {
+                "version": 1,
+                "by_id": {
+                    k: _extract_device_runtime(v)
+                    for k, v in _devices_state.items()
+                    if k
+                },
+            },
+        )
     _save_devices_cfg()
     return list_devices(redact=True)
 
@@ -4497,12 +4826,12 @@ def reorder_devices(ids: list) -> list[dict]:
         seen: set[str] = set()
         for did in want:
             if did in by_id and did not in seen:
-                ordered.append(by_id[did])
+                ordered.append(_strip_device_runtime(by_id[did]))
                 seen.add(did)
         for d in devices:
             did = str(d.get("id") or "")
             if did and did not in seen:
-                ordered.append(d)
+                ordered.append(_strip_device_runtime(d))
                 seen.add(did)
         _devices_cfg["devices"] = ordered
     _save_devices_cfg()
@@ -4510,10 +4839,13 @@ def reorder_devices(ids: list) -> list[dict]:
 
 
 def _device_cfg_snapshot(did: str) -> dict | None:
+    """Config + runtime for one device (policy / backends)."""
+    did = str(did or "").strip()
     with _devices_cfg_lock:
         for d in _devices_cfg.get("devices") or []:
             if d.get("id") == did:
-                return dict(d)
+                st = _devices_state.get(did) or _device_runtime_defaults()
+                return _merge_device_runtime(dict(d), st)
     return None
 
 
@@ -5662,7 +5994,14 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
         work = "resume"
     now = time.time()
     with _devices_cfg_lock:
-        devices = [dict(d) for d in (_devices_cfg.get("devices") or [])]
+        devices = [
+            _merge_device_runtime(
+                dict(d),
+                _devices_state.get(str(d.get("id") or "")),
+            )
+            for d in (_devices_cfg.get("devices") or [])
+            if isinstance(d, dict)
+        ]
     for cfg in devices:
         if not cfg.get("enabled"):
             continue
@@ -8165,6 +8504,12 @@ def build_config_backup() -> dict:
     devices.pop("backends", None)
     devices.pop("reserved_aliases", None)
     devices.pop("icons", None)
+    devices.pop("tuya_ecosystems", None)
+    # backup = settings only (runtime lives in devices_state.json, not portable)
+    if isinstance(devices.get("devices"), list):
+        devices["devices"] = [
+            _strip_device_runtime(d) for d in devices["devices"] if isinstance(d, dict)
+        ]
     with _weather_cfg_lock:
         weather = dict(_weather_cfg)
     with _energy_cfg_lock:
