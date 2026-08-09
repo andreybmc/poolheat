@@ -10473,8 +10473,6 @@ def _merge_sensor_samples_into_points(
             conn.close()
 
     # bisect-ready: parallel ts[] / val[] per alias
-    import bisect
-
     series_tv: dict[str, tuple[list[float], list[float]]] = {}
     for a, series in by_alias.items():
         if not series:
@@ -10533,6 +10531,10 @@ _history_query_cache: dict = {}  # key -> {"ts": float, "points": list}
 _history_query_cache_lock = threading.Lock()
 _HISTORY_SENSOR_META_TTL_SEC = 30.0
 _history_sensor_meta_cache: dict = {"ts": 0.0, "data": None}
+# Pre-serialized JSON for GET /api/history (skip dumps on warm hits)
+_HISTORY_HTTP_TTL_SEC = 12.0
+_history_http_cache: dict = {}  # key -> {"ts": float, "data": bytes}
+_history_http_cache_lock = threading.Lock()
 
 
 def _history_query_cache_key(
@@ -10549,6 +10551,8 @@ def _history_query_cache_key(
 def _invalidate_history_query_cache() -> None:
     with _history_query_cache_lock:
         _history_query_cache.clear()
+    with _history_http_cache_lock:
+        _history_http_cache.clear()
     _history_stats_cache["ts"] = 0.0
     _history_stats_cache["data"] = None
 
@@ -26564,10 +26568,52 @@ class Handler(SimpleHTTPRequestHandler):
             since_f = float(since) if since not in (None, "") else None
             until_f = float(until) if until not in (None, "") else None
 
+            # Resolve window (same as query_history) for HTTP cache key
+            now = time.time()
+            if since_f is None:
+                h = 24.0 if hours_f is None else float(hours_f)
+                since_f = now - h * 3600.0
+            if until_f is None:
+                until_f = now
+            max_points = max(10, min(20000, int(max_points)))
+            http_key = (
+                int(float(since_f) // 30) * 30,
+                int(float(until_f) // 30) * 30,
+                int(max_points),
+            )
+            # Warm path: pre-serialized JSON (avoids multi-second dumps on ARM)
+            with _history_http_cache_lock:
+                hit = _history_http_cache.get(http_key)
+                if (
+                    hit
+                    and (now - float(hit.get("ts") or 0)) < _HISTORY_HTTP_TTL_SEC
+                    and isinstance(hit.get("data"), (bytes, bytearray))
+                ):
+                    data = hit["data"]
+                    try:
+                        self.send_response(200)
+                        self.send_header(
+                            "Content-Type", "application/json; charset=utf-8"
+                        )
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("X-Poolheat-History-Cache", "HIT")
+                        self.end_headers()
+                        self.wfile.write(data)
+                    except (
+                        BrokenPipeError,
+                        ConnectionResetError,
+                        ConnectionAbortedError,
+                    ):
+                        pass
+                    return
+
+            # Prefer explicit since/until when provided; else hours window
+            q_since = float(since) if since not in (None, "") else None
+            q_until = float(until) if until not in (None, "") else None
             points = query_history(
-                hours=hours_f,
-                since=since_f,
-                until=until_f,
+                hours=hours_f if q_since is None else None,
+                since=q_since,
+                until=q_until,
                 max_points=max_points,
                 use_cache=True,
             )
@@ -26577,23 +26623,43 @@ class Handler(SimpleHTTPRequestHandler):
                 sensor_series = history_sensor_series_meta(use_cache=True)
             except Exception:
                 sensor_series = []
-            # stats cached ~15s — full COUNT/MIN/MAX not on every chart paint
             try:
                 stats = history_stats(use_cache=True)
             except Exception:
                 stats = {}
-            self._json_response(
-                200,
-                {
-                    "ok": True,
-                    "count": len(points),
-                    "config": cfg,
-                    "stats": stats,
-                    "points": points,
-                    # Peripherals → Sensors with history=true (for Temperatures °C chart)
-                    "sensor_series": sensor_series,
-                },
+            body = {
+                "ok": True,
+                "count": len(points),
+                "config": cfg,
+                "stats": stats,
+                "points": points,
+                "sensor_series": sensor_series,
+            }
+            data = json.dumps(body, ensure_ascii=False, default=str).encode(
+                "utf-8"
             )
+            with _history_http_cache_lock:
+                if len(_history_http_cache) > 16:
+                    _history_http_cache.clear()
+                _history_http_cache[http_key] = {
+                    "ts": time.time(),
+                    "data": data,
+                }
+            try:
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type", "application/json; charset=utf-8"
+                )
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("X-Poolheat-History-Cache", "MISS")
+                self.end_headers()
+                self.wfile.write(data)
+            except (
+                BrokenPipeError,
+                ConnectionResetError,
+                ConnectionAbortedError,
+            ):
+                pass
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
