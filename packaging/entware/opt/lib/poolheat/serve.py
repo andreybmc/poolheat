@@ -10210,6 +10210,10 @@ def insert_sample(row: dict) -> None:
             conn.commit()
         finally:
             conn.close()
+    try:
+        _invalidate_history_query_cache()
+    except Exception:
+        pass
 
 
 def prune_old(retention_days: int) -> int:
@@ -10227,9 +10231,14 @@ def prune_old(retention_days: int) -> int:
             except Exception:
                 pass
             conn.commit()
-            return n
+            n_out = n
         finally:
             conn.close()
+    try:
+        _invalidate_history_query_cache()
+    except Exception:
+        pass
+    return n_out
 
 
 def clear_history_samples() -> int:
@@ -10249,9 +10258,14 @@ def clear_history_samples() -> int:
                 conn.execute("VACUUM")
             except Exception:
                 pass
-            return n
+            n_out = n
         finally:
             conn.close()
+    try:
+        _invalidate_history_query_cache()
+    except Exception:
+        pass
+    return n_out
 
 
 def _history_sensor_values(live: dict | None) -> dict[str, float]:
@@ -10352,8 +10366,14 @@ def clear_miner_error_log() -> int:
     return n
 
 
-def history_sensor_series_meta() -> list[dict]:
+def history_sensor_series_meta(*, use_cache: bool = True) -> list[dict]:
     """Sensors with history=true — appear on Temperatures °C chart."""
+    now = time.time()
+    if use_cache:
+        data = _history_sensor_meta_cache.get("data")
+        ts0 = float(_history_sensor_meta_cache.get("ts") or 0)
+        if data is not None and (now - ts0) < _HISTORY_SENSOR_META_TTL_SEC:
+            return list(data)
     out: list[dict] = []
     try:
         sensors = list_sensors()
@@ -10406,6 +10426,8 @@ def history_sensor_series_meta() -> list[dict]:
                 "group": "sensor",
             }
         )
+    _history_sensor_meta_cache["ts"] = time.time()
+    _history_sensor_meta_cache["data"] = list(out)
     return out
 
 
@@ -10497,12 +10519,88 @@ def _merge_sensor_samples_into_points(
     return points
 
 
+# Chart-facing columns only (no SELECT *) — order stable for SELECT list
+HISTORY_CHART_COLUMNS: tuple[str, ...] = (
+    "ts",
+    "ts_iso",
+    *HISTORY_TEMP_COLUMNS,
+    "power",
+    "power_limit",
+    "power_limit_set",
+    "power_pct_cmd",
+    "freq",
+    "hashrate_th",
+    "mode",
+    "hash_stable",
+    "online",
+    "work_state",
+    "upfreq_ok",
+    "eff_jt",
+)
+
+# P1 caches — avoid full-table stats + re-query on every chart paint
+_HISTORY_STATS_TTL_SEC = 15.0
+_history_stats_cache: dict = {"ts": 0.0, "data": None}
+_HISTORY_QUERY_TTL_SEC = 10.0
+_history_query_cache: dict = {}  # key -> {"ts": float, "points": list}
+_history_query_cache_lock = threading.Lock()
+_HISTORY_SENSOR_META_TTL_SEC = 30.0
+_history_sensor_meta_cache: dict = {"ts": 0.0, "data": None}
+
+
+def _history_query_cache_key(
+    since: float, until: float, max_points: int
+) -> tuple:
+    # quantize window so nearby refreshes hit cache
+    return (
+        int(float(since) // 5) * 5,
+        int(float(until) // 5) * 5,
+        int(max_points),
+    )
+
+
+def _invalidate_history_query_cache() -> None:
+    with _history_query_cache_lock:
+        _history_query_cache.clear()
+    _history_stats_cache["ts"] = 0.0
+    _history_stats_cache["data"] = None
+
+
+def _samples_existing_columns(conn) -> set[str]:
+    try:
+        return {str(r[1]) for r in conn.execute("PRAGMA table_info(samples)")}
+    except Exception:
+        return set()
+
+
+def _history_select_column_list(conn) -> list[str]:
+    """Intersect chart columns with real table (migrations / older DBs)."""
+    existing = _samples_existing_columns(conn)
+    if not existing:
+        return ["ts"]
+    cols: list[str] = []
+    seen: set[str] = set()
+    for c in HISTORY_CHART_COLUMNS:
+        if c in existing and c not in seen:
+            seen.add(c)
+            cols.append(c)
+    if "ts" not in seen:
+        cols.insert(0, "ts")
+    return cols
+
+
 def query_history(
     hours: float | None = None,
     since: float | None = None,
     until: float | None = None,
     max_points: int = 2000,
+    *,
+    use_cache: bool = True,
 ) -> list[dict]:
+    """
+    History for charts. P0: time-bucket downsample in SQL (not full-table load),
+    explicit column list. P1: short RAM cache of query results.
+    """
     now = time.time()
     if since is None:
         if hours is None:
@@ -10510,56 +10608,136 @@ def query_history(
         since = now - float(hours) * 3600
     if until is None:
         until = now
+    since = float(since)
+    until = float(until)
+    if until < since:
+        since, until = until, since
     max_points = max(10, min(20000, int(max_points)))
 
+    cache_key = _history_query_cache_key(since, until, max_points)
+    if use_cache:
+        with _history_query_cache_lock:
+            hit = _history_query_cache.get(cache_key)
+            if (
+                hit
+                and (now - float(hit.get("ts") or 0)) < _HISTORY_QUERY_TTL_SEC
+                and isinstance(hit.get("points"), list)
+            ):
+                return list(hit["points"])
+
+    span = max(1.0, until - since)
+    # ~max_points buckets over the window (latest sample per bucket)
+    bucket = max(1.0, span / float(max_points))
+
+    points: list[dict] = []
     with _db_lock:
         conn = _db_connect()
         try:
+            cols = _history_select_column_list(conn)
+            col_sql = ", ".join(f"s.{c}" for c in cols)
+            # Fast empty check without COUNT(*) over full range
             cur = conn.execute(
-                "SELECT COUNT(*) AS c FROM samples WHERE ts >= ? AND ts <= ?",
+                "SELECT 1 FROM samples WHERE ts >= ? AND ts <= ? LIMIT 1",
                 (since, until),
             )
-            total = int(cur.fetchone()["c"])
-            if total == 0:
-                # still return empty — sensor-only ranges not supported for brush sync
-                return []
-
-            cur = conn.execute(
-                """
-                SELECT * FROM samples
-                WHERE ts >= ? AND ts <= ?
-                ORDER BY ts ASC
-                """,
-                (since, until),
-            )
-            all_rows = cur.fetchall()
-            stride = max(1, (len(all_rows) + max_points - 1) // max_points)
-            rows = all_rows[::stride][:max_points]
-            points = [dict(r) for r in rows]
+            if cur.fetchone() is None:
+                points = []
+            else:
+                # One row per time bucket = MAX(ts) in bucket (keeps work_state/mode intact)
+                try:
+                    cur = conn.execute(
+                        f"""
+                        SELECT {col_sql}
+                        FROM samples s
+                        INNER JOIN (
+                            SELECT MAX(ts) AS mts
+                            FROM samples
+                            WHERE ts >= ? AND ts <= ?
+                            GROUP BY CAST((ts - ?) / ? AS INTEGER)
+                        ) b ON s.ts = b.mts
+                        ORDER BY s.ts ASC
+                        LIMIT ?
+                        """,
+                        (since, until, since, bucket, max_points),
+                    )
+                    rows = cur.fetchall()
+                    points = [dict(r) for r in rows]
+                except Exception as e:
+                    # Fallback: strided fetch without loading every column twice
+                    print(f"[history] bucket query fallback: {e}", flush=True)
+                    cur = conn.execute(
+                        f"""
+                        SELECT {col_sql}
+                        FROM samples s
+                        WHERE s.ts >= ? AND s.ts <= ?
+                        ORDER BY s.ts ASC
+                        """,
+                        (since, until),
+                    )
+                    all_rows = cur.fetchall()
+                    if all_rows:
+                        stride = max(
+                            1, (len(all_rows) + max_points - 1) // max_points
+                        )
+                        points = [
+                            dict(r) for r in all_rows[::stride][:max_points]
+                        ]
         finally:
             conn.close()
 
-    try:
-        points = _merge_sensor_samples_into_points(points, float(since), float(until))
-    except Exception as e:
-        print(f"[history] merge sensor samples: {e}", flush=True)
+    if points:
+        try:
+            points = _merge_sensor_samples_into_points(
+                points, float(since), float(until)
+            )
+        except Exception as e:
+            print(f"[history] merge sensor samples: {e}", flush=True)
+
+    if use_cache:
+        with _history_query_cache_lock:
+            # cap cache entries (simple LRU-ish: drop oldest half if large)
+            if len(_history_query_cache) > 24:
+                items = sorted(
+                    _history_query_cache.items(),
+                    key=lambda kv: float(kv[1].get("ts") or 0),
+                )
+                for k, _ in items[:12]:
+                    _history_query_cache.pop(k, None)
+            _history_query_cache[cache_key] = {
+                "ts": time.time(),
+                "points": list(points),
+            }
     return points
 
 
-def history_stats() -> dict:
+def history_stats(*, use_cache: bool = True) -> dict:
+    """DB totals for history. Cached ~15s (P1) — not a full scan every chart paint."""
+    now = time.time()
+    if use_cache:
+        data = _history_stats_cache.get("data")
+        ts0 = float(_history_stats_cache.get("ts") or 0)
+        if data is not None and (now - ts0) < _HISTORY_STATS_TTL_SEC:
+            return dict(data)
+
     with _db_lock:
         conn = _db_connect()
         try:
-            cur = conn.execute("SELECT COUNT(*) AS c, MIN(ts) AS tmin, MAX(ts) AS tmax FROM samples")
+            cur = conn.execute(
+                "SELECT COUNT(*) AS c, MIN(ts) AS tmin, MAX(ts) AS tmax FROM samples"
+            )
             row = cur.fetchone()
-            return {
+            out = {
                 "count": int(row["c"] or 0),
                 "oldest_ts": row["tmin"],
                 "newest_ts": row["tmax"],
-                "oldest_iso": datetime.fromtimestamp(row["tmin"]).isoformat(timespec="seconds")
+                "oldest_iso": datetime.fromtimestamp(row["tmin"]).isoformat(
+                    timespec="seconds"
+                )
                 if row["tmin"]
                 else None,
-                "newest_iso": datetime.fromtimestamp(row["tmax"]).isoformat(timespec="seconds")
+                "newest_iso": datetime.fromtimestamp(row["tmax"]).isoformat(
+                    timespec="seconds"
+                )
                 if row["tmax"]
                 else None,
                 "db_path": str(DB_FILE),
@@ -10567,6 +10745,9 @@ def history_stats() -> dict:
             }
         finally:
             conn.close()
+    _history_stats_cache["ts"] = time.time()
+    _history_stats_cache["data"] = dict(out)
+    return out
 
 
 # ── Energy accounting (energy.db meters + hold integration) ──────────────────
@@ -26396,20 +26577,26 @@ class Handler(SimpleHTTPRequestHandler):
                 since=since_f,
                 until=until_f,
                 max_points=max_points,
+                use_cache=True,
             )
             with _hist_cfg_lock:
                 cfg = dict(_hist_cfg)
             try:
-                sensor_series = history_sensor_series_meta()
+                sensor_series = history_sensor_series_meta(use_cache=True)
             except Exception:
                 sensor_series = []
+            # stats cached ~15s — full COUNT/MIN/MAX not on every chart paint
+            try:
+                stats = history_stats(use_cache=True)
+            except Exception:
+                stats = {}
             self._json_response(
                 200,
                 {
                     "ok": True,
                     "count": len(points),
                     "config": cfg,
-                    "stats": history_stats(),
+                    "stats": stats,
                     "points": points,
                     # Peripherals → Sensors with history=true (for Temperatures °C chart)
                     "sensor_series": sensor_series,
