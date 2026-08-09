@@ -17788,9 +17788,9 @@
         if (pol.want_work || pol.measured_work) {
           parts.push(
             "MC want=" +
-              (pol.want_work || "—") +
+              shortWorkLabel(pol.want_work) +
               " have=" +
-              (pol.measured_work || "—")
+              shortWorkLabel(pol.measured_work)
           );
         }
         if (pol.override_active) {
@@ -21939,6 +21939,17 @@
       return "info";
     }
 
+    /** Short MC label for status lines: resume→mining, sleep→suspend. */
+    function shortWorkLabel(w) {
+      const s = String(w == null ? "" : w)
+        .trim()
+        .toLowerCase();
+      if (s === "resume" || s === "mining") return "mining";
+      if (s === "suspend" || s === "sleep") return "suspend";
+      if (!s) return "—";
+      return String(w);
+    }
+
     function renderActionLog(pol, lastWrite) {
       const el = document.getElementById("log");
       const meta = document.getElementById("action-log-meta");
@@ -21966,8 +21977,8 @@
       actionLogCache = events;
       if (meta) {
         const z = (pol && (pol.heat_zone_title || pol.heat_zone)) || "—";
-        const want = (pol && pol.want_work) || "—";
-        const have = (pol && pol.measured_work) || "—";
+        const want = shortWorkLabel(pol && pol.want_work);
+        const have = shortWorkLabel(pol && pol.measured_work);
         const dry = pol && pol.dry_run ? "Dry Run ON" : "Dry Run OFF";
         const fs = pol && pol.force_stop ? "Force Stop ON" : "Force Stop OFF";
         const stored =

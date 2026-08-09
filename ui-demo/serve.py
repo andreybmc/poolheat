@@ -23954,8 +23954,8 @@ def _tg_handle_command(
         )
         dry = bool(pol.get("dry_run"))
         fs = bool(pol.get("force_stop"))
-        want = pol.get("want_work") or "—"
-        have = pol.get("measured_work") or "—"
+        want = _short_work_label(pol.get("want_work"))
+        have = _short_work_label(pol.get("measured_work"))
         if en:
             title = "📋 <b>Events</b>"
             empty = "no events yet (log is kept on server after restart)"
@@ -23964,7 +23964,7 @@ def _tg_handle_command(
             title = "📋 <b>События</b>"
             empty = "пока пусто (журнал хранится на сервере после рестарта)"
             more_fmt = "… ещё {n} на сервере"
-        # zone: <b>Z3 No heat</b> · want: <b>suspend</b> have: <b>suspend</b>
+        # zone: <b>Z3 No heat</b> · want: <b>suspend</b> have: <b>mining</b>
         # Dry Run: <b>OFF</b> · Force Stop: <b>OFF</b>
         z_show = _tg_html_esc(str(zlab or "—").replace(" · ", " "))
         want_s = _tg_html_esc(str(want or "—"))
@@ -24672,10 +24672,22 @@ def _policy_cmd_short(action: object, value: object) -> str:
     if a in ("power_limit", "set_power_limit", "adjust_power_limit"):
         return f"pl={_fmt_policy_w(value)}W"
     if a in ("working", "working_mode", "work", "mining"):
-        return f"mc={value}"
+        return f"mc={_short_work_label(value)}"
     if a in ("power_pct", "pct"):
         return f"pct={value}"
     return f"{a}={value}"
+
+
+def _short_work_label(w: object) -> str:
+    """Short MC label for logs/status: resume→mining, sleep→suspend."""
+    s = str(w or "").strip().lower()
+    if s in ("resume", "mining"):
+        return "mining"
+    if s in ("suspend", "sleep"):
+        return "suspend"
+    if not s:
+        return "—"
+    return str(w)
 
 
 def _fmt_auto_policy_log(
@@ -24687,21 +24699,22 @@ def _fmt_auto_policy_log(
 ) -> str:
     """
     AUTO z0 · SET pm=normal, pl=6000W
-      (HAVE pm=low, pl=5000W, mc=resume, hr=270.36TH/s, P=4953W, want_work=resume)
+      (HAVE pm=low, pl=5000W, mc=mining, hr=270.36TH/s, P=4953W, want_work=mining)
     """
     live = live if isinstance(live, dict) else {}
     set_part = ", ".join(
         _policy_cmd_short(a, v) for a, v in (need_cmds or [])
     ) or "—"
+    mc = _short_work_label(measured_work) if measured_work else "?"
     have_bits = [
         f"pm={_live_mode(live) or '?'}",
         f"pl={_fmt_policy_w(_live_limit_w(live))}W",
-        f"mc={measured_work or '?'}",
+        f"mc={mc}",
         f"hr={_fmt_policy_hr(live.get('hashrate_th'))}TH/s",
         f"P={_fmt_policy_w(live.get('power'))}W",
     ]
     if want_work:
-        have_bits.append(f"want_work={want_work}")
+        have_bits.append(f"want_work={_short_work_label(want_work)}")
     return (
         f"AUTO {desired} · SET {set_part} "
         f"(HAVE {', '.join(have_bits)})"
