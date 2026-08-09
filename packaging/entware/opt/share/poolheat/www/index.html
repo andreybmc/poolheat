@@ -18304,71 +18304,143 @@
     }
 
     /**
-     * Power chart Y axes: all on the left, unit-colored, compact type.
-     * W (green) · TH/s+freq (purple) · J/T (orange).
+     * Power chart: one visual Y rail on the left (combined multi-unit ticks).
+     * Internal y / y1 / y2 still scale series; only y reserves width + grid.
+     * Plugin draws W · TH/s · J/T in one column (green / purple / orange).
      */
     function powerChartYScaleOpts() {
-      const tickFont = { size: 9 };
-      const titleFont = { size: 10, weight: "600" };
       return {
         y: {
           position: "left",
-          title: {
-            display: true,
-            text: "W",
-            color: "#3ecf8e",
-            font: titleFont,
-            padding: { top: 0, bottom: 2 },
-          },
+          title: { display: false, text: "" },
           ticks: {
-            color: "#3ecf8e",
-            font: tickFont,
+            display: false,
             maxTicksLimit: 6,
-            padding: 2,
+            padding: 0,
           },
           grid: { color: "rgba(42,53,68,0.5)" },
-          border: { color: "rgba(62, 207, 142, 0.35)" },
+          border: { display: false },
+          afterFit(scale) {
+            // room for 3 compact value columns + unit header
+            scale.width = Math.max(scale.width || 0, 86);
+          },
         },
         y1: {
+          display: false,
           position: "left",
-          offset: true,
-          title: {
-            display: true,
-            text: "TH/s",
-            color: "#c792ea",
-            font: titleFont,
-            padding: { top: 0, bottom: 2 },
-          },
-          ticks: {
-            color: "#c792ea",
-            font: tickFont,
-            maxTicksLimit: 6,
-            padding: 2,
-          },
+          title: { display: false },
+          ticks: { display: false, maxTicksLimit: 6 },
           grid: { drawOnChartArea: false },
-          border: { color: "rgba(199, 146, 234, 0.4)" },
+          border: { display: false },
         },
         y2: {
+          display: false,
           position: "left",
-          offset: true,
-          title: {
-            display: true,
-            text: "J/T",
-            color: "#ff9f43",
-            font: titleFont,
-            padding: { top: 0, bottom: 2 },
-          },
-          ticks: {
-            color: "#ff9f43",
-            font: tickFont,
-            maxTicksLimit: 6,
-            padding: 2,
-          },
+          title: { display: false },
+          ticks: { display: false, maxTicksLimit: 6 },
           grid: { drawOnChartArea: false },
-          border: { color: "rgba(255, 159, 67, 0.4)" },
+          border: { display: false },
         },
       };
     }
+
+    function _fmtPowerAxisVal(v, unit) {
+      if (v == null || !Number.isFinite(v)) return "";
+      const a = Math.abs(v);
+      if (unit === "W") {
+        if (a >= 1000) return String(Math.round(v));
+        return String(Math.round(v * 10) / 10);
+      }
+      if (a >= 100) return String(Math.round(v));
+      if (a >= 10) return String(Math.round(v));
+      return (Math.round(v * 10) / 10).toFixed(1);
+    }
+
+    /** One combined left scale: colored multi-unit ticks at shared grid rows. */
+    const powerCombinedAxisPlugin = {
+      id: "powerCombinedAxis",
+      afterDraw(chart) {
+        if (!chart || chart.$chartKey !== "power") return;
+        const y = chart.scales && chart.scales.y;
+        const y1 = chart.scales && chart.scales.y1;
+        const y2 = chart.scales && chart.scales.y2;
+        const area = chart.chartArea;
+        if (!y || !area) return;
+        if (y.options && y.options.display === false) return;
+
+        const ctx = chart.ctx;
+        // columns left→right: J/T · TH/s · W (W closest to plot)
+        const cols = [
+          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2" },
+          { scale: y1, color: "#c792ea", unit: "TH/s", key: "y1" },
+          { scale: y, color: "#3ecf8e", unit: "W", key: "y" },
+        ].filter((c) => c.scale);
+
+        // hide a unit column if every dataset on that axis is off
+        const ds = (chart.data && chart.data.datasets) || [];
+        const axisOn = (axisId) =>
+          ds.some((d) => d && !d.hidden && (d.yAxisID || "y") === axisId);
+        const visible = cols.filter((c) => {
+          if (c.key === "y") return axisOn("y");
+          if (c.key === "y1") return axisOn("y1");
+          if (c.key === "y2") return axisOn("y2");
+          return true;
+        });
+        if (!visible.length) return;
+
+        const colW = 28;
+        const rightEdge = area.left - 4;
+        const ticks = y.ticks || [];
+
+        ctx.save();
+        ctx.textBaseline = "middle";
+
+        // unit headers (tiny, above first tick)
+        const headY = area.top - 9;
+        if (headY > 4) {
+          ctx.font = "600 8px 'Segoe UI', system-ui, sans-serif";
+          visible.forEach((c, i) => {
+            const x = rightEdge - (visible.length - 1 - i) * colW;
+            ctx.fillStyle = c.color;
+            ctx.textAlign = "right";
+            ctx.fillText(c.unit, x, headY);
+          });
+        }
+
+        ctx.font = "9px 'Segoe UI', system-ui, sans-serif";
+        ticks.forEach((t) => {
+          const val = typeof t === "object" ? t.value : t;
+          if (val == null || !Number.isFinite(val)) return;
+          const py = y.getPixelForValue(val);
+          if (py < area.top - 1 || py > area.bottom + 1) return;
+
+          visible.forEach((c, i) => {
+            let v = val;
+            try {
+              if (c.scale !== y && typeof c.scale.getValueForPixel === "function") {
+                v = c.scale.getValueForPixel(py);
+              }
+            } catch (_) {
+              v = val;
+            }
+            const x = rightEdge - (visible.length - 1 - i) * colW;
+            ctx.fillStyle = c.color;
+            ctx.textAlign = "right";
+            ctx.fillText(_fmtPowerAxisVal(v, c.unit === "W" ? "W" : c.unit), x, py);
+          });
+        });
+
+        // thin rail
+        ctx.strokeStyle = "rgba(90, 110, 135, 0.35)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(area.left, area.top);
+        ctx.lineTo(area.left, area.bottom);
+        ctx.stroke();
+
+        ctx.restore();
+      },
+    };
 
     function applyChartDisplayOptions(chart, kind) {
       if (!chart || !chart.options) return;
@@ -18378,25 +18450,50 @@
       chart.options.plugins.legend = chartLegendPluginOpts(k);
       if (!chart.options.scales) chart.options.scales = {};
       const scales = chart.options.scales;
-      // keep power Y layout compact / left-stacked even on existing chart instances
+      // power: one combined left rail (plugin); y1/y2 stay hidden
       if (k === "power") {
         const yOpts = powerChartYScaleOpts();
         ["y", "y1", "y2"].forEach((sid) => {
           const prev = scales[sid] && typeof scales[sid] === "object" ? scales[sid] : {};
           const next = Object.assign({}, prev, yOpts[sid]);
-          // preserve runtime min/max if set (don't write undefined)
           ["min", "max", "suggestedMin", "suggestedMax"].forEach((pk) => {
             if (prev[pk] != null) next[pk] = prev[pk];
             else delete next[pk];
           });
           scales[sid] = next;
         });
+        // top pad for unit headers
+        if (!chart.options.layout) chart.options.layout = {};
+        const pad = chart.options.layout.padding;
+        if (pad == null || typeof pad === "number") {
+          chart.options.layout.padding = {
+            top: Math.max(14, typeof pad === "number" ? pad : 0),
+            right: typeof pad === "number" ? pad : 0,
+            bottom: typeof pad === "number" ? pad : 0,
+            left: typeof pad === "number" ? pad : 0,
+          };
+        } else if (typeof pad === "object") {
+          pad.top = Math.max(14, pad.top || 0);
+        }
       }
       Object.keys(scales).forEach((sid) => {
         const sc = scales[sid];
         if (!sc || typeof sc !== "object") return;
         const isX = sid === "x" || sc.axis === "x" || sc.type === "time";
         const show = isX ? disp.x_axis !== false : disp.y_axis !== false;
+        if (k === "power" && (sid === "y1" || sid === "y2")) {
+          // always hidden — combined plugin draws their values on the y rail
+          sc.display = false;
+          if (sc.title && typeof sc.title === "object") sc.title.display = false;
+          if (sc.ticks && typeof sc.ticks === "object") sc.ticks.display = false;
+          return;
+        }
+        if (k === "power" && sid === "y") {
+          sc.display = show;
+          if (sc.title && typeof sc.title === "object") sc.title.display = false;
+          if (sc.ticks && typeof sc.ticks === "object") sc.ticks.display = false;
+          return;
+        }
         sc.display = show;
         if (sc.title && typeof sc.title === "object") {
           sc.title.display = show && sc.title.text != null && sc.title.text !== "";
@@ -19727,6 +19824,13 @@
         } catch (_) { /* ignore */ }
         chartTemp = null;
       }
+      // rebuild power chart when combined Y-axis plugin is missing (layout v2)
+      if (chartPower && !chartPower.$combinedAxis) {
+        try {
+          chartPower.destroy();
+        } catch (_) { /* ignore */ }
+        chartPower = null;
+      }
       const common = {
         responsive: true,
         maintainAspectRatio: false,
@@ -19860,9 +19964,10 @@
               legend: chartLegendPluginOpts("power"),
             },
           },
-          plugins: [statusBandsPlugin],
+          plugins: [statusBandsPlugin, powerCombinedAxisPlugin],
         });
         chartPower.$chartKey = "power";
+        chartPower.$combinedAxis = true;
         applyChartDisplayOptions(chartPower, "power");
       }
     }
