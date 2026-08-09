@@ -4145,7 +4145,7 @@
       grid-column: unset;
       grid-row: unset;
     }
-    /* edit: linear order badge (source of truth for 1-col reflow) */
+    /* edit: per-zone order badge (widgets 1…n · charts 1…m) */
     .dash-board.dash-edit-mode .dash-item[data-order-n]::after {
       content: attr(data-order-n);
       position: absolute;
@@ -4164,6 +4164,11 @@
       text-align: center;
       pointer-events: none;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    }
+    /* charts/errors zone — distinct badge color */
+    .dash-board.dash-edit-mode .dash-item[data-order-zone="charts"][data-order-n]::after {
+      background: rgba(167, 139, 217, 0.95);
+      color: #12081c;
     }
     @media (max-width: 960px) {
       .dash-item { grid-column: span 2; }
@@ -5674,7 +5679,7 @@
               <div><strong style="color:var(--text)">Hash est</strong> — TH/s estimate: nonce share × ASIC hashrate</div>
               <div><strong style="color:var(--text)">Nonce deficit</strong> — % below slot average nonce (−12% = weaker)</div>
               <div><strong style="color:var(--text)">Gradient</strong> — °C hotter than upstream neighbors (local hotspot)</div>
-              <div><strong style="color:var(--text)">Outliers</strong> — hotter than same C# on other boards (z-score)</div>
+              <div><strong style="color:var(--text)">Outliers</strong> — hotter than same geometry on other boards (z-score; hydro M53/M63: mirrored boards reverse C#)</div>
               <div><strong style="color:var(--text)">err</strong> — chip errors (API log)</div>
               <div><strong style="color:var(--text)">crc</strong> — CRC link errors</div>
               <div><strong style="color:var(--text)">x</strong> — xfer / transfer errors</div>
@@ -14073,18 +14078,24 @@
 
     // ── Dashboard layout (reorder / hide / show) ─────────────────────────
     const DASH_LAYOUT_KEY = "poolheat_dash_layout_v1";
-    const DASH_DEFAULT_ORDER = [
+    /** Top metric widgets (3-col grid) — reorder only within this zone */
+    const DASH_WIDGET_ORDER = [
       "t_ctrl",
       "weather",
       "heat_loss",
       "power",
       "boards",
       "heat_balance",
+    ];
+    /** Charts + errors band — reorder only within this zone */
+    const DASH_CHART_ORDER = [
       "errors",
       "chart_temps",
       "chart_power",
       "chart_energy",
     ];
+    /** Full default order = widgets then charts (zones never interleave) */
+    const DASH_DEFAULT_ORDER = DASH_WIDGET_ORDER.concat(DASH_CHART_ORDER);
     /** Widgets that default to full width and can toggle half in edit mode */
     const DASH_RESIZABLE = {
       errors: 1,
@@ -14116,6 +14127,53 @@
     let dashLayout = { order: DASH_DEFAULT_ORDER.slice(), hidden: [], half: [] };
     let dashEditMode = false;
     let dashSortBound = false;
+
+    function isDashWidgetId(id) {
+      return !!(id && DASH_WIDGET_ORDER.indexOf(id) >= 0);
+    }
+
+    function isDashChartZoneId(id) {
+      // errors + charts share the lower band
+      return !!(id && (DASH_BAND_IDS[id] || DASH_CHART_ORDER.indexOf(id) >= 0));
+    }
+
+    function dashSameZone(idA, idB) {
+      if (!idA || !idB) return false;
+      return isDashChartZoneId(idA) === isDashChartZoneId(idB);
+    }
+
+    /**
+     * Force order = [widgets…] + [charts…], preserving relative order inside each zone.
+     * Prevents interleaving widgets with charts after drag or old saves.
+     */
+    function normalizeDashZoneOrder(orderIn) {
+      const seenW = {};
+      const seenC = {};
+      const widgets = [];
+      const charts = [];
+      (orderIn || []).forEach((id) => {
+        if (!id || DASH_DEFAULT_ORDER.indexOf(id) < 0) return;
+        if (isDashChartZoneId(id)) {
+          if (!seenC[id]) {
+            seenC[id] = 1;
+            charts.push(id);
+          }
+        } else if (isDashWidgetId(id)) {
+          if (!seenW[id]) {
+            seenW[id] = 1;
+            widgets.push(id);
+          }
+        }
+      });
+      DASH_WIDGET_ORDER.forEach((id) => {
+        if (!seenW[id]) widgets.push(id);
+      });
+      DASH_CHART_ORDER.forEach((id) => {
+        if (!seenC[id]) charts.push(id);
+      });
+      // legacy history → already migrated; ensure unknown band ids stay in charts tail
+      return widgets.concat(charts);
+    }
 
     function dashWidgetTitle(id) {
       return typeof t === "function"
@@ -14170,11 +14228,16 @@
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
         order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        order = normalizeDashZoneOrder(order);
         hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
         half = half.filter(
           (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
         );
         dashLayout = { order, hidden, half };
+        // persist migration (zone-split order) so old interleaved layouts stick
+        try {
+          saveDashLayout();
+        } catch (_) { /* ignore */ }
       } catch (_) { /* ignore */ }
     }
 
@@ -14498,23 +14561,26 @@
     }
 
     /**
-     * Swap two widgets in dashLayout.order (linear source of truth),
-     * then rebuild pack so column-major visual stays consistent.
+     * Swap two items in the same zone only (widgets ↔ widgets, charts ↔ charts).
+     * Cross-zone swaps are ignored so grids stay separate.
      * Returns the dragged element after re-layout (or null).
      */
     function swapDashOrderAndRelayout(idA, idB) {
       if (!idA || !idB || idA === idB) return null;
+      if (!dashSameZone(idA, idB)) return null;
       let order = Array.isArray(dashLayout.order)
         ? dashLayout.order.slice()
         : [];
+      order = normalizeDashZoneOrder(order);
       if (order.indexOf(idA) < 0) order.push(idA);
       if (order.indexOf(idB) < 0) order.push(idB);
+      order = normalizeDashZoneOrder(order);
       const ia = order.indexOf(idA);
       const ib = order.indexOf(idB);
       if (ia < 0 || ib < 0) return null;
       order[ia] = idB;
       order[ib] = idA;
-      dashLayout.order = order;
+      dashLayout.order = normalizeDashZoneOrder(order);
       applyDashLayout();
       const board = document.getElementById("dash-board");
       if (board && dashEditMode) {
@@ -14544,30 +14610,26 @@
           el.style.gridRow = "";
         }
       });
-      // ensure every known widget is in order exactly once
+      // ensure every known widget is in order exactly once; zones never interleave
       let order = Array.isArray(dashLayout.order) ? dashLayout.order.slice() : [];
-      DASH_DEFAULT_ORDER.forEach((id) => {
-        if (order.indexOf(id) < 0) order.push(id);
-      });
-      order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
-      const uniq = [];
+      order = normalizeDashZoneOrder(order);
+      dashLayout.order = order;
+      // reorder DOM — widgets first, then charts band
       order.forEach((id) => {
-        if (uniq.indexOf(id) < 0) uniq.push(id);
-      });
-      dashLayout.order = uniq;
-      // reorder DOM — linear order = 1-col reflow order (and pack input)
-      uniq.forEach((id) => {
         if (items[id]) board.appendChild(items[id]);
       });
       Object.keys(items).forEach((id) => {
-        if (uniq.indexOf(id) < 0) board.appendChild(items[id]);
+        if (order.indexOf(id) < 0) board.appendChild(items[id]);
       });
-      // visibility: class + hidden attribute + edit order badges
-      let orderN = 0;
-      uniq.forEach((id) => {
+      // visibility + separate order badges per zone (widgets 1…n, charts 1…m)
+      let widgetN = 0;
+      let chartN = 0;
+      order.forEach((id) => {
         const el = items[id];
         if (!el) return;
         const hide = dashLayoutIsHidden(id);
+        const zone = isDashChartZoneId(id) ? "charts" : "widgets";
+        el.setAttribute("data-order-zone", zone);
         el.classList.toggle("is-layout-hidden", hide);
         if (hide) {
           el.setAttribute("hidden", "");
@@ -14577,16 +14639,24 @@
           el.removeAttribute("hidden");
           el.hidden = false;
           if (el.style && el.style.display === "none") el.style.display = "";
-          orderN += 1;
-          el.setAttribute("data-order-n", String(orderN));
+          if (zone === "charts") {
+            chartN += 1;
+            el.setAttribute("data-order-n", String(chartN));
+          } else {
+            widgetN += 1;
+            el.setAttribute("data-order-n", String(widgetN));
+          }
         }
       });
       Object.keys(items).forEach((id) => {
-        if (uniq.indexOf(id) >= 0) return;
+        if (order.indexOf(id) >= 0) return;
         const el = items[id];
-        if (el) el.removeAttribute("data-order-n");
+        if (el) {
+          el.removeAttribute("data-order-n");
+          el.removeAttribute("data-order-zone");
+        }
       });
-      // half charts: column-major pack from linear order
+      // half charts: column-major pack from linear order (charts zone only)
       packDashHalfCharts(board);
       updateDashAddButton();
     }
@@ -14662,18 +14732,11 @@
     function readDashOrderFromDom() {
       const board = document.getElementById("dash-board");
       if (!board) return;
-      // DOM order of all items (including layout-hidden — they stay in place)
+      // DOM order (including layout-hidden); normalize so zones stay separate
       const ids = Array.from(board.querySelectorAll(".dash-item[data-dash-id]"))
         .map((el) => el.getAttribute("data-dash-id"))
         .filter((id) => id && DASH_DEFAULT_ORDER.indexOf(id) >= 0);
-      DASH_DEFAULT_ORDER.forEach((id) => {
-        if (ids.indexOf(id) < 0) ids.push(id);
-      });
-      const uniq = [];
-      ids.forEach((id) => {
-        if (uniq.indexOf(id) < 0) uniq.push(id);
-      });
-      dashLayout.order = uniq;
+      dashLayout.order = normalizeDashZoneOrder(ids);
       // never drop hidden / half flags here
       if (!Array.isArray(dashLayout.hidden)) dashLayout.hidden = [];
       dashLayout.hidden = dashLayout.hidden.filter(
@@ -14816,6 +14879,8 @@
         if (!dragId || !overEl || swapBusy) return;
         const overId = overEl.getAttribute("data-dash-id");
         if (!overId || overId === dragId) return;
+        // only within the same grid zone (widgets vs charts)
+        if (!dashSameZone(dragId, overId)) return;
         if (overId === lastOverId) return;
         lastOverId = overId;
         swapBusy = true;
@@ -14884,6 +14949,7 @@
         }
         const oid = over.getAttribute("data-dash-id");
         if (!oid || oid === dragId) return;
+        if (!dashSameZone(dragId, oid)) return;
         over.classList.add("is-swap-target");
         // live swap on enter new tile (home-screen style)
         if (oid !== lastOverId) swapWith(over);
@@ -14897,7 +14963,14 @@
           e.target && e.target.closest ? e.target.closest(".dash-item") : null;
         if (over) {
           const oid = over.getAttribute("data-dash-id");
-          if (oid && oid !== dragId && oid !== lastOverId) swapWith(over);
+          if (
+            oid &&
+            oid !== dragId &&
+            oid !== lastOverId &&
+            dashSameZone(dragId, oid)
+          ) {
+            swapWith(over);
+          }
         }
         saveDashLayout();
         cleanup();
@@ -24878,6 +24951,32 @@
         .filter(Boolean);
     }
 
+    /**
+     * Hydro chassis (M53/M63/…): physical boards (link pairs) face each other
+     * and alternate orientation. Pair 0 → normal C#; pair 1 → mirrored, etc.
+     * slot_link "0:1 2:3" → slots 0,1 normal; 2,3 mirrored.
+     * Returns { [slot]: true } when chip indices must be reversed for geometry.
+     */
+    function chipmapSlotMirrorFlags(links) {
+      const flags = Object.create(null);
+      if (!links || !links.length) return flags;
+      links.forEach((pair, pi) => {
+        if (!pair || !pair.length) return;
+        const mir = pi % 2 === 1;
+        pair.forEach((s) => {
+          flags[s | 0] = mir;
+        });
+      });
+      return flags;
+    }
+
+    /** Map firmware chip id → geometric position for cross-board compare. */
+    function chipmapGeoId(chipId, nChips, mirrored) {
+      const id = chipId | 0;
+      if (!mirrored || !nChips || nChips <= 1) return id;
+      return nChips - 1 - id;
+    }
+
     function chipTempPalette(tmax) {
       const m = Number(tmax);
       if (!Number.isFinite(m) || m < 55) {
@@ -25081,37 +25180,39 @@
     }
 
     /**
-     * Spatial analysis (HashSource):
+     * Spatial analysis (HashSource-inspired):
      * - gradient: hotter than upstream airflow neighbors
-     * - outliers: z-score vs same chip index across slots
+     * - outliers: z-score vs same *geometry* across slots
+     *   (hydro M53/M63: odd physical boards mirrored → reverse C#)
      * - nonce_def: % below slot average nonce
+     *
+     * @param {Array} boards
+     * @param {number} cpd chips per domain
+     * @param {Array<[number,number]>} [links] hydro slot pairs from slot_link
      */
-    function chipmapAnalyze(boards, cpd) {
+    function chipmapAnalyze(boards, cpd, links) {
       const slots = boards || [];
       const maxChips = slots.reduce(
         (m, b) => Math.max(m, (b.chips || []).length),
         0
       );
-      // cross-slot temps by position index (chip id / array order)
-      const tempsByPos = [];
-      for (let i = 0; i < maxChips; i++) {
-        const arr = [];
-        slots.forEach((b) => {
-          const chips = b.chips || [];
-          // prefer by id, fallback index
-          let c = chips.find((x) => (x.id | 0) === i);
-          if (!c && chips[i] && (chips[i].id | 0) === i) c = chips[i];
-          if (!c) {
-            // sorted by id: find index match
-            const byId = chips.find((x) => (x.id | 0) === i);
-            c = byId;
-          }
-          if (c && c.temp != null && Number.isFinite(Number(c.temp)))
-            arr.push(Number(c.temp));
+      const mirrorFlags = chipmapSlotMirrorFlags(links || []);
+
+      // cross-slot temps by geometric position (not raw C# when mirrored)
+      const tempsByGeo = [];
+      for (let i = 0; i < maxChips; i++) tempsByGeo.push([]);
+      slots.forEach((b) => {
+        const chips = b.chips || [];
+        const nChips = chips.length || maxChips;
+        const mir = !!mirrorFlags[b.slot | 0];
+        chips.forEach((c) => {
+          if (!c || c.temp == null || !Number.isFinite(Number(c.temp))) return;
+          const geo = chipmapGeoId(c.id | 0, nChips, mir);
+          if (geo < 0 || geo >= maxChips) return;
+          tempsByGeo[geo].push(Number(c.temp));
         });
-        tempsByPos.push(arr);
-      }
-      const stats = tempsByPos.map((temps) => {
+      });
+      const stats = tempsByGeo.map((temps) => {
         if (!temps.length) return { mean: 0, std: 0 };
         const n = temps.length;
         const mean = temps.reduce((a, b) => a + b, 0) / n;
@@ -25125,6 +25226,7 @@
       slots.forEach((b) => {
         const chips = (b.chips || []).slice().sort((a, c) => (a.id | 0) - (c.id | 0));
         const nChips = chips.length;
+        const mir = !!mirrorFlags[b.slot | 0];
         const cpdUse = cpd > 0 ? cpd : chipmapInferCpd(nChips);
         const numDomains = cpdUse > 0 ? Math.ceil(nChips / cpdUse) : 1;
         const remaining = Math.max(0, numDomains - 1);
@@ -25143,7 +25245,7 @@
           const domain = Math.floor(idx / cpdUse);
           const row = idx % cpdUse;
           const isTop = domain >= bottomDomains;
-          // upstream neighbors (airflow-aware snake)
+          // upstream neighbors (airflow-aware snake) — within same slot only
           const neigh = [];
           if (isTop) {
             if (domain + 1 < numDomains) {
@@ -25169,8 +25271,10 @@
             const avg = neigh.reduce((a, t) => a + t, 0) / neigh.length;
             gradient = Math.max(0, Number(chip.temp) - avg);
           }
+          // Outliers: compare to same geometry (mirrored boards → reverse C#)
           let z = 0;
-          const st = stats[idx];
+          const geo = chipmapGeoId(idx, nChips || maxChips, mir);
+          const st = stats[geo];
           if (st && chip.temp != null) {
             const dev = Number(chip.temp) - st.mean;
             if (dev > 0) {
@@ -25188,6 +25292,8 @@
           analysis[idx] = {
             gradient: Math.round(gradient * 100) / 100,
             z: Math.round(z * 100) / 100,
+            geo: geo,
+            mirrored: mir,
             nonceDef: Math.round(nonceDef * 10) / 10,
             nonceAvg: Math.round(avgNonce),
             nonceDelta: Math.round(nonceDelta),
@@ -25755,7 +25861,8 @@
               " · " +
               cpd +
               " c/d" +
-              (isHydro ? " · hydro" : " · snake");
+              (isHydro ? " · hydro" : " · snake") +
+              (isHydro && links.length > 1 ? " · mirror pairs" : "");
             if (cfg.manufacturer || cfg.brand) {
               t +=
                 " · " +
@@ -25800,7 +25907,7 @@
         return;
       }
 
-      const analysisBySlot = chipmapAnalyze(boards, cpd);
+      const analysisBySlot = chipmapAnalyze(boards, cpd, links);
       const metricRange = chipmapMetricRange(boards, metric, analysisBySlot);
       const labels = chipmapLegendLabels(metric, metricRange);
       if (leg) {
@@ -26453,7 +26560,7 @@
       gradient:
         "Gradient — chip hotter than upstream airflow neighbors (local hotspot)",
       outliers:
-        "Outliers — chip hotter than same C# on other boards (z-score)",
+        "Outliers — hotter than same geometry on other boards (z-score; hydro M53/M63: mirrored boards reverse C#)",
       nonce_def:
         "Nonce deficit — center % below slot average nonce (−12% = weaker than avg)",
       est_th: "Hash est — chip TH/s estimate (nonce share × ASIC hashrate)",

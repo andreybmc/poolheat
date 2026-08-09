@@ -88,12 +88,16 @@ _FAMILIES: list[dict[str, Any]] = [
             "virtual_per_physical": 2,
             "chart_slots": [0, 2],
             "slot_link": "0:1 2:3",
-            "note": "2 physical × 2 virtual slots",  # UI prefixes «HB »
+            # odd link pairs are mirror-oriented in chassis (for Outliers geometry)
+            "board_mirror": "odd_pair",
+            "note": "2 physical × 2 virtual slots · boards face each other (mirror)",
         },
         "chip_layout": {
             "style": "hydro",
             "chips_per_domain_default": 4,
             "chips_per_board_typical": 264,
+            # pair 0 (slots 0:1) normal C#; pair 1 (2:3) reverse for cross-board compare
+            "outlier_mirror_pairs": True,
         },
         "sensors": {
             "liquid_temp": True,
@@ -121,11 +125,13 @@ _FAMILIES: list[dict[str, Any]] = [
             "virtual_per_physical": 1,
             "chart_slots": [0, 1, 2],
             "slot_link": "0:1 2:3",
-            "note": "3 hashboards · hydro layout SKUs",
+            "board_mirror": "odd_pair",
+            "note": "3 hashboards · hydro · mirrored pairs for Outliers",
         },
         "chip_layout": {
             "style": "hydro",
             "chips_per_domain_default": 3,
+            "outlier_mirror_pairs": True,
         },
         "sensors": {
             "liquid_temp": True,
@@ -153,11 +159,13 @@ _FAMILIES: list[dict[str, Any]] = [
             "virtual_per_physical": 1,
             "chart_slots": [0, 1, 2],
             "slot_link": "0:1 2:3",
-            "note": "3 hashboards · hydro",
+            "board_mirror": "odd_pair",
+            "note": "3 hashboards · hydro · mirrored pairs for Outliers",
         },
         "chip_layout": {
             "style": "hydro",
             "chips_per_domain_default": 3,
+            "outlier_mirror_pairs": True,
         },
         "sensors": {
             "liquid_temp": True,

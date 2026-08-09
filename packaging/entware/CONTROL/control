@@ -1,5 +1,5 @@
 Package: poolheat
-Version: 0.5.65-1
+Version: 0.5.66-1
 Depends: python3, python3-pip
 Section: net
 Architecture: aarch64-3.10

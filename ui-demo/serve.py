@@ -3910,7 +3910,12 @@ DEVICE_ICON_DEFAULTS: tuple[str, ...] = (
 )
 
 _devices_cfg_lock = threading.Lock()
-_devices_cfg: dict = dict(DEFAULT_DEVICES_CFG)
+# deep-ish init — never share DEFAULT_DEVICES_CFG["devices"] list object
+_devices_cfg: dict = {
+    "version": 1,
+    "poller": dict(DEFAULT_DEVICES_POLLER),
+    "devices": [],
+}
 # per-device last-try throttle for auto-sync after errors
 _devices_sync_ts: dict[str, float] = {}
 # Pending Auto Off after Suspend: did → unix deadline (cancel if Resume before)
@@ -4129,6 +4134,58 @@ def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | 
     }
 
 
+def _device_from_filtration_cfg(filtr: dict | None) -> dict | None:
+    """One-shot migration: legacy single filtration outlet → multi-device entry."""
+    if not isinstance(filtr, dict):
+        return None
+    be = str(filtr.get("backend") or "tapo").strip().lower()
+    ip = str(filtr.get("ip") or "").strip()
+    # skip empty stub
+    if not ip and not filtr.get("webhook_on_url") and not filtr.get("ha_entity_id"):
+        return None
+    if not filtr.get("password") and not filtr.get("password_set") and be == "tapo":
+        # still allow if email+ip present (password may be redacted elsewhere)
+        if not filtr.get("email"):
+            return None
+    raw = {
+        "alias": "filtration",
+        "name": "Filtration",
+        "name_en": "Filtration",
+        "name_ru": "Фильтрация",
+        "icon": "🌀",
+        "enabled": True,
+        "backend": be if be else "tapo",
+        "ip": ip,
+        "email": filtr.get("email") or "",
+        "password": filtr.get("password") or "",
+        "device_id": filtr.get("device_id") or "",
+        "ewelink_port": filtr.get("ewelink_port"),
+        "webhook_on_url": filtr.get("webhook_on_url") or "",
+        "webhook_off_url": filtr.get("webhook_off_url") or "",
+        "webhook_method": filtr.get("webhook_method") or "GET",
+        "webhook_body_on": filtr.get("webhook_body_on") or "",
+        "webhook_body_off": filtr.get("webhook_body_off") or "",
+        "webhook_headers": filtr.get("webhook_headers") or "",
+        "shelly_channel": filtr.get("shelly_channel"),
+        "shelly_gen": filtr.get("shelly_gen") or "auto",
+        "ha_url": filtr.get("ha_url") or "",
+        "ha_token": filtr.get("ha_token") or "",
+        "ha_entity_id": filtr.get("ha_entity_id") or "",
+        "auto_on_mining": filtr.get("auto_on_mining", True),
+        "auto_off_suspend": filtr.get("auto_off_suspend", False),
+        "allow_off_while_mining": filtr.get("allow_off_while_mining", False),
+        "allow_on_while_suspend": filtr.get("allow_on_while_suspend", False),
+        "enforce_desired": True,
+        "show_in_bot": True,
+        "last_on": filtr.get("last_on"),
+        "desired_on": filtr.get("last_on"),
+        "last_error": filtr.get("last_error"),
+        "last_ok_ts": filtr.get("last_ok_ts"),
+        "last_action": filtr.get("last_action"),
+    }
+    return _normalize_device(raw)
+
+
 def _load_devices_cfg() -> None:
     global _devices_cfg
     with _devices_cfg_lock:
@@ -4146,14 +4203,71 @@ def _load_devices_cfg() -> None:
                 continue
             seen_alias.add(nd["alias"])
             clean.append(nd)
+        # auto-heal: empty multi-device list but legacy filtration outlet present
+        migrated = False
+        if not clean:
+            try:
+                filtr = _load_json(FILTRATION_CFG_FILE, {})
+            except Exception:
+                filtr = {}
+            mig = _device_from_filtration_cfg(
+                filtr if isinstance(filtr, dict) else None
+            )
+            if mig and mig["alias"] not in seen_alias:
+                clean.append(mig)
+                migrated = True
+                print(
+                    f"[devices] migrated legacy filtration → device "
+                    f"alias={mig.get('alias')} backend={mig.get('backend')}",
+                    flush=True,
+                )
         poller = _normalize_devices_poller(
             raw.get("poller") if isinstance(raw.get("poller"), dict) else None
         )
         _devices_cfg = {"version": 1, "poller": poller, "devices": clean}
+        if migrated:
+            try:
+                _save_json(DEVICES_CFG_FILE, dict(_devices_cfg))
+            except Exception as e:
+                print(f"[devices] migrate save: {e}", flush=True)
 
 
 def _save_devices_cfg() -> None:
+    """
+    Persist devices_config.json.
+    Guard: never overwrite a non-empty on-disk device list with an empty
+    in-memory list (protects against race / partial load wipe).
+    """
     with _devices_cfg_lock:
+        mem = list(_devices_cfg.get("devices") or [])
+        if not mem and DEVICES_CFG_FILE.is_file():
+            try:
+                disk = _load_json(DEVICES_CFG_FILE, {})
+                disk_devs = (
+                    disk.get("devices")
+                    if isinstance(disk, dict) and isinstance(disk.get("devices"), list)
+                    else []
+                )
+                if disk_devs:
+                    print(
+                        f"[devices] refuse save: memory has 0 devices but disk has "
+                        f"{len(disk_devs)} — keeping disk (reload)",
+                        flush=True,
+                    )
+                    # heal memory from disk so UI/API match
+                    clean: list[dict] = []
+                    seen: set[str] = set()
+                    for d in disk_devs:
+                        nd = _normalize_device(d)
+                        if not nd or nd["alias"] in seen:
+                            continue
+                        seen.add(nd["alias"])
+                        clean.append(nd)
+                    if clean:
+                        _devices_cfg["devices"] = clean
+                        return
+            except Exception as e:
+                print(f"[devices] save guard: {e}", flush=True)
         _save_json(DEVICES_CFG_FILE, dict(_devices_cfg))
 
 
