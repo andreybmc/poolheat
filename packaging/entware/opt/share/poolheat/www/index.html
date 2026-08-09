@@ -18369,7 +18369,7 @@
 
     /**
      * Power chart: compact single-column multi-unit Y rail.
-     * Internal y / y1 / y2 scale series; plugin draws stacked ticks + rotated titles.
+     * Each unit draws its own ticks at its scale height (spread, not stacked clumps).
      */
     function powerChartYScaleOpts() {
       return {
@@ -18378,14 +18378,14 @@
           title: { display: false, text: "" },
           ticks: {
             display: false,
-            maxTicksLimit: 5,
+            maxTicksLimit: 6,
             padding: 0,
           },
           grid: { color: "rgba(42,53,68,0.5)" },
           border: { display: false },
           afterFit(scale) {
-            // one value column + rotated unit titles
-            scale.width = Math.max(scale.width || 0, 40);
+            // numbers + rotated titles
+            scale.width = Math.max(scale.width || 0, 42);
           },
         },
         y1: {
@@ -18400,7 +18400,7 @@
           display: false,
           position: "left",
           title: { display: false },
-          ticks: { display: false, maxTicksLimit: 5 },
+          ticks: { display: false, maxTicksLimit: 4 },
           grid: { drawOnChartArea: false },
           border: { display: false },
         },
@@ -18420,11 +18420,9 @@
     }
 
     /**
-     * Compact combined Y: one narrow column of values, stacked per tick:
-     *   TH/s (purple)
-     *   W    (green)
-     *   J/T  (orange)
-     * Shared 0 at bottom; unit titles rotated −90° (Chart.js style), multi-color.
+     * One narrow column: each scale places its values at its own Y pixels
+     * (spread over the full height). Collision filter keeps ≥minGap.
+     * Shared 0 at bottom; unit titles rotated −90°, multi-color.
      */
     const powerCombinedAxisPlugin = {
       id: "powerCombinedAxis",
@@ -18438,11 +18436,11 @@
         if (y.options && y.options.display === false) return;
 
         const ctx = chart.ctx;
-        // stack order top→bottom at each tick: TH/s · W · J/T
+        // priority when two labels would collide (higher first)
         const cols = [
-          { scale: y1, color: "#c792ea", unit: "TH/s", key: "y1" },
-          { scale: y, color: "#3ecf8e", unit: "W", key: "y" },
-          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2" },
+          { scale: y, color: "#3ecf8e", unit: "W", key: "y", prio: 3 },
+          { scale: y1, color: "#c792ea", unit: "TH/s", key: "y1", prio: 2 },
+          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2", prio: 1 },
         ].filter((c) => c.scale);
 
         const ds = (chart.data && chart.data.datasets) || [];
@@ -18456,33 +18454,35 @@
         });
         if (!visible.length) return;
 
-        const numX = area.left - 3;
-        const titleX = Math.max(8, area.left - 32);
-        const ticks = y.ticks || [];
-        const lineH = 9;
-        const n = visible.length;
+        const numX = area.left - 4;
+        const titleX = Math.max(8, area.left - 33);
+        const minGap = 13; // px between labels — avoids clumping
 
         ctx.save();
         ctx.textBaseline = "middle";
 
-        // rotated unit titles (−90°), multi-color, like other chart axes
+        // rotated unit titles (−90°), multi-color
         {
           const midY = (area.top + area.bottom) / 2;
+          // title order reading bottom→top after rotate: J/T · TH/s · W
+          const titleOrder = [
+            visible.find((c) => c.key === "y2"),
+            visible.find((c) => c.key === "y1"),
+            visible.find((c) => c.key === "y"),
+          ].filter(Boolean);
           ctx.font = "600 9px 'Segoe UI', system-ui, sans-serif";
           ctx.save();
           ctx.translate(titleX, midY);
           ctx.rotate(-Math.PI / 2);
-          // after rotation: +x goes up the chart → draw left-to-right = bottom-to-top
-          let tx = 0;
-          const gap = 10;
-          // measure total width to center the group
-          const parts = visible.map((c) => {
-            const w = ctx.measureText(c.unit).width;
-            return { c, w };
-          });
+          const gap = 12;
+          const parts = titleOrder.map((c) => ({
+            c,
+            w: ctx.measureText(c.unit).width,
+          }));
           const total =
-            parts.reduce((s, p) => s + p.w, 0) + gap * Math.max(0, parts.length - 1);
-          tx = -total / 2;
+            parts.reduce((s, p) => s + p.w, 0) +
+            gap * Math.max(0, parts.length - 1);
+          let tx = -total / 2;
           parts.forEach((p) => {
             ctx.fillStyle = p.c.color;
             ctx.textAlign = "left";
@@ -18493,46 +18493,78 @@
           ctx.restore();
         }
 
-        ctx.font = "8px 'Segoe UI', system-ui, sans-serif";
-        ctx.textAlign = "right";
-
-        ticks.forEach((t) => {
-          const val = typeof t === "object" ? t.value : t;
-          if (val == null || !Number.isFinite(val)) return;
-          const py = y.getPixelForValue(val);
-          if (py < area.top - 2 || py > area.bottom + 2) return;
-
-          const vals = visible.map((c) => {
-            let v = val;
+        // collect candidates from each scale at its own pixel height
+        const cand = [];
+        visible.forEach((c) => {
+          const ticks = (c.scale && c.scale.ticks) || [];
+          ticks.forEach((t) => {
+            const val = typeof t === "object" ? t.value : t;
+            if (val == null || !Number.isFinite(val)) return;
+            let py;
             try {
-              if (c.scale !== y && typeof c.scale.getValueForPixel === "function") {
-                v = c.scale.getValueForPixel(py);
-              }
+              py = c.scale.getPixelForValue(val);
             } catch (_) {
-              v = val;
+              return;
             }
-            return v;
+            if (py < area.top - 2 || py > area.bottom + 2) return;
+            cand.push({
+              py,
+              val,
+              color: c.color,
+              unit: c.unit,
+              prio: c.prio,
+              key: c.key,
+              zero: Math.abs(val) < 0.51,
+            });
           });
+        });
 
-          // shared zero at bottom (all ~0)
-          const allZero = vals.every((v) => Number.isFinite(v) && Math.abs(v) < 0.51);
-          if (allZero) {
-            ctx.fillStyle = "#8b9bb0";
-            ctx.fillText("0", numX, py);
+        // sort top→bottom, then resolve overlaps (keep higher prio)
+        cand.sort((a, b) => a.py - b.py || b.prio - a.prio);
+        const placed = [];
+        cand.forEach((it) => {
+          // shared 0: only one muted zero near bottom
+          if (it.zero) {
+            const nearZero = placed.some(
+              (p) => p.zero && Math.abs(p.py - it.py) < minGap
+            );
+            if (nearZero) return;
+            // prefer neutral common 0
+            it.color = "#8b9bb0";
+            it.val = 0;
+          }
+          const clash = placed.find((p) => Math.abs(p.py - it.py) < minGap);
+          if (clash) {
+            if (it.prio > clash.prio) {
+              // replace weaker label
+              const idx = placed.indexOf(clash);
+              placed[idx] = it;
+            }
             return;
           }
+          placed.push(it);
+        });
+        placed.sort((a, b) => a.py - b.py);
 
-          const stackH = (n - 1) * lineH;
-          visible.forEach((c, i) => {
-            const ty = py - stackH / 2 + i * lineH;
-            if (ty < area.top - 4 || ty > area.bottom + 4) return;
-            ctx.fillStyle = c.color;
-            ctx.fillText(
-              _fmtPowerAxisVal(vals[i], c.unit === "W" ? "W" : c.unit),
-              numX,
-              ty
-            );
-          });
+        // light vertical spread nudge if two remain almost equal (safety)
+        for (let i = 1; i < placed.length; i++) {
+          const gap = placed[i].py - placed[i - 1].py;
+          if (gap > 0 && gap < minGap) {
+            const need = minGap - gap;
+            placed[i].py += need * 0.55;
+            placed[i - 1].py -= need * 0.45;
+          }
+        }
+
+        ctx.font = "9px 'Segoe UI', system-ui, sans-serif";
+        ctx.textAlign = "right";
+        placed.forEach((it) => {
+          if (it.py < area.top - 2 || it.py > area.bottom + 2) return;
+          ctx.fillStyle = it.color;
+          const txt = it.zero
+            ? "0"
+            : _fmtPowerAxisVal(it.val, it.unit === "W" ? "W" : it.unit);
+          ctx.fillText(txt, numX, it.py);
         });
 
         // thin rail
@@ -19929,7 +19961,7 @@
         chartTemp = null;
       }
       // rebuild power chart when combined Y-axis layout is outdated
-      if (chartPower && chartPower.$combinedAxis !== 3) {
+      if (chartPower && chartPower.$combinedAxis !== 4) {
         try {
           chartPower.destroy();
         } catch (_) { /* ignore */ }
@@ -20071,7 +20103,7 @@
           plugins: [statusBandsPlugin, powerCombinedAxisPlugin],
         });
         chartPower.$chartKey = "power";
-        chartPower.$combinedAxis = 3;
+        chartPower.$combinedAxis = 4;
         applyChartDisplayOptions(chartPower, "power");
       }
     }
