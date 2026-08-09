@@ -662,9 +662,11 @@
     .energy-chart-toolbar .energy-chart-field {
       gap: 0;
     }
-    /* icon-only refresh — energy + temps/power chart headers */
+    /* icon-only refresh — charts + action log headers */
     .energy-chart-toolbar .energy-chart-refresh,
-    .chart-header-toolbar .energy-chart-refresh {
+    .chart-header-toolbar .energy-chart-refresh,
+    .card-h .energy-chart-refresh,
+    .btn-row .energy-chart-refresh {
       flex: 0 0 auto;
       align-self: center;
       width: 28px;
@@ -680,11 +682,15 @@
       background: var(--panel2);
     }
     .energy-chart-toolbar .energy-chart-refresh:hover,
-    .chart-header-toolbar .energy-chart-refresh:hover {
+    .chart-header-toolbar .energy-chart-refresh:hover,
+    .card-h .energy-chart-refresh:hover,
+    .btn-row .energy-chart-refresh:hover {
       border-color: var(--accent);
     }
     .energy-chart-toolbar .energy-chart-refresh .ico-refresh,
-    .chart-header-toolbar .energy-chart-refresh .ico-refresh {
+    .chart-header-toolbar .energy-chart-refresh .ico-refresh,
+    .card-h .energy-chart-refresh .ico-refresh,
+    .btn-row .energy-chart-refresh .ico-refresh {
       font-size: 0.95rem;
       line-height: 1;
       display: block;
@@ -8315,7 +8321,18 @@
               <div class="sub" data-i18n="sub.action_log">policy events · last write · live</div>
             </div>
             <div class="btn-row" style="gap:8px">
-              <button class="btn ghost" type="button" id="btn-refresh-log" data-i18n="btn.refresh">Refresh</button>
+              <button class="btn danger ghost" type="button" id="btn-clear-log" data-i18n="btn.clear_log">Clear</button>
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-refresh-log"
+                title="Refresh"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
               <button class="btn ghost" type="button" id="btn-export-log" data-i18n="btn.export_jsonl">Export JSONL</button>
             </div>
           </div>
@@ -8773,6 +8790,8 @@
         "btn.install": "Install",
         "btn.reinstall": "Reinstall",
         "btn.export_jsonl": "Export JSONL",
+        "btn.clear_log": "Clear",
+        "confirm.clear_action_log": "Clear action log (all events)?",
         "btn.apply_asic": "Apply to ASIC",
         "btn.save_current": "Save current…",
         "btn.overwrite_asic": "Overwrite from ASIC",
@@ -9554,6 +9573,8 @@
         "btn.install": "Установить",
         "btn.reinstall": "Переустановить",
         "btn.export_jsonl": "Экспорт JSONL",
+        "btn.clear_log": "Очистить",
+        "confirm.clear_action_log": "Очистить журнал действий (все события)?",
         "btn.apply_asic": "Применить на ASIC",
         "btn.save_current": "Сохранить текущие…",
         "btn.overwrite_asic": "Перезаписать с ASIC",
@@ -21831,6 +21852,28 @@
       .getElementById("btn-refresh-log")
       ?.addEventListener("click", () => {
         void loadActionLog().then(() => toastSuccess("Action log updated"));
+      });
+    document
+      .getElementById("btn-clear-log")
+      ?.addEventListener("click", async () => {
+        const ask =
+          (typeof t === "function" && t("confirm.clear_action_log")) ||
+          "Clear action log (all events)?";
+        if (!confirm(ask)) return;
+        try {
+          const res = await fetch("/api/policy/events/clear", {
+            method: "POST",
+          });
+          const body = await res.json();
+          if (!body.ok) throw new Error(body.error || "clear fail");
+          toastSuccess(
+            "Action log cleared · deleted: " + (body.deleted ?? 0)
+          );
+          actionLogCache = [];
+          void loadActionLog();
+        } catch (e) {
+          toastError("Failed to clear log: " + (e.message || e));
+        }
       });
     // poll while Logs subtab (under Info) is open
     if (actionLogTimer) clearInterval(actionLogTimer);

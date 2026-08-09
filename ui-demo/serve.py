@@ -23927,6 +23927,81 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
         pass
 
 
+def clear_policy_events() -> int:
+    """Wipe action / policy event ring (RAM + disk)."""
+    try:
+        _reload_policy_events_if_stale()
+    except Exception:
+        pass
+    with _policy_lock:
+        n = len(_policy_ctrl.get("events") or [])
+        _policy_ctrl["events"] = []
+        _policy_ctrl["last_event"] = None
+    try:
+        _save_policy_events()
+    except Exception:
+        pass
+    return n
+
+
+def _fmt_policy_w(v) -> str:
+    f = _f(v)
+    if f is None:
+        return "?"
+    return str(int(round(float(f))))
+
+
+def _fmt_policy_hr(v) -> str:
+    f = _f(v)
+    if f is None:
+        return "?"
+    return f"{float(f):.2f}"
+
+
+def _policy_cmd_short(action: object, value: object) -> str:
+    """Short SET tokens: pm / pl / mc / …"""
+    a = str(action or "").strip().lower()
+    if a == "mode":
+        return f"pm={value}"
+    if a in ("power_limit", "set_power_limit", "adjust_power_limit"):
+        return f"pl={_fmt_policy_w(value)}W"
+    if a in ("working", "working_mode", "work", "mining"):
+        return f"mc={value}"
+    if a in ("power_pct", "pct"):
+        return f"pct={value}"
+    return f"{a}={value}"
+
+
+def _fmt_auto_policy_log(
+    desired: object,
+    need_cmds: list,
+    live: dict | None,
+    measured_work: object,
+    want_work: object,
+) -> str:
+    """
+    AUTO z0 · SET pm=normal, pl=6000W
+      (HAVE pm=low, pl=5000W, mc=resume, hr=270.36TH/s, P=4953W, want_work=resume)
+    """
+    live = live if isinstance(live, dict) else {}
+    set_part = ", ".join(
+        _policy_cmd_short(a, v) for a, v in (need_cmds or [])
+    ) or "—"
+    have_bits = [
+        f"pm={_live_mode(live) or '?'}",
+        f"pl={_fmt_policy_w(_live_limit_w(live))}W",
+        f"mc={measured_work or '?'}",
+        f"hr={_fmt_policy_hr(live.get('hashrate_th'))}TH/s",
+        f"P={_fmt_policy_w(live.get('power'))}W",
+    ]
+    if want_work:
+        have_bits.append(f"want_work={want_work}")
+    return (
+        f"AUTO {desired} · SET {set_part} "
+        f"(HAVE {', '.join(have_bits)})"
+    )
+
+
 _load_logs_cfg()
 _load_policy_events()
 try:
@@ -24979,12 +25054,9 @@ def policy_tick() -> None:
 
     _policy_log(
         "ok",
-        f"AUTO {desired} · fix "
-        + ", ".join(f"{a}={v}" for a, v in need_cmds)
-        + f" (have mode={_live_mode(live)} work={measured_work}"
-        + (f" want_work={want_work}" if want_work else "")
-        + f" P={_f(live.get('power'))} TH={_f(live.get('hashrate_th'))} "
-        f"lim={_live_limit_w(live)})",
+        _fmt_auto_policy_log(
+            desired, need_cmds, live, measured_work, want_work
+        ),
         dry_run=dry,
         liquid=liquid,
         t_ctrl=t_ctrl,
@@ -25796,6 +25868,17 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/miner/errors/clear", "/api/errors/log/clear"):
             try:
                 n = clear_miner_error_log()
+                self._json_response(200, {"ok": True, "deleted": n})
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/policy/events/clear",
+            "/api/events/log/clear",
+            "/api/action-log/clear",
+        ):
+            try:
+                n = clear_policy_events()
                 self._json_response(200, {"ok": True, "deleted": n})
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
