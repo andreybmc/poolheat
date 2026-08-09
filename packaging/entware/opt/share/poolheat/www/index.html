@@ -5108,14 +5108,14 @@
               <div class="tc-extra pm-extra">
                 <div class="pm-extra-line">
                   <span data-bind="pwMode">—</span>
-                  · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot">uptime</span>
+                  · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot" data-i18n="dash.uptime">uptime</span>
                   <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
                   · <span class="tip" data-tip-key="asic_elapsed" id="dash-asic-elapsed-lbl"
-                      title="Elapsed — since mining start">mining</span>
+                      title="Elapsed — since mining start" data-i18n="dash.mining">mining</span>
                   <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
                 </div>
                 <div class="pm-extra-line">
-                  <span class="tip" data-tip-key="psu_temp">PSU</span>
+                  <span class="tip" data-tip-key="psu_temp" data-i18n="dash.psu">PSU</span>
                   <span data-bind="psuTemp">—</span>
                   · <span data-bind="psuFan">—</span>
                   · <span data-bind="psuVin" class="tip" data-tip-key="psu_vin">—</span>
@@ -9014,6 +9014,9 @@
         "wx.wind": "{v} m/s",
         "wx.pressure": "{v} mmHg",
         "dash.heat_loss": "Heat loss",
+        "dash.uptime": "uptime",
+        "dash.mining": "mining",
+        "dash.psu": "PSU",
         "dash.heat_balance": "Heat / cool-down",
         "dash.power_measured": "Power measured",
         "dash.hashboards": "Hashboards",
@@ -9797,6 +9800,9 @@
         "wx.wind": "{v} м/с",
         "wx.pressure": "{v} мм рт.ст.",
         "dash.heat_loss": "Теплопотери",
+        "dash.uptime": "uptime",
+        "dash.mining": "mining",
+        "dash.psu": "БП",
         "dash.heat_balance": "Нагрев / остывание",
         "dash.power_measured": "Мощность",
         "dash.hashboards": "Хешплаты",
@@ -15477,16 +15483,23 @@
           if (raw == null || raw === "") return "—";
           const sec = Number(raw);
           if (!Number.isFinite(sec) || sec < 0) return String(raw);
+          const ru =
+            typeof getUiLang === "function" && getUiLang() === "ru";
+          // EN: 18h 29m · RU: 18ч 29м (keep words uptime/mining via labels)
+          const uD = ru ? "д" : "d";
+          const uH = ru ? "ч" : "h";
+          const uM = ru ? "м" : "m";
+          const uS = ru ? "с" : "s";
           let s = Math.floor(sec);
           const d = Math.floor(s / 86400);
           s %= 86400;
           const h = Math.floor(s / 3600);
           s %= 3600;
           const m = Math.floor(s / 60);
-          if (d > 0) return d + "d " + h + "h";
-          if (h > 0) return h + "h " + m + "m";
-          if (m > 0) return m + "m";
-          return s + "s";
+          if (d > 0) return d + uD + " " + h + uH;
+          if (h > 0) return h + uH + " " + m + uM;
+          if (m > 0) return m + uM;
+          return s + uS;
         };
         const pick = (key) => {
           if (r && r[key] != null && r[key] !== "") return r[key];
@@ -18325,9 +18338,8 @@
     }
 
     /**
-     * Power chart: one visual Y rail on the left (combined multi-unit ticks).
-     * Internal y / y1 / y2 still scale series; only y reserves width + grid.
-     * Plugin draws W · TH/s · J/T in one column (green / purple / orange).
+     * Power chart: compact single-column multi-unit Y rail.
+     * Internal y / y1 / y2 scale series; plugin draws stacked ticks + rotated titles.
      */
     function powerChartYScaleOpts() {
       return {
@@ -18336,21 +18348,21 @@
           title: { display: false, text: "" },
           ticks: {
             display: false,
-            maxTicksLimit: 6,
+            maxTicksLimit: 5,
             padding: 0,
           },
           grid: { color: "rgba(42,53,68,0.5)" },
           border: { display: false },
           afterFit(scale) {
-            // room for 3 compact value columns + unit header
-            scale.width = Math.max(scale.width || 0, 86);
+            // one value column + rotated unit titles
+            scale.width = Math.max(scale.width || 0, 40);
           },
         },
         y1: {
           display: false,
           position: "left",
           title: { display: false },
-          ticks: { display: false, maxTicksLimit: 6 },
+          ticks: { display: false, maxTicksLimit: 5 },
           grid: { drawOnChartArea: false },
           border: { display: false },
         },
@@ -18358,7 +18370,7 @@
           display: false,
           position: "left",
           title: { display: false },
-          ticks: { display: false, maxTicksLimit: 6 },
+          ticks: { display: false, maxTicksLimit: 5 },
           grid: { drawOnChartArea: false },
           border: { display: false },
         },
@@ -18377,7 +18389,13 @@
       return (Math.round(v * 10) / 10).toFixed(1);
     }
 
-    /** One combined left scale: colored multi-unit ticks at shared grid rows. */
+    /**
+     * Compact combined Y: one narrow column of values, stacked per tick:
+     *   TH/s (purple)
+     *   W    (green)
+     *   J/T  (orange)
+     * Shared 0 at bottom; unit titles rotated −90° (Chart.js style), multi-color.
+     */
     const powerCombinedAxisPlugin = {
       id: "powerCombinedAxis",
       afterDraw(chart) {
@@ -18390,14 +18408,13 @@
         if (y.options && y.options.display === false) return;
 
         const ctx = chart.ctx;
-        // columns left→right: J/T · TH/s · W (W closest to plot)
+        // stack order top→bottom at each tick: TH/s · W · J/T
         const cols = [
-          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2" },
           { scale: y1, color: "#c792ea", unit: "TH/s", key: "y1" },
           { scale: y, color: "#3ecf8e", unit: "W", key: "y" },
+          { scale: y2, color: "#ff9f43", unit: "J/T", key: "y2" },
         ].filter((c) => c.scale);
 
-        // hide a unit column if every dataset on that axis is off
         const ds = (chart.data && chart.data.datasets) || [];
         const axisOn = (axisId) =>
           ds.some((d) => d && !d.hidden && (d.yAxisID || "y") === axisId);
@@ -18409,33 +18426,53 @@
         });
         if (!visible.length) return;
 
-        const colW = 28;
-        const rightEdge = area.left - 4;
+        const numX = area.left - 3;
+        const titleX = Math.max(8, area.left - 32);
         const ticks = y.ticks || [];
+        const lineH = 9;
+        const n = visible.length;
 
         ctx.save();
         ctx.textBaseline = "middle";
 
-        // unit headers (tiny, above first tick)
-        const headY = area.top - 9;
-        if (headY > 4) {
-          ctx.font = "600 8px 'Segoe UI', system-ui, sans-serif";
-          visible.forEach((c, i) => {
-            const x = rightEdge - (visible.length - 1 - i) * colW;
-            ctx.fillStyle = c.color;
-            ctx.textAlign = "right";
-            ctx.fillText(c.unit, x, headY);
+        // rotated unit titles (−90°), multi-color, like other chart axes
+        {
+          const midY = (area.top + area.bottom) / 2;
+          ctx.font = "600 9px 'Segoe UI', system-ui, sans-serif";
+          ctx.save();
+          ctx.translate(titleX, midY);
+          ctx.rotate(-Math.PI / 2);
+          // after rotation: +x goes up the chart → draw left-to-right = bottom-to-top
+          let tx = 0;
+          const gap = 10;
+          // measure total width to center the group
+          const parts = visible.map((c) => {
+            const w = ctx.measureText(c.unit).width;
+            return { c, w };
           });
+          const total =
+            parts.reduce((s, p) => s + p.w, 0) + gap * Math.max(0, parts.length - 1);
+          tx = -total / 2;
+          parts.forEach((p) => {
+            ctx.fillStyle = p.c.color;
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(p.c.unit, tx, 0);
+            tx += p.w + gap;
+          });
+          ctx.restore();
         }
 
-        ctx.font = "9px 'Segoe UI', system-ui, sans-serif";
+        ctx.font = "8px 'Segoe UI', system-ui, sans-serif";
+        ctx.textAlign = "right";
+
         ticks.forEach((t) => {
           const val = typeof t === "object" ? t.value : t;
           if (val == null || !Number.isFinite(val)) return;
           const py = y.getPixelForValue(val);
-          if (py < area.top - 1 || py > area.bottom + 1) return;
+          if (py < area.top - 2 || py > area.bottom + 2) return;
 
-          visible.forEach((c, i) => {
+          const vals = visible.map((c) => {
             let v = val;
             try {
               if (c.scale !== y && typeof c.scale.getValueForPixel === "function") {
@@ -18444,10 +18481,27 @@
             } catch (_) {
               v = val;
             }
-            const x = rightEdge - (visible.length - 1 - i) * colW;
+            return v;
+          });
+
+          // shared zero at bottom (all ~0)
+          const allZero = vals.every((v) => Number.isFinite(v) && Math.abs(v) < 0.51);
+          if (allZero) {
+            ctx.fillStyle = "#8b9bb0";
+            ctx.fillText("0", numX, py);
+            return;
+          }
+
+          const stackH = (n - 1) * lineH;
+          visible.forEach((c, i) => {
+            const ty = py - stackH / 2 + i * lineH;
+            if (ty < area.top - 4 || ty > area.bottom + 4) return;
             ctx.fillStyle = c.color;
-            ctx.textAlign = "right";
-            ctx.fillText(_fmtPowerAxisVal(v, c.unit === "W" ? "W" : c.unit), x, py);
+            ctx.fillText(
+              _fmtPowerAxisVal(vals[i], c.unit === "W" ? "W" : c.unit),
+              numX,
+              ty
+            );
           });
         });
 
@@ -18471,7 +18525,7 @@
       chart.options.plugins.legend = chartLegendPluginOpts(k);
       if (!chart.options.scales) chart.options.scales = {};
       const scales = chart.options.scales;
-      // power: one combined left rail (plugin); y1/y2 stay hidden
+      // power: compact single-column combined rail
       if (k === "power") {
         const yOpts = powerChartYScaleOpts();
         ["y", "y1", "y2"].forEach((sid) => {
@@ -18483,18 +18537,17 @@
           });
           scales[sid] = next;
         });
-        // top pad for unit headers
         if (!chart.options.layout) chart.options.layout = {};
         const pad = chart.options.layout.padding;
         if (pad == null || typeof pad === "number") {
           chart.options.layout.padding = {
-            top: Math.max(14, typeof pad === "number" ? pad : 0),
+            top: Math.max(4, typeof pad === "number" ? pad : 0),
             right: typeof pad === "number" ? pad : 0,
             bottom: typeof pad === "number" ? pad : 0,
             left: typeof pad === "number" ? pad : 0,
           };
         } else if (typeof pad === "object") {
-          pad.top = Math.max(14, pad.top || 0);
+          if (pad.top == null || pad.top > 8) pad.top = Math.max(4, pad.top || 0);
         }
       }
       Object.keys(scales).forEach((sid) => {
@@ -19845,8 +19898,8 @@
         } catch (_) { /* ignore */ }
         chartTemp = null;
       }
-      // rebuild power chart when combined Y-axis plugin is missing (layout v2)
-      if (chartPower && !chartPower.$combinedAxis) {
+      // rebuild power chart when combined Y-axis layout is outdated
+      if (chartPower && chartPower.$combinedAxis !== 3) {
         try {
           chartPower.destroy();
         } catch (_) { /* ignore */ }
@@ -19988,7 +20041,7 @@
           plugins: [statusBandsPlugin, powerCombinedAxisPlugin],
         });
         chartPower.$chartKey = "power";
-        chartPower.$combinedAxis = true;
+        chartPower.$combinedAxis = 3;
         applyChartDisplayOptions(chartPower, "power");
       }
     }
@@ -23360,8 +23413,11 @@
         kwEl.textContent = Q_kW.toFixed(2);
         if (dTEl) dTEl.textContent = Number.isFinite(cool) ? cool.toFixed(3) : "—";
         if (condEl) {
+          const ru =
+            typeof getUiLang === "function" && getUiLang() === "ru";
+          const waterLbl = ru ? "вода" : "bowl";
           condEl.textContent =
-            "bowl ≈" + Tw.toFixed(1) + "°C" +
+            waterLbl + " ≈" + Tw.toFixed(1) + "°C" +
             " · ΔT ≈" + dT.toFixed(1) + "°C" +
             " · S =" + S.toFixed(1) + " m²";
         }
