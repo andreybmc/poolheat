@@ -10603,7 +10603,7 @@ _history_query_cache_lock = threading.Lock()
 _HISTORY_SENSOR_META_TTL_SEC = 30.0
 _history_sensor_meta_cache: dict = {"ts": 0.0, "data": None}
 # Pre-serialized JSON for GET /api/history (skip dumps on warm hits)
-_HISTORY_HTTP_TTL_SEC = 12.0
+_HISTORY_HTTP_TTL_SEC = 45.0  # long enough for chart paint + user zoom
 _history_http_cache: dict = {}  # key -> {"ts": float, "data": bytes}
 _history_http_cache_lock = threading.Lock()
 
