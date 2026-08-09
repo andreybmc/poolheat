@@ -620,6 +620,8 @@
       cursor: pointer;
       outline: none;
       transition: border-color 0.15s;
+      text-align: center;
+      text-align-last: center;
     }
     .ui-pill-control:hover,
     select.chart-zoom-select:hover,
@@ -633,7 +635,7 @@
     select.energy-chart-range:focus {
       border-color: var(--accent);
     }
-    /* native select pill + chevron slightly righter than form selects */
+    /* native select pill + chevron; text centered (symmetric pad for chevron) */
     select.chart-zoom-select,
     select.energy-chart-bucket,
     select.energy-chart-range {
@@ -641,7 +643,9 @@
       width: auto;
       min-width: 3.2rem;
       max-width: 100%;
-      padding: 6px 1.35rem 6px 10px;
+      padding: 6px 1.35rem;
+      text-align: center;
+      text-align-last: center;
       -webkit-appearance: none;
       appearance: none;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9bb0' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
@@ -649,6 +653,11 @@
       background-position: right 0.4rem center;
       background-size: 10px 10px;
       vertical-align: middle;
+    }
+    select.chart-zoom-select option,
+    select.energy-chart-bucket option,
+    select.energy-chart-range option {
+      text-align: center;
     }
     select.chart-zoom-select:disabled,
     select.energy-chart-bucket:disabled,
