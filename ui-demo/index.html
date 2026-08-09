@@ -2840,19 +2840,29 @@
       padding: 14px;
       position: relative;
       overflow: hidden;
+      box-sizing: border-box;
     }
 
+    /*
+     * Left accent stripe: sit under the 1px border (left/top/bottom -1px)
+     * so the card outline never peeks as a dark hairline beside the ribbon
+     * (weather widget made this obvious on blue gradients).
+     */
     .temp-card::before {
       content: "";
       position: absolute;
-      left: 0; top: 0; bottom: 0;
-      width: 4px; /* same left stripe width on all dash widgets */
+      left: -1px;
+      top: -1px;
+      bottom: -1px;
+      width: 5px; /* 4px visible + 1px under border */
       background: var(--dim);
+      border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      z-index: 2;
+      pointer-events: none;
     }
 
     /* T_ctrl (blue) → Env (green): smooth left bookmark gradient */
     .temp-card.liquid-env::before {
-      width: 4px;
       background: linear-gradient(
         180deg,
         var(--accent) 0%,
@@ -2861,12 +2871,10 @@
         var(--ok) 100%
       );
     }
-    /* outdoor weather: same 4px left stripe as Power / T_ctrl / etc. */
+    /* outdoor weather: same left stripe as Power / T_ctrl / etc. */
     .temp-card.outdoor::before {
       display: block;
-      width: 4px;
       background: linear-gradient(180deg, #7ec8f5 0%, #3d9cf0 45%, #1a6bb5 100%);
-      z-index: 2;
     }
 
     /* —— Weather widget (iOS / Android style) —— */
@@ -2876,7 +2884,8 @@
       flex-direction: column;
       gap: 6px;
       min-height: 0;
-      padding: 14px 14px 12px;
+      /* match other temp-cards (14px) — was 14/14/12 and looked slightly taller */
+      padding: 14px;
       border: 1px solid rgba(255, 255, 255, 0.12);
       background:
         radial-gradient(ellipse 90% 80% at 85% 15%, rgba(255, 220, 120, 0.22), transparent 55%),
@@ -2884,6 +2893,7 @@
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
       transition: background 0.45s ease, box-shadow 0.3s ease;
       overflow: hidden;
+      box-sizing: border-box;
     }
     .temp-card.outdoor.wx-widget.wx-clear {
       background:
@@ -3688,7 +3698,6 @@
 
     /* Power measured: energy gradient on left tab */
     .temp-card.power-meas::before {
-      width: 4px;
       background: linear-gradient(
         180deg,
         #3ecf8e 0%,
@@ -7728,29 +7737,29 @@
           <div class="card-b stack" style="gap:12px">
             <label class="check">
               <input type="checkbox" id="warmup-en" checked />
-              <span>Wait until at operating regime
-                <span class="desc">upfreq=0 / ramping → block Z0 / upward</span>
+              <span><span data-i18n="check.warmup_en">Wait until at operating regime</span>
+                <span class="desc" data-i18n="check.warmup_en_desc">upfreq=0 / ramping → block Z0 / upward</span>
               </span>
             </label>
             <label class="check">
               <input type="checkbox" id="warmup-downward-only" checked />
-              <span>In warmup only allow down / Critical
-                <span class="desc">mode↑ limit↑ resume blocked; Z2/Suspend/Critical — yes</span>
+              <span><span data-i18n="check.warmup_down">In warmup only allow down / Critical</span>
+                <span class="desc" data-i18n="check.warmup_down_desc">mode↑ limit↑ resume blocked; Z2/Suspend/Critical — yes</span>
               </span>
             </label>
             <div class="row" style="grid-template-columns:1fr">
-              <label class="field"><span class="tip" data-tip-key="warmup">max_warmup_wait_min</span>
+              <label class="field"><span class="tip" data-tip-key="warmup" data-i18n="field.warmup_max_wait">Max warmup wait, min</span>
                 <input type="number" id="warmup-max-wait" value="30" min="1" max="240" />
               </label>
             </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.4">
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.4" data-i18n="hint.warmup_save">
               Saved with the anti-thrash Save button (same zone config).
-              After max_warmup_wait — upward allowed again even if upfreq is still 0.
+              After max wait — upward allowed again even if upfreq is still 0.
             </p>
             <div class="metric" id="ready-metric">
-              <label><span class="tip" data-tip-key="miner_ready">miner_ready</span></label>
-              <div class="val" style="font-size:1.1rem;color:var(--warn)" id="ready-val">false · upfreq</div>
-              <div class="hint">SIM: clear “upfreq / not ready” to allow ↑</div>
+              <label><span class="tip" data-tip-key="miner_ready" data-i18n="label.miner_ready">Miner ready</span></label>
+              <div class="val" style="font-size:1.1rem;color:var(--warn)" id="ready-val">—</div>
+              <div class="hint" data-i18n="hint.warmup_sim">SIM: clear “upfreq / not ready” to allow ↑</div>
             </div>
           </div>
         </div>
@@ -8153,7 +8162,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.software">poolheat_WM · software</h2>
-              <div class="sub" data-i18n="sub.software">version · GitHub update check</div>
+              <div class="sub" data-i18n="sub.software">version · update check</div>
             </div>
             <div class="btn-row" style="gap:8px">
               <button class="btn ghost" type="button" id="btn-info-refresh" data-i18n="btn.refresh">Refresh</button>
@@ -8166,10 +8175,10 @@
               <div class="metric highlight-accent">
                 <label data-i18n="info.installed">Installed</label>
                 <div class="val" style="font-size:1.2rem" id="info-app-version">—</div>
-                <div class="hint" id="info-app-repo">github —</div>
+                <div class="hint" id="info-app-repo" data-i18n="info.channel">release channel</div>
               </div>
               <div class="metric">
-                <label data-i18n="info.on_github">On GitHub</label>
+                <label data-i18n="info.on_github">In repository</label>
                 <div class="val" style="font-size:1.2rem" id="info-app-latest">—</div>
                 <div class="hint" id="info-app-source">source —</div>
               </div>
@@ -9099,6 +9108,17 @@
         "h2.telegram": "Telegram bot",
         "h2.dry": "Dry Run",
         "h2.warmup": "Warmup / upfreq gate",
+        "check.warmup_en": "Wait until at operating regime",
+        "check.warmup_en_desc": "upfreq=0 / ramping → block Z0 / upward",
+        "check.warmup_down": "In warmup only allow down / Critical",
+        "check.warmup_down_desc": "mode↑ limit↑ resume blocked; Z2/Suspend/Critical — yes",
+        "field.warmup_max_wait": "Max warmup wait, min",
+        "hint.warmup_save": "Saved with the zone map Save button. After max wait — upward allowed again even if upfreq is still 0.",
+        "label.miner_ready": "Miner ready",
+        "ready.false_upfreq": "not ready · upfreq",
+        "ready.hash_settling": "ready · upfreq ok · hash settling",
+        "ready.ok": "ready",
+        "hint.warmup_sim": "SIM: clear “upfreq / not ready” to allow ↑",
         "h2.keenetic": "Keenetic",
         "h2.whatsminer": "Whatsminer",
         "h2.hashboards": "Hashboards · PCB SN · Tagged",
@@ -9214,7 +9234,7 @@
         "sub.warmup": "until ready — no point raising the profile",
         "sub.advanced_card": "history · energy · devices poller · logs · chip map · rare options",
         "sub.access": "Remote · auth · LuCI proxy :8788",
-        "sub.software": "version · GitHub update check",
+        "sub.software": "version · update check",
         "sub.dry": "auto zones · Safety always · then Save",
         "sub.chip_poll": "own interval · web admin · separate from live poll",
         "sub.keenetic": "model · firmware · hostname",
@@ -9236,7 +9256,8 @@
         "wx.interval": "Refresh interval, min",
         "hint.sniffer": "<div>Install downloads <code>modules/miner_sniffer</code> from GitHub into the data directory.</div><div>Activate starts <code>tcpdump</code> on the router (requires module installed).</div><div>Deactivate stops capture but keeps the module on disk.</div><div>Uninstall removes module files and pcaps to free space.</div><div>Needs <code>opkg install tcpdump</code>.</div><div>Captures go to <code>/tmp/poolheat-sniffer/</code> (tmpfs). Keep sessions short.</div>",
         "info.installed": "Installed",
-        "info.on_github": "On GitHub",
+        "info.on_github": "In repository",
+        "info.channel": "release channel",
         "info.status": "Status",
         "info.commit": "commit —",
         "info.source": "source —",
@@ -9245,18 +9266,29 @@
         "upd.up_to_date": "up to date",
         "upd.available": "update available",
         "upd.local_ahead": "locally newer",
-        "upd.branch_only": "branch only",
+        "upd.branch_only": "channel only",
         "upd.unknown": "unknown",
         "upd.error": "check error",
         "upd.not_checked": "not checked",
-        "upd.press_test": "press Test",
+        "upd.press_test": "press Check",
         "upd.reinstall": "Reinstall",
         "upd.install": "Install",
-        "upd.install_from": "Install from GitHub",
-        "upd.msg_match": "Version matches GitHub ({ver}, source {src}). You can reinstall from {ref}.",
-        "upd.msg_avail": "Available {latest} (now {cur}). Install downloads the GitHub archive and restarts the service. config.json is kept.",
+        "upd.install_from": "Install from repository",
+        "upd.msg_match": "Version matches the repository ({ver}, source {src}). You can reinstall from {ref}.",
+        "upd.msg_avail": "Available {latest} (now {cur}). Install downloads the package and restarts the service. config.json is kept.",
+        "upd.msg_local_ahead": "Locally {cur} is newer than repository ({latest}). Publish a new release to catch up.",
+        "upd.msg_branch": "No release version in repository yet — you can install channel {branch}.",
+        "upd.msg_checked": "Checked: {at}",
         "upd.checking": "Checking for updates…",
+        "upd.checking_short": "Checking…",
         "upd.uptodate_toast": "poolheat_WM is up to date · {ver}",
+        "upd.toast_available": "Update available {ver}",
+        "upd.toast_local_ahead": "Local version is newer than the repository",
+        "upd.toast_branch": "No release version yet · you can install channel {branch}",
+        "upd.toast_check": "Check: {msg}",
+        "upd.toast_err": "Update check: {msg}",
+        "upd.install_confirm": "Install poolheat from repository?\n\nVersion: {ver}\nCurrent: {cur}\n\nconfig.json is kept. Service will restart.",
+        "upd.installing": "Installing…",
         "footer.powered": "Powered by poolheat_WM"
       },
       ru: {
@@ -9852,7 +9884,18 @@
         "h2.action_log": "Журнал действий",
         "h2.telegram": "Telegram bot",
         "h2.dry": "Dry Run",
-        "h2.warmup": "Warmup / upfreq gate",
+        "h2.warmup": "Прогрев / upfreq",
+        "check.warmup_en": "Ждать выхода на режим",
+        "check.warmup_en_desc": "upfreq=0 / разгон → блок Z0 / вверх",
+        "check.warmup_down": "В прогреве только вниз / Critical",
+        "check.warmup_down_desc": "mode↑ limit↑ resume запрещены; Z2/Suspend/Critical — да",
+        "field.warmup_max_wait": "Макс. ожидание прогрева, мин",
+        "hint.warmup_save": "Сохраняется кнопкой Save карты зон. После лимита — вверх снова можно, даже если upfreq ещё 0.",
+        "label.miner_ready": "Готовность майнера",
+        "ready.false_upfreq": "не готов · upfreq",
+        "ready.hash_settling": "готов · upfreq ok · hash settling",
+        "ready.ok": "готов",
+        "hint.warmup_sim": "SIM: снимите «upfreq / not ready», чтобы разрешить ↑",
         "h2.keenetic": "Keenetic",
         "h2.whatsminer": "Whatsminer",
         "h2.hashboards": "Hashboards · PCB SN · Tagged",
@@ -9965,10 +10008,10 @@
         "filt.off_blocked_title": "Нельзя выключить при майнинге — включите «Разрешить OFF при майнинге»",
         "sub.telegram": "уведомления policy · команды /status",
         "sub.policy": "dwell · settle · streak · сохраняется с картой зон",
-        "sub.warmup": "пока не ready — нет смысла повышать профиль",
+        "sub.warmup": "пока не готов — нет смысла повышать профиль",
         "sub.advanced_card": "история · учёт энергии · поллер устройств · логи · кеш карты чипов · редкие опции",
         "sub.access": "Remote · auth · LuCI proxy :8788",
-        "sub.software": "версия · проверка обновлений GitHub",
+        "sub.software": "версия · проверка обновлений",
         "sub.dry": "авто-зоны · Safety всегда · после галки — Сохранить",
         "sub.chip_poll": "отдельный интервал · web admin · не смешивается с live poll",
         "sub.keenetic": "модель · прошивка · hostname",
@@ -9990,7 +10033,8 @@
         "wx.interval": "Интервал обновления, мин",
         "hint.sniffer": "<div>Установка скачивает <code>modules/miner_sniffer</code> с GitHub в каталог data.</div><div>Активация запускает <code>tcpdump</code> на роутере (нужен установленный модуль).</div><div>Деактивация останавливает захват, модуль остаётся на диске.</div><div>Удаление снимает файлы модуля и pcap, освобождает место.</div><div>Нужен <code>opkg install tcpdump</code>.</div><div>Захваты пишутся в <code>/tmp/poolheat-sniffer/</code> (tmpfs). Держите сессии короткими.</div>",
         "info.installed": "Установлено",
-        "info.on_github": "На GitHub",
+        "info.on_github": "В репозитории",
+        "info.channel": "канал релизов",
         "info.status": "Статус",
         "info.commit": "commit —",
         "info.source": "источник —",
@@ -9999,18 +10043,29 @@
         "upd.up_to_date": "актуально",
         "upd.available": "есть обновление",
         "upd.local_ahead": "локально новее",
-        "upd.branch_only": "только ветка",
+        "upd.branch_only": "только канал",
         "upd.unknown": "неизвестно",
         "upd.error": "ошибка проверки",
         "upd.not_checked": "не проверено",
         "upd.press_test": "нажмите Проверить",
         "upd.reinstall": "Переустановить",
         "upd.install": "Установить",
-        "upd.install_from": "Установить с GitHub",
-        "upd.msg_match": "Версия совпадает с GitHub ({ver}, источник {src}). Можно переустановить из {ref}.",
-        "upd.msg_avail": "Доступна {latest} (сейчас {cur}). Установка скачает архив с GitHub и перезапустит сервис. config.json сохранится.",
+        "upd.install_from": "Установить из репозитория",
+        "upd.msg_match": "Версия совпадает с репозиторием ({ver}, источник {src}). Можно переустановить из {ref}.",
+        "upd.msg_avail": "Доступна {latest} (сейчас {cur}). Установка скачает пакет и перезапустит сервис. config.json сохранится.",
+        "upd.msg_local_ahead": "Локально {cur} новее репозитория ({latest}). Опубликуйте новый релиз, чтобы догнать.",
+        "upd.msg_branch": "В репозитории ещё нет версии релиза — можно поставить канал {branch}.",
+        "upd.msg_checked": "Проверено: {at}",
         "upd.checking": "Проверка обновлений…",
+        "upd.checking_short": "Проверка…",
         "upd.uptodate_toast": "poolheat_WM актуален · {ver}",
+        "upd.toast_available": "Доступно обновление {ver}",
+        "upd.toast_local_ahead": "Локальная версия новее репозитория",
+        "upd.toast_branch": "Версии релиза ещё нет · можно поставить канал {branch}",
+        "upd.toast_check": "Проверка: {msg}",
+        "upd.toast_err": "Проверка обновлений: {msg}",
+        "upd.install_confirm": "Установить poolheat из репозитория?\n\nВерсия: {ver}\nСейчас: {cur}\n\nconfig.json сохранится. Сервис перезапустится.",
+        "upd.installing": "Установка…",
         "footer.powered": "Работает на poolheat_WM"
       },
     };
@@ -10548,8 +10603,8 @@
         body: "How often samples are written to history.db.",
       },
       miner_ready: {
-        title: "miner_ready",
-        body: "true when ramp is complete and hash is stable.\nCondition to allow upward.\nSee Upfreq Complete + Hash Stable.",
+        title: "Miner ready",
+        body: "Ready when ramp is complete and hash is stable.\nCondition to allow upward profile changes.\nSee Upfreq Complete + Hash Stable.",
       },
       override: {
         title: "Override 30m",
@@ -10670,7 +10725,11 @@
         },
         warmup: {
           title: "Warmup / upfreq",
-          body: "Miner still ramping. Upward profile changes blocked until ready.",
+          body: "While Upfreq Complete ≠ 1 (and warmup is on):\n· Z0 / upward blocked\n· with “down only” — mode↑/limit↑/resume cut\n· Critical and Z2/Suspend — allowed\n· After max wait — upward allowed again even if upfreq is still 0.",
+        },
+        miner_ready: {
+          title: "Miner ready",
+          body: "Ready when ramp is complete and hash is stable.\nCondition to allow upward profile changes.\nSee Upfreq Complete + Hash Stable.",
         },
         override: {
           title: "Override 30m",
@@ -10735,8 +10794,12 @@
           body: "Whatsminer TCP :4028 через serve.py.\nOK = последний опрос успешен.\nFail → fail-safe / SIM / ошибка.",
         },
         warmup: {
-          title: "Warmup / upfreq",
-          body: "Майнер ещё выходит на режим. Повышение профиля заблокировано, пока не готов.",
+          title: "Прогрев / upfreq",
+          body: "Пока Upfreq Complete ≠ 1 (и прогрев включён):\n· Z0 / вверх заблокированы\n· при «только вниз» — mode↑/limit↑/resume режутся\n· Critical и Z2/Suspend — можно\n· После макс. ожидания — вверх снова можно, даже если upfreq=0.",
+        },
+        miner_ready: {
+          title: "Готовность майнера",
+          body: "Готов, когда разгон завершён и хеш стабилен.\nУсловие, чтобы разрешить повышение профиля.\nСм. Upfreq Complete + Hash Stable.",
         },
         override: {
           title: "Override 30м",
@@ -17233,14 +17296,19 @@
 
       const readyEl = document.getElementById("ready-val");
       if (readyEl) {
+        const tr = (k, fb) =>
+          typeof t === "function" ? t(k, fb) : fb;
         if (upfreq) {
-          readyEl.textContent = "false · upfreq";
+          readyEl.textContent = tr("ready.false_upfreq", "not ready · upfreq");
           readyEl.style.color = "var(--warn)";
         } else if (r.hash_stable === false) {
-          readyEl.textContent = "true · upfreq ok · hash settling";
+          readyEl.textContent = tr(
+            "ready.hash_settling",
+            "ready · upfreq ok · hash settling"
+          );
           readyEl.style.color = "var(--warn)";
         } else {
-          readyEl.textContent = "true · ready";
+          readyEl.textContent = tr("ready.ok", "ready");
           readyEl.style.color = "var(--ok)";
         }
       }
@@ -21962,14 +22030,18 @@
       const notesEl = document.getElementById("info-update-notes");
       if (ph) {
         setTxt("info-app-version", ph.version || "—");
+        // channel label only — no public host/repo URL in UI
         setTxt(
           "info-app-repo",
-          ph.github_repo
-            ? "github.com/" + ph.github_repo
-            : "github —"
+          typeof t === "function"
+            ? t("info.channel", "release channel")
+            : "release channel"
         );
         const gl = document.getElementById("info-github-link");
-        if (gl && ph.github_url) gl.href = ph.github_url;
+        if (gl) {
+          if (ph.github_url) gl.href = ph.github_url;
+          // keep link functional but not advertised as github.com in visible text
+        }
       }
       if (!chk) {
         setTxt("info-app-latest", "—");
@@ -22052,25 +22124,22 @@
           });
         } else if (chk.status === "local_ahead") {
           msgEl.style.color = "var(--muted)";
-          msgEl.textContent =
-            "Locally " +
-            (chk.current_version || "?") +
-            " newer than GitHub (" +
-            (chk.latest_version || "?") +
-            "). Push VERSION/release to the repository.";
+          msgEl.textContent = tf("upd.msg_local_ahead", {
+            cur: chk.current_version || "?",
+            latest: chk.latest_version || "?",
+          });
         } else if (chk.status === "branch_only") {
           msgEl.style.color = "var(--muted)";
           msgEl.textContent =
             chk.notes ||
-            ("No VERSION/release on GitHub — you can install branch " +
-              (chk.github_branch || "main") +
-              ".");
+            tf("upd.msg_branch", {
+              branch: chk.github_branch || "main",
+            });
         } else {
           msgEl.style.color = "var(--muted)";
           msgEl.textContent =
-            "Checking: " +
-            (chk.checked_at || "") +
-            (chk.commit_sha ? " · tip " + chk.commit_sha : "");
+            tf("upd.msg_checked", { at: chk.checked_at || "—" }) +
+            (chk.commit_sha ? " · " + chk.commit_sha : "");
         }
       }
       if (notesEl) {
@@ -22156,11 +22225,12 @@
     document.getElementById("btn-update-check")?.addEventListener("click", async () => {
       const btn = document.getElementById("btn-update-check");
       const statusEl = document.getElementById("info-app-status");
+      const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
       if (btn) {
         btn.disabled = true;
-        btn.textContent = "Checking…";
+        btn.textContent = tr("upd.checking_short", "Checking…");
       }
-      if (statusEl) statusEl.textContent = "checking…";
+      if (statusEl) statusEl.textContent = tr("upd.checking", "Checking for updates…");
       try {
         const lang =
           typeof getUiLang === "function" ? getUiLang() : "en";
@@ -22178,30 +22248,58 @@
           github_url: "https://github.com/" + (body.github_repo || ""),
         });
         if (body.status === "update_available") {
-          toastWarn("Update available " + (body.latest_version || ""), 5000);
+          toastWarn(
+            tr("upd.toast_available", "Update available {ver}").replace(
+              "{ver}",
+              body.latest_version || ""
+            ),
+            5000
+          );
         } else if (body.status === "up_to_date") {
           toastSuccess(
-            "poolheat_WM is up to date · " + (body.current_version || ""),
+            tr("upd.uptodate_toast", "poolheat_WM is up to date · {ver}").replace(
+              "{ver}",
+              body.current_version || ""
+            ),
             3500
           );
         } else if (body.status === "local_ahead") {
-          toastInfo("Local version is newer than GitHub", 4000);
+          toastInfo(
+            tr(
+              "upd.toast_local_ahead",
+              "Local version is newer than the repository"
+            ),
+            4000
+          );
         } else if (body.status === "branch_only") {
           toastInfo(
-            "No VERSION on GitHub yet · you can install branch " +
-              (body.github_branch || "main"),
+            tr(
+              "upd.toast_branch",
+              "No release version yet · you can install channel {branch}"
+            ).replace("{branch}", body.github_branch || "main"),
             4500
           );
         } else {
-          toastInfo("Checking: " + (body.error || body.status || "ok"), 4000);
+          toastInfo(
+            tr("upd.toast_check", "Check: {msg}").replace(
+              "{msg}",
+              body.error || body.status || "ok"
+            ),
+            4000
+          );
         }
       } catch (e) {
-        toastError("Update check: " + e.message);
-        setTxt("info-app-status", "error");
+        toastError(
+          tr("upd.toast_err", "Update check: {msg}").replace(
+            "{msg}",
+            e.message || e
+          )
+        );
+        setTxt("info-app-status", tr("upd.error", "check error"));
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = "Check for updates";
+          btn.textContent = tr("btn.check_updates", "Check for updates");
         }
       }
     });
@@ -22209,20 +22307,22 @@
       const chk = lastUpdateCheck || {};
       const ver = chk.latest_version || chk.tag || chk.github_branch || "main";
       const ok = window.confirm(
-        "Install poolheat from GitHub?\n\n" +
-          "Source: " +
-          (chk.github_repo || "andreybmc/poolheat") +
-          " @ " +
-          ver +
-          "\nCurrent: " +
-          (chk.current_version || "?") +
-          "\n\nconfig.json is not overwritten. Service will restart."
+        (typeof t === "function"
+          ? t(
+              "upd.install_confirm",
+              "Install poolheat from repository?\n\nVersion: {ver}\nCurrent: {cur}\n\nconfig.json is kept. Service will restart."
+            )
+          : "Install poolheat from repository?\n\nVersion: {ver}\nCurrent: {cur}\n\nconfig.json is kept. Service will restart."
+        )
+          .replace("{ver}", ver)
+          .replace("{cur}", chk.current_version || "?")
       );
       if (!ok) return;
       const btn = document.getElementById("btn-update-apply");
       if (btn) {
         btn.disabled = true;
-        btn.textContent = "Installing…";
+        btn.textContent =
+          typeof t === "function" ? t("upd.installing", "Installing…") : "Installing…";
       }
       try {
         const res = await fetch("/api/update/apply", {
