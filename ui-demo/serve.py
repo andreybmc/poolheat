@@ -23835,22 +23835,73 @@ def _load_policy_events() -> None:
 
 
 _policy_events_mtime: float = 0.0
+# Debounced disk flush — avoid rewriting policy_events.json on every event
+_POLICY_EVENTS_FLUSH_SEC = 1.0
+_policy_events_dirty: bool = False
+_policy_events_flush_timer: threading.Timer | None = None
+_policy_events_flush_lock = threading.Lock()
 
 
 def _save_policy_events() -> None:
-    """Persist ring buffer to DATA/policy_events.json."""
-    global _policy_events_mtime
+    """Persist ring buffer to DATA/policy_events.json (immediate)."""
+    global _policy_events_mtime, _policy_events_dirty
     mx = get_event_log_max()
     with _policy_lock:
         evs = list(_policy_ctrl.get("events") or [])[:mx]
     try:
         _save_json(POLICY_EVENTS_FILE, {"events": evs, "max": mx})
+        _policy_events_dirty = False
         try:
             _policy_events_mtime = float(POLICY_EVENTS_FILE.stat().st_mtime)
         except Exception:
             pass
     except Exception as e:
         print(f"[policy] save events: {e}")
+
+
+def _schedule_policy_events_save(*, force: bool = False) -> None:
+    """
+    Debounce disk writes for the action/policy event ring.
+    force=True → cancel timer and write now (clear / shutdown / critical).
+    """
+    global _policy_events_flush_timer, _policy_events_dirty
+    with _policy_events_flush_lock:
+        if force:
+            t = _policy_events_flush_timer
+            _policy_events_flush_timer = None
+            if t is not None:
+                try:
+                    t.cancel()
+                except Exception:
+                    pass
+            _policy_events_dirty = True
+            # write outside lock? keep short — _save_policy_events uses _policy_lock
+        else:
+            _policy_events_dirty = True
+            if _policy_events_flush_timer is not None:
+                return
+
+            def _fire() -> None:
+                global _policy_events_flush_timer
+                with _policy_events_flush_lock:
+                    _policy_events_flush_timer = None
+                    dirty = _policy_events_dirty
+                if dirty:
+                    try:
+                        _save_policy_events()
+                    except Exception as e:
+                        print(f"[policy] debounced save events: {e}")
+
+            t = threading.Timer(_POLICY_EVENTS_FLUSH_SEC, _fire)
+            t.daemon = True
+            _policy_events_flush_timer = t
+            t.start()
+            return
+    if force:
+        try:
+            _save_policy_events()
+        except Exception as e:
+            print(f"[policy] force save events: {e}")
 
 
 def _reload_policy_events_if_stale() -> None:
@@ -23915,11 +23966,14 @@ def _policy_log(kind: str, msg: str, **extra) -> None:
         events.insert(0, ev)
         _policy_ctrl["events"] = events[:mx]
     print(f"[policy] {ev['ts']} {kind}: {msg}")
-    # disk so OTA / restart does not wipe the log
+    # disk (debounced) so OTA / restart does not wipe the log
     try:
-        _save_policy_events()
+        _schedule_policy_events_save(force=False)
     except Exception:
-        pass
+        try:
+            _save_policy_events()
+        except Exception:
+            pass
     # Telegram notify (best-effort, non-blocking)
     try:
         tg_on_policy_event(kind, msg, extra)
@@ -23938,10 +23992,78 @@ def clear_policy_events() -> int:
         _policy_ctrl["events"] = []
         _policy_ctrl["last_event"] = None
     try:
-        _save_policy_events()
+        _schedule_policy_events_save(force=True)
+    except Exception:
+        try:
+            _save_policy_events()
+        except Exception:
+            pass
+    return n
+
+
+def _get_last_write_snapshot() -> dict | None:
+    """Last miner write entry for action log (no ASIC I/O)."""
+    try:
+        with _state_lock:
+            lw = _state.get("last_write")
+        if isinstance(lw, dict):
+            return dict(lw)
     except Exception:
         pass
-    return n
+    return None
+
+
+def get_policy_events_status() -> dict:
+    """
+    Lightweight action-log payload — no zone thresholds / sensor catalog / live.
+    For UI «Журнал действий» only.
+    """
+    try:
+        _reload_policy_events_if_stale()
+    except Exception:
+        pass
+    with _policy_lock:
+        events_raw = list(_policy_ctrl.get("events") or [])
+        last_event = _policy_ctrl.get("last_event")
+        heat_zone = _policy_ctrl.get("heat_zone")
+        safety_sticky = bool(_policy_ctrl.get("safety_sticky"))
+        want_work = _policy_ctrl.get("want_work")
+        measured_work = _policy_ctrl.get("measured_work")
+        force_stop = bool(_policy_ctrl.get("force_stop"))
+    with _miner_cfg_lock:
+        dry = bool(DRY_RUN)
+    events_max = get_event_log_max()
+    # slim rows: only what the UI renders
+    slim: list = []
+    for e in events_raw[:events_max]:
+        if not isinstance(e, dict):
+            continue
+        slim.append(
+            {
+                "ts": e.get("ts"),
+                "kind": e.get("kind"),
+                "msg": e.get("msg"),
+            }
+        )
+    return {
+        "ok": True,
+        "events": slim,
+        "events_max": events_max,
+        "events_stored": len(events_raw),
+        "last_event": last_event,
+        "last_write": _get_last_write_snapshot(),
+        "heat_zone": heat_zone,
+        "heat_zone_title": (
+            zone_title("critical")
+            if safety_sticky
+            else zone_title(heat_zone)
+        ),
+        "want_work": want_work,
+        "measured_work": measured_work,
+        "force_stop": force_stop,
+        "dry_run": dry,
+        "safety_sticky": safety_sticky,
+    }
 
 
 def _fmt_policy_w(v) -> str:
@@ -24554,6 +24676,8 @@ def get_policy_status() -> dict:
         "force_stop": bool(ctrl.get("force_stop")),
         "last_apply_ts": ctrl.get("last_apply_ts"),
         "last_event": ctrl.get("last_event"),
+        # last miner write (no ASIC I/O) — action log can skip /api/live
+        "last_write": _get_last_write_snapshot(),
         # full ring for Action log UI (depth = Advanced → Event log)
         "events": events[:events_max],
         "events_max": events_max,
@@ -25398,6 +25522,17 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/policy", "/api/policy/status"):
             self._json_response(200, get_policy_status())
+            return
+        # Lightweight action log (no ASIC live, no zone thresholds catalog)
+        if path in (
+            "/api/policy/events",
+            "/api/events",
+            "/api/action-log",
+        ):
+            try:
+                self._json_response(200, get_policy_events_status())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
             return
         if path in ("/api/system/info", "/api/info"):
             qs = parse_qs(urlparse(self.path).query)
@@ -27640,6 +27775,7 @@ def main() -> None:
     except Exception as e:
         print(f"sniffer:           n/a ({e})")
     print(f"policy:            GET/POST /api/policy · server-side control")
+    print(f"action log:        GET  /api/policy/events · POST /api/policy/events/clear")
     print(f"system info:       GET  /api/system/info")
     print(f"version/update:    GET  /api/version · /api/update/check · POST /api/update/apply")
     print(f"app version:       {get_app_version()} · repo {GITHUB_REPO}")

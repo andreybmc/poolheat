@@ -21907,19 +21907,15 @@
 
     async function loadActionLog() {
       try {
-        const [resPol, resLive] = await Promise.all([
-          fetch("/api/policy", { cache: "no-store" }),
-          fetch("/api/live", { cache: "no-store" }).catch(() => null),
-        ]);
-        const pol = await resPol.json();
-        let lw = null;
-        if (resLive && resLive.ok) {
-          try {
-            const live = await resLive.json();
-            lw = live && live.last_write ? live.last_write : null;
-          } catch (_) { /* ignore */ }
+        // Lightweight endpoint — no /api/live (ASIC poll was the main stall)
+        let res = await fetch("/api/policy/events", { cache: "no-store" });
+        // fallback for older builds still running mid-OTA
+        if (!res.ok && (res.status === 404 || res.status === 405)) {
+          res = await fetch("/api/policy", { cache: "no-store" });
         }
+        const pol = await res.json();
         if (pol && pol.ok === false) throw new Error(pol.error || "policy fail");
+        const lw = pol && pol.last_write ? pol.last_write : null;
         renderActionLog(pol, lw);
         return pol;
       } catch (e) {
@@ -21991,13 +21987,13 @@
           toastError("Failed to clear log: " + (e.message || e));
         }
       });
-    // poll while Logs subtab (under Info) is open
+    // poll while Logs subtab (under Info) is open — light endpoint only, 12s
     if (actionLogTimer) clearInterval(actionLogTimer);
     actionLogTimer = setInterval(() => {
       if (typeof isLogsSubtabActive === "function" ? isLogsSubtabActive() : false) {
         void loadActionLog();
       }
-    }, 5000);
+    }, 12000);
     // first paint if already on logs
     if (typeof isLogsSubtabActive === "function" && isLogsSubtabActive()) {
       void loadActionLog();
