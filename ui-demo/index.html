@@ -2763,6 +2763,11 @@
       display: grid;
       grid-template-columns: repeat(3, 1fr);
       gap: 12px;
+      align-items: stretch;
+    }
+    .temp-grid > .temp-card {
+      height: 100%;
+      min-height: 0;
     }
 
     @media (max-width: 960px) {
@@ -2991,9 +2996,9 @@
       position: relative;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
       min-height: 0;
-      padding: 14px;
+      padding: 12px 14px;
       /* same outline as other temp-cards — no custom border that shifts the box */
       border: 1px solid var(--border);
       background:
@@ -3135,7 +3140,7 @@
       align-items: baseline;
       flex-wrap: wrap;
       gap: 0 2px;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
       color: rgba(255, 255, 255, 0.55);
       text-shadow: none;
       font-weight: 550;
@@ -3171,7 +3176,7 @@
       margin-top: 0;
     }
     .wx-widget .wx-temp-row #t-outdoor {
-      font-size: 2.35rem;
+      font-size: 2.05rem;
       font-weight: 300;
       line-height: 1;
       letter-spacing: -0.03em;
@@ -3189,8 +3194,8 @@
       flex-wrap: wrap;
       align-items: baseline;
       gap: 0 8px;
-      margin-top: 2px;
-      line-height: 1.35;
+      margin-top: 0;
+      line-height: 1.3;
     }
     .wx-widget .wx-cond {
       font-size: 0.82rem;
@@ -3213,9 +3218,9 @@
     /* next to temperature — pulled up to sit closer to card top / temp row */
     .wx-widget .wx-icon-wrap {
       flex-shrink: 0;
-      width: 72px;
-      height: 72px;
-      margin-top: -18px; /* higher: align with top of big temperature */
+      width: 58px;
+      height: 58px;
+      margin-top: -12px;
       align-self: flex-start;
       display: grid;
       place-items: center;
@@ -3224,20 +3229,20 @@
     }
     .wx-widget .wx-icon-wrap img,
     .wx-widget .wx-icon-wrap svg {
-      width: 70px;
-      height: 70px;
+      width: 56px;
+      height: 56px;
       display: block;
       object-fit: contain;
       user-select: none;
       pointer-events: none;
-      transform: translateY(-4px);
+      transform: none;
     }
     .wx-widget .wx-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 8px 12px;
-      margin-top: 4px;
-      padding-top: 8px;
+      gap: 6px 10px;
+      margin-top: 2px;
+      padding-top: 6px;
       border-top: 1px solid rgba(255, 255, 255, 0.14);
       font-size: 0.72rem;
       color: rgba(255, 255, 255, 0.82);
