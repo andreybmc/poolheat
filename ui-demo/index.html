@@ -4838,6 +4838,12 @@
       width: 100% !important;
       max-width: 100%;
     }
+    /* less right dead space on dash history charts (keep left for Y labels) */
+    #panel-chart-temps > .card-b,
+    #panel-chart-power > .card-b {
+      padding-right: 10px;
+      padding-left: 12px;
+    }
     .chart-zoom-row {
       display: flex;
       flex-wrap: wrap;
@@ -19847,6 +19853,10 @@
       Chart.defaults.color = "#8b9bb0";
       Chart.defaults.borderColor = "rgba(42,53,68,0.9)";
       Chart.defaults.font.family = "'Segoe UI', system-ui, sans-serif";
+      // no extra right gutter for overflowing labels — plot uses full width
+      if (Chart.defaults.layout) {
+        Chart.defaults.layout.autoPadding = false;
+      }
     }
 
     function viewSpan(key) {
@@ -20446,7 +20456,8 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const pad = { l: 6, r: 6, t: 4, b: 4 };
+      // thin outer pad only — full width used for range (match main plot right edge)
+      const pad = { l: 2, r: 2, t: 4, b: 4 };
       const plotW = w - pad.l - pad.r;
       const plotH = h - pad.t - pad.b;
       // base
@@ -20528,29 +20539,35 @@
     }
 
     /**
-     * Tighten right padding so plot extends to the canvas edge,
-     * then inset the brush navigator to match chartArea left/right
-     * (Y-axis labels stay outside the brush; right edges align).
+     * Kill Chart.js right gutter (autoPadding + layout) so the plot
+     * reaches the canvas edge. Left stays for Y-axis labels.
+     * Brush: inset left to chartArea; right flush with card (no dead strip).
      */
     function tightenChartHorizontalPadding(chart) {
       if (!chart || !chart.options) return;
       if (!chart.options.layout) chart.options.layout = {};
+      // Chart.js 4 reserves extra right for overflowing tick labels
+      chart.options.layout.autoPadding = false;
       const pad = chart.options.layout.padding;
       let obj;
       if (pad == null || typeof pad === "number") {
         const n = typeof pad === "number" ? pad : 0;
-        obj = { top: Math.max(4, n), right: 2, bottom: n, left: n };
+        obj = { top: Math.max(4, n), right: 0, bottom: n, left: 0 };
       } else {
-        obj = Object.assign({ top: 4, right: 2, bottom: 0, left: 0 }, pad);
-        obj.right = Math.min(2, obj.right != null ? obj.right : 2);
+        obj = Object.assign({ top: 4, right: 0, bottom: 0, left: 0 }, pad);
+        obj.right = 0;
+        if (obj.left == null) obj.left = 0;
       }
       chart.options.layout.padding = obj;
       const x = chart.options.scales && chart.options.scales.x;
       if (x) {
         if (!x.ticks || typeof x.ticks !== "object") x.ticks = {};
-        // last/first labels sit inside plot — less reserved right gutter
-        if (x.ticks.align == null) x.ticks.align = "inner";
-        if (x.ticks.autoSkipPadding == null) x.ticks.autoSkipPadding = 0;
+        // last/first labels sit inside plot — no external right gutter
+        x.ticks.align = "inner";
+        x.ticks.autoSkipPadding = 0;
+        if (x.ticks.padding == null || x.ticks.padding > 4) x.ticks.padding = 2;
+        x.offset = false;
+        if (x.grace == null || x.grace === "") x.grace = 0;
       }
     }
 
@@ -20570,15 +20587,10 @@
         return;
       }
       const ca = chart.chartArea;
-      const cw =
-        (typeof chart.width === "number" && chart.width > 0
-          ? chart.width
-          : chart.canvas && chart.canvas.clientWidth) || 0;
-      if (!(cw > 0)) return;
       const left = Math.max(0, Math.round(ca.left));
-      const right = Math.max(0, Math.round(cw - ca.right));
+      // left follows Y-axis; right always flush (plot already extended)
       wrap.style.marginLeft = left + "px";
-      wrap.style.marginRight = right + "px";
+      wrap.style.marginRight = "0";
     }
 
     function drawBrush() {
@@ -20606,8 +20618,8 @@
       const chartKey = chartKeyFromEl(canvas);
       const view = getView(chartKey);
       const rect = canvas.getBoundingClientRect();
-      const padL = 6;
-      const padR = 6;
+      const padL = 2;
+      const padR = 2;
       const plotW = Math.max(1, rect.width - padL - padR);
       const fullSpan = Math.max(fullEnd - fullStart, 1);
       const toX = (ts) => padL + ((ts - fullStart) / fullSpan) * plotW;
