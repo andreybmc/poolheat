@@ -1,21 +1,18 @@
 package miner
 
 import (
-	"encoding/binary"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"math"
-	"net"
 	"strings"
 	"time"
 
 	"github.com/andreybmc/wm-lib/api"
 )
 
-// FetchLive polls Whatsminer public API (V2 :4028) and builds poolheat live JSON.
-// Shape matches serve.py fetch_live() core fields used by UI / history / policy.
+// FetchLive polls Whatsminer public API (V2 :4028 + V3 liquid) and builds
+// poolheat live JSON. Shape matches serve.py fetch_live() core fields used by
+// UI / history / policy. serve never talks to the ASIC for live — only this poller.
 func FetchLive(s Settings) (map[string]any, error) {
 	c := api.NewV2(s.Host)
 	c.Port = s.Port
@@ -36,26 +33,6 @@ func FetchLive(s Settings) (map[string]any, error) {
 		status = extractPayload(stRaw, "STATUS", "status")
 	} else {
 		log.Printf("[miner-poller] status: %v", err)
-	}
-
-	// Liquid early via V3 (before more :4028 sessions) — M63+ coolant
-	var liquid *float64
-	var liquidSrc any
-	var v3Err string
-	liquid, liquidSrc = extractLiquidTemp(status, summary, nil, nil)
-	var v3msg map[string]any
-	if liquid == nil {
-		var errV3 error
-		v3msg, errV3 = fetchV3DeviceMsg(s.Host)
-		if errV3 != nil {
-			v3Err = errV3.Error()
-			log.Printf("[miner-poller] v3 liquid host=%s: %v", s.Host, errV3)
-		} else if v3msg != nil {
-			liquid, liquidSrc = extractLiquidTemp(status, summary, nil, v3msg)
-			if liquid != nil && (liquidSrc == nil || fmt.Sprint(liquidSrc) == "") {
-				liquidSrc = "v3"
-			}
-		}
 	}
 
 	devs := []map[string]any{}
@@ -83,6 +60,25 @@ func FetchLive(s Settings) (map[string]any, error) {
 		psuVin = normalizePsuVin(firstNonEmpty(psuMap["vin"], psuMap["Vin"]))
 		psuIin = normalizePsuIin(firstNonEmpty(psuMap["iin"], psuMap["Iin"]))
 		psuModel = firstNonEmpty(psuMap["model"], psuMap["name"])
+	}
+
+	// Liquid / coolant: V2 status/summary/psu first; M63+ → wm-lib V3 LiquidTempC (:4433).
+	// Single V3 call only when classic fields lack liquid — no custom TCP here.
+	var liquid *float64
+	var liquidSrc any
+	var v3Err string
+	liquid, liquidSrc = extractLiquidTemp(status, summary, psuMap, nil)
+	if liquid == nil {
+		v3 := api.NewV3(s.Host)
+		v3.Timeout = 8 * time.Second
+		lt, errV3 := v3.LiquidTempC()
+		if errV3 != nil {
+			v3Err = errV3.Error()
+			log.Printf("[miner-poller] v3 LiquidTempC host=%s: %v", s.Host, errV3)
+		} else if lt != nil {
+			liquid = lt
+			liquidSrc = "v3"
+		}
 	}
 
 	// Temperature fallback from classic field
@@ -145,32 +141,6 @@ func FetchLive(s Settings) (map[string]any, error) {
 	hsInt := 0
 	if strings.ToLower(fmt.Sprint(hs)) == "true" || fmt.Sprint(hs) == "1" {
 		hsInt = 1
-	}
-
-	// Re-check liquid with psu fields; fill PSU from cached v3 power if needed
-	if liquid == nil {
-		liquid, liquidSrc = extractLiquidTemp(status, summary, psuMap, v3msg)
-	}
-	if v3msg != nil {
-		if pwr, ok := v3msg["power"].(map[string]any); ok {
-			if psuVin == nil {
-				// V3 vin already in volts
-				if p := fPtr(pwr["vin"]); p != nil {
-					psuVin = p
-				}
-			}
-			if psuIin == nil {
-				if p := fPtr(pwr["iin"]); p != nil {
-					psuIin = p
-				}
-			}
-			if psuTemp == nil {
-				psuTemp = fPtr(pwr["temp0"])
-			}
-			if psuPin == nil {
-				psuPin = fPtr(pwr["pin"])
-			}
-		}
 	}
 
 	power := fOrNil(summary["Power"])
@@ -323,118 +293,6 @@ func extractLiquidTemp(status, summary, psu, v3msg map[string]any) (*float64, an
 		}
 	}
 	return nil, nil
-}
-
-// V3 device.info cache (liquid lives here on M63+; avoid hitting :4433 every poll).
-var (
-	v3MsgCache    map[string]any
-	v3MsgCacheAt  time.Time
-	v3MsgCacheTTL = 30 * time.Second
-)
-
-// fetchV3DeviceMsg calls unauthenticated get.device.info on TCP 4433.
-// Uses SHUT_WR after write (Python tcp_len_prefixed parity) — more reliable
-// on Whatsminer than a plain write+read. Cached ~30s.
-func fetchV3DeviceMsg(host string) (map[string]any, error) {
-	if v3MsgCache != nil && time.Since(v3MsgCacheAt) < v3MsgCacheTTL {
-		return v3MsgCache, nil
-	}
-	var (
-		resp map[string]any
-		err  error
-	)
-	for attempt := 0; attempt < 3; attempt++ {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 350 * time.Millisecond)
-		}
-		// Prefer power-only filter; full info as fallback
-		for _, param := range []any{"power", nil} {
-			resp, err = v3LenPrefixedCall(host, 4433, map[string]any{
-				"cmd":   "get.device.info",
-				"param": param,
-			}, 8*time.Second)
-			if err == nil {
-				break
-			}
-		}
-		if err == nil {
-			break
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	code := resp["code"]
-	ok := false
-	switch t := code.(type) {
-	case float64:
-		ok = t == 0
-	case int:
-		ok = t == 0
-	case string:
-		ok = t == "0" || t == ""
-	case nil:
-		ok = true
-	}
-	if !ok {
-		return nil, fmt.Errorf("v3 code=%v", code)
-	}
-	msg, _ := resp["msg"].(map[string]any)
-	if msg == nil {
-		msg, _ = resp["Msg"].(map[string]any)
-	}
-	if msg == nil {
-		return nil, fmt.Errorf("v3 no msg")
-	}
-	v3MsgCache = msg
-	v3MsgCacheAt = time.Now()
-	return msg, nil
-}
-
-// v3LenPrefixedCall — TCP 4433 length-prefixed JSON (little-endian u32 + body).
-// Closes write half after send so miner flushes response (Python parity).
-func v3LenPrefixedCall(host string, port int, payload map[string]any, timeout time.Duration) (map[string]any, error) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	// Prefer IPv4 — Keenetic dual-stack sometimes hangs on AAAA first
-	d := net.Dialer{Timeout: timeout}
-	conn, err := d.Dial("tcp4", addr)
-	if err != nil {
-		conn, err = d.Dial("tcp", addr)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("dial: %w", err)
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	hdr := make([]byte, 4)
-	binary.LittleEndian.PutUint32(hdr, uint32(len(raw)))
-	if _, err := conn.Write(append(hdr, raw...)); err != nil {
-		return nil, fmt.Errorf("write: %w", err)
-	}
-	// critical: signal end of request
-	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.CloseWrite()
-	}
-	if _, err := io.ReadFull(conn, hdr); err != nil {
-		return nil, fmt.Errorf("read hdr: %w", err)
-	}
-	n := int(binary.LittleEndian.Uint32(hdr))
-	if n <= 0 || n > 8<<20 {
-		return nil, fmt.Errorf("bad length %d", n)
-	}
-	body := make([]byte, n)
-	if _, err := io.ReadFull(conn, body); err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-	var out map[string]any
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("json: %w", err)
-	}
-	return out, nil
 }
 
 // normalizePsuVin: get_psu often reports centivolts (39200 → 392.0 V).
