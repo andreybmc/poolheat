@@ -1,31 +1,58 @@
 package miner
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/andreybmc/wm-lib/api"
 )
 
-// Last-good liquid so a transient V3 blip does not blank the UI sensor.
+// Liquid coolant (M63+ V3 :4433) — sticky so brief V3 timeouts do not show «н/д».
 var (
-	liquidCacheVal *float64
-	liquidCacheAt  time.Time
-	liquidCacheTTL = 90 * time.Second
+	liquidCacheVal     *float64
+	liquidCacheAt      time.Time
+	liquidCacheSrc     string
+	liquidLastV3Try    time.Time
+	liquidRefreshEvery = 20 * time.Second // do not hammer :4433 every poll
+	// Prefer stale reading over null for UI/control (sensor rarely jumps wildly).
+	liquidStickyMaxAge = 30 * time.Minute
 )
 
 // FetchLive polls Whatsminer public API (V2 :4028 + V3 liquid) and builds
 // poolheat live JSON. Shape matches serve.py fetch_live() core fields used by
 // UI / history / policy. serve never talks to the ASIC for live — only this poller.
 func FetchLive(s Settings) (map[string]any, error) {
-	// Liquid FIRST on :4433 — before V2 opens several :4028 sessions (over max connect).
+	// Seed RAM cache from disk once per process (after OTA/restart).
+	loadLiquidDiskCache(s.DataDir)
+
 	var liquid *float64
 	var liquidSrc any
 	var v3Err string
-	liquid, liquidSrc, v3Err = fetchLiquidTempC(s.Host)
+
+	// Throttle V3: use last-good if fresh enough; only re-query :4433 periodically.
+	needV3 := liquidCacheVal == nil || time.Since(liquidLastV3Try) >= liquidRefreshEvery
+	if needV3 {
+		liquidLastV3Try = time.Now()
+		// Liquid early on :4433 — before several :4028 sessions (over max connect).
+		liquid, liquidSrc, v3Err = fetchLiquidTempC(s.Host)
+		if liquid != nil {
+			rememberLiquid(s.DataDir, *liquid, fmt.Sprint(liquidSrc))
+		}
+	} else if liquidCacheVal != nil {
+		v := *liquidCacheVal
+		liquid = &v
+		if liquidCacheSrc != "" {
+			liquidSrc = liquidCacheSrc
+		} else {
+			liquidSrc = "cache"
+		}
+	}
 
 	c := api.NewV2(s.Host)
 	c.Port = s.Port
@@ -37,6 +64,10 @@ func FetchLive(s Settings) (map[string]any, error) {
 
 	sumRaw, err := c.Summary()
 	if err != nil {
+		// Even if summary fails, keep publishing sticky liquid if we have it
+		if liquid == nil {
+			liquid, liquidSrc = stickyLiquid()
+		}
 		return nil, fmt.Errorf("summary: %w", err)
 	}
 	summary := extractPayload(sumRaw, "SUMMARY", "summary")
@@ -75,18 +106,27 @@ func FetchLive(s Settings) (map[string]any, error) {
 		psuModel = firstNonEmpty(psuMap["model"], psuMap["name"])
 	}
 
-	// Prefer V2 fields when present; else keep V3 / sticky cache.
+	// Prefer V2 fields when present (rare on M63); else V3 / sticky.
 	if v2liq, src := extractLiquidTemp(status, summary, psuMap, nil); v2liq != nil {
 		liquid, liquidSrc = v2liq, src
+		rememberLiquid(s.DataDir, *v2liq, fmt.Sprint(src))
 	}
-	if liquid != nil {
-		v := *liquid
-		liquidCacheVal = &v
-		liquidCacheAt = time.Now()
-	} else if liquidCacheVal != nil && time.Since(liquidCacheAt) < liquidCacheTTL {
-		v := *liquidCacheVal
-		liquid = &v
-		liquidSrc = "cache"
+	// Second chance V3 if still empty (after V2 load may free :4433)
+	if liquid == nil && needV3 {
+		lt2, src2, err2 := fetchLiquidTempC(s.Host)
+		if lt2 != nil {
+			liquid, liquidSrc = lt2, src2
+			rememberLiquid(s.DataDir, *lt2, fmt.Sprint(src2))
+			v3Err = ""
+		} else if err2 != "" {
+			v3Err = err2
+		}
+	}
+	if liquid == nil {
+		liquid, liquidSrc = stickyLiquid()
+		if liquid == nil && v3Err == "" {
+			v3Err = "no liquid reading"
+		}
 	}
 
 	// Temperature fallback from classic field
@@ -259,25 +299,138 @@ func FetchLive(s Settings) (map[string]any, error) {
 // fetchLiquidTempC reads M63+ coolant via wm-lib V3 (TCP :4433), with retries.
 func fetchLiquidTempC(host string) (*float64, any, string) {
 	v3 := api.NewV3(host)
-	v3.Timeout = 6 * time.Second
+	v3.Timeout = 5 * time.Second
 	var lastErr string
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+			time.Sleep(400 * time.Millisecond)
 		}
-		lt, err := v3.LiquidTempC()
+		// Prefer DeviceInfoMsg so we can parse more field aliases than LiquidTempC.
+		msg, err := v3.DeviceInfoMsg("power")
 		if err != nil {
+			msg, err = v3.DeviceInfoMsg(nil)
+		}
+		if err != nil {
+			// fallback thin helper
+			lt, err2 := v3.LiquidTempC()
+			if err2 != nil {
+				lastErr = err2.Error()
+				log.Printf("[miner-poller] v3 liquid host=%s attempt=%d: %v", host, attempt+1, err2)
+				continue
+			}
+			if lt != nil {
+				return lt, "v3", ""
+			}
 			lastErr = err.Error()
-			log.Printf("[miner-poller] v3 LiquidTempC host=%s attempt=%d: %v", host, attempt+1, err)
+			log.Printf("[miner-poller] v3 liquid host=%s attempt=%d: %v", host, attempt+1, err)
 			continue
 		}
-		if lt != nil {
+		if lt, src := extractLiquidTemp(nil, nil, nil, msg); lt != nil {
+			if src == nil || fmt.Sprint(src) == "" {
+				src = "v3"
+			}
+			return lt, src, ""
+		}
+		// also try LiquidTempC parse path
+		if lt, err2 := v3.LiquidTempC(); err2 == nil && lt != nil {
 			return lt, "v3", ""
 		}
-		// field missing — no point retrying hard
-		return nil, nil, ""
+		lastErr = "v3 power has no liquid-temperature field"
 	}
 	return nil, nil, lastErr
+}
+
+func rememberLiquid(dataDir string, v float64, src string) {
+	if v <= 0.05 || v >= 150 {
+		return
+	}
+	vv := v
+	liquidCacheVal = &vv
+	liquidCacheAt = time.Now()
+	if src == "" {
+		src = "v3"
+	}
+	liquidCacheSrc = src
+	saveLiquidDiskCache(dataDir, v, src)
+}
+
+func stickyLiquid() (*float64, any) {
+	if liquidCacheVal == nil {
+		return nil, nil
+	}
+	if time.Since(liquidCacheAt) > liquidStickyMaxAge {
+		return nil, nil
+	}
+	v := *liquidCacheVal
+	src := liquidCacheSrc
+	if src == "" {
+		src = "cache"
+	} else if time.Since(liquidCacheAt) > liquidRefreshEvery {
+		src = "cache"
+	}
+	return &v, src
+}
+
+func liquidDiskPath(dataDir string) string {
+	return filepath.Join(dataDir, "liquid_last.json")
+}
+
+func loadLiquidDiskCache(dataDir string) {
+	if liquidCacheVal != nil || dataDir == "" {
+		return
+	}
+	b, err := os.ReadFile(liquidDiskPath(dataDir))
+	if err != nil {
+		return
+	}
+	var m map[string]any
+	if json.Unmarshal(b, &m) != nil {
+		return
+	}
+	v := asF(m["value"])
+	if v <= 0.05 || v >= 150 {
+		return
+	}
+	// age from ts if present
+	ageOK := true
+	if ts, ok := m["unix"].(float64); ok && ts > 0 {
+		age := time.Since(time.Unix(int64(ts), 0))
+		if age > liquidStickyMaxAge {
+			ageOK = false
+		} else {
+			liquidCacheAt = time.Unix(int64(ts), 0)
+		}
+	} else {
+		liquidCacheAt = time.Now().Add(-liquidRefreshEvery)
+	}
+	if !ageOK {
+		return
+	}
+	vv := v
+	liquidCacheVal = &vv
+	if s, ok := m["source"].(string); ok && s != "" {
+		liquidCacheSrc = s
+	} else {
+		liquidCacheSrc = "disk"
+	}
+	log.Printf("[miner-poller] liquid disk cache: %.1f°C src=%s", v, liquidCacheSrc)
+}
+
+func saveLiquidDiskCache(dataDir string, v float64, src string) {
+	if dataDir == "" {
+		return
+	}
+	payload := map[string]any{
+		"value":  round2(v),
+		"source": src,
+		"unix":   float64(time.Now().Unix()),
+		"ts":     time.Now().Format(time.RFC3339),
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(liquidDiskPath(dataDir), b, 0o644)
 }
 
 // extractLiquidTemp mirrors serve.py _extract_liquid_temp.
