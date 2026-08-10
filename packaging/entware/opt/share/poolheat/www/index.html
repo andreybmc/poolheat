@@ -2821,12 +2821,12 @@
       font-variant-numeric: tabular-nums;
     }
 
-    /* Software auto-update (Keenetic-style) */
+    /* Software auto-update (Keenetic-style) — compact, no flex-grow height */
     .auto-update-block {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      padding: 12px 14px;
+      gap: 8px;
+      padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg2, var(--bg));
@@ -2847,17 +2847,18 @@
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 10px 14px;
+      gap: 8px 12px;
     }
     .auto-update-block .au-row .au-label {
       font-size: 0.88rem;
       color: var(--muted);
       min-width: 10rem;
     }
+    /* Do NOT use flex: 1 1 220px here — in column layout basis=height → huge empty gap */
     .auto-update-block .au-schedule {
-      flex: 1 1 220px;
-      min-width: 180px;
+      width: 100%;
       max-width: 360px;
+      min-width: 0;
     }
     .auto-update-block .au-schedule label {
       display: block;
@@ -2903,30 +2904,27 @@
       color: var(--muted);
     }
 
-    /* Release notes: fully collapsed when empty / hidden (no reserved gap) */
+    /* Release notes — same as before auto-update (show when .is-visible) */
     .update-notes {
-      display: none !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      border: none !important;
-      max-height: 0 !important;
-      overflow: hidden;
-      background: transparent;
-      color: var(--muted);
-      font-size: 0.78rem;
-      line-height: 1.5;
-      word-break: break-word;
-      font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-    }
-    .update-notes.is-visible:not([hidden]) {
-      display: block !important;
+      display: none;
       margin: 0;
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg);
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.5;
+      word-break: break-word;
       max-height: 280px;
       overflow: auto;
+      font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    }
+    .update-notes.is-visible {
+      display: block;
+    }
+    .update-notes[hidden] {
+      display: none !important;
     }
     /* Title once, then short gap, then body (no duplicate «Release notes») */
     .update-notes .rn-label {

@@ -6417,14 +6417,15 @@ def start_devices_poller_process() -> None:
         logf = None
     go_bin = _resolve_devices_poller_bin()
     if go_bin:
-        cmd = [go_bin]
+        # Explicit --data so Go always uses same DATA as serve (USB path etc.)
+        cmd = [go_bin, "-data", str(DATA)]
         kind = "go"
     else:
         cmd = [sys.executable, script, "--devices-poller"]
         kind = "python"
     try:
         env = os.environ.copy()
-        env.setdefault("POOLHEAT_DATA", str(DATA))
+        env["POOLHEAT_DATA"] = str(DATA)
         _devices_poller_proc = subprocess.Popen(
             cmd,
             cwd=str(Path(__file__).resolve().parent),
@@ -6792,6 +6793,96 @@ def devices_probe_live(*, max_devices: int = 24) -> dict:
         except Exception:
             errors += 1
     return {"probed": probed, "errors": errors}
+
+
+# Background hold (enforce_desired) in serve process — same tinytuya path as UI
+# Refresh. Go devices-poller may miss Tuya restore; this guarantees SmartLife
+# toggles are reversed without opening the UI.
+_devices_hold_stop = threading.Event()
+
+
+def devices_hold_tick() -> dict:
+    """
+    For every enabled device with enforce_desired: status + restore desired.
+    Returns {checked, restored, errors}.
+    """
+    checked = 0
+    restored = 0
+    errors = 0
+    with _devices_cfg_lock:
+        try:
+            _load_devices_state()
+        except Exception:
+            pass
+        rows = [
+            dict(d)
+            for d in (_devices_cfg.get("devices") or [])
+            if isinstance(d, dict)
+            and d.get("enabled") is not False
+            and _as_bool(d.get("enforce_desired"), False)
+            and str(d.get("id") or "")
+        ]
+    for d in rows:
+        did = str(d.get("id") or "")
+        cfg = _device_cfg_snapshot(did)
+        if not cfg or not _device_ready(cfg):
+            continue
+        checked += 1
+        before = cfg.get("desired_on")
+        try:
+            res = device_poll_status(
+                did, source="hold", apply_policy=True, use_timeout_for_enforce=True
+            )
+            if not res.get("ok"):
+                errors += 1
+                continue
+            # restored if enforce ran and reported now matches desired
+            en = res.get("enforce_result")
+            if isinstance(en, dict) and en.get("ok") and not en.get("skipped"):
+                restored += 1
+            elif (
+                before is not None
+                and res.get("reported_on") is not None
+                and bool(res.get("reported_on")) == bool(before)
+                and res.get("enforced")
+            ):
+                restored += 1
+        except Exception as e:
+            errors += 1
+            print(f"[devices-hold] {did}: {e}", flush=True)
+    return {"checked": checked, "restored": restored, "errors": errors}
+
+
+def devices_hold_loop() -> None:
+    """Daemon: restore enforce_desired devices in background (UI-refresh path)."""
+    print("[devices-hold] loop start", flush=True)
+    # boot delay so poller / network settle
+    time.sleep(20)
+    while not _devices_hold_stop.is_set():
+        iv = 12
+        try:
+            pol = get_devices_poller_cfg()
+            if not pol.get("enabled", True):
+                _devices_hold_stop.wait(30)
+                continue
+            # interval: at least 8s (same spirit as UI refresh hold)
+            try:
+                iv = max(8, min(120, int(pol.get("interval_sec") or 10)))
+            except (TypeError, ValueError):
+                iv = 12
+            summary = devices_hold_tick()
+            if summary.get("restored") or summary.get("errors"):
+                print(
+                    f"[devices-hold] checked={summary.get('checked')} "
+                    f"restored={summary.get('restored')} "
+                    f"err={summary.get('errors')}",
+                    flush=True,
+                )
+        except Exception as e:
+            print(f"[devices-hold] tick: {e}", flush=True)
+            iv = 15
+        _devices_hold_stop.wait(timeout=float(iv))
+    print("[devices-hold] loop stop", flush=True)
 
 
 def device_display_name(d: dict, lang: str = "ru") -> str:
@@ -30373,6 +30464,16 @@ def main() -> None:
     # Devices auto ON/OFF — separate process so hangs never block API/policy
     if role_enabled("edge_device_poller"):
         start_devices_poller_process()
+        # Serve-side hold: tinytuya path identical to UI Refresh — restores
+        # enforce_desired even when Go poller cannot (Tuya local_key / timeouts).
+        try:
+            th = threading.Thread(
+                target=devices_hold_loop, name="devices-hold", daemon=True
+            )
+            th.start()
+            print("devices-hold:      on (enforce_desired background)")
+        except Exception as e:
+            print(f"devices-hold:      failed to start: {e}")
     else:
         print("devices-poller:    off (edge_device_poller role disabled)")
 
