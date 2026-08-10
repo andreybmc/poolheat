@@ -319,6 +319,10 @@ TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Virtual / alias sensors (Peripherals → Sensors)
 SENSORS_CFG_FILE = DATA / "sensors_config.json"
 FIRMWARE_CFG_FILE = DATA / "firmware_config.json"
+FIRMWARE_FLASH_REQ_FILE = DATA / "firmware_flash_req.json"
+FIRMWARE_FLASH_STATUS_FILE = DATA / "firmware_flash_status.json"
+EXPORT_LOG_REQ_FILE = DATA / "export_log_req.json"
+EXPORT_LOG_RESULT_FILE = DATA / "export_log_result.json"
 # Software auto-update (GitHub OTA) — Keenetic-style toggle + schedule
 UPDATE_CFG_FILE = DATA / "update_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
@@ -14003,6 +14007,16 @@ _FW_FLASH_STATE: dict[str, Any] = {
 
 
 def get_firmware_flash_status() -> dict:
+    """Flash progress from miner-poller (firmware_flash_status.json)."""
+    try:
+        if FIRMWARE_FLASH_STATUS_FILE.is_file():
+            raw = json.loads(FIRMWARE_FLASH_STATUS_FILE.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                out = dict(raw)
+                out.setdefault("busy", False)
+                return out
+    except Exception:
+        pass
     with _FW_FLASH_LOCK:
         return dict(_FW_FLASH_STATE)
 
@@ -14013,71 +14027,15 @@ def _fw_flash_set(**kwargs: Any) -> None:
 
 
 def _prepare_firmware_image(data: bytes, miner_type: str | None = None) -> tuple[bytes, dict]:
-    """Optionally slice multi-platform Whatsminer-all package for H616/etc."""
-    meta: dict[str, Any] = {"source": "raw", "size": len(data)}
-    try:
-        from whatsminer.protocol.netpacket import extract_firmware_image  # type: ignore
-
-        platform = "h616"
-        # crude platform guess from identity / version cache
-        try:
-            ident = get_miner_identity_cached(force=False)
-            plat = ""
-            if isinstance(ident, dict):
-                plat = str(ident.get("platform") or ident.get("chip") or "").lower()
-            if "h3" in plat:
-                platform = "h3"
-            elif "h6" in plat and "h616" not in plat:
-                platform = "h6os"
-        except Exception:
-            pass
-        img, m = extract_firmware_image(data, platform=platform)
-        if img:
-            meta = dict(m or {})
-            meta["platform"] = platform
-            return img, meta
-    except Exception as e:
-        meta["extract_note"] = str(e)
-    return data, meta
+    """Deprecated — extraction is done in miner-poller (wm-lib)."""
+    return data, {"source": "raw_passthrough", "size": len(data or b"")}
 
 
-def _netpacket_client(
-    password: str | None = None,
-    *,
-    timeout: float = 20.0,
-):
-    """
-    WhatsMinerTool NetPacket client (:8889).
-
-    Tries WMT default ``super``/``super`` first, then miner API password.
-    """
-    from whatsminer.protocol.netpacket import NetPacketClient  # type: ignore
-
-    candidates: list[str] = []
-    for pw in (
-        "super",
-        password if password not in (None, "") else None,
-        DEFAULT_API_PASSWORD,
-        "admin",
-    ):
-        if pw and str(pw) not in candidates:
-            candidates.append(str(pw))
-    last: Exception | None = None
-    for pw in candidates:
-        try:
-            np = NetPacketClient(
-                HOST_MINER,
-                account="super",
-                password=pw,
-                timeout=timeout,
-            )
-            # validate auth early
-            np.ensure_token()
-            return np
-        except Exception as e:
-            last = e
-            continue
-    raise RuntimeError(f"NetPacket :8889 auth failed: {last}")
+def _netpacket_client(password: str | None = None, *, timeout: float = 20.0):
+    raise RuntimeError(
+        "NetPacket removed from serve — use miner-poller "
+        "(firmware flash / export-log IPC)"
+    )
 
 
 def flash_firmware_to_miner(
@@ -14088,171 +14046,222 @@ def flash_firmware_to_miner(
     allow_incompatible: bool = False,
 ) -> dict:
     """
-    Push a library firmware image via **NetPacket :8889 only** (WhatsMinerTool).
-
-    Progress is mirrored into :func:`get_firmware_flash_status` for UI polling.
+    Queue firmware flash for Go miner-poller (NetPacket :8889).
+    serve never opens :8889 / never loads whatsminer.
     """
     conf = str(confirm or "").strip().lower()
     if conf not in ("yes", "confirm", "flash", "1", "go"):
         raise ValueError("confirm required (yes) — double-check in UI")
     if not _fw_cfg_load().get("enabled"):
         raise RuntimeError("firmware repository is disabled")
+    if not miner_poller_process_alive():
+        raise RuntimeError(
+            "miner-poller not running — firmware flash only via poller"
+        )
+    st0 = get_firmware_flash_status()
+    if st0.get("busy"):
+        raise RuntimeError("firmware flash already in progress")
 
+    item = firmware_item_by_id(firmware_id)
+    if not item:
+        raise ValueError(f"firmware id not found: {firmware_id}")
+    fpath = firmware_file_path(str(item.get("id")))
+    if not fpath or not fpath.is_file():
+        raise ValueError("firmware file missing on disk")
+
+    miner_type = None
+    platform = "h616"
+    try:
+        ident = get_miner_identity_cached(force=False)
+        if isinstance(ident, dict):
+            miner_type = str(ident.get("miner_type") or "").strip() or None
+            plat = str(ident.get("platform") or ident.get("chip") or "").lower()
+            if "h3" in plat:
+                platform = "h3"
+            elif "h6" in plat and "h616" not in plat:
+                platform = "h6os"
+    except Exception:
+        pass
+    models = list(item.get("models") or [])
+    if (
+        models
+        and miner_type
+        and not firmware_model_matches(miner_type, models)
+        and not allow_incompatible
+    ):
+        raise ValueError(
+            f"firmware models {models} not compatible with miner {miner_type} "
+            f"(pass allow_incompatible=true to force)"
+        )
+
+    req_id = uuid.uuid4().hex
+    pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
+    req = {
+        "id": req_id,
+        "ts": time.time(),
+        "path": str(fpath.resolve()),
+        "filename": str(item.get("filename") or fpath.name),
+        "firmware_id": str(item.get("id")),
+        "platform": platform,
+        "password": str(pw or ""),
+        "miner_type": miner_type,
+    }
+    # seed status so UI poll sees busy immediately
+    try:
+        _write_json_atomic(
+            FIRMWARE_FLASH_STATUS_FILE,
+            {
+                "busy": True,
+                "pct": 0,
+                "stage": "queued",
+                "error": None,
+                "id": req_id,
+                "filename": req["filename"],
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+    except Exception:
+        pass
     with _FW_FLASH_LOCK:
-        if _FW_FLASH_STATE.get("busy"):
-            raise RuntimeError("firmware flash already in progress")
         _FW_FLASH_STATE.update(
             {
                 "busy": True,
                 "pct": 0,
-                "stage": "prepare",
+                "stage": "queued",
                 "error": None,
-                "result": None,
-                "status_text": None,
-                "status_log": [],
                 "firmware_id": str(firmware_id),
-                "filename": None,
+                "filename": req["filename"],
                 "started_at": datetime.now().isoformat(timespec="seconds"),
-                "finished_at": None,
             }
         )
+    _write_json_atomic(FIRMWARE_FLASH_REQ_FILE, req)
 
-    def _on_progress(ev: dict) -> None:
-        stage = str(ev.get("stage") or "upload")
-        pct = ev.get("pct")
-        st_txt = ev.get("status_text")
-        kwargs: dict[str, Any] = {"stage": stage}
-        if pct is not None:
-            try:
-                kwargs["pct"] = float(pct)
-            except (TypeError, ValueError):
-                pass
-        if st_txt:
-            kwargs["status_text"] = str(st_txt)[:240]
-            with _FW_FLASH_LOCK:
-                log = list(_FW_FLASH_STATE.get("status_log") or [])
-                log.append(str(st_txt)[:240])
-                _FW_FLASH_STATE["status_log"] = log[-40:]
-        _fw_flash_set(**kwargs)
+    # Wait for poller (UI also polls /flash/status)
+    deadline = time.time() + 900.0
+    last: dict = {}
+    while time.time() < deadline:
+        time.sleep(0.4)
+        last = get_firmware_flash_status()
+        if not last.get("busy") and last.get("id") in (req_id, None, ""):
+            # finished (or status without id match after done)
+            if last.get("stage") in ("success", "done", "error") or last.get("finished_at"):
+                if str(last.get("id") or "") in ("", req_id):
+                    break
+        if not last.get("busy") and last.get("finished_at") and str(last.get("id") or "") == req_id:
+            break
+        if not miner_poller_process_alive():
+            raise RuntimeError("miner-poller died during firmware flash")
+    else:
+        raise RuntimeError("timeout waiting for miner-poller firmware flash")
 
+    ok = bool(last.get("ok")) or (
+        str(last.get("stage") or "") == "success"
+        or str(last.get("upgrade") or "").lower() == "success"
+    )
+    if last.get("error") and str(last.get("stage") or "") == "error":
+        ok = False
+    out = {
+        "ok": ok,
+        "transport": "go-miner-poller",
+        "firmware_id": str(item.get("id")),
+        "filename": item.get("filename"),
+        "miner_type": miner_type,
+        "models": models,
+        "host": f"{HOST_MINER}:8889",
+        "upgrade": last.get("upgrade"),
+        "status_log": last.get("status_log") or [],
+        "result": last.get("result"),
+        "extract": last.get("extract"),
+        "bytes": last.get("bytes"),
+        "warning": (
+            "Firmware via miner-poller NetPacket · ASIC may reboot · "
+            "verify Firmware Version after reconnect"
+        ),
+    }
+    if not ok:
+        out["error"] = last.get("error") or "firmware flash failed"
+        raise RuntimeError(str(out["error"]))
     try:
-        item = firmware_item_by_id(firmware_id)
-        if not item:
-            raise ValueError(f"firmware id not found: {firmware_id}")
-        fpath = firmware_file_path(str(item.get("id")))
-        if not fpath or not fpath.is_file():
-            raise ValueError("firmware file missing on disk")
-
-        miner_type = None
-        try:
-            ident = get_miner_identity_cached(force=False)
-            if isinstance(ident, dict):
-                miner_type = str(ident.get("miner_type") or "").strip() or None
-        except Exception:
-            pass
-        models = list(item.get("models") or [])
-        if (
-            models
-            and miner_type
-            and not firmware_model_matches(miner_type, models)
-            and not allow_incompatible
-        ):
-            raise ValueError(
-                f"firmware models {models} not compatible with miner {miner_type} "
-                f"(pass allow_incompatible=true to force)"
-            )
-
-        _fw_flash_set(
-            stage="read",
-            filename=str(item.get("filename") or fpath.name),
-            pct=1,
+        _policy_log(
+            "warn",
+            f"FIRMWARE poller · {item.get('filename')} → {HOST_MINER} · {last.get('upgrade')}",
         )
-        data = fpath.read_bytes()
-        if not data:
-            raise ValueError("empty firmware file")
-        _fw_flash_set(stage="extract", pct=3)
-        image, extract_meta = _prepare_firmware_image(data, miner_type)
+    except Exception:
+        pass
+    return out
 
-        pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
-        _fw_flash_set(stage="auth", pct=4)
-        # NetPacket only — WhatsMinerTool path (not public API update_firmware)
-        with _miner_io_lock:
-            np = _netpacket_client(str(pw), timeout=30.0)
-            np.timeout = max(float(getattr(np, "timeout", 5) or 5), 30.0)
-            resp = np.update_firmware(
-                image,
-                poll_status=True,
-                poll_attempts=45,
-                wait_upload=600.0,
-                progress=_on_progress,
-                poll_interval=1.0,
-            )
 
-        ok = bool(isinstance(resp, dict) and resp.get("ok"))
-        upgrade = (resp or {}).get("upgrade") if isinstance(resp, dict) else None
-        _fw_flash_set(
-            stage="success" if ok and upgrade == "success" else ("done" if ok else "error"),
-            pct=100 if ok else float(_FW_FLASH_STATE.get("pct") or 90),
-            result=resp if isinstance(resp, dict) else {"raw": resp},
-            status_text=str(upgrade or ""),
+def export_miner_log(*, password: str | None = None, timeout_sec: float = 90.0) -> dict:
+    """
+    Ask miner-poller to pull ASIC export-log (NetPacket cmd 20).
+    Result file under DATA/export_logs/.
+    """
+    if not miner_poller_process_alive():
+        raise RuntimeError(
+            "miner-poller not running — export log only via poller"
         )
-        out = {
-            "ok": ok,
-            "transport": "netpacket",
-            "firmware_id": str(item.get("id")),
-            "filename": item.get("filename"),
-            "bytes": len(image),
-            "source_bytes": len(data),
-            "extract": extract_meta,
-            "miner_type": miner_type,
-            "models": models,
-            "host": f"{HOST_MINER}:8889",
-            "upgrade": upgrade,
-            "status_log": list((_FW_FLASH_STATE.get("status_log") or []))[-20:],
-            "response": resp,
-            "warning": (
-                "Firmware via NetPacket · ASIC may reboot · "
-                "verify Firmware Version after reconnect"
-            ),
-        }
-        if not ok:
-            out["error"] = (
-                (resp or {}).get("error")
-                if isinstance(resp, dict)
-                else "firmware upload failed"
-            )
+    req_id = uuid.uuid4().hex
+    pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
+    req = {"id": req_id, "ts": time.time(), "password": str(pw or "")}
+    try:
+        if EXPORT_LOG_RESULT_FILE.is_file():
+            EXPORT_LOG_RESULT_FILE.unlink()
+    except Exception:
+        pass
+    _write_json_atomic(EXPORT_LOG_REQ_FILE, req)
+    deadline = time.time() + max(15.0, float(timeout_sec))
+    last_err = "timeout waiting for export-log"
+    while time.time() < deadline:
+        time.sleep(0.25)
+        try:
+            if not EXPORT_LOG_RESULT_FILE.is_file():
+                if not miner_poller_process_alive():
+                    raise RuntimeError("miner-poller died during export-log")
+                continue
+            raw = json.loads(EXPORT_LOG_RESULT_FILE.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict) or str(raw.get("id") or "") != req_id:
+                continue
+            if not raw.get("ok"):
+                raise RuntimeError(str(raw.get("error") or "export-log failed"))
+            fn = str(raw.get("filename") or "")
+            return {
+                "ok": True,
+                "path": raw.get("path"),
+                "filename": fn,
+                "bytes": raw.get("bytes"),
+                "transport": raw.get("transport") or "go-miner-poller",
+                "download": f"/api/miner/export-log/download?name={fn}",
+            }
+        except RuntimeError:
+            raise
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise RuntimeError(last_err)
 
-        try:
-            _policy_log(
-                "warn" if ok else "err",
-                f"FIRMWARE netpacket · {item.get('filename')} · {len(image)} B → {HOST_MINER} · {upgrade}",
-            )
-        except Exception:
-            pass
-        try:
-            _token_cache_clear()
-        except Exception:
-            pass
-        with _cache_lock:
-            global _cache, _cache_ts
-            _cache = None
-            _cache_ts = 0.0
-        _fw_flash_set(
-            busy=False,
-            finished_at=datetime.now().isoformat(timespec="seconds"),
-            error=None if ok else out.get("error"),
-        )
-        if not ok:
-            raise RuntimeError(str(out.get("error") or "firmware flash failed"))
-        return out
+
+def list_export_logs() -> dict:
+    """List ASIC export-log files under DATA/export_logs."""
+    d = DATA / "export_logs"
+    items: list[dict] = []
+    try:
+        if d.is_dir():
+            for p in sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                if not p.is_file():
+                    continue
+                try:
+                    st = p.stat()
+                    items.append({
+                        "name": p.name,
+                        "bytes": st.st_size,
+                        "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+                        "download": f"/api/miner/export-log/download?name={p.name}",
+                    })
+                except Exception:
+                    continue
     except Exception as e:
-        _fw_flash_set(
-            busy=False,
-            stage="error",
-            error=str(e),
-            finished_at=datetime.now().isoformat(timespec="seconds"),
-        )
-        raise
+        return {"ok": False, "error": str(e), "items": []}
+    return {"ok": True, "items": items, "dir": str(d)}
 
 
 def _poolheat_usb_info() -> dict | None:
@@ -27042,6 +27051,24 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/firmware/flash/status", "/api/firmware/flash-status"):
             self._json_response(200, {"ok": True, **get_firmware_flash_status()})
             return
+        if path in (
+            "/api/miner/export-log",
+            "/api/miner/export_log",
+            "/api/export-log",
+            "/api/export_log",
+        ):
+            try:
+                self._json_response(200, list_export_logs())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/miner/export-log/download",
+            "/api/miner/export_log/download",
+            "/api/export-log/download",
+        ):
+            self._api_export_log_download()
+            return
         if path.startswith("/api/firmware/download/"):
             self._api_firmware_download()
             return
@@ -27307,6 +27334,24 @@ class Handler(SimpleHTTPRequestHandler):
                     password=str(pw) if pw not in (None, "") else None,
                     confirm=conf,
                     allow_incompatible=allow,
+                )
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/miner/export-log",
+            "/api/miner/export_log",
+            "/api/export-log",
+            "/api/export_log",
+        ):
+            try:
+                req = self._read_json_body() or {}
+                if not isinstance(req, dict):
+                    req = {}
+                pw = req.get("password") or req.get("api_password")
+                body = export_miner_log(
+                    password=str(pw) if pw not in (None, "") else None,
                 )
                 self._json_response(200, body)
             except Exception as e:
@@ -27648,6 +27693,40 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header(
             "Content-Disposition", f'attachment; filename="{safe}"'
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _api_export_log_download(self) -> None:
+        """GET /api/miner/export-log/download?name=… — file from DATA/export_logs."""
+        qs = parse_qs(urlparse(self.path).query)
+        name = str((qs.get("name") or [""])[0]).strip()
+        # no path traversal
+        name = Path(name).name
+        if not name or name in (".", ".."):
+            self._json_response(400, {"ok": False, "error": "name required"})
+            return
+        fpath = (DATA / "export_logs" / name).resolve()
+        root = (DATA / "export_logs").resolve()
+        try:
+            fpath.relative_to(root)
+        except ValueError:
+            self._json_response(400, {"ok": False, "error": "invalid path"})
+            return
+        if not fpath.is_file():
+            self._json_response(404, {"ok": False, "error": "file not found"})
+            return
+        try:
+            data = fpath.read_bytes()
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        ctype = "application/gzip" if name.endswith(".gz") else "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header(
+            "Content-Disposition", f'attachment; filename="{name}"'
         )
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()

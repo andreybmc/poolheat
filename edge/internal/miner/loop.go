@@ -41,6 +41,14 @@ func Run(s Settings) error {
 		// Keeps write latency low and serializes ASIC TCP in this process only.
 		handledWrite := ProcessPendingWrite(s)
 
+		// Long jobs: firmware flash + export log (NetPacket :8889).
+		if ProcessPendingFirmwareFlash(s) {
+			handledWrite = true
+		}
+		if ProcessPendingExportLog(s) {
+			handledWrite = true
+		}
+
 		// Chipmap: full boards always in chipmap_cache.json (serve/UI read-only).
 		ProcessChipmapTick(s, &chipSt)
 
@@ -97,6 +105,9 @@ func Run(s Settings) error {
 			}
 			if ProcessPendingWrite(s) {
 				// write mid-wait: refresh live next outer iteration soon
+				break
+			}
+			if ProcessPendingFirmwareFlash(s) || ProcessPendingExportLog(s) {
 				break
 			}
 			// On-demand chipmap refresh while waiting

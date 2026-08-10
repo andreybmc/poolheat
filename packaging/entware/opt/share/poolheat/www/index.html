@@ -6172,6 +6172,14 @@
             <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="fw.flash_warn">
               After the update the miner will reboot. Do not cut power or network during flashing.
             </p>
+            <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn ghost" type="button" id="btn-miner-export-log" data-i18n="fw.export_log">Export miner log</button>
+              <span id="miner-export-log-status" style="font-size:0.78rem;color:var(--muted)"></span>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0;line-height:1.45" data-i18n="fw.export_log_hint">
+              Pulls ASIC diagnostic log via miner-poller (NetPacket). File saved on router under export_logs/.
+            </p>
           </div>
         </div>
 
@@ -9721,6 +9729,10 @@
         "fw.saved": "Saved",
         "h2.fw_flash": "Firmware update",
         "sub.fw_flash": "from USB library · compatible models only",
+        "fw.export_log": "Export miner log",
+        "fw.export_log_hint": "Pulls ASIC diagnostic log via miner-poller (NetPacket). File saved on router under export_logs/.",
+        "fw.export_log_ok": "Log exported",
+        "fw.export_log_busy": "Exporting…",
         "fw.flash_select": "Compatible firmware",
         "fw.flash_force": "Allow incompatible (not in model map)",
         "fw.flash_btn": "Flash to miner",
@@ -10538,6 +10550,10 @@
         "fw.saved": "Сохранено",
         "h2.fw_flash": "Обновление прошивки",
         "sub.fw_flash": "из USB-библиотеки · только совместимые модели",
+        "fw.export_log": "Экспорт лога ASIC",
+        "fw.export_log_hint": "Скачивает диагностический лог через miner-poller (NetPacket). Файл на роутере: export_logs/.",
+        "fw.export_log_ok": "Лог сохранён",
+        "fw.export_log_busy": "Экспорт…",
         "fw.flash_select": "Совместимая прошивка",
         "fw.flash_force": "Разрешить несовместимую (нет в карте моделей)",
         "fw.flash_btn": "Прошить майнер",
@@ -26130,12 +26146,49 @@
       }
     }
 
+    async function exportMinerLog() {
+      const st = document.getElementById("miner-export-log-status");
+      const btn = document.getElementById("btn-miner-export-log");
+      if (btn) btn.disabled = true;
+      if (st) st.textContent = t("fw.export_log_busy", "Exporting…");
+      try {
+        const res = await fetch("/api/miner/export-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (!res.ok || data.ok === false)
+          throw new Error(data.error || "HTTP " + res.status);
+        const msg =
+          t("fw.export_log_ok", "Log exported") +
+          (data.filename ? " · " + data.filename : "") +
+          (data.bytes != null ? " · " + data.bytes + " B" : "");
+        if (st) st.textContent = msg;
+        if (typeof toastSuccess === "function") toastSuccess(msg);
+        if (data.download) {
+          try {
+            window.open(data.download, "_blank");
+          } catch (_) {}
+        }
+      } catch (e) {
+        if (st) st.textContent = String(e.message || e);
+        if (typeof toastError === "function")
+          toastError("Export log: " + (e.message || e));
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
     document
       .getElementById("btn-fw-flash-refresh")
       ?.addEventListener("click", () => void loadMinerFirmwareFlashOptions());
     document
       .getElementById("btn-fw-flash")
       ?.addEventListener("click", () => void flashFirmwareToMiner());
+    document
+      .getElementById("btn-miner-export-log")
+      ?.addEventListener("click", () => void exportMinerLog());
     document
       .getElementById("fw-flash-force")
       ?.addEventListener("change", () => void loadMinerFirmwareFlashOptions());

@@ -1,0 +1,335 @@
+package miner
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/andreybmc/wm-lib/protocol"
+)
+
+// File IPC: firmware flash + export log (NetPacket :8889 via wm-lib).
+// serve never opens :8889 / never loads whatsminer.
+const (
+	fwFlashReqFile    = "firmware_flash_req.json"
+	fwFlashStatusFile = "firmware_flash_status.json"
+	exportLogReqFile  = "export_log_req.json"
+	exportLogResultFile = "export_log_result.json"
+	exportLogDir      = "export_logs"
+)
+
+var (
+	fwFlashMu   sync.Mutex
+	fwFlashBusy bool
+)
+
+// ProcessPendingFirmwareFlash runs one flash job if requested.
+// Long-running (minutes); call from main loop (blocks live during flash).
+func ProcessPendingFirmwareFlash(s Settings) bool {
+	path := filepath.Join(s.DataDir, fwFlashReqFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var req map[string]any
+	if json.Unmarshal(b, &req) != nil {
+		_ = os.Remove(path)
+		return true
+	}
+	_ = os.Remove(path)
+
+	fwFlashMu.Lock()
+	if fwFlashBusy {
+		fwFlashMu.Unlock()
+		writeFlashStatus(s.DataDir, map[string]any{
+			"busy":  true,
+			"stage": "busy",
+			"error": "firmware flash already in progress",
+			"ok":    false,
+			"id":    str(req["id"]),
+		})
+		return true
+	}
+	fwFlashBusy = true
+	fwFlashMu.Unlock()
+	defer func() {
+		fwFlashMu.Lock()
+		fwFlashBusy = false
+		fwFlashMu.Unlock()
+	}()
+
+	runFirmwareFlash(s, req)
+	return true
+}
+
+func runFirmwareFlash(s Settings, req map[string]any) {
+	id := str(req["id"])
+	filePath := str(firstNonEmpty(req["path"], req["file"], req["firmware_path"]))
+	platform := str(req["platform"])
+	if platform == "" {
+		platform = "h616"
+	}
+	pw := str(req["password"])
+	if pw == "" {
+		pw = s.Password
+	}
+	filename := str(req["filename"])
+	if filename == "" && filePath != "" {
+		filename = filepath.Base(filePath)
+	}
+
+	writeFlashStatus(s.DataDir, map[string]any{
+		"busy":        true,
+		"pct":         0,
+		"stage":       "prepare",
+		"error":       nil,
+		"result":      nil,
+		"id":          id,
+		"filename":    filename,
+		"started_at":  time.Now().Format("2006-01-02T15:04:05"),
+		"finished_at": nil,
+		"status_log":  []string{},
+	})
+
+	if filePath == "" {
+		failFlash(s.DataDir, id, "missing firmware path")
+		return
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		failFlash(s.DataDir, id, fmt.Sprintf("firmware file: %v", err))
+		return
+	}
+
+	writeFlashStatusMerge(s.DataDir, map[string]any{"stage": "extract", "pct": 2})
+	img, meta, err := protocol.LoadFirmwareFile(filePath, platform)
+	if err != nil {
+		failFlash(s.DataDir, id, fmt.Sprintf("extract: %v", err))
+		return
+	}
+	writeFlashStatusMerge(s.DataDir, map[string]any{
+		"stage":   "auth",
+		"pct":     4,
+		"extract": meta,
+		"bytes":   len(img),
+	})
+
+	np, err := netpacketClient(s.Host, pw)
+	if err != nil {
+		failFlash(s.DataDir, id, err.Error())
+		return
+	}
+	np.Timeout = 10 * time.Minute
+
+	var statusLog []string
+	out, err := np.UpdateFirmware(img,
+		protocol.WithFirmwarePoll(true),
+		protocol.WithFirmwarePollAttempts(45),
+		protocol.WithFirmwareProgress(func(stage string, pct float64, extra map[string]any) {
+			st := map[string]any{
+				"busy":  true,
+				"stage": stage,
+				"pct":   pct,
+				"id":    id,
+			}
+			if extra != nil {
+				if t, ok := extra["status_text"]; ok && t != nil {
+					txt := truncStr(fmt.Sprint(t), 240)
+					st["status_text"] = txt
+					statusLog = append(statusLog, txt)
+					if len(statusLog) > 40 {
+						statusLog = statusLog[len(statusLog)-40:]
+					}
+					st["status_log"] = append([]string{}, statusLog...)
+				}
+			}
+			writeFlashStatusMerge(s.DataDir, st)
+		}),
+	)
+	if err != nil {
+		failFlash(s.DataDir, id, err.Error())
+		return
+	}
+	ok := false
+	if out != nil {
+		if v, okb := out["ok"].(bool); okb {
+			ok = v
+		}
+	}
+	upgrade := ""
+	if out != nil {
+		upgrade = fmt.Sprint(out["upgrade"])
+	}
+	stage := "done"
+	if ok && strings.Contains(strings.ToLower(upgrade), "success") {
+		stage = "success"
+	} else if !ok {
+		stage = "error"
+	}
+	errMsg := any(nil)
+	if !ok {
+		if out != nil && out["error"] != nil {
+			errMsg = out["error"]
+		} else {
+			errMsg = "firmware flash failed"
+		}
+	}
+	writeFlashStatus(s.DataDir, map[string]any{
+		"busy":        false,
+		"pct":         100,
+		"stage":       stage,
+		"error":       errMsg,
+		"result":      out,
+		"ok":          ok,
+		"id":          id,
+		"filename":    filename,
+		"extract":     meta,
+		"bytes":       len(img),
+		"upgrade":     upgrade,
+		"status_log":  statusLog,
+		"transport":   "netpacket",
+		"finished_at": time.Now().Format("2006-01-02T15:04:05"),
+	})
+	if ok {
+		log.Printf("[miner-poller] firmware flash ok id=%s file=%s bytes=%d upgrade=%s",
+			id, filename, len(img), upgrade)
+	} else {
+		log.Printf("[miner-poller] firmware flash fail id=%s: %v", id, errMsg)
+	}
+}
+
+func failFlash(dataDir, id, msg string) {
+	writeFlashStatus(dataDir, map[string]any{
+		"busy":        false,
+		"stage":       "error",
+		"error":       msg,
+		"ok":          false,
+		"id":          id,
+		"pct":         0,
+		"finished_at": time.Now().Format("2006-01-02T15:04:05"),
+	})
+	log.Printf("[miner-poller] firmware flash fail: %s", msg)
+}
+
+func writeFlashStatus(dataDir string, st map[string]any) {
+	_ = writeJSONAtomic(filepath.Join(dataDir, fwFlashStatusFile), st)
+}
+
+func writeFlashStatusMerge(dataDir string, patch map[string]any) {
+	path := filepath.Join(dataDir, fwFlashStatusFile)
+	cur := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &cur)
+	}
+	for k, v := range patch {
+		cur[k] = v
+	}
+	if cur["busy"] == nil {
+		cur["busy"] = true
+	}
+	_ = writeJSONAtomic(path, cur)
+}
+
+// ProcessPendingExportLog handles export_log_req.json (NetPacket cmd 20).
+func ProcessPendingExportLog(s Settings) bool {
+	path := filepath.Join(s.DataDir, exportLogReqFile)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var req map[string]any
+	if json.Unmarshal(b, &req) != nil {
+		_ = os.Remove(path)
+		return true
+	}
+	_ = os.Remove(path)
+
+	id := str(req["id"])
+	pw := str(req["password"])
+	if pw == "" {
+		pw = s.Password
+	}
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := map[string]any{
+		"id": id,
+		"ts": now,
+		"ok": false,
+	}
+
+	np, err := netpacketClient(s.Host, pw)
+	if err != nil {
+		res["error"] = err.Error()
+		_ = writeJSONAtomic(filepath.Join(s.DataDir, exportLogResultFile), res)
+		return true
+	}
+	np.Timeout = 60 * time.Second
+	body, resp, err := np.ExportLog()
+	if err != nil {
+		res["error"] = err.Error()
+		_ = writeJSONAtomic(filepath.Join(s.DataDir, exportLogResultFile), res)
+		return true
+	}
+	dir := filepath.Join(s.DataDir, exportLogDir)
+	_ = os.MkdirAll(dir, 0o755)
+	name := fmt.Sprintf("miner-export-%s.bin", time.Now().Format("20060102-150405"))
+	outPath := filepath.Join(dir, name)
+	if err := os.WriteFile(outPath, body, 0o644); err != nil {
+		res["error"] = err.Error()
+		_ = writeJSONAtomic(filepath.Join(s.DataDir, exportLogResultFile), res)
+		return true
+	}
+	// detect gzip magic
+	gz := len(body) >= 2 && body[0] == 0x1f && body[1] == 0x8b
+	if gz {
+		gzPath := strings.TrimSuffix(outPath, ".bin") + ".bin.gz"
+		if err := os.Rename(outPath, gzPath); err == nil {
+			outPath = gzPath
+			name = filepath.Base(gzPath)
+		}
+	}
+	res["ok"] = true
+	if resp != nil {
+		res["netpacket_ok"] = resp.OK
+	}
+	res["path"] = outPath
+	res["filename"] = name
+	res["bytes"] = len(body)
+	res["transport"] = "netpacket"
+	_ = writeJSONAtomic(filepath.Join(s.DataDir, exportLogResultFile), res)
+	log.Printf("[miner-poller] export-log ok %s (%d B)", name, len(body))
+	return true
+}
+
+func netpacketClient(host, password string) (*protocol.Client, error) {
+	if !protocol.ProbePort(host, protocol.DefaultPort, 2*time.Second) {
+		return nil, fmt.Errorf("netpacket :8889 not reachable on %s", host)
+	}
+	type cred struct{ acc, pw string }
+	try := []cred{{"super", "super"}, {"admin", password}}
+	if password != "" && password != "super" {
+		try = append(try, cred{"super", password})
+	}
+	var last error
+	for _, cr := range try {
+		if strings.TrimSpace(cr.pw) == "" {
+			continue
+		}
+		np := protocol.NewClient(host)
+		np.Account = cr.acc
+		np.Password = cr.pw
+		np.Timeout = 30 * time.Second
+		if _, err := np.Handshake(); err != nil {
+			last = err
+			continue
+		}
+		return np, nil
+	}
+	if last != nil {
+		return nil, fmt.Errorf("netpacket auth failed: %v", last)
+	}
+	return nil, fmt.Errorf("netpacket auth failed")
+}
