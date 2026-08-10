@@ -56,25 +56,39 @@ func Run(dataDir string) error {
 			pol = cfgFile.Poller
 			nDev = len(cfgFile.Devices)
 
-			// refresh state from disk each tick (API may have written desired)
-			if st, err := state.Load(paths.DevicesState(dataDir)); err == nil {
-				// merge: keep our online/last_on if newer? Prefer disk for desired, keep last probe if disk empty
-				for id, diskRT := range st {
-					cur := store.ByID[id]
-					// desired always from disk (UI writes)
-					if diskRT.DesiredOn != nil {
-						cur.DesiredOn = diskRT.DesiredOn
+			store.ClearTickFlags()
+
+			// refresh desired_on from disk each tick (UI/API may have written it)
+			diskState, _ := state.Load(paths.DevicesState(dataDir))
+			store.MergeDesiredFromDisk(diskState)
+
+			// log enforce flags once in a while for diagnosis
+			if time.Now().Unix()%120 < int64(max(3, pol.IntervalSec)) {
+				for _, d := range cfgFile.Devices {
+					if !d.IsEnabled() {
+						continue
 					}
-					// if we have no last_on yet, take disk
-					if cur.LastOn == nil && diskRT.LastOn != nil {
-						cur.LastOn = diskRT.LastOn
+					rt := store.ByID[d.ID]
+					des := "?"
+					if rt.DesiredOn != nil {
+						if *rt.DesiredOn {
+							des = "ON"
+						} else {
+							des = "OFF"
+						}
 					}
-					// last_error from disk if we have none
-					if cur.LastError == nil && diskRT.LastError != nil {
-						cur.LastError = diskRT.LastError
-						cur.LastAction = diskRT.LastAction
+					rep := "?"
+					if rt.LastOn != nil {
+						if *rt.LastOn {
+							rep = "ON"
+						} else {
+							rep = "OFF"
+						}
 					}
-					store.ByID[id] = cur
+					if d.EnforceDesired {
+						log.Printf("[devices-poller] hold %s enforce=on desired=%s reported=%s",
+							d.Label(), des, rep)
+					}
 				}
 			}
 
@@ -94,6 +108,11 @@ func Run(dataDir string) error {
 						log.Printf("[devices-poller] no mining_work (snapshot stale/missing, cfg=%d)", nDev)
 					}
 				}
+			}
+
+			// re-merge disk desired for devices we did not touch (UI race)
+			if disk2, err := state.Load(paths.DevicesState(dataDir)); err == nil {
+				store.MergeBeforeSave(disk2)
 			}
 
 			// persist

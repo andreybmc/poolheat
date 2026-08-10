@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -507,20 +508,81 @@ func asFloatAny(v any) (float64, bool) {
 	switch t := v.(type) {
 	case float64:
 		return t, true
+	case float32:
+		return float64(t), true
 	case int:
 		return float64(t), true
+	case int64:
+		return float64(t), true
+	case int32:
+		return float64(t), true
+	case uint:
+		return float64(t), true
+	case uint64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		return f, err == nil
 	}
 	return 0, false
 }
 
+// asBoolAny — Tuya/SmartLife DPS may be bool, 0/1 int, or "true"/"1" string.
+// Missing types used to always return false → enforce_desired never restored ON.
 func asBoolAny(v any) bool {
+	if v == nil {
+		return false
+	}
 	switch t := v.(type) {
 	case bool:
 		return t
 	case float64:
 		return t != 0
+	case float32:
+		return t != 0
+	case int:
+		return t != 0
+	case int8:
+		return t != 0
+	case int16:
+		return t != 0
+	case int32:
+		return t != 0
+	case int64:
+		return t != 0
+	case uint:
+		return t != 0
+	case uint8:
+		return t != 0
+	case uint16:
+		return t != 0
+	case uint32:
+		return t != 0
+	case uint64:
+		return t != 0
+	case json.Number:
+		f, err := t.Float64()
+		return err == nil && f != 0
+	case string:
+		s := strings.ToLower(strings.TrimSpace(t))
+		switch s {
+		case "1", "true", "on", "yes", "y":
+			return true
+		case "0", "false", "off", "no", "n", "":
+			return false
+		default:
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				return f != 0
+			}
+			return false
+		}
+	default:
+		s := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+		return s == "1" || s == "true" || s == "on" || s == "yes"
 	}
-	return false
 }
 
 func round2(v float64) float64 { return float64(int(v*100+0.5)) / 100 }

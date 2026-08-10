@@ -141,9 +141,33 @@ func dpsBool(dps map[string]any, switchDPS int) *bool {
 	if dps == nil {
 		return nil
 	}
-	keys := []string{strconv.Itoa(switchDPS), "1"}
+	// Prefer configured switch DPS, then common switch indices (never 18/19/20 metering).
+	keys := []string{
+		strconv.Itoa(switchDPS),
+		"1", "101", "102", "103",
+	}
+	seen := map[string]bool{}
 	for _, k := range keys {
-		if v, ok := dps[k]; ok {
+		if k == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		if v, ok := dps[k]; ok && v != nil {
+			b := asBoolAny(v)
+			return &b
+		}
+	}
+	// last resort: first bool-like value among small keys
+	for k, v := range dps {
+		if v == nil {
+			continue
+		}
+		// skip obvious metering keys
+		if k == "18" || k == "19" || k == "20" || k == "4" || k == "5" || k == "6" {
+			continue
+		}
+		switch v.(type) {
+		case bool, int, int64, float64, float32:
 			b := asBoolAny(v)
 			return &b
 		}

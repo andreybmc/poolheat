@@ -12,7 +12,7 @@ import (
 	"github.com/andreybmc/poolheat/edge/internal/state"
 )
 
-const enforceCooldownSec = 15.0
+const enforceCooldownSec = 8.0
 
 // Store holds mutable runtime + deadlines for one process.
 type Store struct {
@@ -20,6 +20,8 @@ type Store struct {
 	Deadlines map[string]float64
 	SyncTS    map[string]float64
 	EnforceTS map[string]float64
+	// DesiredTouched: ids whose desired_on we set this tick (don't clobber from disk on save)
+	DesiredTouched map[string]bool
 }
 
 func NewStore(byID map[string]state.Runtime, deadlines, syncTS map[string]float64) *Store {
@@ -33,10 +35,11 @@ func NewStore(byID map[string]state.Runtime, deadlines, syncTS map[string]float6
 		syncTS = map[string]float64{}
 	}
 	return &Store{
-		ByID:      byID,
-		Deadlines: deadlines,
-		SyncTS:    syncTS,
-		EnforceTS: map[string]float64{},
+		ByID:           byID,
+		Deadlines:      deadlines,
+		SyncTS:         syncTS,
+		EnforceTS:      map[string]float64{},
+		DesiredTouched: map[string]bool{},
 	}
 }
 
@@ -99,16 +102,18 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 	return nil
 }
 
-// SetLogical sets logical ON/OFF (force skips mining gates).
-func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, source string) error {
+// SetLogical sets logical ON/OFF.
+// force=true: always talk to device (enforce path — don't trust cached LastOn).
+func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, source string, force bool) error {
 	did := cfg.ID
 	be := cfg.BackendNorm()
-	// no-op if already reported same
+	// no-op if already reported same (unless force — enforce must re-check hardware)
 	rt := s.getRT(did)
-	if rt.LastOn != nil && *rt.LastOn == on {
+	if !force && rt.LastOn != nil && *rt.LastOn == on {
 		s.update(did, func(r *state.Runtime) {
 			r.DesiredOn = boolPtr(on)
 		})
+		s.DesiredTouched[did] = true
 		return nil
 	}
 	phys := backend.LogicalToPhysical(on, cfg.Inverted)
@@ -119,7 +124,10 @@ func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, s
 			r.Online = boolPtr(false)
 			r.LastError = strPtr(pretty)
 			r.LastAction = strPtr(source + "_fail")
+			// keep desired so next tick still tries to restore
+			r.DesiredOn = boolPtr(on)
 		})
+		s.DesiredTouched[did] = true
 		return err
 	}
 	reported := on
@@ -133,16 +141,28 @@ func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, s
 		r.LastError = nil
 		ts := state.NowISO()
 		r.LastOkTS = &ts
-		r.LastAction = strPtr(source + ":" + be)
+		if res.Skipped {
+			r.LastAction = strPtr(source + ":" + be + ":skip")
+		} else {
+			r.LastAction = strPtr(source + ":" + be)
+		}
 		if res.Power != nil {
 			r.LastPower = res.Power
 			r.LastPowerTS = &ts
 		}
 	})
+	s.DesiredTouched[did] = true
 	if res.Skipped {
 		log.Printf("[devices] set %s: skipped (%s)", cfg.Label(), res.Reason)
 	} else {
 		log.Printf("[devices] set %s: %v (%s)", cfg.Label(), on, source)
+	}
+	// if hardware still disagrees after set — surface as soft error for next tick
+	if reported != on {
+		err = fmt.Errorf("after set: reported=%s desired=%s", onOff(reported), onOff(on))
+		log.Printf("[devices] set %s: %v", cfg.Label(), err)
+		// still keep desired; return error so caller can log
+		return err
 	}
 	return nil
 }
@@ -154,9 +174,12 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 	did := cfg.ID
 	rt := s.getRT(did)
 	if rt.DesiredOn == nil {
+		// seed hold target from first successful probe
 		s.update(did, func(r *state.Runtime) {
 			r.DesiredOn = boolPtr(reported)
 		})
+		s.DesiredTouched[did] = true
+		log.Printf("[devices] enforce seed desired %s = %s", cfg.Label(), onOff(reported))
 		return nil
 	}
 	desired := *rt.DesiredOn
@@ -169,9 +192,16 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 	}
 	s.EnforceTS[did] = now
 	driver := backend.DriverLabel(cfg.Backend)
-	log.Printf("[devices] enforce desired %s/%s: reported=%v → desired=%v",
+	log.Printf("[devices] enforce desired %s/%s: reported=%s → desired=%s",
 		cfg.Label(), driver, onOff(reported), onOff(desired))
-	return s.SetLogical(ctx, cfg, desired, "enforce_desired")
+	// force=true: ignore cached LastOn, re-apply on wire (SmartLife external change)
+	err := s.SetLogical(ctx, cfg, desired, "enforce_desired", true)
+	if err != nil {
+		log.Printf("[devices] enforce desired %s FAILED: %v", cfg.Label(), err)
+	} else {
+		log.Printf("[devices] enforce desired %s OK restored %s", cfg.Label(), onOff(desired))
+	}
+	return err
 }
 
 func (s *Store) AdoptReported(did string, reported bool) {
@@ -182,6 +212,7 @@ func (s *Store) AdoptReported(did string, reported bool) {
 	s.update(did, func(r *state.Runtime) {
 		r.DesiredOn = boolPtr(reported)
 	})
+	s.DesiredTouched[did] = true
 }
 
 // PollAll status for enabled ready devices.
@@ -203,9 +234,14 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 			continue
 		}
 		rt := s.getRT(cfg.ID)
-		if rt.LastError != nil && rt.LastAction != nil && strings.HasSuffix(*rt.LastAction, "_fail") {
-			if now-s.SyncTS[cfg.ID] < backoff {
-				continue
+		// Back off only after status probe failures — still re-poll after enforce
+		// set failures so hold can restore after SmartLife toggles.
+		if rt.LastError != nil && rt.LastAction != nil {
+			act := *rt.LastAction
+			if strings.HasSuffix(act, "_fail") && !strings.Contains(act, "enforce") {
+				if now-s.SyncTS[cfg.ID] < backoff {
+					continue
+				}
 			}
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
@@ -330,12 +366,67 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		log.Printf("[devices] sync %s: work=%s → %s (%s) reported=%s desired=%s",
 			cfg.Label(), work, onOff(*want), src, repS, desS)
 		cctx, cancel := context.WithTimeout(ctx, timeout)
-		err := s.SetLogical(cctx, cfg, *want, src)
+		err := s.SetLogical(cctx, cfg, *want, src, true)
 		cancel()
 		if err != nil {
 			log.Printf("[devices] sync %s: %v", cfg.Label(), err)
 		}
 	}
+}
+
+// MergeDesiredFromDisk refreshes desired_on from devices_state.json (UI may write).
+// Does not overwrite desired we set this tick (DesiredTouched).
+func (s *Store) MergeDesiredFromDisk(disk map[string]state.Runtime) {
+	if disk == nil {
+		return
+	}
+	for id, diskRT := range disk {
+		if s.DesiredTouched[id] {
+			continue
+		}
+		if diskRT.DesiredOn == nil {
+			continue
+		}
+		cur := s.getRT(id)
+		// always take disk desired when UI/API wrote it
+		if cur.DesiredOn == nil || *cur.DesiredOn != *diskRT.DesiredOn {
+			cur.DesiredOn = diskRT.DesiredOn
+			s.ByID[id] = cur
+		}
+		// seed last_on only if we never probed
+		if cur.LastOn == nil && diskRT.LastOn != nil {
+			cur.LastOn = diskRT.LastOn
+			s.ByID[id] = cur
+		}
+	}
+}
+
+// MergeBeforeSave: disk desired wins for devices we did not touch this tick
+// (prevents wiping concurrent UI writes).
+func (s *Store) MergeBeforeSave(disk map[string]state.Runtime) {
+	if disk == nil {
+		return
+	}
+	for id, diskRT := range disk {
+		if s.DesiredTouched[id] {
+			continue
+		}
+		cur, ok := s.ByID[id]
+		if !ok {
+			// keep unknown ids from disk
+			s.ByID[id] = diskRT
+			continue
+		}
+		if diskRT.DesiredOn != nil {
+			cur.DesiredOn = diskRT.DesiredOn
+		}
+		s.ByID[id] = cur
+	}
+}
+
+// ClearTickFlags resets per-tick bookkeeping.
+func (s *Store) ClearTickFlags() {
+	s.DesiredTouched = map[string]bool{}
 }
 
 func onOff(b bool) string {
