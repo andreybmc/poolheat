@@ -226,18 +226,14 @@ func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
 				res.Transport = "netpacket"
 				res.Response = map[string]any{
 					"STATUS": "S", "Msg": "ok", "transport": "netpacket",
+					"account": cr.acc,
 				}
 				return res
 			}
-			// some FW return non-OK status text but still reboot
+			// Non-OK status: do NOT claim success (same false-OK class as factory).
 			if resp != nil {
-				log.Printf("[miner-poller] netpacket reboot status=%s", resp.StatusText)
-				res.OK = true
-				res.Transport = "netpacket"
-				res.Response = map[string]any{
-					"STATUS": "S", "Msg": resp.StatusText, "transport": "netpacket",
-				}
-				return res
+				log.Printf("[miner-poller] netpacket reboot %s status=%d %s",
+					cr.acc, resp.Status, resp.StatusText)
 			}
 		}
 	}
@@ -270,6 +266,13 @@ func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
 }
 
 // executeFactoryReset — WhatsMinerTool NetPacket cmd 10 (preferred), then V2.
+//
+// Lab Peak: Restore Factory Settings = cmd 10 empty + KEY1 auth.
+// On-device: restore-factory-settings (wipes pools/passwords, reboot).
+// If DisableFactoryMode=1, cmd 10 may ACK but do nothing — enable param 24=1 first.
+//
+// IMPORTANT: never report OK on non-success NetPacket status or dial/timeout
+// errors (previous bug: any resp != nil → OK while ASIC never reset).
 func executeFactoryReset(s Settings, req WriteRequest, password string) WriteResult {
 	now := float64(time.Now().UnixNano()) / 1e9
 	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
@@ -279,9 +282,10 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 		res.Transport = "dry_run"
 		return res
 	}
-	// 1) NetPacket factory reset (WMT cmd 10) — works with API Switch OFF.
-	// Prefer :8889; V2 :4028 is fallback only.
+
 	var npLastErr error
+	var npLastStatus string
+
 	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
 		type cred struct{ acc, pw string }
 		tryCreds := []cred{
@@ -303,44 +307,89 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 				continue
 			}
 			seen[key] = true
+
 			np := protocol.NewClient(s.Host)
 			np.Account = cr.acc
 			np.Password = cr.pw
-			np.Timeout = 20 * time.Second
+			np.Timeout = 25 * time.Second
+
+			// 1) Allow factory ops when blocked (DisableFactoryMode → 0).
+			if fr, err := np.SetFactoryMode(true); err != nil {
+				if !isAuthOrPwdErr(err) {
+					log.Printf("[miner-poller] factory_mode enable %s: %v", cr.acc, err)
+				} else {
+					npLastErr = err
+					log.Printf("[miner-poller] factory_reset auth %s: %v", cr.acc, err)
+					continue
+				}
+			} else if fr != nil && !fr.OK {
+				log.Printf("[miner-poller] factory_mode enable %s status=%s", cr.acc, fr.StatusText)
+			}
+
+			// 2) NetPacket cmd 10 — Restore Factory Settings
 			resp, err := np.FactoryReset()
 			if err != nil {
 				npLastErr = err
-				if isLinkDropAfterWrite(err) {
+				// Only peer-close after the write counts as accepted.
+				if isLinkDropAccepted(err) {
+					log.Printf("[miner-poller] netpacket factory_reset %s: link drop (accepted)", cr.acc)
 					res.OK = true
 					res.Transport = "netpacket"
 					res.Response = map[string]any{
 						"STATUS": "S", "Msg": "factory_reset sent (link dropped)",
 						"transport": "netpacket", "account": cr.acc,
+						"cmd": 10,
 					}
 					return res
 				}
 				log.Printf("[miner-poller] netpacket factory_reset %s: %v", cr.acc, err)
+				if isAuthOrPwdErr(err) {
+					continue
+				}
 				continue
 			}
-			if resp != nil {
-				// Even non-OK status text often means the unit accepted and will reboot.
+			if resp == nil {
+				npLastErr = fmt.Errorf("empty response")
+				continue
+			}
+			npLastStatus = resp.StatusText
+			log.Printf("[miner-poller] netpacket factory_reset %s status=%d ok=%v text=%q",
+				cr.acc, resp.Status, resp.OK, resp.StatusText)
+
+			// Require real success ACK (status 0 / OK). Non-OK was previously
+			// mis-reported as WRITE … OK while the unit never reset.
+			if resp.OK && (resp.Status == 0 || resp.StatusText == "ok" || resp.StatusText == "") {
+				// Lab: unit drops off LAN shortly after. Best-effort second push
+				// (some FW ACK then need a nudge — ignore errors).
+				_, _ = np.FactoryReset()
+
 				res.OK = true
 				res.Transport = "netpacket"
 				res.Response = map[string]any{
-					"STATUS": "S", "Msg": resp.StatusText, "transport": "netpacket",
-					"ok": resp.OK, "account": cr.acc,
+					"STATUS": "S", "Msg": "factory_reset accepted",
+					"transport": "netpacket", "account": cr.acc,
+					"status": resp.Status, "status_text": resp.StatusText,
+					"cmd": 10,
 				}
 				return res
+			}
+
+			npLastErr = fmt.Errorf("netpacket status=%d %s", resp.Status, resp.StatusText)
+			// Wrong password / permission → try next credential set.
+			if resp.Status == uint16(protocol.StatusIncorrectPwd) ||
+				resp.Status == uint16(protocol.StatusNeedChangePwd) {
+				continue
 			}
 		}
 	} else {
 		log.Printf("[miner-poller] factory_reset: NetPacket :%d not open on %s — try V2",
 			protocol.DefaultPort, s.Host)
 	}
-	// 2) V2 privileged factory_reset (needs Miner API Switch ON)
+
+	// 3) V2 privileged factory_reset (needs Miner API Switch ON)
 	resp, err := cV2WriteTimeout(s, password, "factory_reset", nil, 25*time.Second)
 	if err != nil {
-		if isLinkDropAfterWrite(err) {
+		if isLinkDropAccepted(err) {
 			res.OK = true
 			res.Transport = "v2"
 			res.Response = map[string]any{
@@ -351,6 +400,9 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 		msg := err.Error()
 		if npLastErr != nil {
 			msg = fmt.Sprintf("netpacket: %v; v2: %s", npLastErr, msg)
+		}
+		if npLastStatus != "" {
+			msg = fmt.Sprintf("%s (last netpacket status: %s)", msg, npLastStatus)
 		}
 		res.Error = msg
 		res.Transport = "v2"
@@ -432,21 +484,63 @@ func cV2WriteTimeout(s Settings, password, cmd string, params map[string]any, to
 	return c.Write(cmd, params)
 }
 
+// isLinkDropAfterWrite — legacy helper used by several write paths.
+// Prefer isLinkDropAccepted for destructive cmds (factory/reboot).
 func isLinkDropAfterWrite(err error) bool {
+	return isLinkDropAccepted(err)
+}
+
+// isLinkDropAccepted is true only when the peer almost certainly closed the
+// TCP session after receiving the command (unit rebooting / factory wipe).
+// Dial failures, "connection refused", and empty/timeout-before-write must
+// NOT be treated as success — that caused false "WRITE factory_reset OK".
+func isLinkDropAccepted(err error) bool {
 	if err == nil {
 		return false
 	}
 	low := strings.ToLower(err.Error())
+	// Never accept pure dial / unreachable errors.
+	if strings.Contains(low, "dial") ||
+		strings.Contains(low, "connection refused") ||
+		strings.Contains(low, "no route") ||
+		strings.Contains(low, "network is unreachable") ||
+		strings.Contains(low, "empty response") {
+		return false
+	}
 	for _, t := range []string{
-		"connection reset", "broken pipe", "eof", "i/o timeout",
-		"timeout", "connection refused", "use of closed", "wsasend",
-		"forcibly closed", "empty response",
+		"connection reset",
+		"broken pipe",
+		"forcibly closed",
+		"use of closed",
+		"wsasend",
+		"wsarecv",
 	} {
 		if strings.Contains(low, t) {
 			return true
 		}
 	}
+	// EOF after a write often means the unit cut the link on accept.
+	if strings.Contains(low, "eof") {
+		return true
+	}
+	// Read i/o timeout *after* send can happen when the unit freezes mid-reboot.
+	// Only accept when the error looks like a read deadline, not dial.
+	if (strings.Contains(low, "i/o timeout") || strings.Contains(low, "timeout")) &&
+		(strings.Contains(low, "read") || strings.Contains(low, "wait")) {
+		return true
+	}
 	return false
+}
+
+func isAuthOrPwdErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "incorrect password") ||
+		strings.Contains(low, "handshake failed") ||
+		strings.Contains(low, "auth") ||
+		strings.Contains(low, "need change pwd")
 }
 
 // executeWritePools applies stratum pools via NetPacket :8889 (WhatsMinerTool)

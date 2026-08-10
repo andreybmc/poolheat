@@ -20281,8 +20281,34 @@ def apply_set(action: str, value, password: str) -> dict:
         except Exception:
             pass
         resp = miner_write_cmd({"cmd": "factory_reset"}, password)
+        # Enrich response so UI WRITE log shows transport + status (not bare OK).
+        if isinstance(resp, dict):
+            tr = str(resp.get("transport") or "go-miner-poller")
+            detail = str(
+                resp.get("Msg")
+                or resp.get("msg")
+                or resp.get("status_text")
+                or "accepted"
+            )
+            acc = resp.get("account")
+            msg = f"{detail} · {tr}"
+            if acc:
+                msg += f" · {acc}"
+            resp = dict(resp)
+            resp.setdefault("STATUS", "S")
+            resp["Msg"] = msg
+            resp["transport"] = tr
         try:
-            _policy_log("ok", "FACTORY_RESET poller · ASIC will reboot / reconfigure")
+            _policy_log(
+                "ok",
+                "FACTORY_RESET "
+                + (
+                    str((resp or {}).get("Msg") or "poller")
+                    if isinstance(resp, dict)
+                    else "poller"
+                )
+                + " · ASIC should reboot / defaults; IP may change",
+            )
         except Exception:
             pass
         try:
@@ -20297,8 +20323,9 @@ def apply_set(action: str, value, password: str) -> dict:
             "asic",
             resp if isinstance(resp, dict) else {"result": resp},
             warning=(
-                "Factory reset via miner-poller (NetPacket) · ASIC reboot / defaults. "
-                "IP may change (DHCP)."
+                "Factory reset via miner-poller NetPacket cmd 10 · ASIC must reboot. "
+                "If it stays online, factory mode may be blocked or password wrong — "
+                "check miner-poller log."
             ),
         )
         if isinstance(resp, dict) and resp.get("transport"):
