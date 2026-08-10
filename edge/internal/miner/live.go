@@ -44,20 +44,21 @@ func FetchLive(s Settings) (map[string]any, error) {
 	// PSU optional
 	var psuTemp, psuFan, psuPin, psuVin, psuIin *float64
 	var psuModel any
+	psuMap := map[string]any{}
 	if pRaw, err := c.Read("get_psu", nil); err == nil {
-		psu := extractPayload(pRaw, "PSU", "psu")
-		if len(psu) == 0 {
+		psuMap = extractPayload(pRaw, "PSU", "psu")
+		if len(psuMap) == 0 {
 			if m, ok := pRaw["Msg"].(map[string]any); ok {
-				psu = m
+				psuMap = m
 			}
 		}
-		psuTemp = fPtr(psu["temp0"])
-		psuFan = fPtr(psu["fan_speed"])
-		psuPin = fPtr(psu["pin"])
+		psuTemp = fPtr(psuMap["temp0"])
+		psuFan = fPtr(psuMap["fan_speed"])
+		psuPin = fPtr(psuMap["pin"])
 		// get_psu Vin often ×100 (39200 → 392.0 V); Iin often mA integer
-		psuVin = normalizePsuVin(firstNonEmpty(psu["vin"], psu["Vin"]))
-		psuIin = normalizePsuIin(firstNonEmpty(psu["iin"], psu["Iin"]))
-		psuModel = firstNonEmpty(psu["model"], psu["name"])
+		psuVin = normalizePsuVin(firstNonEmpty(psuMap["vin"], psuMap["Vin"]))
+		psuIin = normalizePsuIin(firstNonEmpty(psuMap["iin"], psuMap["Iin"]))
+		psuModel = firstNonEmpty(psuMap["model"], psuMap["name"])
 	}
 
 	// Temperature fallback from classic field
@@ -122,19 +123,17 @@ func FetchLive(s Settings) (map[string]any, error) {
 		hsInt = 1
 	}
 
-	liquid := fPtr(status["liquid_temp"])
+	// Liquid / coolant — often missing on V2 status/summary; M63+ via API v3
+	// get.device.info → msg.power.liquid-temperature (same as WhatsMinerTool).
+	liquid, liquidSrc := extractLiquidTemp(status, summary, psuMap, nil)
 	if liquid == nil {
-		liquid = fPtr(summary["Liquid Temp"])
-	}
-	if liquid == nil {
-		liquid = fPtr(summary["liquid_temp"])
-	}
-	liquidSrc := any(nil)
-	if liquid != nil {
-		if status["liquid_temp"] != nil {
-			liquidSrc = "status"
-		} else {
-			liquidSrc = "summary"
+		if v3msg, err := fetchV3DeviceMsg(s.Host); err == nil && v3msg != nil {
+			liquid, liquidSrc = extractLiquidTemp(status, summary, psuMap, v3msg)
+			if liquid != nil && (liquidSrc == nil || liquidSrc == "") {
+				liquidSrc = "v3"
+			}
+		} else if err != nil {
+			log.Printf("[miner-poller] v3 liquid: %v", err)
 		}
 	}
 
@@ -240,6 +239,97 @@ func FetchLive(s Settings) (map[string]any, error) {
 	}
 
 	return body, nil
+}
+
+// extractLiquidTemp mirrors serve.py _extract_liquid_temp.
+// Returns value + source label (status|summary|psu|v3).
+func extractLiquidTemp(status, summary, psu, v3msg map[string]any) (*float64, any) {
+	type cand struct {
+		v   any
+		src string
+	}
+	cands := []cand{
+		{status["liquid_temp"], "status"},
+		{status["Liquid Temp"], "status"},
+		{status["liquid_temperature"], "status"},
+		{status["coolant_temp"], "status"},
+		{summary["Liquid Temp"], "summary"},
+		{summary["liquid_temp"], "summary"},
+		{summary["Coolant Temp"], "summary"},
+		{psu["liquid_temp"], "psu"},
+		{psu["liquid-temperature"], "psu"},
+		{psu["temp_liquid"], "psu"},
+	}
+	if v3msg != nil {
+		power, _ := v3msg["power"].(map[string]any)
+		if power == nil {
+			// some FW nest under Power
+			power, _ = v3msg["Power"].(map[string]any)
+		}
+		if power != nil {
+			cands = append(cands,
+				cand{power["liquid-temperature"], "v3"},
+				cand{power["liquid_temperature"], "v3"},
+				cand{power["liquid_temp"], "v3"},
+				cand{power["coolant"], "v3"},
+				cand{power["Coolant Temp"], "v3"},
+			)
+		}
+		cands = append(cands,
+			cand{v3msg["liquid_temp"], "v3"},
+			cand{v3msg["liquid-temperature"], "v3"},
+		)
+	}
+	for _, c := range cands {
+		if p := fPtr(c.v); p != nil && *p > 0.05 && *p < 150 {
+			return p, c.src
+		}
+	}
+	return nil, nil
+}
+
+// fetchV3DeviceMsg calls unauthenticated get.device.info on TCP 4433.
+// Returns msg dict (power, miner, system, …) or error.
+func fetchV3DeviceMsg(host string) (map[string]any, error) {
+	v3 := api.NewV3(host)
+	v3.Timeout = 4 * time.Second
+	// Prefer filtered power section when FW supports param; fallback full info.
+	var resp map[string]any
+	var err error
+	for _, param := range []any{"power", nil} {
+		payload := map[string]any{"cmd": "get.device.info", "param": param}
+		resp, err = v3.Call(payload)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	// code 0 = success
+	code := resp["code"]
+	ok := false
+	switch t := code.(type) {
+	case float64:
+		ok = t == 0
+	case int:
+		ok = t == 0
+	case string:
+		ok = t == "0" || t == ""
+	case nil:
+		ok = true
+	}
+	if !ok {
+		return nil, fmt.Errorf("v3 code=%v", code)
+	}
+	msg, _ := resp["msg"].(map[string]any)
+	if msg == nil {
+		msg, _ = resp["Msg"].(map[string]any)
+	}
+	if msg == nil {
+		return nil, fmt.Errorf("v3 no msg")
+	}
+	return msg, nil
 }
 
 // normalizePsuVin: get_psu often reports centivolts (39200 → 392.0 V).
