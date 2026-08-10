@@ -24113,6 +24113,12 @@ def _tg_bot_settings_inline(lang: str = "ru") -> dict:
             ],
             [
                 {
+                    "text": "ℹ️ Info" if en else "ℹ️ Инфо",
+                    "callback_data": "cfg:info",
+                }
+            ],
+            [
+                {
                     "text": "👤 Profile" if en else "👤 Профайл",
                     "callback_data": "cfg:profile",
                 }
@@ -24125,6 +24131,193 @@ def _tg_bot_settings_inline(lang: str = "ru") -> dict:
             ],
         ]
     }
+
+
+def _tg_fmt_mib(b) -> str:
+    """Bytes → «12.3 MiB» for TG info."""
+    try:
+        if b is None:
+            return "—"
+        n = float(b)
+        if n < 0:
+            return "—"
+        mib = n / (1024.0 * 1024.0)
+        if mib >= 100:
+            return f"{mib:.0f} MiB"
+        if mib >= 10:
+            return f"{mib:.1f} MiB"
+        return f"{mib:.2f} MiB"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _tg_info_resources_text(lang: str = "ru") -> str:
+    """
+    Settings → Info: host RAM + Poolheat process RSS
+    (same data as UI Info → Resources).
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    ver = get_app_version()
+    mem = _host_memory() or {}
+    procs_bag = _poolheat_process_roles() or {}
+    procs = procs_bag.get("processes") if isinstance(procs_bag, dict) else []
+    if not isinstance(procs, list):
+        procs = []
+
+    lines: list[str] = []
+    if en:
+        lines.append("ℹ️ Info")
+        lines.append("————————————")
+        lines.append(f"poolheat {ver}")
+        lines.append("")
+        lines.append("🧠 RAM")
+    else:
+        lines.append("ℹ️ Инфо")
+        lines.append("————————————")
+        lines.append(f"poolheat {ver}")
+        lines.append("")
+        lines.append("🧠 RAM")
+
+    total_b = mem.get("total_b")
+    used_b = mem.get("used_b")
+    avail_b = mem.get("available_b")
+    used_pct = mem.get("used_pct")
+    if total_b:
+        pct_s = f" · {used_pct}%" if used_pct is not None else ""
+        lines.append(
+            f"  {_tg_fmt_mib(used_b)} / {_tg_fmt_mib(total_b)}{pct_s}"
+        )
+        if avail_b is not None:
+            if en:
+                lines.append(f"  available {_tg_fmt_mib(avail_b)}")
+            else:
+                lines.append(f"  доступно {_tg_fmt_mib(avail_b)}")
+    else:
+        lines.append("  —")
+
+    lines.append("")
+    if en:
+        lines.append("⚙️ Poolheat processes · RSS")
+    else:
+        lines.append("⚙️ Процессы Poolheat · RSS")
+
+    role_order = ("serve", "miner-poller", "devices-poller", "sniffer")
+    role_label = {
+        "serve": "serve",
+        "miner-poller": "miner-poller",
+        "devices-poller": "devices-poller",
+        "sniffer": "sniffer",
+    }
+    # stable order
+    by_role = {str(p.get("role") or ""): p for p in procs if isinstance(p, dict)}
+    shown = 0
+    for role in role_order:
+        p = by_role.get(role)
+        if not p:
+            continue
+        shown += 1
+        rss = p.get("rss_mib")
+        if rss is not None:
+            rss_s = f"{rss} MiB"
+        else:
+            rss_s = _tg_fmt_mib(p.get("rss_b"))
+        pid = p.get("pid")
+        pid_s = f"pid {pid}" if pid is not None else ""
+        label = role_label.get(role, role)
+        if pid_s:
+            lines.append(f"  {label}: {rss_s} · {pid_s}")
+        else:
+            lines.append(f"  {label}: {rss_s}")
+    # any extra roles
+    for p in procs:
+        if not isinstance(p, dict):
+            continue
+        role = str(p.get("role") or "")
+        if role in role_order:
+            continue
+        shown += 1
+        rss = p.get("rss_mib")
+        rss_s = f"{rss} MiB" if rss is not None else _tg_fmt_mib(p.get("rss_b"))
+        pid = p.get("pid")
+        lines.append(
+            f"  {role or '?'}: {rss_s}"
+            + (f" · pid {pid}" if pid is not None else "")
+        )
+
+    if shown == 0:
+        lines.append("  —")
+
+    total_mib = procs_bag.get("total_rss_mib") if isinstance(procs_bag, dict) else None
+    count = procs_bag.get("count") if isinstance(procs_bag, dict) else shown
+    lines.append("")
+    if total_mib is not None:
+        if en:
+            lines.append(f"Σ processes: {total_mib} MiB · {count or shown} proc")
+        else:
+            lines.append(f"Σ процессы: {total_mib} MiB · {count or shown} proc")
+    elif en:
+        lines.append(f"Σ processes: {count or shown} proc")
+    else:
+        lines.append(f"Σ процессы: {count or shown} proc")
+
+    # uptime optional one-liner
+    try:
+        up = _host_uptime_sec()
+        if up is not None and up >= 0:
+            d = int(up) // 86400
+            h = (int(up) % 86400) // 3600
+            m = (int(up) % 3600) // 60
+            if d > 0:
+                up_s = f"{d}d {h}h"
+            elif h > 0:
+                up_s = f"{h}h {m}m"
+            else:
+                up_s = f"{m}m"
+            lines.append(("Uptime: " if en else "Аптайм: ") + up_s)
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
+
+def _tg_info_inline(lang: str = "ru") -> dict:
+    en = str(lang or "ru").lower().startswith("en")
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🔄 Refresh" if en else "🔄 Обновить",
+                    "callback_data": "cfg:info:refresh",
+                }
+            ],
+            [
+                {
+                    "text": "◀️ " + ("Settings" if en else "Настройки"),
+                    "callback_data": "cfg:home",
+                },
+                {
+                    "text": "🏠 " + ("Menu" if en else "Меню"),
+                    "callback_data": "cfg:menu",
+                },
+            ],
+        ]
+    }
+
+
+def _tg_send_info(
+    chat_id,
+    lang: str = "ru",
+    *,
+    edit_message_id: int | None = None,
+) -> None:
+    text = _tg_info_resources_text(lang)
+    markup = _tg_info_inline(lang)
+    if edit_message_id is not None:
+        ok = tg_edit_message(chat_id, edit_message_id, text, reply_markup=markup)
+        if not ok:
+            tg_send_message(chat_id, text, reply_markup=markup)
+    else:
+        tg_send_message(chat_id, text, reply_markup=markup)
 
 
 def _tg_send_bot_settings(
@@ -24425,8 +24618,8 @@ def _tg_handle_callback(cq: dict) -> None:
                 return
             tg_answer_callback(cq_id)
             return
-        # cfg: — bot Settings hub + Update subsection
-        # cfg:home | cfg:menu | cfg:profile | cfg:update | cfg:update:check | …
+        # cfg: — bot Settings hub + Update / Info subsections
+        # cfg:home | cfg:menu | cfg:profile | cfg:info | cfg:update | …
         if len(parts) >= 2 and parts[0] == "cfg":
             action = parts[1]
             if action in ("home", "settings"):
@@ -24444,6 +24637,11 @@ def _tg_handle_callback(cq: dict) -> None:
             if action == "profile":
                 tg_answer_callback(cq_id, "OK")
                 _tg_send_profile(chat_id, prefs, edit_message_id=mid)
+                return
+            if action == "info":
+                # cfg:info | cfg:info:refresh — RAM + Poolheat processes
+                tg_answer_callback(cq_id, "OK")
+                _tg_send_info(chat_id, lang, edit_message_id=mid)
                 return
             if action == "update":
                 sub = parts[2] if len(parts) >= 3 else ""
