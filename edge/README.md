@@ -2,25 +2,35 @@
 
 Low-RAM edge workers for Keenetic Entware.
 
-## `poolheat-devices-poller`
+## Binaries
 
-Drop-in replacement for `python serve.py --devices-poller`.
+| Binary | Replaces | Uses |
+|--------|----------|------|
+| `poolheat-devices-poller` | `serve.py --devices-poller` | Tapo / Tuya / Shelly / … |
+| `poolheat-miner-poller` | `serve.py --miner-poller` | **wm-lib** (`github.com/andreybmc/wm-lib`) public API :4028 |
 
-- Reads / writes the same JSON files under `POOLHEAT_DATA` (`/opt/var/poolheat`)
-- Backends: **tapo** (KLAP), **tuya** (LAN 3.1/3.4), shelly, ewelink, webhook, homeassistant
+### miner-poller
+
+- Polls summary / status / devs / get_psu via wm-lib
+- Writes `live_cache.json` + `mining_work.json`
+- History samples + chipmap stay in `serve.py` (read cache, no :4028)
 - Target RSS: ~5–15 MiB (vs ~90 MiB Python)
 
 ### Build (host → arm64 static)
 
 ```bash
 cd edge
-make build-arm64          # → packaging/entware/opt/bin/poolheat-devices-poller
+# wm-lib via replace in go.mod → /Users/…/projects/mining/wm-lib
+make build-arm64
+# → packaging/entware/opt/bin/poolheat-{devices,miner}-poller
 ```
 
 ### Run
 
 ```bash
-POOLHEAT_DATA=/opt/var/poolheat /opt/bin/poolheat-devices-poller
+POOLHEAT_DATA=/opt/var/poolheat \
+POOLHEAT_MINER_HOST=192.168.1.10 \
+  /opt/bin/poolheat-miner-poller
 ```
 
-`serve.py` auto-prefers this binary when present; falls back to Python otherwise.
+`serve.py` auto-prefers Go binaries when present; Python fallback otherwise.

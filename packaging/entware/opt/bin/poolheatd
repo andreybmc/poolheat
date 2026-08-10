@@ -84,7 +84,7 @@ cleanup() {
   for p in $(ps w 2>/dev/null | grep '[p]oolheat-devices-poller' | awk '{print $1}'); do
     kill "$p" 2>/dev/null || true
   done
-  # ASIC / miner poller child (serve.py --miner-poller)
+  # ASIC / miner poller child (Go poolheat-miner-poller or serve.py --miner-poller)
   if [ -f "$DATADIR/miner_poller.pid" ]; then
     mpid=$(cat "$DATADIR/miner_poller.pid" 2>/dev/null || echo "")
     if [ -n "$mpid" ] && kill -0 "$mpid" 2>/dev/null; then
@@ -93,6 +93,9 @@ cleanup() {
     rm -f "$DATADIR/miner_poller.pid"
   fi
   for p in $(ps w 2>/dev/null | grep '[s]erve.py --miner-poller' | awk '{print $1}'); do
+    kill "$p" 2>/dev/null || true
+  done
+  for p in $(ps w 2>/dev/null | grep '[p]oolheat-miner-poller' | awk '{print $1}'); do
     kill "$p" 2>/dev/null || true
   done
   rm -f "$SERVE_PIDFILE"

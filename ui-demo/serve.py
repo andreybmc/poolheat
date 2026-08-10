@@ -6553,6 +6553,35 @@ def miner_poller_main() -> None:
         print("[miner-poller] exit", flush=True)
 
 
+def _resolve_miner_poller_bin() -> str | None:
+    """Prefer Go poolheat-miner-poller (wm-lib) over Python --miner-poller."""
+    candidates: list[Path] = []
+    env = (os.environ.get("POOLHEAT_MINER_POLLER") or "").strip()
+    if env:
+        candidates.append(Path(env))
+    here = Path(__file__).resolve().parent
+    candidates.extend(
+        [
+            Path("/opt/bin/poolheat-miner-poller"),
+            here / "poolheat-miner-poller",
+            here.parent / "bin" / "poolheat-miner-poller",
+        ]
+    )
+    try:
+        real_lib = here.resolve()
+        candidates.append(real_lib.parent / "bin" / "poolheat-miner-poller")
+        candidates.append(real_lib / "poolheat-miner-poller")
+    except Exception:
+        pass
+    for p in candidates:
+        try:
+            if p.is_file() and os.access(p, os.X_OK):
+                return str(p)
+        except Exception:
+            continue
+    return None
+
+
 def start_miner_poller_process() -> None:
     """Spawn isolated ASIC poller (live + history + chipmap)."""
     global _miner_poller_proc
@@ -6581,19 +6610,65 @@ def start_miner_poller_process() -> None:
         logf.flush()
     except Exception:
         logf = None
+    go_bin = _resolve_miner_poller_bin()
+    if go_bin:
+        cmd = [go_bin]
+        kind = "go"
+    else:
+        cmd = [sys.executable, script, "--miner-poller"]
+        kind = "python"
     try:
+        env = os.environ.copy()
+        env.setdefault("POOLHEAT_DATA", str(DATA))
+        env.setdefault("POOLHEAT_MINER_HOST", str(HOST_MINER))
+        env.setdefault("POOLHEAT_MINER_PORT", str(PORT_MINER))
+        env.setdefault("POOLHEAT_API_PASSWORD", str(DEFAULT_API_PASSWORD))
+        env.setdefault("POOLHEAT_POLL_INTERVAL", str(int(POLL_INTERVAL_SEC)))
+        if Path("/opt/etc/poolheat/config.json").is_file():
+            env.setdefault("POOLHEAT_CONFIG", "/opt/etc/poolheat/config.json")
         _miner_poller_proc = subprocess.Popen(
-            [sys.executable, script, "--miner-poller"],
+            cmd,
             cwd=str(Path(__file__).resolve().parent),
-            env=os.environ.copy(),
+            env=env,
             stdout=logf or subprocess.DEVNULL,
             stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
             start_new_session=True,
         )
         print(
-            f"miner-poller:      pid {_miner_poller_proc.pid} · log {MINER_POLLER_LOG}",
+            f"miner-poller:      {kind} pid {_miner_poller_proc.pid} · "
+            f"log {MINER_POLLER_LOG}"
+            + (f" · bin {go_bin}" if go_bin else ""),
             flush=True,
         )
+        # Go poller: live_cache + mining_work only.
+        # History samples + chipmap stay in serve (read live_cache, no :4028).
+        if go_bin:
+            if role_enabled("edge_history"):
+                try:
+                    th = threading.Thread(
+                        target=collector_loop,
+                        name="history-collector",
+                        daemon=True,
+                    )
+                    th.start()
+                    print(
+                        "history:           in serve (from live_cache · go miner-poller)",
+                        flush=True,
+                    )
+                except Exception as e:
+                    print(f"history:           failed to start in serve: {e}", flush=True)
+            if role_enabled("edge_miner_poller"):
+                try:
+                    tc = threading.Thread(
+                        target=chipmap_loop, name="chipmap-poll", daemon=True
+                    )
+                    tc.start()
+                    print(
+                        "chipmap:           in serve (go miner-poller has no chipmap)",
+                        flush=True,
+                    )
+                except Exception as e:
+                    print(f"chipmap:           failed to start in serve: {e}", flush=True)
     except Exception as e:
         print(f"miner-poller:      failed to start: {e}", flush=True)
         _miner_poller_proc = None
@@ -14439,7 +14514,11 @@ def _poolheat_process_roles() -> dict:
                 and "devices-poller" not in cmd
             ):
                 continue
-            if "--miner-poller" in cmd or "miner-poller" in cmd:
+            if (
+                "--miner-poller" in cmd
+                or "miner-poller" in cmd
+                or "poolheat-miner-poller" in cmd
+            ):
                 _add("miner-poller", pid, cmd)
             elif (
                 "--devices-poller" in cmd
@@ -16044,6 +16123,7 @@ def apply_github_update(ref: str | None = None) -> dict:
                             "VERSION",
                             "packaging/entware/opt/bin/poolheatd",
                             "packaging/entware/opt/bin/poolheat-devices-poller",
+                            "packaging/entware/opt/bin/poolheat-miner-poller",
                             "packaging/entware/opt/etc/init.d/S99poolheat",
                             "packaging/entware/opt/etc/init.d/S99poolheat-standalone",
                         ):
@@ -16156,6 +16236,11 @@ def apply_github_update(ref: str | None = None) -> dict:
                         ),
                         (
                             src_root
+                            / "packaging/entware/opt/bin/poolheat-miner-poller",
+                            Path("/opt/bin/poolheat-miner-poller"),
+                        ),
+                        (
+                            src_root
                             / "packaging/entware/opt/etc/init.d/S99poolheat",
                             Path("/opt/etc/init.d/S99poolheat"),
                         ),
@@ -16178,6 +16263,7 @@ def apply_github_update(ref: str | None = None) -> dict:
                 if dst.name in (
                     "poolheatd",
                     "poolheat-devices-poller",
+                    "poolheat-miner-poller",
                     "S99poolheat",
                     "S99poolheat-standalone",
                     "serve.py",
