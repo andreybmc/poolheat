@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/andreybmc/wm-lib/api"
+	"github.com/andreybmc/wm-lib/protocol"
 )
 
 // File IPC for privileged ASIC writes (serve → poller → ASIC).
@@ -139,8 +140,9 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		cname = "power_off"
 	case "resume", "wakeup":
 		cname = "power_on"
-	case "set_pools":
-		cname = "update_pools"
+	case "update_pools", "set_pools":
+		// Pools need special transport (NetPacket preferred, V2 flat pool1/worker1/…).
+		return executeWritePools(s, req, pw)
 	}
 
 	resp, err := c.Write(cname, params)
@@ -159,6 +161,280 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		}
 	}
 	return res
+}
+
+// executeWritePools applies stratum pools via NetPacket :8889 (WhatsMinerTool)
+// or classic V2 update_pools with flat pool1/worker1/passwd1… params.
+// serve sends {"cmd":"update_pools","pools":[{url,user,pass},…]} — never nested
+// "pools" into V2 as-is (ASIC rejects that).
+func executeWritePools(s Settings, req WriteRequest, password string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{
+		ID:     req.ID,
+		TS:     now,
+		Action: req.Action,
+		Value:  req.Value,
+	}
+	if s.DryRun {
+		res.OK = true
+		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
+		res.Transport = "dry_run"
+		return res
+	}
+
+	slots := extractPoolSlots(req.Cmd)
+	if len(slots) == 0 {
+		res.Error = "update_pools: no pool slots (need url+user)"
+		return res
+	}
+	restart := true
+	if v, ok := req.Cmd["restart_mining"]; ok {
+		restart = asBool(v, true)
+	} else if v, ok := req.Cmd["restart"]; ok {
+		restart = asBool(v, true)
+	}
+	coin := strings.TrimSpace(fmt.Sprint(firstNonEmpty(req.Cmd["coin_type"], req.Cmd["coin"])))
+	if coin == "<nil>" {
+		coin = ""
+	}
+
+	// 1) NetPacket SET_POOLS (cmd 2) — same path as WhatsMinerTool / UniversalMiner
+	// Credentials: WMT defaults super/super (not the public API password).
+	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
+		npPools := make([]map[string]string, 0, len(slots))
+		for i, sl := range slots {
+			if sl.url == "" && sl.user == "" {
+				continue
+			}
+			npPools = append(npPools, map[string]string{
+				"url":      sl.url,
+				"user":     sl.user,
+				"password": sl.pass,
+				"index":    fmt.Sprint(i),
+			})
+		}
+		type cred struct{ acc, pw string }
+		tryCreds := []cred{{"super", "super"}, {"admin", password}}
+		if password != "" && password != "super" {
+			tryCreds = append(tryCreds, cred{"super", password})
+		}
+		for _, cr := range tryCreds {
+			if strings.TrimSpace(cr.pw) == "" {
+				continue
+			}
+			np := protocol.NewClient(s.Host)
+			np.Timeout = 15 * time.Second
+			np.Account = cr.acc
+			np.Password = cr.pw
+			resp, err := np.SetPools(npPools)
+			if err != nil {
+				log.Printf("[miner-poller] netpacket SetPools %s: %v", cr.acc, err)
+				continue
+			}
+			if resp == nil || !resp.OK {
+				if resp != nil {
+					log.Printf("[miner-poller] netpacket SetPools %s status=%s", cr.acc, resp.StatusText)
+				}
+				continue
+			}
+			out := map[string]any{
+				"STATUS":    "S",
+				"Msg":       "ok",
+				"transport": "netpacket",
+				"pools_n":   len(npPools),
+			}
+			if coin != "" {
+				if _, errC := np.Request(protocol.CmdSetCoin, []byte(coin)); errC == nil {
+					out["coin_type"] = coin
+				} else {
+					out["coin_error"] = errC.Error()
+				}
+			}
+			if restart {
+				if _, errR := cV2Write(s, password, "restart_btminer", nil); errR != nil {
+					out["restart_error"] = errR.Error()
+					out["restart_mining"] = false
+				} else {
+					out["restart_mining"] = true
+				}
+			}
+			res.OK = true
+			res.Transport = "netpacket"
+			res.Response = out
+			return res
+		}
+		log.Printf("[miner-poller] netpacket SetPools failed all creds — try V2")
+	}
+
+	// 2) Classic V2 update_pools — flat pool1/worker1/passwd1 …
+	params := map[string]any{}
+	for i := 0; i < 3; i++ {
+		n := i + 1
+		url, user, pass := "", "", "x"
+		if i < len(slots) {
+			url, user, pass = slots[i].url, slots[i].user, slots[i].pass
+		}
+		if pass == "" {
+			pass = "x"
+		}
+		params[fmt.Sprintf("pool%d", n)] = url
+		params[fmt.Sprintf("worker%d", n)] = user
+		params[fmt.Sprintf("passwd%d", n)] = pass
+	}
+	resp, err := cV2Write(s, password, "update_pools", params)
+	if err != nil {
+		res.Error = err.Error()
+		res.Transport = "v2"
+		return res
+	}
+	res.Response = resp
+	res.Transport = "v2"
+	ok, msg := minerWriteOK(resp)
+	res.OK = ok
+	if !ok {
+		if msg != "" {
+			res.Error = msg
+		} else {
+			res.Error = "miner rejected update_pools"
+		}
+		return res
+	}
+	if restart {
+		if _, errR := cV2Write(s, password, "restart_btminer", nil); errR != nil {
+			if res.Response == nil {
+				res.Response = map[string]any{}
+			}
+			res.Response["restart_error"] = errR.Error()
+			res.Response["restart_mining"] = false
+		} else if res.Response != nil {
+			res.Response["restart_mining"] = true
+		}
+	}
+	if res.Response != nil {
+		res.Response["transport"] = "v2"
+	}
+	return res
+}
+
+type poolSlot struct {
+	url, user, pass string
+}
+
+func extractPoolSlots(cmd map[string]any) []poolSlot {
+	if cmd == nil {
+		return nil
+	}
+	// Already flat V2 style?
+	if v, ok := cmd["pool1"]; ok && strings.TrimSpace(fmt.Sprint(v)) != "" {
+		out := make([]poolSlot, 0, 3)
+		for i := 1; i <= 3; i++ {
+			url := strings.TrimSpace(fmt.Sprint(cmd[fmt.Sprintf("pool%d", i)]))
+			user := strings.TrimSpace(fmt.Sprint(firstNonEmpty(
+				cmd[fmt.Sprintf("worker%d", i)],
+				cmd[fmt.Sprintf("user%d", i)],
+			)))
+			pass := strings.TrimSpace(fmt.Sprint(firstNonEmpty(
+				cmd[fmt.Sprintf("passwd%d", i)],
+				cmd[fmt.Sprintf("pass%d", i)],
+				cmd[fmt.Sprintf("password%d", i)],
+			)))
+			if pass == "" || pass == "<nil>" {
+				pass = "x"
+			}
+			if url == "<nil>" {
+				url = ""
+			}
+			if user == "<nil>" {
+				user = ""
+			}
+			if url == "" && user == "" {
+				continue
+			}
+			out = append(out, poolSlot{url: url, user: user, pass: pass})
+		}
+		return out
+	}
+	raw := cmd["pools"]
+	list, ok := raw.([]any)
+	if !ok {
+		// json may decode as []map after round-trip from some clients
+		if arr, ok2 := raw.([]map[string]any); ok2 {
+			for _, m := range arr {
+				list = append(list, m)
+			}
+			ok = true
+		}
+	}
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	out := make([]poolSlot, 0, 3)
+	for _, item := range list {
+		if len(out) >= 3 {
+			break
+		}
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		url := strings.TrimSpace(fmt.Sprint(firstNonEmpty(m["url"], m["pool"], m["URL"])))
+		user := strings.TrimSpace(fmt.Sprint(firstNonEmpty(m["user"], m["worker"], m["User"])))
+		pass := strings.TrimSpace(fmt.Sprint(firstNonEmpty(m["pass"], m["password"], m["passwd"], m["Pass"])))
+		if url == "<nil>" {
+			url = ""
+		}
+		if user == "<nil>" {
+			user = ""
+		}
+		if pass == "" || pass == "<nil>" {
+			pass = "x"
+		}
+		if url == "" && user == "" {
+			continue
+		}
+		out = append(out, poolSlot{url: url, user: user, pass: pass})
+	}
+	return out
+}
+
+func cV2Write(s Settings, password, cmd string, params map[string]any) (map[string]any, error) {
+	c := api.NewV2(s.Host)
+	c.Port = s.Port
+	c.Password = password
+	if c.Password == "" {
+		c.Password = api.DefaultAdmin
+	}
+	c.Timeout = 12 * time.Second
+	if params == nil {
+		params = map[string]any{}
+	}
+	return c.Write(cmd, params)
+}
+
+func asBool(v any, def bool) bool {
+	if v == nil {
+		return def
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	case string:
+		s := strings.ToLower(strings.TrimSpace(t))
+		if s == "" {
+			return def
+		}
+		return s == "1" || s == "true" || s == "yes" || s == "on"
+	default:
+		s := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+		if s == "" || s == "<nil>" {
+			return def
+		}
+		return s == "1" || s == "true" || s == "yes" || s == "on"
+	}
 }
 
 // minerWriteOK mirrors serve.py _miner_cmd_result loosely.

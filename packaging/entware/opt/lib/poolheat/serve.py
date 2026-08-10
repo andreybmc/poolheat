@@ -18035,7 +18035,11 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
     # Primary: poller owns all ASIC I/O (read + write)
     if miner_poller_process_alive():
         try:
-            return miner_write_via_poller(cmd, password)
+            # Pools + restart can take longer than power cmds
+            to = None
+            if cname in ("update_pools", "set_pools", "reboot", "restart_btminer"):
+                to = max(float(MINER_WRITE_TIMEOUT_SEC), 60.0)
+            return miner_write_via_poller(cmd, password, timeout_sec=to)
         except Exception as e:
             err = str(e)
             if "over max" in err.lower() and "лимит" not in err.lower():
