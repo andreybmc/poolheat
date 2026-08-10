@@ -37,17 +37,17 @@ func Run(s Settings) error {
 		s = LoadSettings()
 		hostLabel = fmt.Sprintf("%s:%d", s.Host, s.Port)
 
-		// Privileged writes first — serve enqueues miner_write_req.json.
-		// Keeps write latency low and serializes ASIC TCP in this process only.
-		handledWrite := ProcessPendingWrite(s)
-
-		// Long jobs: firmware flash + export log (NetPacket :8889).
+		// Firmware first (may take minutes) — do not bury under chipmap/live.
 		if ProcessPendingFirmwareFlash(s) {
-			handledWrite = true
+			// after flash, skip chipmap this tick; live may be down while ASIC reboots
+			continue
 		}
 		if ProcessPendingExportLog(s) {
-			handledWrite = true
+			// short job; continue loop for fresh live
 		}
+
+		// Privileged writes — serve enqueues miner_write_req.json.
+		handledWrite := ProcessPendingWrite(s)
 
 		// Chipmap: full boards always in chipmap_cache.json (serve/UI read-only).
 		ProcessChipmapTick(s, &chipSt)

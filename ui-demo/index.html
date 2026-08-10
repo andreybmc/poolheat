@@ -9733,6 +9733,8 @@
         "fw.export_log_hint": "Pulls ASIC diagnostic log via miner-poller (NetPacket). File saved on router under export_logs/.",
         "fw.export_log_ok": "Log exported",
         "fw.export_log_busy": "Exporting…",
+        "fw.flash_queued": "Queued for miner-poller…",
+        "fw.flash_timeout": "Timeout waiting for miner-poller flash",
         "fw.flash_select": "Compatible firmware",
         "fw.flash_force": "Allow incompatible (not in model map)",
         "fw.flash_btn": "Flash to miner",
@@ -10554,6 +10556,8 @@
         "fw.export_log_hint": "Скачивает диагностический лог через miner-poller (NetPacket). Файл на роутере: export_logs/.",
         "fw.export_log_ok": "Лог сохранён",
         "fw.export_log_busy": "Экспорт…",
+        "fw.flash_queued": "В очереди miner-poller…",
+        "fw.flash_timeout": "Таймаут ожидания прошивки (miner-poller)",
         "fw.flash_select": "Совместимая прошивка",
         "fw.flash_force": "Разрешить несовместимую (нет в карте моделей)",
         "fw.flash_btn": "Прошить майнер",
@@ -26086,28 +26090,23 @@
       )
         return;
       if (btn) btn.disabled = true;
-      _fwFlashSetUi(t("fw.flash_busy", "Flashing…"), 5, t("fw.flash_busy", "Flashing…"));
-      // poll flash status while request runs (stages from server when available)
-      if (_fwFlashPoll) clearInterval(_fwFlashPoll);
-      _fwFlashPoll = setInterval(async () => {
-        try {
-          const r = await fetch("/api/firmware/flash/status", {
-            cache: "no-store",
-          });
-          const d = await r.json();
-          if (d && (d.busy || d.stage)) {
-            const stLine = d.status_text
-              ? String(d.status_text)
-              : t("fw.flash_busy", "Flashing…") +
-                (d.filename ? " · " + d.filename : "");
-            const stageLine =
-              (d.stage || "…") +
-              (d.status_text ? " · " + String(d.status_text).slice(0, 80) : "");
-            _fwFlashSetUi(stageLine, d.pct != null ? d.pct : 10, stLine);
-          }
-        } catch (_) {}
-      }, 500);
+      _fwFlashSetUi(t("fw.flash_busy", "Flashing…"), 2, t("fw.flash_queued", "Queued…"));
+      let jobId = null;
+      const applyStatus = (d) => {
+        if (!d) return;
+        const stLine = d.status_text
+          ? String(d.status_text)
+          : t("fw.flash_busy", "Flashing…") +
+            (d.filename ? " · " + d.filename : "");
+        const stageLine =
+          (d.stage || "…") +
+          (d.status_text ? " · " + String(d.status_text).slice(0, 80) : "");
+        const pct =
+          d.pct != null && !Number.isNaN(Number(d.pct)) ? Number(d.pct) : 5;
+        _fwFlashSetUi(stageLine, pct, stLine);
+      };
       try {
+        // 1) enqueue only (serve returns immediately)
         const res = await fetch("/api/firmware/flash", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -26120,15 +26119,74 @@
         const data = await res.json();
         if (!res.ok || data.ok === false)
           throw new Error(data.error || "HTTP " + res.status);
-        _fwFlashSetUi("done", 100, t("fw.flash_ok", "Firmware sent"));
-        if (typeof toastSuccess === "function")
-          toastSuccess(
-            t("fw.flash_ok", "Firmware sent") +
-              (data.filename ? " · " + data.filename : "") +
-              (data.transport ? " · " + data.transport : "")
-          );
+        jobId = data.id || null;
         if (typeof toastWarn === "function" && data.warning)
-          toastWarn(String(data.warning), 8000);
+          toastWarn(String(data.warning), 6000);
+        _fwFlashSetUi(
+          t("fw.flash_queued", "Queued…"),
+          3,
+          data.filename || t("fw.flash_busy", "Flashing…")
+        );
+
+        // 2) poll miner-poller status until done (can take several minutes)
+        const tEnd = Date.now() + 20 * 60 * 1000;
+        let last = null;
+        while (Date.now() < tEnd) {
+          await new Promise((r) => setTimeout(r, 600));
+          try {
+            const r = await fetch("/api/firmware/flash/status", {
+              cache: "no-store",
+            });
+            last = await r.json();
+          } catch (_) {
+            continue;
+          }
+          if (!last) continue;
+          // ignore stale status from another job if id known
+          if (jobId && last.id && String(last.id) !== String(jobId) && last.busy)
+            continue;
+          applyStatus(last);
+          const busy = !!last.busy;
+          const stage = String(last.stage || "");
+          const done =
+            !busy &&
+            (stage === "success" ||
+              stage === "done" ||
+              stage === "error" ||
+              last.finished_at ||
+              last.ok === true ||
+              last.ok === false);
+          if (!done) continue;
+          const ok =
+            last.ok === true ||
+            stage === "success" ||
+            String(last.upgrade || "").toLowerCase() === "success";
+          if (!ok && (stage === "error" || last.error)) {
+            throw new Error(String(last.error || "firmware flash failed"));
+          }
+          if (ok) {
+            _fwFlashSetUi("done", 100, t("fw.flash_ok", "Firmware sent"));
+            if (typeof toastSuccess === "function")
+              toastSuccess(
+                t("fw.flash_ok", "Firmware sent") +
+                  (last.filename || data.filename
+                    ? " · " + (last.filename || data.filename)
+                    : "") +
+                  " · poller"
+              );
+            return;
+          }
+          // finished_at but unknown outcome
+          if (last.finished_at && !busy) {
+            if (last.error)
+              throw new Error(String(last.error));
+            _fwFlashSetUi("done", 100, t("fw.flash_ok", "Firmware sent"));
+            return;
+          }
+        }
+        throw new Error(
+          t("fw.flash_timeout", "Timeout waiting for miner-poller flash")
+        );
       } catch (e) {
         _fwFlashSetUi("error", 0, String(e.message || e));
         if (typeof toastError === "function")
@@ -26142,7 +26200,7 @@
         setTimeout(() => {
           const wrap = document.getElementById("fw-flash-progress-wrap");
           if (wrap) wrap.style.display = "none";
-        }, 4000);
+        }, 6000);
       }
     }
 

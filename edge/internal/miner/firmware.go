@@ -118,40 +118,74 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 		"bytes":   len(img),
 	})
 
-	np, err := netpacketClient(s.Host, pw)
-	if err != nil {
-		failFlash(s.DataDir, id, err.Error())
+	if !protocol.ProbePort(s.Host, protocol.DefaultPort, 3*time.Second) {
+		failFlash(s.DataDir, id, fmt.Sprintf("netpacket :8889 not reachable on %s", s.Host))
 		return
 	}
-	np.Timeout = 10 * time.Minute
+
+	// Try WMT default super/super first, then API password (same as WhatsMinerTool).
+	type cred struct{ acc, pw string }
+	tryCreds := []cred{{"super", "super"}, {"admin", pw}}
+	if pw != "" && pw != "super" {
+		tryCreds = append(tryCreds, cred{"super", pw})
+	}
 
 	var statusLog []string
-	out, err := np.UpdateFirmware(img,
-		protocol.WithFirmwarePoll(true),
-		protocol.WithFirmwarePollAttempts(45),
-		protocol.WithFirmwareProgress(func(stage string, pct float64, extra map[string]any) {
-			st := map[string]any{
-				"busy":  true,
-				"stage": stage,
-				"pct":   pct,
-				"id":    id,
-			}
-			if extra != nil {
-				if t, ok := extra["status_text"]; ok && t != nil {
-					txt := truncStr(fmt.Sprint(t), 240)
-					st["status_text"] = txt
-					statusLog = append(statusLog, txt)
-					if len(statusLog) > 40 {
-						statusLog = statusLog[len(statusLog)-40:]
-					}
-					st["status_log"] = append([]string{}, statusLog...)
+	var out map[string]any
+	var lastErr error
+	okFlash := false
+	for _, cr := range tryCreds {
+		if strings.TrimSpace(cr.pw) == "" {
+			continue
+		}
+		writeFlashStatusMerge(s.DataDir, map[string]any{
+			"stage":       "auth",
+			"pct":         4,
+			"status_text": fmt.Sprintf("netpacket as %s…", cr.acc),
+		})
+		np := protocol.NewClient(s.Host)
+		np.Account = cr.acc
+		np.Password = cr.pw
+		np.Timeout = 10 * time.Minute
+		statusLog = nil
+		out, lastErr = np.UpdateFirmware(img,
+			protocol.WithFirmwarePoll(true),
+			protocol.WithFirmwarePollAttempts(45),
+			protocol.WithFirmwareProgress(func(stage string, pct float64, extra map[string]any) {
+				st := map[string]any{
+					"busy":  true,
+					"stage": stage,
+					"pct":   pct,
+					"id":    id,
 				}
-			}
-			writeFlashStatusMerge(s.DataDir, st)
-		}),
-	)
-	if err != nil {
-		failFlash(s.DataDir, id, err.Error())
+				if extra != nil {
+					if t, ok := extra["status_text"]; ok && t != nil {
+						txt := truncStr(fmt.Sprint(t), 240)
+						st["status_text"] = txt
+						statusLog = append(statusLog, txt)
+						if len(statusLog) > 40 {
+							statusLog = statusLog[len(statusLog)-40:]
+						}
+						st["status_log"] = append([]string{}, statusLog...)
+					}
+				}
+				writeFlashStatusMerge(s.DataDir, st)
+			}),
+		)
+		if lastErr != nil {
+			log.Printf("[miner-poller] firmware auth/upload %s: %v", cr.acc, lastErr)
+			continue
+		}
+		// uploaded without Go error — treat as success path even if upgrade unknown
+		okFlash = true
+		break
+	}
+	if !okFlash {
+		msg := "netpacket firmware failed"
+		if lastErr != nil {
+			msg = lastErr.Error()
+		}
+		failFlash(s.DataDir, id, msg)
 		return
 	}
 	ok := false
@@ -260,16 +294,42 @@ func ProcessPendingExportLog(s Settings) bool {
 		"ok": false,
 	}
 
-	np, err := netpacketClient(s.Host, pw)
-	if err != nil {
-		res["error"] = err.Error()
+	if !protocol.ProbePort(s.Host, protocol.DefaultPort, 3*time.Second) {
+		res["error"] = fmt.Sprintf("netpacket :8889 not reachable on %s", s.Host)
 		_ = writeJSONAtomic(filepath.Join(s.DataDir, exportLogResultFile), res)
 		return true
 	}
-	np.Timeout = 60 * time.Second
-	body, resp, err := np.ExportLog()
-	if err != nil {
-		res["error"] = err.Error()
+	type cred struct{ acc, pw string }
+	tryCreds := []cred{{"super", "super"}, {"admin", pw}}
+	if pw != "" && pw != "super" {
+		tryCreds = append(tryCreds, cred{"super", pw})
+	}
+	var body []byte
+	var resp *protocol.Response
+	var expErr error
+	okExp := false
+	for _, cr := range tryCreds {
+		if strings.TrimSpace(cr.pw) == "" {
+			continue
+		}
+		np := protocol.NewClient(s.Host)
+		np.Account = cr.acc
+		np.Password = cr.pw
+		np.Timeout = 60 * time.Second
+		body, resp, expErr = np.ExportLog()
+		if expErr != nil {
+			log.Printf("[miner-poller] export-log %s: %v", cr.acc, expErr)
+			continue
+		}
+		okExp = true
+		break
+	}
+	if !okExp {
+		if expErr != nil {
+			res["error"] = expErr.Error()
+		} else {
+			res["error"] = "export-log failed"
+		}
 		_ = writeJSONAtomic(filepath.Join(s.DataDir, exportLogResultFile), res)
 		return true
 	}
@@ -304,32 +364,3 @@ func ProcessPendingExportLog(s Settings) bool {
 	return true
 }
 
-func netpacketClient(host, password string) (*protocol.Client, error) {
-	if !protocol.ProbePort(host, protocol.DefaultPort, 2*time.Second) {
-		return nil, fmt.Errorf("netpacket :8889 not reachable on %s", host)
-	}
-	type cred struct{ acc, pw string }
-	try := []cred{{"super", "super"}, {"admin", password}}
-	if password != "" && password != "super" {
-		try = append(try, cred{"super", password})
-	}
-	var last error
-	for _, cr := range try {
-		if strings.TrimSpace(cr.pw) == "" {
-			continue
-		}
-		np := protocol.NewClient(host)
-		np.Account = cr.acc
-		np.Password = cr.pw
-		np.Timeout = 30 * time.Second
-		if _, err := np.Handshake(); err != nil {
-			last = err
-			continue
-		}
-		return np, nil
-	}
-	if last != nil {
-		return nil, fmt.Errorf("netpacket auth failed: %v", last)
-	}
-	return nil, fmt.Errorf("netpacket auth failed")
-}

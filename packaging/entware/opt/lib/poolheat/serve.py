@@ -14038,6 +14038,54 @@ def _netpacket_client(password: str | None = None, *, timeout: float = 20.0):
     )
 
 
+def _flash_status_is_stale(st: dict, *, max_age_sec: float = 180.0) -> bool:
+    """True if busy flag is stuck (poller died / never picked up queued job)."""
+    if not isinstance(st, dict) or not st.get("busy"):
+        return False
+    # finished_at set but busy left true
+    if st.get("finished_at") and st.get("stage") in ("success", "done", "error"):
+        return True
+    started = str(st.get("started_at") or "")
+    if not started:
+        return True
+    try:
+        # ISO local without tz
+        t0 = datetime.fromisoformat(started.replace("Z", ""))
+        age = (datetime.now() - t0).total_seconds()
+        stage = str(st.get("stage") or "")
+        # queued forever without poller pickup
+        if stage in ("queued", "prepare", "") and age > 90:
+            return True
+        # any busy longer than max (flash can be long — only for queued/auth stuck)
+        if stage in ("queued", "prepare", "auth", "extract") and age > max_age_sec:
+            return True
+        # absolute cap 25 min
+        if age > 25 * 60:
+            return True
+    except Exception:
+        return True
+    return False
+
+
+def _clear_flash_status_file() -> None:
+    try:
+        if FIRMWARE_FLASH_STATUS_FILE.is_file():
+            FIRMWARE_FLASH_STATUS_FILE.unlink()
+    except Exception:
+        pass
+    with _FW_FLASH_LOCK:
+        _FW_FLASH_STATE.update(
+            {
+                "busy": False,
+                "pct": 0,
+                "stage": "idle",
+                "error": None,
+                "result": None,
+                "finished_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        )
+
+
 def flash_firmware_to_miner(
     firmware_id: str,
     *,
@@ -14047,6 +14095,7 @@ def flash_firmware_to_miner(
 ) -> dict:
     """
     Queue firmware flash for Go miner-poller (NetPacket :8889).
+    Returns immediately with queued=True; UI polls /api/firmware/flash/status.
     serve never opens :8889 / never loads whatsminer.
     """
     conf = str(confirm or "").strip().lower()
@@ -14056,11 +14105,19 @@ def flash_firmware_to_miner(
         raise RuntimeError("firmware repository is disabled")
     if not miner_poller_process_alive():
         raise RuntimeError(
-            "miner-poller not running — firmware flash only via poller"
+            "miner-poller not running — firmware flash only via poller "
+            "(OTA poolheat-miner-poller)"
         )
     st0 = get_firmware_flash_status()
     if st0.get("busy"):
-        raise RuntimeError("firmware flash already in progress")
+        if _flash_status_is_stale(st0):
+            print(f"[firmware] clearing stale busy status: {st0.get('stage')}", flush=True)
+            _clear_flash_status_file()
+        else:
+            raise RuntimeError(
+                f"firmware flash already in progress "
+                f"(stage={st0.get('stage')!r} · started {st0.get('started_at')})"
+            )
 
     item = firmware_item_by_id(firmware_id)
     if not item:
@@ -14096,99 +14153,61 @@ def flash_firmware_to_miner(
 
     req_id = uuid.uuid4().hex
     pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
+    abs_path = str(fpath.resolve())
     req = {
         "id": req_id,
         "ts": time.time(),
-        "path": str(fpath.resolve()),
+        "path": abs_path,
         "filename": str(item.get("filename") or fpath.name),
         "firmware_id": str(item.get("id")),
         "platform": platform,
         "password": str(pw or ""),
         "miner_type": miner_type,
     }
-    # seed status so UI poll sees busy immediately
+    seed = {
+        "busy": True,
+        "pct": 0,
+        "stage": "queued",
+        "error": None,
+        "ok": None,
+        "id": req_id,
+        "filename": req["filename"],
+        "path": abs_path,
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "finished_at": None,
+        "status_log": [],
+    }
     try:
-        _write_json_atomic(
-            FIRMWARE_FLASH_STATUS_FILE,
-            {
-                "busy": True,
-                "pct": 0,
-                "stage": "queued",
-                "error": None,
-                "id": req_id,
-                "filename": req["filename"],
-                "started_at": datetime.now().isoformat(timespec="seconds"),
-            },
-        )
-    except Exception:
-        pass
+        _write_json_atomic(FIRMWARE_FLASH_STATUS_FILE, seed)
+    except Exception as e:
+        raise RuntimeError(f"cannot write flash status: {e}") from e
     with _FW_FLASH_LOCK:
-        _FW_FLASH_STATE.update(
-            {
-                "busy": True,
-                "pct": 0,
-                "stage": "queued",
-                "error": None,
-                "firmware_id": str(firmware_id),
-                "filename": req["filename"],
-                "started_at": datetime.now().isoformat(timespec="seconds"),
-            }
-        )
+        _FW_FLASH_STATE.update(seed)
+    # req last so poller never sees req without status
     _write_json_atomic(FIRMWARE_FLASH_REQ_FILE, req)
-
-    # Wait for poller (UI also polls /flash/status)
-    deadline = time.time() + 900.0
-    last: dict = {}
-    while time.time() < deadline:
-        time.sleep(0.4)
-        last = get_firmware_flash_status()
-        if not last.get("busy") and last.get("id") in (req_id, None, ""):
-            # finished (or status without id match after done)
-            if last.get("stage") in ("success", "done", "error") or last.get("finished_at"):
-                if str(last.get("id") or "") in ("", req_id):
-                    break
-        if not last.get("busy") and last.get("finished_at") and str(last.get("id") or "") == req_id:
-            break
-        if not miner_poller_process_alive():
-            raise RuntimeError("miner-poller died during firmware flash")
-    else:
-        raise RuntimeError("timeout waiting for miner-poller firmware flash")
-
-    ok = bool(last.get("ok")) or (
-        str(last.get("stage") or "") == "success"
-        or str(last.get("upgrade") or "").lower() == "success"
+    print(
+        f"[firmware] queued flash id={req_id} path={abs_path} "
+        f"platform={platform} → miner-poller",
+        flush=True,
     )
-    if last.get("error") and str(last.get("stage") or "") == "error":
-        ok = False
-    out = {
-        "ok": ok,
+    return {
+        "ok": True,
+        "queued": True,
+        "id": req_id,
         "transport": "go-miner-poller",
         "firmware_id": str(item.get("id")),
         "filename": item.get("filename"),
         "miner_type": miner_type,
         "models": models,
+        "path": abs_path,
+        "platform": platform,
         "host": f"{HOST_MINER}:8889",
-        "upgrade": last.get("upgrade"),
-        "status_log": last.get("status_log") or [],
-        "result": last.get("result"),
-        "extract": last.get("extract"),
-        "bytes": last.get("bytes"),
+        "message": "flash queued — poll /api/firmware/flash/status",
         "warning": (
             "Firmware via miner-poller NetPacket · ASIC may reboot · "
             "verify Firmware Version after reconnect"
         ),
     }
-    if not ok:
-        out["error"] = last.get("error") or "firmware flash failed"
-        raise RuntimeError(str(out["error"]))
-    try:
-        _policy_log(
-            "warn",
-            f"FIRMWARE poller · {item.get('filename')} → {HOST_MINER} · {last.get('upgrade')}",
-        )
-    except Exception:
-        pass
-    return out
 
 
 def export_miner_log(*, password: str | None = None, timeout_sec: float = 90.0) -> dict:
