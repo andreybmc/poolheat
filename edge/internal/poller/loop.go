@@ -32,7 +32,7 @@ func Run(dataDir string) error {
 	byID, _ := state.Load(paths.DevicesState(dataDir))
 	store := device.NewStore(byID, deadlines, syncTS)
 
-	log.Printf("[devices-poller] loop start")
+	log.Printf("[devices-poller] loop start (device_req IPC + hold)")
 	for {
 		if ctx.Err() != nil {
 			break
@@ -40,6 +40,13 @@ func Run(dataDir string) error {
 		t0 := time.Now()
 		pol := config.DefaultPoller()
 		nDev := 0
+
+		// UI/API commands first (serve never talks tinytuya)
+		for i := 0; i < 4; i++ {
+			if !ProcessPendingDeviceCmd(ctx, dataDir, store) {
+				break
+			}
+		}
 
 		func() {
 			defer func() {
@@ -134,13 +141,29 @@ func Run(dataDir string) error {
 		}
 		spent := time.Since(t0)
 		wait := time.Duration(interval)*time.Second - spent
-		if wait < time.Second {
-			wait = time.Second
+		if wait < 500*time.Millisecond {
+			wait = 500 * time.Millisecond
 		}
-		select {
-		case <-ctx.Done():
-			break
-		case <-time.After(wait):
+		// Slice wait so UI device_req is picked up quickly (no tinytuya in serve).
+		deadline := time.Now().Add(wait)
+		for time.Now().Before(deadline) {
+			if ctx.Err() != nil {
+				break
+			}
+			if ProcessPendingDeviceCmd(ctx, dataDir, store) {
+				break
+			}
+			slice := 300 * time.Millisecond
+			if rem := time.Until(deadline); rem < slice {
+				slice = rem
+			}
+			if slice < 20*time.Millisecond {
+				break
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(slice):
+			}
 		}
 		if ctx.Err() != nil {
 			break

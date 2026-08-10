@@ -308,6 +308,8 @@ MINER_POLLER_LOG = DATA / "miner_poller.log"
 # ASIC write IPC (serve → Go miner-poller → :4028). serve does not open miner TCP for writes.
 MINER_WRITE_REQ_FILE = DATA / "miner_write_req.json"
 MINER_WRITE_RESULT_FILE = DATA / "miner_write_result.json"
+DEVICE_REQ_FILE = DATA / "device_req.json"
+DEVICE_RESULT_FILE = DATA / "device_result.json"
 MINER_WRITE_TIMEOUT_SEC = float(os.environ.get("POOLHEAT_MINER_WRITE_TIMEOUT", "35") or 35)
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
@@ -4894,12 +4896,20 @@ def _device_cfg_snapshot(did: str) -> dict | None:
 
 
 def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
-    """on=None read; else set physical state. Reuses filtration backends."""
+    """on=None read; else set physical state."""
     be = str(cfg.get("backend") or "tapo").lower()
     if be in ("smartlife", "smart_life"):
         be = "tuya"
     if be in ("mi", "mihome", "mi_home", "miio", "mijia"):
         be = "xiaomi"
+    # Prefer devices-poller for all LAN (no tinytuya / hang in serve)
+    if devices_poller_process_alive():
+        # device_set passes logical via _logical_on; status has on=None
+        return _device_control_via_poller(on, cfg, backend_hint=be)
+    if be == "tuya":
+        raise RuntimeError(
+            "Tuya requires devices-poller (tinytuya removed from serve)"
+        )
     if be == "tapo":
         return _filtration_backend_tapo(on, cfg)
     if be in ("ewelink", "sonoff", "sonoff_diy"):
@@ -4910,8 +4920,6 @@ def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
         return _filtration_backend_shelly(on, cfg)
     if be in ("homeassistant", "ha"):
         return _filtration_backend_ha(on, cfg)
-    if be == "tuya":
-        return _device_backend_tuya(on, cfg)
     if be == "xiaomi":
         return _device_backend_xiaomi(on, cfg)
     raise ValueError(f"unknown backend: {be}")
@@ -5256,138 +5264,93 @@ def _tuya_ensure_local_key(cfg: dict) -> str:
     return key
 
 
+_device_cmd_ipc_lock = threading.Lock()
+
+
+def _device_control_via_poller(
+    on: bool | None,
+    cfg: dict,
+    *,
+    backend_hint: str = "",
+    timeout_sec: float = 15.0,
+) -> dict:
+    """
+    Enqueue device_req.json for Go devices-poller (all LAN backends).
+    serve never imports tinytuya.
+    """
+    if not devices_poller_process_alive():
+        raise RuntimeError(
+            "devices-poller not running — device LAN control only via poller "
+            "(no tinytuya in serve)"
+        )
+    did = str(cfg.get("id") or "").strip()
+    if not did:
+        raise RuntimeError("device id missing")
+    req_id = uuid.uuid4().hex
+    req = {
+        "id": req_id,
+        "ts": time.time(),
+        "device_id": did,
+        "on": on,  # None = status; bool = physical set (poller treats as logical — see note)
+        "source": "serve",
+        "force": True,
+    }
+    # Caller passes physical for set paths that already applied inverted.
+    # device_set uses logical; backends use physical. Align with poller SetLogical:
+    # we pass logical via a flag when present on cfg.
+    if on is not None and "_logical_on" in cfg:
+        req["on"] = bool(cfg["_logical_on"])
+    with _device_cmd_ipc_lock:
+        try:
+            if DEVICE_RESULT_FILE.is_file():
+                DEVICE_RESULT_FILE.unlink()
+        except Exception:
+            pass
+        _write_json_atomic(DEVICE_REQ_FILE, req)
+        deadline = time.time() + max(3.0, float(timeout_sec))
+        last_err = "timeout waiting for devices-poller"
+        while time.time() < deadline:
+            time.sleep(0.12)
+            try:
+                if not DEVICE_RESULT_FILE.is_file():
+                    if not devices_poller_process_alive():
+                        raise RuntimeError("devices-poller died during command")
+                    continue
+                raw = json.loads(DEVICE_RESULT_FILE.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict) or str(raw.get("id") or "") != req_id:
+                    continue
+                if not raw.get("ok"):
+                    raise RuntimeError(str(raw.get("error") or "device command failed"))
+                out = {
+                    "on": raw.get("on"),
+                    "on_is_logical": True,
+                    "backend": raw.get("backend") or backend_hint or cfg.get("backend"),
+                    "ip": cfg.get("ip"),
+                    "device_id": cfg.get("device_id") or did,
+                    "transport": "devices-poller",
+                }
+                if raw.get("skipped"):
+                    out["skipped"] = True
+                    out["reason"] = raw.get("reason") or "already_in_state"
+                if isinstance(raw.get("power"), dict):
+                    out["power"] = raw["power"]
+                if isinstance(raw.get("extra"), dict):
+                    out.update({k: v for k, v in raw["extra"].items() if k not in out})
+                return out
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_err = str(e)
+                continue
+        raise RuntimeError(last_err)
+
+
 def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
     """
-    LAN control via tinytuya (TCP 6668).
-    local_key from config or mobile login (email/password + ecosystem).
+    Tuya LAN — only via devices-poller (no tinytuya in serve).
+    Status: on=None; set: on=True/False (physical already resolved by caller).
     """
-    ip = str(cfg.get("ip") or "").strip()
-    if not ip:
-        raise RuntimeError("Tuya IP не настроен")
-    dev_id = str(cfg.get("device_id") or "").strip()
-    if not dev_id:
-        raise RuntimeError("Tuya device_id не настроен")
-    try:
-        import tinytuya  # type: ignore
-    except ImportError as e:
-        raise RuntimeError(
-            "tinytuya не установлен (pip install tinytuya)"
-        ) from e
-    local_key = _tuya_ensure_local_key(cfg)
-    try:
-        ver = float(cfg.get("tuya_version") or 3.4)
-    except (TypeError, ValueError):
-        ver = 3.4
-    try:
-        switch_dps = int(cfg.get("tuya_switch_dps") or 1)
-    except (TypeError, ValueError):
-        switch_dps = 1
-    d = tinytuya.OutletDevice(
-        dev_id=dev_id,
-        address=ip,
-        local_key=local_key,
-        version=ver,
-    )
-    d.set_socketTimeout(6)
-    d.set_socketRetryLimit(2)
-
-    def _tuya_read_status() -> dict:
-        # Note: do NOT call updatedps([18,19,20,...]) here.
-        # On many plugs (incl. FinePower PLG-1) UPDATEDPS with metering
-        # indices is misinterpreted and can flip the switch DPS.
-        # Power DPs appear in status() only if the product schema has them.
-        st = d.status()
-        if isinstance(st, dict) and (st.get("Error") or st.get("Err")):
-            err = st.get("Err")
-            msg = st.get("Error") or st.get("Payload")
-            if str(err) == "914":
-                # key invalid — clear cache so next try re-logins
-                did = str(cfg.get("id") or "")
-                if did:
-                    def _clr(x):
-                        x["tuya_local_key"] = ""
-                    try:
-                        _device_update_in_store(did, _clr)
-                    except Exception:
-                        pass
-                raise RuntimeError(
-                    f"Tuya Err 914 (key/version) — обновите local_key: {msg}"
-                )
-            raise RuntimeError(f"Tuya status Err={err}: {msg}")
-        return st if isinstance(st, dict) else {}
-
-    if on is None:
-        st = _tuya_read_status()
-        dps = st.get("dps") or {}
-        key = str(switch_dps) if str(switch_dps) in dps else switch_dps
-        val = dps.get(key)
-        if val is None and dps:
-            # fallback dps 1
-            val = dps.get("1") if "1" in dps else dps.get(1)
-        out = {
-            "on": bool(val) if val is not None else None,
-            "backend": "tuya",
-            "ip": ip,
-            "dps": dps,
-            "device_id": dev_id,
-        }
-        pm = _tuya_dps_to_power(dps)
-        if pm:
-            out["power"] = pm
-        return out
-    # set — never re-send same state: some plugs treat set_status as toggle
-    dps = {}
-    cur: bool | None = None
-    try:
-        st0 = _tuya_read_status()
-        dps = st0.get("dps") or {}
-        key0 = str(switch_dps) if str(switch_dps) in dps else switch_dps
-        raw0 = dps.get(key0)
-        if raw0 is None and dps:
-            raw0 = dps.get("1") if "1" in dps else dps.get(1)
-        if raw0 is not None:
-            cur = bool(raw0)
-    except Exception:
-        cur = None
-    if cur is not None and cur is bool(on):
-        out = {
-            "on": cur,
-            "backend": "tuya",
-            "ip": ip,
-            "device_id": dev_id,
-            "dps": dps,
-            "skipped": True,
-            "reason": "already_in_state",
-        }
-        pm = _tuya_dps_to_power(dps) if dps else None
-        if pm:
-            out["power"] = pm
-        return out
-    res = d.set_status(bool(on), switch=switch_dps)
-    if isinstance(res, dict) and (res.get("Error") or res.get("Err")):
-        err = res.get("Err")
-        msg = res.get("Error") or res.get("Payload")
-        raise RuntimeError(f"Tuya set Err={err}: {msg}")
-    # verify + metering
-    try:
-        st = _tuya_read_status()
-        dps = st.get("dps") or {}
-        key = str(switch_dps) if str(switch_dps) in dps else switch_dps
-        val = dps.get(key, on)
-        got = bool(val)
-    except Exception:
-        got = bool(on)
-    out = {
-        "on": got,
-        "backend": "tuya",
-        "ip": ip,
-        "device_id": dev_id,
-        "dps": dps,
-    }
-    pm = _tuya_dps_to_power(dps) if dps else None
-    if pm:
-        out["power"] = pm
-    return out
+    return _device_control_via_poller(on, cfg, backend_hint="tuya")
 
 
 def tuya_refresh_device_keys(
@@ -5704,12 +5667,16 @@ def device_poll_status(
     be = str(cfg.get("backend") or "tapo")
     try:
         out = _device_backend_dispatch(None, cfg)
-        phys = out.get("on")
         reported = None
-        if phys is not None:
-            reported = _device_physical_to_logical(
-                bool(phys), bool(cfg.get("inverted"))
-            )
+        if out.get("transport") == "devices-poller" or out.get("on_is_logical"):
+            if out.get("on") is not None:
+                reported = bool(out.get("on"))
+        else:
+            phys = out.get("on")
+            if phys is not None:
+                reported = _device_physical_to_logical(
+                    bool(phys), bool(cfg.get("inverted"))
+                )
         power = _power_from_backend_out(out)
 
         def _mut(d):
@@ -5870,11 +5837,20 @@ def device_set(
             "power": cfg.get("last_power"),
         }
     try:
-        out = _device_backend_dispatch(physical, cfg)
-        got_phys = out.get("on")
-        if got_phys is None:
-            got_phys = physical
-        got_logical = _device_physical_to_logical(bool(got_phys), inverted)
+        cfg_call = dict(cfg)
+        cfg_call["_logical_on"] = bool(on)  # poller SetLogical wants logical
+        out = _device_backend_dispatch(physical, cfg_call)
+        if out.get("transport") == "devices-poller" or out.get("on_is_logical"):
+            # poller returns logical on
+            got_logical = (
+                bool(out["on"]) if out.get("on") is not None else bool(on)
+            )
+            got_phys = _device_logical_to_physical(got_logical, inverted)
+        else:
+            got_phys = out.get("on")
+            if got_phys is None:
+                got_phys = physical
+            got_logical = _device_physical_to_logical(bool(got_phys), inverted)
         power = _power_from_backend_out(out)
         skipped = bool(out.get("skipped"))
 
@@ -6829,123 +6805,17 @@ _devices_hold_stop = threading.Event()
 
 
 def devices_hold_tick() -> dict:
-    """
-    For every enabled device with enforce_desired: status + restore desired.
-    Returns {checked, restored, errors}.
-    """
-    checked = 0
-    restored = 0
-    errors = 0
-    with _devices_cfg_lock:
-        try:
-            _load_devices_state()
-        except Exception:
-            pass
-        rows = [
-            dict(d)
-            for d in (_devices_cfg.get("devices") or [])
-            if isinstance(d, dict)
-            and d.get("enabled") is not False
-            and _as_bool(d.get("enforce_desired"), False)
-            and str(d.get("id") or "")
-        ]
-    if not rows:
-        # also pick from merged snapshot (enforce flag only on config is enough)
-        pass
-    for d in rows:
-        did = str(d.get("id") or "")
-        cfg = _device_cfg_snapshot(did)
-        if not cfg:
-            continue
-        # re-check enforce on merged cfg (config is source of truth)
-        if not _as_bool(cfg.get("enforce_desired"), False):
-            continue
-        if not _device_ready(cfg):
-            print(
-                f"[devices-hold] skip {cfg.get('alias') or did}: not ready",
-                flush=True,
-            )
-            continue
-        checked += 1
-        desired_before = cfg.get("desired_on")
-        reported_before = cfg.get("last_on")
-        try:
-            res = device_poll_status(
-                did, source="hold", apply_policy=True, use_timeout_for_enforce=True
-            )
-            if not res.get("ok"):
-                errors += 1
-                print(
-                    f"[devices-hold] {cfg.get('alias') or did}: "
-                    f"{res.get('error') or 'fail'}",
-                    flush=True,
-                )
-                continue
-            en = res.get("enforce_result")
-            if isinstance(en, dict) and en.get("ok") and not en.get("skipped"):
-                restored += 1
-                print(
-                    f"[devices-hold] restored {cfg.get('alias') or did}: "
-                    f"desired={desired_before} was={reported_before}",
-                    flush=True,
-                )
-            elif res.get("enforced") and isinstance(en, dict) and en.get("ok"):
-                restored += 1
-        except Exception as e:
-            errors += 1
-            print(f"[devices-hold] {did}: {e}", flush=True)
-    return {"checked": checked, "restored": restored, "errors": errors}
+    """No-op — hold is devices-poller only."""
+    return {"checked": 0, "restored": 0, "errors": 0, "disabled": True}
 
 
 def devices_hold_loop() -> None:
-    """Daemon: restore enforce_desired devices in background (UI-refresh path)."""
-    print("[devices-hold] loop start", flush=True)
-    # short boot delay — hold must work without opening UI
-    time.sleep(3)
-    while not _devices_hold_stop.is_set():
-        iv = 5
-        t0 = time.time()
-        try:
-            # reload config from disk each tick (OTA / UI saves)
-            try:
-                _load_devices_cfg()
-            except Exception:
-                pass
-            pol = get_devices_poller_cfg()
-            if not pol.get("enabled", True):
-                _devices_hold_stop.wait(30)
-                continue
-            # Advanced: hold_interval_sec (fallback = status interval_sec)
-            try:
-                iv = max(
-                    3,
-                    min(
-                        120,
-                        int(
-                            pol.get("hold_interval_sec")
-                            or pol.get("interval_sec")
-                            or 5
-                        ),
-                    ),
-                )
-            except (TypeError, ValueError):
-                iv = 5
-            summary = devices_hold_tick()
-            if summary.get("checked") or summary.get("restored") or summary.get("errors"):
-                print(
-                    f"[devices-hold] checked={summary.get('checked')} "
-                    f"restored={summary.get('restored')} "
-                    f"err={summary.get('errors')} hold_interval={iv}s",
-                    flush=True,
-                )
-        except Exception as e:
-            print(f"[devices-hold] tick: {e}", flush=True)
-            iv = 5
-        # account for tick duration so effective period ≈ poller interval
-        spent = time.time() - t0
-        wait = max(0.5, float(iv) - spent)
-        _devices_hold_stop.wait(timeout=wait)
-    print("[devices-hold] loop stop", flush=True)
+    """
+    Removed: enforce_desired runs only in Go devices-poller.
+    (tinytuya no longer loaded in serve.)
+    """
+    print("[devices-hold] disabled in serve — devices-poller owns hold", flush=True)
+    _devices_hold_stop.wait()
 
 
 def device_display_name(d: dict, lang: str = "ru") -> str:
@@ -7667,193 +7537,11 @@ def _chipmap_suspend_payload(*, fetch_ms: int | None = None) -> dict:
 
 def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
     """
-    Login to miner LuCI and scrape Miner API Log.
-    Returns cache-shaped dict with ok/error.
-    Suspend (miner offline boards) → ok + reason=suspend, not an access error.
+    Removed from serve — Go miner-poller writes chipmap_cache.json.
     """
-    t0 = time.time()
-    with _chipmap_lock:
-        enabled = bool(_chipmap_cfg.get("enabled", True))
-        user = str(_chipmap_cfg.get("web_user") or "admin")
-        verify = bool(_chipmap_cfg.get("verify_tls", False))
-    if not enabled and not force:
-        with _chipmap_lock:
-            out = dict(_chipmap_cache)
-        out["ok"] = False
-        out["error"] = "chipmap disabled"
-        out["reason"] = "disabled"
-        return out
-
-    # Suspend first: empty chip log is expected — do not scrape LuCI / show auth errors
-    mining, mining_detail = _chipmap_is_mining()
-    if mining is False:
-        return _chipmap_suspend_payload(
-            fetch_ms=int((time.time() - t0) * 1000)
-        )
-
-    password = _chipmap_web_password()
-    base = _chipmap_base_url()
-    try:
-        import ssl as _ssl
-        import http.cookiejar
-
-        ctx = _ssl.create_default_context()
-        if not verify:
-            ctx.check_hostname = False
-            ctx.verify_mode = _ssl.CERT_NONE
-        cj = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(
-            urllib.request.HTTPSHandler(context=ctx),
-            urllib.request.HTTPHandler(),
-            urllib.request.HTTPCookieProcessor(cj),
-        )
-        opener.addheaders = [("User-Agent", "poolheat-chipmap/1.0")]
-
-        # login
-        login_body = urllib.parse.urlencode(
-            {"luci_username": user, "luci_password": password}
-        ).encode("utf-8")
-        login_req = urllib.request.Request(
-            f"{base}/cgi-bin/luci",
-            data=login_body,
-            method="POST",
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        with opener.open(login_req, timeout=10) as resp:
-            _ = resp.read(8192)
-
-        # API log page
-        page_req = urllib.request.Request(
-            f"{base}/cgi-bin/luci/admin/status/btminerapi",
-            method="GET",
-        )
-        with opener.open(page_req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
-        # extract textarea#syslog
-        m = re.search(
-            r'<textarea[^>]*id=["\']syslog["\'][^>]*>(.*?)</textarea>',
-            html,
-            re.I | re.S,
-        )
-        if not m:
-            # fallback: whole page text
-            log_text = re.sub(r"<[^>]+>", "\n", html)
-        else:
-            log_text = m.group(1)
-            # unescape basic HTML entities
-            log_text = (
-                log_text.replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&amp;", "&")
-                .replace("&quot;", '"')
-            )
-
-        parsed = parse_chipmap_log(log_text)
-        if not parsed.get("chip_count"):
-            # Re-check suspend: empty log while stopped is normal
-            mining2, _ = _chipmap_is_mining()
-            if mining2 is False:
-                return _chipmap_suspend_payload(
-                    fetch_ms=int((time.time() - t0) * 1000)
-                )
-            raise RuntimeError(
-                "no chip lines parsed — check web password / page content "
-                "(or miner not hashing yet)"
-            )
-
-        ms = int((time.time() - t0) * 1000)
-        out = {
-            "ok": True,
-            "reason": None,
-            "message": None,
-            "ts": datetime.now().isoformat(timespec="seconds"),
-            "fetch_ms": ms,
-            "error": None,
-            "source": "luci:btminerapi",
-            "host": base,
-            **parsed,
-        }
-        # model string + profile for physical layout (snake / cpd / slot_link)
-        try:
-            ident = get_miner_identity_cached(force=False)
-            if isinstance(ident, dict):
-                mt = (ident.get("miner_type") or ident.get("model") or "").strip()
-                if mt:
-                    out["miner_type"] = mt
-        except Exception:
-            pass
-        if resolve_miner_model is not None:
-            try:
-                n_b = out.get("board_count")
-                try:
-                    n_b_i = int(n_b) if n_b is not None else None
-                except (TypeError, ValueError):
-                    n_b_i = None
-                out["model"] = resolve_miner_model(
-                    out.get("miner_type"),
-                    n_devs=n_b_i,
-                    board_num=n_b_i,
-                )
-            except Exception:
-                pass
-        out = _chipmap_attach_hash_estimates(out)
-        out = _chipmap_compact_payload(out)
-        # Disk = full map; RAM keeps summary only (1056 chips stay off-heap)
-        out["boards_in_ram"] = False
-        saved = _save_chipmap_cache_disk(out)
-        out["persisted"] = bool(saved)
-        with _chipmap_lock:
-            _chipmap_cache.clear()
-            _chipmap_cache.update(_chipmap_summary_only(out))
-            _chipmap_cache["persisted"] = bool(saved)
-            _chipmap_cache["boards_in_ram"] = False
-        # return full map for this request only (not retained in _chipmap_cache)
-        return dict(out)
-    except Exception as e:
-        ms = int((time.time() - t0) * 1000)
-        # If we only failed LuCI while miner is suspended — not an access error
-        mining3, _ = _chipmap_is_mining()
-        if mining3 is False:
-            return _chipmap_suspend_payload(fetch_ms=ms)
-        # Prefer last good from disk (no huge prev boards stuck in error state)
-        disk = _read_chipmap_cache_disk() if _chipmap_persist_cache_enabled() else None
-        with _chipmap_lock:
-            prev = dict(_chipmap_cache)
-            _chipmap_cache["ok"] = False
-            _chipmap_cache["reason"] = "error"
-            _chipmap_cache["message"] = None
-            _chipmap_cache["error"] = str(e)
-            _chipmap_cache["fetch_ms"] = ms
-            _chipmap_cache["ts"] = datetime.now().isoformat(timespec="seconds")
-            out = dict(_chipmap_cache)
-        src = None
-        if disk and disk.get("boards"):
-            src = disk
-        elif prev.get("boards") and prev.get("reason") not in ("suspend",):
-            src = prev
-        if src:
-            out = dict(src)
-            out["ok"] = False
-            out["reason"] = "error"
-            out["error"] = str(e)
-            out["fetch_ms"] = ms
-            out["stale"] = True
-            out["last_good_ts"] = src.get("ts")
-            out["message"] = "last map (stale) · " + str(e)[:120]
-            # keep summary in RAM, full boards only if already small / from prev
-            if disk and disk is src:
-                # don't re-inflate RAM with disk boards on every error
-                with _chipmap_lock:
-                    _chipmap_cache.clear()
-                    _chipmap_cache.update(_chipmap_summary_only(out))
-                    _chipmap_cache["error"] = str(e)
-                    _chipmap_cache["reason"] = "error"
-                    _chipmap_cache["ok"] = False
-            else:
-                with _chipmap_lock:
-                    _chipmap_cache.update(out)
-        return out
+    raise RuntimeError(
+        "chipmap scrape removed from serve — use miner-poller chipmap_cache.json"
+    )
 
 
 def request_chipmap_refresh(*, timeout_sec: float = 45.0) -> dict:
@@ -9630,6 +9318,20 @@ _hist_cfg_lock = threading.Lock()
 _hist_cfg: dict = dict(DEFAULT_HISTORY_CFG)
 _collector_stop = threading.Event()
 _db_lock = threading.Lock()
+
+
+def devices_poller_process_alive() -> bool:
+    """True if Go/Python devices-poller pidfile is a live process."""
+    try:
+        if not DEVICES_POLLER_PIDFILE.is_file():
+            return False
+        pid = int((DEVICES_POLLER_PIDFILE.read_text(encoding="utf-8") or "").strip() or "0")
+        if pid <= 0 or pid == os.getpid():
+            return False
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
 
 
 def _load_json(path: Path, default: dict) -> dict:
@@ -17192,334 +16894,70 @@ PORT_MINER_V3 = 4433
 
 
 def _v3_send(payload: dict | str, *, timeout: float = 8.0) -> dict:
-    if miner_poller_process_alive():
-        raise RuntimeError("v3 blocked: miner-poller owns ASIC TCP")
-    """Send one API v3 message: 4-byte LE length + JSON body."""
-    if isinstance(payload, dict):
-        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    else:
-        raw = str(payload).encode("utf-8")
-    with socket.create_connection((HOST_MINER, PORT_MINER_V3), timeout=timeout) as sock:
-        sock.settimeout(timeout)
-        sock.sendall(struct.pack("<I", len(raw)) + raw)
-        hdr = b""
-        while len(hdr) < 4:
-            ch = sock.recv(4 - len(hdr))
-            if not ch:
-                raise TimeoutError("API v3: empty length header")
-            hdr += ch
-        n = struct.unpack("<I", hdr)[0]
-        if n <= 0 or n > 2_000_000:
-            raise RuntimeError(f"API v3: bad length {n}")
-        buf = b""
-        while len(buf) < n:
-            ch = sock.recv(min(65536, n - len(buf)))
-            if not ch:
-                break
-            buf += ch
-    return json.loads(buf.decode("utf-8", "replace"))
+    raise RuntimeError("API v3 removed from serve — use miner-poller")
 
 
 def _v3_token(cmd: str, password: str, salt: str, ts: int) -> str:
-    src = f"{cmd}{password}{salt}{ts}"
-    digest = hashlib.sha256(src.encode("utf-8")).digest()
-    return base64.b64encode(digest).decode("ascii")[:8]
+    raise RuntimeError("v3 removed from serve")
 
 
 def _v3_encrypt_param(param: str, cmd: str, password: str, salt: str, ts: int) -> str:
-    try:
-        from Crypto.Cipher import AES  # type: ignore
-    except ImportError:
-        from Cryptodome.Cipher import AES  # type: ignore
-    src = f"{cmd}{password}{salt}{ts}"
-    aes_key = hashlib.sha256(src.encode("utf-8")).digest()
-    pad = 16 - (len(param) % 16)
-    padded = param + (chr(pad) * pad)
-    cipher = AES.new(aes_key, AES.MODE_ECB)
-    return base64.b64encode(cipher.encrypt(padded.encode("utf-8"))).decode("ascii")
+    raise RuntimeError("v3 removed from serve")
 
 
 def v3_get_device_info() -> dict:
-    """Unauthenticated get.device.info (includes salt + system.apiswitch)."""
-    return _v3_send({"cmd": "get.device.info", "param": None})
+    raise RuntimeError("API v3 removed from serve — use miner-poller")
 
 
 def v3_api_switch_on() -> bool | None:
-    """True if Miner API Switch enabled (write allowed). None if probe fail."""
-    try:
-        info = v3_get_device_info()
-        msg = info.get("msg") if isinstance(info, dict) else None
-        if not isinstance(msg, dict):
-            return None
-        sys_ = msg.get("system") if isinstance(msg.get("system"), dict) else {}
-        sw = str(sys_.get("apiswitch") or "0").strip()
-        return sw in ("1", "true", "on", "enable", "enabled")
-    except Exception:
-        return None
+    return None
 
 
-def v3_call(
-    cmd: str,
-    param=None,
-    *,
-    password: str | None = None,
-    account: str = "super",
-    encrypt_param: bool = False,
-) -> dict:
-    """Authenticated API v3 call. Tries account super then admin with password."""
-    info = v3_get_device_info()
-    # note: code 0 is success — do not use `or -1` (0 is falsy)
-    try:
-        info_code = int(info.get("code")) if isinstance(info, dict) and info.get("code") is not None else -1
-    except (TypeError, ValueError):
-        info_code = -1
-    if not isinstance(info, dict) or info_code != 0:
-        raise RuntimeError(f"API v3 get.device.info fail: {info}")
-    msg = info.get("msg") or {}
-    salt = str(msg.get("salt") or "")
-    if not salt:
-        raise RuntimeError("API v3: no salt in get.device.info")
-    pw_candidates = []
-    p0 = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
-    for p in (p0, "super", "admin"):
-        if p not in pw_candidates:
-            pw_candidates.append(p)
-    acc_candidates = []
-    for a in (account, "super", "admin"):
-        if a not in acc_candidates:
-            acc_candidates.append(a)
-    last: dict | None = None
-    for acc in acc_candidates:
-        for pw in pw_candidates:
-            ts = int(time.time())
-            tok = _v3_token(cmd, pw, salt, ts)
-            payload: dict = {
-                "cmd": cmd,
-                "ts": ts,
-                "token": tok,
-                "account": acc,
-            }
-            if encrypt_param and param is not None:
-                pstr = param if isinstance(param, str) else json.dumps(param)
-                payload["param"] = _v3_encrypt_param(pstr, cmd, pw, salt, ts)
-            else:
-                payload["param"] = param
-            try:
-                last = _v3_send(payload)
-            except Exception as e:
-                last = {"code": -99, "msg": str(e)}
-                continue
-            code = last.get("code")
-            # 0 = ok; -4 = no write permission (auth may still be ok)
-            # -3 / token errors → try next credential
-            if code == 0:
-                last["_v3_account"] = acc
-                return last
-            msg_s = str(last.get("msg") or "").lower()
-            if code == -4 or "no permission" in msg_s or "write command" in msg_s:
-                last["_v3_account"] = acc
-                return last  # switch off / no write — credentials accepted
-            if "token" in msg_s or "auth" in msg_s or "password" in msg_s:
-                continue
-            # invalid command/param — stop credential churn
-            if code in (-1, -2):
-                return last
-    return last or {"code": -99, "msg": "API v3 call failed"}
+def v3_call(cmd: str, param=None, *, password: str | None = None, account: str = "super", encrypt_param: bool = False) -> dict:
+    raise RuntimeError("API v3 removed from serve — use miner-poller writes")
 
 
 def _v3_cmd_for_legacy(legacy_cmd: str, cmd: dict) -> tuple[str, object, bool] | None:
-    """
-    Map classic 4028 privileged cmd → API v3 (cmd, param, encrypt).
-    Returns None if no mapping.
-    """
-    c = str(legacy_cmd or "").strip()
-    if c == "set_low_power":
-        return "set.miner.power_mode", "low", False
-    if c == "set_normal_power":
-        return "set.miner.power_mode", "normal", False
-    if c == "set_high_power":
-        return "set.miner.power_mode", "high", False
-    if c == "power_off":
-        # stop hashing / suspend equivalent on v3
-        return "set.miner.service", "stop", False
-    if c == "power_on":
-        return "set.miner.service", "start", False
-    if c == "reboot":
-        return "set.system.reboot", None, False
-    if c == "restart_btminer":
-        return "set.miner.service", "restart", False
-    if c == "adjust_power_limit":
-        lim = cmd.get("power_limit")
-        return "set.miner.power_limit", lim, False
-    if c == "set_power_pct":
-        pct = cmd.get("percent")
-        return (
-            "set.miner.power_percent",
-            json.dumps({"percent": str(pct), "mode": "temp"}),
-            False,
-        )
-    if c == "update_pwd":
-        return (
-            "set.user.change_passwd",
-            {
-                "account": "admin",
-                "old": str(cmd.get("old") or ""),
-                "new": str(cmd.get("new") or ""),
-            },
-            True,
-        )
     return None
 
 
 def v3_write_legacy(cmd: dict, password: str) -> dict:
-    """Execute legacy privileged cmd via API v3; raise on failure."""
-    cname = str(cmd.get("cmd") or "")
-    mapped = _v3_cmd_for_legacy(cname, cmd)
-    if not mapped:
-        raise RuntimeError(f"API v3: no mapping for «{cname}»")
-    v3cmd, param, enc = mapped
-    # power_off sometimes exposed as service power_off on some firmwares
-    attempts = [(v3cmd, param, enc)]
-    if cname == "power_off":
-        attempts.extend(
-            [
-                ("set.miner.service", "power_off", False),
-                ("set.miner.service", "suspend", False),
-            ]
-        )
-    if cname == "power_on":
-        attempts.extend(
-            [
-                ("set.miner.service", "power_on", False),
-                ("set.miner.service", "resume", False),
-            ]
-        )
-    last_err = "API v3 write fail"
-    for vc, p, e in attempts:
-        r = v3_call(vc, p, password=password, encrypt_param=e)
-        code = r.get("code")
-        if code == 0:
-            return {
-                "STATUS": "S",
-                "Code": 131,
-                "Msg": r.get("msg") if r.get("msg") is not None else "ok",
-                "transport": "api_v3",
-                "v3_cmd": vc,
-                "response": r,
-            }
-        last_err = str(r.get("msg") or f"code={code}")
-        if code == -2:  # invalid command — try next alias
-            continue
-        if code == -4 or "no permission" in last_err.lower():
-            raise RuntimeError(
-                f"can't access write cmd · API v3 apiswitch off ({last_err})"
-            )
-        # other errors: try next alias only for service variants
-        if cname not in ("power_off", "power_on"):
-            break
-    raise RuntimeError(f"API v3: {last_err}")
+    raise RuntimeError("API v3 removed from serve — use miner_write_cmd")
 
 
 def get_write_api_status(password: str | None = None) -> dict:
-    """
-    Probe write capability: API v3 apiswitch + 4028 privileged test (set_led).
-    Does not change miner state when possible (set_led auto is safe).
-    """
+    """Probe write path via miner-poller only (no direct ASIC from serve)."""
     password = password or DEFAULT_API_PASSWORD
     out: dict = {
         "ok": True,
-        "host": HOST_MINER,
-        "port_v2": int(PORT_MINER),
-        "port_v3": PORT_MINER_V3,
-        "apiswitch": None,
-        "apiswitch_on": None,
-        "v3_ok": False,
-        "v2_write_ok": None,
+        "write_ok": False,
+        "v2_write_ok": False,
         "v3_write_ok": None,
         "luci_ok": None,
-        "write_ok": False,
+        "poller": miner_poller_process_alive(),
         "hint": "",
-        "fw": None,
-        "api_ver_v3": None,
     }
-    # v3 info
+    if not miner_poller_process_alive():
+        out["hint"] = "miner-poller not running"
+        out["error"] = out["hint"]
+        return out
     try:
-        info = v3_get_device_info()
+        r = miner_write_cmd({"cmd": "set_led", "param": "auto"}, password)
         try:
-            out["v3_ok"] = (
-                isinstance(info, dict)
-                and info.get("code") is not None
-                and int(info.get("code")) == 0
-            )
-        except (TypeError, ValueError):
-            out["v3_ok"] = False
-        msg = info.get("msg") if isinstance(info, dict) else {}
-        if isinstance(msg, dict):
-            sys_ = msg.get("system") if isinstance(msg.get("system"), dict) else {}
-            out["apiswitch"] = str(sys_.get("apiswitch") or "")
-            out["apiswitch_on"] = out["apiswitch"] in ("1", "true", "on")
-            out["api_ver_v3"] = sys_.get("api")
-            out["fw"] = sys_.get("fwversion")
-    except Exception as e:
-        out["v3_error"] = str(e)
-
-    # v2 write probe (set_led auto)
-    try:
-        r = privileged_cmd({"cmd": "set_led", "param": "auto"}, password, token_attempts=1)
-        ok, msg = _miner_cmd_result(r)
+            ok, msg = _miner_cmd_result(r)
+        except Exception:
+            ok, msg = True, "ok"
         out["v2_write_ok"] = bool(ok)
+        out["write_ok"] = bool(ok)
         if not ok:
             out["v2_write_error"] = msg
+            out["hint"] = str(msg)
+        else:
+            out["hint"] = "Write via miner-poller OK"
     except Exception as e:
         out["v2_write_ok"] = False
         out["v2_write_error"] = str(e)
-
-    # v3 write probe when switch on
-    if out.get("apiswitch_on"):
-        try:
-            r3 = v3_call(
-                "set.miner.power_mode",
-                "normal",
-                password=password,
-            )
-            try:
-                out["v3_write_ok"] = (
-                    r3.get("code") is not None and int(r3.get("code")) == 0
-                )
-            except (TypeError, ValueError):
-                out["v3_write_ok"] = False
-            if not out["v3_write_ok"]:
-                out["v3_write_error"] = r3.get("msg")
-        except Exception as e:
-            out["v3_write_ok"] = False
-            out["v3_write_error"] = str(e)
-    else:
-        out["v3_write_ok"] = False
-
-    # LuCI from serve removed — poller/proxy only
-    out["luci_ok"] = None
-    out["luci_error"] = "luci probe moved to miner-poller / luci_proxy"
-
-    out["write_ok"] = bool(
-        out.get("v2_write_ok") or out.get("v3_write_ok")
-    )
-    if out.get("v2_write_ok") or out.get("v3_write_ok"):
-        out["hint"] = "Write API доступен (TCP)"
-    elif out.get("luci_ok"):
-        out["hint"] = (
-            "LuCI OK · mode/pools/reboot без API Switch; "
-            "suspend/limit/factory — TCP (apiswitch) или Tools :8889"
-        )
-    elif out.get("apiswitch_on") is False:
-        out["hint"] = (
-            "apiswitch=0 · LuCI offline? · Tools Miner API Switch → Enable"
-        )
-    elif out.get("v2_write_error") and "over max" in str(out.get("v2_write_error")).lower():
-        out["hint"] = "Лимит get_token (over max connect) · ждите ~30 мин или reboot ASIC"
-    else:
-        out["hint"] = (
-            "Write закрыт · WhatsMinerTool: Password + Miner API Switch → Enable"
-        )
+        out["hint"] = str(e)
     return out
 
 
@@ -17528,134 +16966,31 @@ def enable_write_api(
     *,
     new_password: str | None = None,
 ) -> dict:
-    """
-    Enable Write API the way Tools does «Miner API Switch», but via LuCI UCI:
-
-      1) Probe
-      2) LuCI POST open_by_api=1 (hidden cbi on Power page) — primary unlock
-      3) Optional password cycle (new_password)
-      4) Verify with set_led / apiswitch
-
-    Live M63: after open_by_api=1, power_off/on, mode, adjust_power_limit work
-    on :4028 without WhatsMinerTool.
-    """
+    """Enable Miner API Switch via miner-poller NetPacket only."""
     password = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
-    new_pw = (new_password or password).strip() or password
     steps: list[dict] = []
-    before = get_write_api_status(password)
-    steps.append({
-        "step": "probe_before",
-        "ok": True,
-        "detail": {
-            "apiswitch": before.get("apiswitch"),
-            "write_ok": before.get("write_ok"),
-            "v2_write_ok": before.get("v2_write_ok"),
-            "v3_write_ok": before.get("v3_write_ok"),
-        },
-    })
-
-    if before.get("write_ok"):
-        return {
-            "ok": True,
-            "enabled": True,
-            "already": True,
-            "message": "Write API уже доступен (mining control / mode / limit)",
-            "status": before,
-            "steps": steps,
-        }
-
-    # A) Primary unlock — LuCI open_by_api (Tools Remote Ctrl equivalent)
     try:
         r = luci_enable_api_switch(password, enable=True)
-        steps.append({
-            "step": "luci_open_by_api",
-            "ok": True,
-            "detail": r.get("Msg"),
-        })
+        steps.append({"step": "netpacket_api_switch", "ok": True, "detail": r})
     except Exception as e:
-        steps.append({"step": "luci_open_by_api", "ok": False, "detail": str(e)})
-
-    # B) Optional password set via LuCI (if caller asked for new password)
-    if new_pw != password:
-        try:
-            path = "/cgi-bin/luci/admin/system/admin"
-            st, html = _luci_request(path, password)
-            tok = _luci_extract_token(html)
-            st2, _ = _luci_request(
-                path,
-                password,
-                data={
-                    "token": tok,
-                    "cbi.submit": "1",
-                    "cbid.system._pass.pw1": new_pw,
-                    "cbid.system._pass.pw2": new_pw,
-                    "cbi.apply": "1",
-                },
-                timeout=20.0,
-            )
-            _luci_clear_session()
-            apply_miner_settings(password=new_pw, persist=True)
-            password = new_pw
-            steps.append({
-                "step": "luci_password",
-                "ok": st2 in (200, 302, 500, 502),
-                "detail": f"HTTP {st2}",
-            })
-        except Exception as e:
-            steps.append({"step": "luci_password", "ok": False, "detail": str(e)})
-
-    # C) Verify write (set_led is harmless)
-    time.sleep(1.0)
-    _token_cache_clear()
-    write_probe_ok = False
-    write_probe_detail = ""
-    try:
-        resp = privileged_cmd(
-            {"cmd": "set_led", "param": "auto"}, password, token_attempts=1
-        )
-        ok, msg = _miner_cmd_result(resp)
-        write_probe_ok = bool(ok)
-        write_probe_detail = msg or str(resp.get("Msg") if isinstance(resp, dict) else resp)
-    except Exception as e:
-        write_probe_detail = str(e)
-    steps.append({
-        "step": "write_probe_set_led",
-        "ok": write_probe_ok,
-        "detail": write_probe_detail,
-    })
-
-    after = get_write_api_status(password)
-    steps.append({
-        "step": "probe_after",
-        "ok": True,
-        "detail": {
-            "apiswitch": after.get("apiswitch"),
-            "write_ok": after.get("write_ok"),
-            "v2_write_ok": after.get("v2_write_ok"),
-            "v3_write_ok": after.get("v3_write_ok"),
-        },
-    })
-
-    enabled = bool(after.get("write_ok") or write_probe_ok)
-    if enabled:
-        msg = "Write API включён · Suspend/Resume, Power Mode, Power Limit доступны"
-    else:
-        msg = (
-            "Не удалось открыть write через LuCI open_by_api. "
-            "Проверьте web-пароль admin и доступ к https://miner/cgi-bin/luci. "
-            "Запасной путь: WhatsMinerTool → Remote Ctrl → Miner API Switch → Enable."
-        )
+        steps.append({"step": "netpacket_api_switch", "ok": False, "detail": str(e)})
+        return {
+            "ok": False,
+            "enabled": False,
+            "message": str(e),
+            "steps": steps,
+        }
+    status = get_write_api_status(password)
+    enabled = bool(status.get("write_ok"))
     return {
         "ok": True,
         "enabled": enabled,
-        "already": False,
-        "message": msg,
-        "status": after,
+        "message": (
+            "Write API via poller" if enabled else
+            "api_switch sent · verify Suspend/mode"
+        ),
+        "status": status,
         "steps": steps,
-        "tools_steps": [
-            "poolheat → Enable Write (LuCI open_by_api)",
-            "или WhatsMinerTool → Remote Ctrl → Miner API Switch → Enable",
-        ],
     }
 
 
@@ -18667,62 +18002,17 @@ _CUSTOMER_SN_TTL_SEC = 120.0
 
 def _fetch_customer_sn(*, force: bool = False) -> str | None:
     """
-    CustomerSn from API v3 get.device.custom_data (WhatsMiner custom SN).
-    Used when factory minersn is empty / not set.
+    CustomerSn — no longer queried from serve (ASIC I/O is miner-poller only).
+    Returns last cached value if any.
     """
-    global _customer_sn_cache, _customer_sn_ts
-    now = time.time()
-    if (
-        not force
-        and _customer_sn_cache is not None
-        and (now - _customer_sn_ts) < _CUSTOMER_SN_TTL_SEC
-    ):
+    if not force and _customer_sn_cache is not None:
         return _customer_sn_cache
-    csn: str | None = None
-    try:
-        from whatsminer.api.v3 import WhatsminerV3
-
-        host = str(HOST_MINER).split(":")[0]
-        c = WhatsminerV3(host, timeout=3.0)
-        raw = c.get_device_custom_data()
-        msg = raw.get("msg") or raw.get("Msg") or raw
-        if isinstance(msg, dict):
-            csn = _normalize_sn(
-                msg.get("CustomerSn")
-                or msg.get("customer_sn")
-                or msg.get("customerSn")
-            )
-    except Exception as e:
-        print(f"[ident] get.device.custom_data: {e}")
-    # NetPacket / other paths may expose it later — keep None on failure
-    _customer_sn_cache = csn
-    _customer_sn_ts = now
-    return csn
+    return _customer_sn_cache
 
 
 def _fetch_v3_device_msg(*, force: bool = False) -> dict | None:
-    if miner_poller_process_alive():
-        return None  # liquid/identity come from live_cache via poller
-    """Best-effort API v3 get.device.info msg (for liquid temp / model). Cached ~30s."""
-    global _v3_device_msg_cache, _v3_device_msg_ts
-    now = time.time()
-    if (
-        not force
-        and isinstance(_v3_device_msg_cache, dict)
-        and (now - float(_v3_device_msg_ts or 0)) < _V3_DEVICE_MSG_TTL_SEC
-    ):
-        return _v3_device_msg_cache
-    try:
-        info = v3_get_device_info()
-        if isinstance(info, dict) and info.get("code") in (0, "0"):
-            msg = info.get("msg")
-            if isinstance(msg, dict):
-                _v3_device_msg_cache = msg
-                _v3_device_msg_ts = now
-                return msg
-    except Exception as e:
-        print(f"[v3] get.device.info: {e}")
-    return _v3_device_msg_cache if isinstance(_v3_device_msg_cache, dict) else None
+    """Liquid/identity from live_cache only when poller owns ASIC."""
+    return None
 
 
 def _normalize_psu_vin(raw) -> float | None:
@@ -18995,7 +18285,7 @@ def _build_temp_sensors_catalog(
     return out
 
 
-def fetch_live() -> dict:
+def _fetch_live_direct() -> dict:
     # summary/status: support both Msg-dict and classic SUMMARY/STATUS sections
     try:
         summary_raw = miner_cmd({"cmd": "summary"})
@@ -19356,6 +18646,24 @@ def fetch_live() -> dict:
         body["run_status"] = None
     _mark_miner_live_ok()
     return body
+
+
+
+
+def fetch_live() -> dict:
+    """
+    Live snapshot. Prefer live_cache from miner-poller.
+    Direct ASIC TCP only when poller is down (legacy python --miner-poller).
+    """
+    if miner_poller_process_alive():
+        live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC)
+        if isinstance(live, dict) and live.get("ok"):
+            return live
+        raise RuntimeError(
+            "no live_cache from miner-poller (serve does not poll ASIC)"
+        )
+    # Fallback path for `python serve.py --miner-poller` without Go binary
+    return _fetch_live_direct()
 
 
 def _measured_work_state(live: dict) -> str:
@@ -30048,16 +29356,8 @@ def main() -> None:
     # Devices auto ON/OFF — separate process so hangs never block API/policy
     if role_enabled("edge_device_poller"):
         start_devices_poller_process()
-        # Serve-side hold: tinytuya path identical to UI Refresh — restores
-        # enforce_desired even when Go poller cannot (Tuya local_key / timeouts).
-        try:
-            th = threading.Thread(
-                target=devices_hold_loop, name="devices-hold", daemon=True
-            )
-            th.start()
-            print("devices-hold:      on (enforce_desired background)")
-        except Exception as e:
-            print(f"devices-hold:      failed to start: {e}")
+        # hold/enforce_desired: Go devices-poller only (no tinytuya in serve)
+        print("devices-hold:      off (poller owns enforce_desired · no tinytuya)")
     else:
         print("devices-poller:    off (edge_device_poller role disabled)")
 
