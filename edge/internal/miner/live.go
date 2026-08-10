@@ -41,13 +41,15 @@ func FetchLive(s Settings) (map[string]any, error) {
 	// Liquid early via V3 (before more :4028 sessions) — M63+ coolant
 	var liquid *float64
 	var liquidSrc any
+	var v3Err string
 	liquid, liquidSrc = extractLiquidTemp(status, summary, nil, nil)
 	var v3msg map[string]any
 	if liquid == nil {
 		var errV3 error
 		v3msg, errV3 = fetchV3DeviceMsg(s.Host)
 		if errV3 != nil {
-			log.Printf("[miner-poller] v3 liquid: %v", errV3)
+			v3Err = errV3.Error()
+			log.Printf("[miner-poller] v3 liquid host=%s: %v", s.Host, errV3)
 		} else if v3msg != nil {
 			liquid, liquidSrc = extractLiquidTemp(status, summary, nil, v3msg)
 			if liquid != nil && (liquidSrc == nil || fmt.Sprint(liquidSrc) == "") {
@@ -195,8 +197,9 @@ func FetchLive(s Settings) (map[string]any, error) {
 		"ok":                   true,
 		"ts":                   time.Now().Format("2006-01-02T15:04:05"),
 		"host":                 fmt.Sprintf("%s:%d", s.Host, s.Port),
-		"liquid":               liquid,
+		"liquid":               ptrVal(liquid),
 		"liquid_source":        liquidSrc,
+		"liquid_v3_error":      nilIfEmpty(v3Err),
 		"env":                  fOrNil(summary["Env Temp"]),
 		"chip_min":             fOrNil(summary["Chip Temp Min"]),
 		"chip_avg":             fOrNil(summary["Chip Temp Avg"]),
@@ -396,7 +399,12 @@ func v3LenPrefixedCall(host string, port int, payload map[string]any, timeout ti
 		return nil, err
 	}
 	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	// Prefer IPv4 — Keenetic dual-stack sometimes hangs on AAAA first
+	d := net.Dialer{Timeout: timeout}
+	conn, err := d.Dial("tcp4", addr)
+	if err != nil {
+		conn, err = d.Dial("tcp", addr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
@@ -468,6 +476,20 @@ func normalizePsuIin(raw any) *float64 {
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
+
+func ptrVal(p *float64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
 
 // buildTempCatalog mirrors serve.py _build_temp_sensors_catalog (core rows).
 func buildTempCatalog(
