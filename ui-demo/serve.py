@@ -14153,16 +14153,24 @@ def flash_firmware_to_miner(
 
     req_id = uuid.uuid4().hex
     pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
-    abs_path = str(fpath.resolve())
+    # Stage into DATA/miner_fw_cache so poller always has a local path
+    # (works when UI is remote — never pass USB/host-only library paths).
+    try:
+        staged = _stage_firmware_for_poller(fpath, req_id)
+    except Exception as e:
+        raise RuntimeError(f"cannot stage firmware for poller: {e}") from e
+    abs_path = str(staged.resolve())
     req = {
         "id": req_id,
         "ts": time.time(),
         "path": abs_path,
+        "cache_dir": str(staged.parent),
         "filename": str(item.get("filename") or fpath.name),
         "firmware_id": str(item.get("id")),
         "platform": platform,
         "password": str(pw or ""),
         "miner_type": miner_type,
+        "cleanup_cache": True,
     }
     seed = {
         "busy": True,
@@ -14186,7 +14194,7 @@ def flash_firmware_to_miner(
     # req last so poller never sees req without status
     _write_json_atomic(FIRMWARE_FLASH_REQ_FILE, req)
     print(
-        f"[firmware] queued flash id={req_id} path={abs_path} "
+        f"[firmware] staged+queued id={req_id} cache={abs_path} "
         f"platform={platform} → miner-poller",
         flush=True,
     )
@@ -14200,14 +14208,51 @@ def flash_firmware_to_miner(
         "miner_type": miner_type,
         "models": models,
         "path": abs_path,
+        "staged": True,
         "platform": platform,
         "host": f"{HOST_MINER}:8889",
-        "message": "flash queued — poll /api/firmware/flash/status",
+        "message": "flash staged to poller cache — poll /api/firmware/flash/status",
         "warning": (
             "Firmware via miner-poller NetPacket · ASIC may reboot · "
             "verify Firmware Version after reconnect"
         ),
     }
+
+
+def _stage_firmware_for_poller(src: Path, req_id: str) -> Path:
+    """
+    Copy firmware image into DATA/miner_fw_cache/<req_id>/image.bin.
+
+    Poller only reads this cache (same DATA volume as live_cache). When UI
+    runs on an external host it still uploads/selects via edge HTTP; edge
+    stages here so no USB/library path is required on the client.
+    """
+    src = Path(src)
+    if not src.is_file():
+        raise FileNotFoundError(str(src))
+    dest_dir = DATA / "miner_fw_cache" / str(req_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "image.bin"
+    # copy in chunks to avoid huge RAM spike
+    with open(src, "rb") as inf, open(dest, "wb") as outf:
+        while True:
+            chunk = inf.read(1024 * 1024)
+            if not chunk:
+                break
+            outf.write(chunk)
+    meta = {
+        "source": str(src),
+        "bytes": dest.stat().st_size,
+        "staged_at": datetime.now().isoformat(timespec="seconds"),
+        "req_id": req_id,
+    }
+    try:
+        (dest_dir / "meta.json").write_text(
+            json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
+    return dest
 
 
 def export_miner_log(*, password: str | None = None, timeout_sec: float = 90.0) -> dict:

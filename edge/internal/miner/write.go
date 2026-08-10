@@ -145,10 +145,25 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		return executeWritePools(s, req, pw)
 	case "set_api_switch", "enable_api_switch", "api_switch":
 		return executeAPISwitch(s, req, pw, params)
+	case "reboot", "reboot_asic", "system_reboot":
+		return executeReboot(s, req, pw)
+	case "restart_btminer", "restart", "restart_miner", "restart_cgminer", "btminer_restart":
+		return executeRestartMining(s, req, pw)
 	}
 
+	// Longer timeout for privileged cmds that may stall the API briefly.
+	c.Timeout = 20 * time.Second
 	resp, err := c.Write(cname, params)
 	if err != nil {
+		// reboot/restart often drop the TCP link after accept — treat as success
+		if isLinkDropAfterWrite(err) && (cname == "reboot" || cname == "restart_btminer" || cname == "restart_cgminer") {
+			res.OK = true
+			res.Response = map[string]any{
+				"STATUS": "S", "Msg": "sent (link dropped — expected)", "transport": "v2",
+			}
+			res.Transport = "v2"
+			return res
+		}
 		res.Error = err.Error()
 		return res
 	}
@@ -163,6 +178,170 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		}
 	}
 	return res
+}
+
+// executeReboot prefers NetPacket :8889 (works with API Switch OFF), then V2.
+func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
+	if s.DryRun {
+		res.OK = true
+		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
+		res.Transport = "dry_run"
+		return res
+	}
+	// 1) NetPacket reboot (WMT cmd 8)
+	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
+		type cred struct{ acc, pw string }
+		tryCreds := []cred{{"super", "super"}, {"admin", password}}
+		if password != "" && password != "super" {
+			tryCreds = append(tryCreds, cred{"super", password})
+		}
+		for _, cr := range tryCreds {
+			if strings.TrimSpace(cr.pw) == "" {
+				continue
+			}
+			np := protocol.NewClient(s.Host)
+			np.Account = cr.acc
+			np.Password = cr.pw
+			np.Timeout = 15 * time.Second
+			resp, err := np.Reboot()
+			if err != nil {
+				// link drop after reboot command is normal
+				if isLinkDropAfterWrite(err) {
+					res.OK = true
+					res.Transport = "netpacket"
+					res.Response = map[string]any{
+						"STATUS": "S", "Msg": "reboot sent (link dropped)", "transport": "netpacket",
+					}
+					return res
+				}
+				log.Printf("[miner-poller] netpacket reboot %s: %v", cr.acc, err)
+				continue
+			}
+			if resp != nil && resp.OK {
+				res.OK = true
+				res.Transport = "netpacket"
+				res.Response = map[string]any{
+					"STATUS": "S", "Msg": "ok", "transport": "netpacket",
+				}
+				return res
+			}
+			// some FW return non-OK status text but still reboot
+			if resp != nil {
+				log.Printf("[miner-poller] netpacket reboot status=%s", resp.StatusText)
+				res.OK = true
+				res.Transport = "netpacket"
+				res.Response = map[string]any{
+					"STATUS": "S", "Msg": resp.StatusText, "transport": "netpacket",
+				}
+				return res
+			}
+		}
+	}
+	// 2) V2 privileged reboot
+	resp, err := cV2WriteTimeout(s, password, "reboot", nil, 20*time.Second)
+	if err != nil {
+		if isLinkDropAfterWrite(err) {
+			res.OK = true
+			res.Transport = "v2"
+			res.Response = map[string]any{
+				"STATUS": "S", "Msg": "reboot sent (link dropped)", "transport": "v2",
+			}
+			return res
+		}
+		res.Error = err.Error()
+		res.Transport = "v2"
+		return res
+	}
+	res.Response = resp
+	res.Transport = "v2"
+	ok, msg := minerWriteOK(resp)
+	res.OK = ok
+	if !ok {
+		res.Error = msg
+		if res.Error == "" {
+			res.Error = "reboot rejected"
+		}
+	}
+	return res
+}
+
+// executeRestartMining restarts btminer process (not full OS reboot).
+func executeRestartMining(s Settings, req WriteRequest, password string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value, Transport: "v2"}
+	if s.DryRun {
+		res.OK = true
+		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
+		res.Transport = "dry_run"
+		return res
+	}
+	var lastErr error
+	for _, cmd := range []string{"restart_btminer", "restart_cgminer"} {
+		resp, err := cV2WriteTimeout(s, password, cmd, nil, 25*time.Second)
+		if err != nil {
+			lastErr = err
+			if isLinkDropAfterWrite(err) {
+				res.OK = true
+				res.Response = map[string]any{
+					"STATUS": "S", "Msg": cmd + " sent (link dropped)", "cmd": cmd,
+				}
+				return res
+			}
+			log.Printf("[miner-poller] %s: %v", cmd, err)
+			continue
+		}
+		ok, msg := minerWriteOK(resp)
+		if ok {
+			res.OK = true
+			res.Response = resp
+			if res.Response == nil {
+				res.Response = map[string]any{}
+			}
+			res.Response["cmd"] = cmd
+			return res
+		}
+		lastErr = fmt.Errorf("%s", msg)
+		log.Printf("[miner-poller] %s rejected: %s", cmd, msg)
+	}
+	if lastErr != nil {
+		res.Error = lastErr.Error()
+	} else {
+		res.Error = "restart_btminer failed"
+	}
+	return res
+}
+
+func cV2WriteTimeout(s Settings, password, cmd string, params map[string]any, to time.Duration) (map[string]any, error) {
+	c := api.NewV2(s.Host)
+	c.Port = s.Port
+	c.Password = password
+	if c.Password == "" {
+		c.Password = api.DefaultAdmin
+	}
+	c.Timeout = to
+	if params == nil {
+		params = map[string]any{}
+	}
+	return c.Write(cmd, params)
+}
+
+func isLinkDropAfterWrite(err error) bool {
+	if err == nil {
+		return false
+	}
+	low := strings.ToLower(err.Error())
+	for _, t := range []string{
+		"connection reset", "broken pipe", "eof", "i/o timeout",
+		"timeout", "connection refused", "use of closed", "wsasend",
+		"forcibly closed", "empty response",
+	} {
+		if strings.Contains(low, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // executeWritePools applies stratum pools via NetPacket :8889 (WhatsMinerTool)

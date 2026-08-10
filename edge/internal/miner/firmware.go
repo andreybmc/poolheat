@@ -234,6 +234,34 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 	} else {
 		log.Printf("[miner-poller] firmware flash fail id=%s: %v", id, errMsg)
 	}
+	// Drop staged cache under DATA/miner_fw_cache/<id>/ after attempt
+	if asBool(req["cleanup_cache"], true) {
+		cleanupFirmwareCache(req)
+	}
+}
+
+func cleanupFirmwareCache(req map[string]any) {
+	cacheDir := str(req["cache_dir"])
+	if cacheDir == "" {
+		// …/miner_fw_cache/<id>/image.bin → parent dir
+		p := str(firstNonEmpty(req["path"], req["file"], req["firmware_path"]))
+		if p != "" {
+			cacheDir = filepath.Dir(p)
+		}
+	}
+	if cacheDir == "" {
+		return
+	}
+	// safety: only remove …/miner_fw_cache/<req_id>
+	if filepath.Base(filepath.Dir(cacheDir)) != "miner_fw_cache" {
+		log.Printf("[miner-poller] skip cache cleanup (not under miner_fw_cache): %s", cacheDir)
+		return
+	}
+	if err := os.RemoveAll(cacheDir); err != nil {
+		log.Printf("[miner-poller] cache cleanup %s: %v", cacheDir, err)
+	} else {
+		log.Printf("[miner-poller] cache cleaned %s", cacheDir)
+	}
 }
 
 func failFlash(dataDir, id, msg string) {
