@@ -668,6 +668,100 @@
     select.energy-chart-range option {
       text-align: center;
     }
+    /* Custom chart zoom menu — centered option labels (native <option> can't center on macOS) */
+    .chart-zoom-dd {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      vertical-align: middle;
+    }
+    .chart-zoom-dd > select.chart-zoom-select {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+    }
+    .chart-zoom-dd-btn {
+      box-sizing: border-box;
+      border: 1px solid var(--border2);
+      background-color: var(--panel2);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 1.35rem 6px 0.75rem;
+      font: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      line-height: 1;
+      min-height: 28px;
+      height: 28px;
+      min-width: 3.4rem;
+      cursor: pointer;
+      outline: none;
+      text-align: center;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b9bb0' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.4rem center;
+      background-size: 10px 10px;
+      transition: border-color 0.15s;
+    }
+    .chart-zoom-dd-btn:hover,
+    .chart-zoom-dd.open .chart-zoom-dd-btn {
+      border-color: var(--accent);
+    }
+    .chart-zoom-menu {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 80;
+      min-width: 4.6rem;
+      padding: 6px;
+      border-radius: 12px;
+      border: 1px solid var(--border2);
+      background: var(--panel, #151b24);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+    }
+    .chart-zoom-dd.open .chart-zoom-menu {
+      display: block;
+    }
+    .chart-zoom-menu-title {
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: center;
+      padding: 4px 6px 6px;
+    }
+    .chart-zoom-menu button {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      line-height: 1.2;
+      padding: 8px 12px;
+      margin: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .chart-zoom-menu button:hover {
+      background: rgba(255, 255, 255, 0.06);
+    }
+    .chart-zoom-menu button.is-active {
+      background: var(--accent, #2f6fed);
+      color: #fff;
+    }
     select.chart-zoom-select:disabled,
     select.energy-chart-bucket:disabled,
     select.energy-chart-range:disabled {
@@ -9403,6 +9497,9 @@
         "dash.hb.no_data": "no data · Heat loss",
         "dash.hb.no_power": "no Power measured",
         "dash.hb.no_geo": "set geometry · Pool",
+        "dash.hl.no_water": "no water t°C",
+        "dash.hl.no_outdoor": "no outdoor t°C · Weather",
+        "dash.hl.no_geo": "set geometry · Pool",
         "h2.backup": "Configuration backup",
         "h2.connection": "Whatsminer connection",
         "h2.filtration": "Filtration · pump",
@@ -10197,6 +10294,9 @@
         "dash.hb.no_data": "нет данных · Теплопотери",
         "dash.hb.no_power": "нет Power measured",
         "dash.hb.no_geo": "задайте геометрию · Бассейн",
+        "dash.hl.no_water": "нет t°C воды",
+        "dash.hl.no_outdoor": "нет t°C улицы · Погода",
+        "dash.hl.no_geo": "задайте геометрию · Бассейн",
         "h2.backup": "Бэкап конфигурации",
         "h2.connection": "Подключение Whatsminer",
         "h2.filtration": "Фильтрация · насос",
@@ -19953,8 +20053,119 @@
             if (!(sel instanceof HTMLSelectElement)) return;
             if (p === "custom") return; // keep last preset option while brush-zoomed
             if ([...sel.options].some((o) => o.value === v)) sel.value = v;
+            syncChartZoomDdLabel(sel);
           });
       });
+    }
+
+    function syncChartZoomDdLabel(sel) {
+      if (!(sel instanceof HTMLSelectElement)) return;
+      const wrap = sel.closest(".chart-zoom-dd");
+      if (!wrap) return;
+      const btn = wrap.querySelector(".chart-zoom-dd-btn");
+      if (!btn) return;
+      const opt = sel.options[sel.selectedIndex];
+      btn.textContent = opt ? opt.textContent : sel.value || "—";
+      wrap.querySelectorAll(".chart-zoom-menu button[data-value]").forEach((b) => {
+        b.classList.toggle("is-active", b.getAttribute("data-value") === sel.value);
+      });
+    }
+
+    function enhanceChartZoomSelect(sel) {
+      if (!(sel instanceof HTMLSelectElement)) return;
+      if (sel.closest(".chart-zoom-dd")) return;
+      const parent = sel.parentElement;
+      if (!parent) return;
+      const dd = document.createElement("div");
+      dd.className = "chart-zoom-dd";
+      parent.insertBefore(dd, sel);
+      dd.appendChild(sel);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chart-zoom-dd-btn";
+      btn.setAttribute("aria-haspopup", "listbox");
+      btn.setAttribute("aria-expanded", "false");
+      const title =
+        sel.getAttribute("title") ||
+        (typeof t === "function" ? t("chart.zoom", "Zoom") : "Zoom");
+      btn.title = title;
+      btn.setAttribute("aria-label", sel.getAttribute("aria-label") || title);
+      dd.appendChild(btn);
+
+      const menu = document.createElement("div");
+      menu.className = "chart-zoom-menu";
+      menu.setAttribute("role", "listbox");
+      const titleEl = document.createElement("div");
+      titleEl.className = "chart-zoom-menu-title";
+      titleEl.textContent =
+        typeof t === "function" ? t("chart.zoom", "Zoom") : "Zoom";
+      menu.appendChild(titleEl);
+
+      const addOpt = (opt) => {
+        if (!opt || opt.disabled) return;
+        const b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("data-value", opt.value);
+        b.setAttribute("role", "option");
+        b.textContent = opt.textContent;
+        b.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (sel.value !== opt.value) {
+            sel.value = opt.value;
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+          } else {
+            syncChartZoomDdLabel(sel);
+          }
+          dd.classList.remove("open");
+          btn.setAttribute("aria-expanded", "false");
+        });
+        menu.appendChild(b);
+      };
+      // flatten optgroup options
+      Array.from(sel.options).forEach(addOpt);
+      dd.appendChild(menu);
+      syncChartZoomDdLabel(sel);
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const open = !dd.classList.contains("open");
+        document.querySelectorAll(".chart-zoom-dd.open").forEach((el) => {
+          if (el !== dd) {
+            el.classList.remove("open");
+            const ob = el.querySelector(".chart-zoom-dd-btn");
+            if (ob) ob.setAttribute("aria-expanded", "false");
+          }
+        });
+        dd.classList.toggle("open", open);
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+          // refresh title lang
+          titleEl.textContent =
+            typeof t === "function" ? t("chart.zoom", "Zoom") : "Zoom";
+          syncChartZoomDdLabel(sel);
+        }
+      });
+
+      if (!window.__chartZoomDdDocBound) {
+        window.__chartZoomDdDocBound = true;
+        document.addEventListener("click", () => {
+          document.querySelectorAll(".chart-zoom-dd.open").forEach((el) => {
+            el.classList.remove("open");
+            const ob = el.querySelector(".chart-zoom-dd-btn");
+            if (ob) ob.setAttribute("aria-expanded", "false");
+          });
+        });
+        document.addEventListener("keydown", (ev) => {
+          if (ev.key === "Escape") {
+            document.querySelectorAll(".chart-zoom-dd.open").forEach((el) => {
+              el.classList.remove("open");
+            });
+          }
+        });
+      }
     }
 
     function chartDefaults() {
@@ -20874,16 +21085,18 @@
         renderCharts();
       });
 
-      // zoom selects (temps + power) — same pill UI as energy chart
+      // zoom selects (temps + power) — custom centered dropdown + native select for state
       document.querySelectorAll("select.chart-zoom-select, select[data-zoom-select]").forEach((sel) => {
         if (sel.dataset.boundZoom === "1") return;
         sel.dataset.boundZoom = "1";
+        enhanceChartZoomSelect(sel);
         sel.addEventListener("change", () => {
           const z = sel.value || "1d";
           const key =
             sel.getAttribute("data-chart-key") ||
             chartKeyFromEl(sel.closest(".chart-zoom-wrap") || sel) ||
             "temps";
+          syncChartZoomDdLabel(sel);
           applyZoomPreset(z, key);
         });
       });
@@ -24091,15 +24304,15 @@
         const { S, massKg, Tw, Ta } = ctx;
 
         if (!poolDerived || !Number.isFinite(S) || S <= 0) {
-          clear("set geometry · Pool");
+          clear(t("dash.hl.no_geo", "set geometry · Pool"));
           return;
         }
         if (!Number.isFinite(Tw)) {
-          clear("no water t");
+          clear(t("dash.hl.no_water", "no water t°C"));
           return;
         }
         if (!Number.isFinite(Ta)) {
-          clear("no outdoor t · Weather");
+          clear(t("dash.hl.no_outdoor", "no outdoor t°C · Weather"));
           return;
         }
 
