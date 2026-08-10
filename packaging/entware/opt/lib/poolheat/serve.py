@@ -5215,20 +5215,28 @@ def _tuya_ensure_local_key(cfg: dict) -> str:
             f"(аккаунт: {len(devices)} устр.)"
         )
     key = str(found["key"])
-    # cache on device
+    # Persist into devices_config.json so Go devices-poller can hold state
+    # in the background (runtime state strip drops non-shadow fields).
     did = str(cfg.get("id") or "")
     if did:
-        def _mut(d):
-            d["tuya_local_key"] = key
-            if found.get("id") and not d.get("device_id"):
-                d["device_id"] = found.get("id")
-            if found.get("id"):
-                d["device_id"] = found.get("id")
-
         try:
-            _device_update_in_store(did, _mut)
-        except Exception:
-            pass
+            with _devices_cfg_lock:
+                for d in _devices_cfg.get("devices") or []:
+                    if not isinstance(d, dict):
+                        continue
+                    if str(d.get("id") or "") != did:
+                        continue
+                    d["tuya_local_key"] = key
+                    if found.get("id"):
+                        d["device_id"] = str(found.get("id"))
+                    break
+            _save_devices_cfg()
+            print(
+                f"[devices] tuya local_key saved to config for {did}",
+                flush=True,
+            )
+        except Exception as e:
+            print(f"[devices] tuya local_key persist: {e}", flush=True)
     cfg["tuya_local_key"] = key
     if found.get("id"):
         cfg["device_id"] = found.get("id")

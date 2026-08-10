@@ -59,8 +59,9 @@ func (s *Store) update(id string, mut func(*state.Runtime)) {
 func boolPtr(b bool) *bool { return &b }
 func strPtr(s string) *string { return &s }
 
-// PollStatus probes device and applies enforce/adopt when applyPolicy.
-func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source string, applyPolicy bool) error {
+// PollStatus probes device status only (no enforce). Use ApplyPolicy after all probes
+// so each set() gets a fresh timeout budget (status+set in one ctx often starved set).
+func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source string) error {
 	did := cfg.ID
 	be := cfg.BackendNorm()
 	res, err := backend.Control(ctx, nil, cfg)
@@ -77,6 +78,9 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 	if res.On != nil {
 		logi := backend.PhysicalToLogical(*res.On, cfg.Inverted)
 		reported = &logi
+	} else {
+		// surface missing switch DPS so logs explain why hold cannot run
+		log.Printf("[devices] %s status: on=nil (check tuya_switch_dps / local_key)", cfg.Label())
 	}
 	s.update(did, func(r *state.Runtime) {
 		if reported != nil {
@@ -92,13 +96,23 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 			r.LastPowerTS = &ts
 		}
 	})
-	if applyPolicy && reported != nil {
-		if cfg.EnforceDesired {
-			_ = s.EnforceDesired(ctx, cfg, *reported)
-		} else {
-			s.AdoptReported(did, *reported)
-		}
+	return nil
+}
+
+// ApplyPolicy runs enforce_desired or adopt after a successful status probe.
+func (s *Store) ApplyPolicy(ctx context.Context, cfg config.DeviceCfg) error {
+	if !cfg.IsEnabled() {
+		return nil
 	}
+	rt := s.getRT(cfg.ID)
+	if rt.LastOn == nil {
+		return nil
+	}
+	reported := *rt.LastOn
+	if cfg.EnforceDesired {
+		return s.EnforceDesired(ctx, cfg, reported)
+	}
+	s.AdoptReported(cfg.ID, reported)
 	return nil
 }
 
@@ -215,8 +229,10 @@ func (s *Store) AdoptReported(did string, reported bool) {
 	s.DesiredTouched[did] = true
 }
 
-// PollAll status for enabled ready devices.
-func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol config.PollerCfg) (probed, errors int) {
+// PollAll: phase1 status all devices, phase2 enforce/adopt with fresh timeouts.
+// Split so background hold is not starved by status I/O (UI probe used to be
+// the only path that restored because it ran set in a new Python call).
+func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol config.PollerCfg) (probed, errors, enforced int) {
 	backoff := float64(pol.ErrorBackoffSec)
 	if backoff < 5 {
 		backoff = 5
@@ -225,17 +241,32 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 	if timeout < 3*time.Second {
 		timeout = 15 * time.Second
 	}
+	// enforce gets at least as long as status; prefer a bit more for Tuya set+reread
+	setTimeout := timeout
+	if setTimeout < 12*time.Second {
+		setTimeout = 12 * time.Second
+	}
 	now := float64(time.Now().UnixNano()) / 1e9
+
+	type item struct {
+		cfg config.DeviceCfg
+		ok  bool
+	}
+	var batch []item
+
+	// ── phase 1: status only ───────────────────────────────────────────
 	for _, cfg := range devices {
 		if !cfg.IsEnabled() || cfg.ID == "" {
 			continue
 		}
 		if !backend.Ready(cfg) {
+			if cfg.BackendNorm() == "tuya" {
+				log.Printf("[devices-poller] skip %s: not ready (need ip+device_id+local_key)", cfg.Label())
+			}
 			continue
 		}
 		rt := s.getRT(cfg.ID)
-		// Back off only after status probe failures — still re-poll after enforce
-		// set failures so hold can restore after SmartLife toggles.
+		// Back off only after status probe failures
 		if rt.LastError != nil && rt.LastAction != nil {
 			act := *rt.LastAction
 			if strings.HasSuffix(act, "_fail") && !strings.Contains(act, "enforce") {
@@ -245,17 +276,50 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 			}
 		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
-		err := s.PollStatus(cctx, cfg, "poll", true)
+		err := s.PollStatus(cctx, cfg, "poll")
 		cancel()
 		if err != nil {
 			errors++
 			s.SyncTS[cfg.ID] = now
 			log.Printf("[devices-poller] status %s: %v", cfg.Label(), err)
+			batch = append(batch, item{cfg: cfg, ok: false})
 			continue
 		}
 		probed++
+		batch = append(batch, item{cfg: cfg, ok: true})
 	}
-	return probed, errors
+
+	// ── phase 2: enforce / adopt with dedicated timeout per device ─────
+	for _, it := range batch {
+		if !it.ok {
+			continue
+		}
+		cfg := it.cfg
+		rt := s.getRT(cfg.ID)
+		if rt.LastOn == nil {
+			continue
+		}
+		needRestore := cfg.EnforceDesired && rt.DesiredOn != nil && *rt.DesiredOn != *rt.LastOn
+		if needRestore {
+			log.Printf("[devices-poller] hold mismatch %s: reported=%s desired=%s → restore",
+				cfg.Label(), onOff(*rt.LastOn), onOff(*rt.DesiredOn))
+		}
+		cctx, cancel := context.WithTimeout(ctx, setTimeout)
+		err := s.ApplyPolicy(cctx, cfg)
+		cancel()
+		if err != nil {
+			log.Printf("[devices-poller] policy %s: %v", cfg.Label(), err)
+			// do not mark status backoff — keep retrying hold next tick
+			continue
+		}
+		if needRestore {
+			rt2 := s.getRT(cfg.ID)
+			if rt2.LastOn != nil && rt2.DesiredOn != nil && *rt2.LastOn == *rt2.DesiredOn {
+				enforced++
+			}
+		}
+	}
+	return probed, errors, enforced
 }
 
 // SyncWithMining applies auto_on / auto_off policy.

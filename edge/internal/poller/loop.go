@@ -95,9 +95,10 @@ func Run(dataDir string) error {
 			if !pol.Enabled {
 				log.Printf("[devices-poller] disabled in config — idle")
 			} else {
-				probed, errs := store.PollAll(ctx, cfgFile.Devices, pol)
-				if probed > 0 || errs > 0 {
-					log.Printf("[devices-poller] status ok=%d err=%d cfg=%d", probed, errs, nDev)
+				probed, errs, enforced := store.PollAll(ctx, cfgFile.Devices, pol)
+				if probed > 0 || errs > 0 || enforced > 0 {
+					log.Printf("[devices-poller] status ok=%d err=%d hold=%d cfg=%d",
+						probed, errs, enforced, nDev)
 				}
 				work := mining.Read(paths.MiningWork(dataDir), float64(pol.MiningWorkMaxAgeSec))
 				if work != "" {
