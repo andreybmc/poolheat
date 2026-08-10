@@ -23426,12 +23426,21 @@
                   : "Restart") +
                 "</button>"
               : "";
+            const verRaw = (p.version && String(p.version).trim()) || "";
+            const ver =
+              verRaw &&
+              (verRaw.toLowerCase().startsWith("v") ? verRaw : "v" + verRaw);
             return (
               '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:0.9rem;padding:6px 0;border-bottom:1px solid var(--border,rgba(255,255,255,0.06))">' +
               '<span style="min-width:0">' +
               "<strong>" +
               role +
               "</strong>" +
+              (ver
+                ? ' <span style="opacity:0.75;font-size:0.78rem;font-variant-numeric:tabular-nums">' +
+                  ver +
+                  "</span>"
+                : "") +
               (pid
                 ? ' <span style="opacity:0.6;font-size:0.82rem">' +
                   pid +

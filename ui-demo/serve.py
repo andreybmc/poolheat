@@ -6728,6 +6728,71 @@ def _force_stop_edge_pollers() -> dict:
 
 
 
+
+_poller_ver_cache: dict[str, tuple[float, str]] = {}
+_POLLER_VER_TTL = 30.0  # seconds — avoid -version on every Info refresh
+
+
+def _role_service_version(role: str, cmd: str = "") -> str | None:
+    """
+    Version string for Info → Processes.
+    serve → app VERSION; Go pollers → `binary -version`.
+    """
+    role = str(role or "").strip().lower()
+    cmd = str(cmd or "")
+    now = time.time()
+
+    def _cached(key: str, producer) -> str | None:
+        hit = _poller_ver_cache.get(key)
+        if hit and (now - hit[0]) < _POLLER_VER_TTL:
+            return hit[1] or None
+        try:
+            ver = producer() or ""
+        except Exception:
+            ver = ""
+        _poller_ver_cache[key] = (now, ver)
+        return ver or None
+
+    if role == "serve":
+        return _cached("serve", lambda: str(get_app_version() or "").strip())
+
+    if role in ("miner-poller", "devices-poller"):
+        bin_path = None
+        # prefer path from cmdline if absolute
+        for tok in cmd.split():
+            if "poolheat-miner-poller" in tok or "poolheat-devices-poller" in tok:
+                if tok.startswith("/") or tok.startswith("./"):
+                    bin_path = tok
+                    break
+        if not bin_path:
+            if role == "miner-poller":
+                bin_path = _resolve_miner_poller_bin()
+            else:
+                try:
+                    bin_path = _resolve_devices_poller_bin()
+                except Exception:
+                    bin_path = None
+        if not bin_path:
+            # python poller child
+            if "serve.py" in cmd:
+                return _cached(f"{role}:py", lambda: str(get_app_version() or "").strip() + " (py)")
+            return None
+
+        def _prod():
+            bi = _poller_bin_info(bin_path)
+            v = str(bi.get("version") or "").strip()
+            # strip noise
+            if v.lower().startswith("version"):
+                v = v.split(None, 1)[-1] if " " in v else v
+            return v
+
+        return _cached(f"{role}:{bin_path}", _prod)
+
+    if role == "sniffer":
+        return None
+    return None
+
+
 def restart_poolheat_role(role: str) -> dict:
     """
     Restart one Poolheat edge process from Info UI.
@@ -14765,6 +14830,7 @@ def _poolheat_process_roles() -> dict:
                 up = round(max(0.0, time.time() - float(_SERVE_BOOT_TS)), 1)
             except Exception:
                 up = None
+        ver = _role_service_version(role, cmd or "")
         found[role] = {
             "role": role,
             "pid": pid,
@@ -14772,6 +14838,7 @@ def _poolheat_process_roles() -> dict:
             "rss_mib": round(rss / (1024 * 1024), 1) if rss is not None else None,
             "uptime_sec": up,
             "uptime": _fmt_uptime_short(up),
+            "version": ver,
             "cmd": (cmd or "")[:160],
             "restartable": role in ("serve", "miner-poller", "devices-poller"),
         }
@@ -14871,6 +14938,14 @@ def _poolheat_process_roles() -> dict:
         "sniffer": 3,
     }
     procs = sorted(found.values(), key=lambda p: order.get(p["role"], 9))
+    for p in procs:
+        if not p.get("version"):
+            try:
+                p["version"] = _role_service_version(
+                    str(p.get("role") or ""), str(p.get("cmd") or "")
+                )
+            except Exception:
+                pass
     total_rss = sum(int(p["rss_b"] or 0) for p in procs)
     return {
         "processes": procs,
@@ -23582,6 +23657,9 @@ def _tg_info_resources_text(lang: str = "ru") -> str:
         up = p.get("uptime") or _fmt_uptime_short(p.get("uptime_sec"), lang=lang)
         label = role_label.get(role, role)
         bits = [rss_s]
+        ver = str(p.get("version") or "").strip()
+        if ver:
+            bits.append(f"v{ver}" if not ver.lower().startswith("v") else ver)
         if up and up != "—":
             bits.append(f"↑{up}")
         if pid_s:
@@ -23600,6 +23678,9 @@ def _tg_info_resources_text(lang: str = "ru") -> str:
         pid = p.get("pid")
         up = p.get("uptime") or _fmt_uptime_short(p.get("uptime_sec"), lang=lang)
         bits = [rss_s]
+        ver = str(p.get("version") or "").strip()
+        if ver:
+            bits.append(f"v{ver}" if not ver.lower().startswith("v") else ver)
         if up and up != "—":
             bits.append(f"↑{up}")
         if pid is not None:
