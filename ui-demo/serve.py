@@ -5458,9 +5458,20 @@ def _mining_work_state() -> str | None:
     return None
 
 
-# Throttle enforce_desired re-apply (per device)
+# Throttle enforce_desired re-apply (per device).
+# Keep short: poller interval is often 5s — 15s made "second restore" feel stuck.
 _devices_enforce_ts: dict[str, float] = {}
-_DEVICES_ENFORCE_COOLDOWN_SEC = 15.0
+_devices_enforce_last_reported: dict[str, bool] = {}
+_DEVICES_ENFORCE_COOLDOWN_SEC = 3.0
+
+
+def _device_enforce_cooldown_sec() -> float:
+    """Cooldown between restores ≈ one poller tick (min 2s, max 15s)."""
+    try:
+        iv = float(get_devices_poller_cfg().get("interval_sec") or 5)
+    except Exception:
+        iv = 5.0
+    return max(2.0, min(15.0, iv))
 
 
 def _device_enforce_desired(
@@ -5489,12 +5500,20 @@ def _device_enforce_desired(
         _device_update_in_store(did, _seed)
         return None
     if bool(reported) is bool(desired):
+        # matched — clear cooldown bookkeeping for next external flip
+        _devices_enforce_last_reported.pop(did, None)
         return None
     now = time.time()
     last = float(_devices_enforce_ts.get(did) or 0)
-    if now - last < _DEVICES_ENFORCE_COOLDOWN_SEC:
+    cool = _device_enforce_cooldown_sec()
+    # If reported flipped again since last enforce attempt, allow immediately
+    # (user toggled SmartLife twice) — only throttle same stuck mismatch.
+    prev_rep = _devices_enforce_last_reported.get(did)
+    same_mismatch = prev_rep is not None and bool(prev_rep) is bool(reported)
+    if same_mismatch and (now - last) < cool:
         return None
     _devices_enforce_ts[did] = now
+    _devices_enforce_last_reported[did] = bool(reported)
     alias = str(cfg.get("alias") or did)
     # Event log is English (same as policy log)
     name = (
@@ -6873,10 +6892,11 @@ def devices_hold_tick() -> dict:
 def devices_hold_loop() -> None:
     """Daemon: restore enforce_desired devices in background (UI-refresh path)."""
     print("[devices-hold] loop start", flush=True)
-    # shorter boot delay — hold must work without opening UI
-    time.sleep(8)
+    # short boot delay — hold must work without opening UI
+    time.sleep(3)
     while not _devices_hold_stop.is_set():
-        iv = 10
+        iv = 5
+        t0 = time.time()
         try:
             # reload config from disk each tick (OTA / UI saves)
             try:
@@ -6887,23 +6907,26 @@ def devices_hold_loop() -> None:
             if not pol.get("enabled", True):
                 _devices_hold_stop.wait(30)
                 continue
+            # Same interval as devices poller (default 5s) — do not floor at 8s
             try:
-                iv = max(8, min(60, int(pol.get("interval_sec") or 10)))
+                iv = max(3, min(120, int(pol.get("interval_sec") or 5)))
             except (TypeError, ValueError):
-                iv = 10
+                iv = 5
             summary = devices_hold_tick()
-            # always log summary lightly so we can see hold is alive
             if summary.get("checked") or summary.get("restored") or summary.get("errors"):
                 print(
                     f"[devices-hold] checked={summary.get('checked')} "
                     f"restored={summary.get('restored')} "
-                    f"err={summary.get('errors')}",
+                    f"err={summary.get('errors')} interval={iv}s",
                     flush=True,
                 )
         except Exception as e:
             print(f"[devices-hold] tick: {e}", flush=True)
-            iv = 15
-        _devices_hold_stop.wait(timeout=float(iv))
+            iv = 5
+        # account for tick duration so effective period ≈ poller interval
+        spent = time.time() - t0
+        wait = max(0.5, float(iv) - spent)
+        _devices_hold_stop.wait(timeout=wait)
     print("[devices-hold] loop stop", flush=True)
 
 

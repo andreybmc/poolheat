@@ -12,7 +12,8 @@ import (
 	"github.com/andreybmc/poolheat/edge/internal/state"
 )
 
-const enforceCooldownSec = 8.0
+// Align with serve.py hold: ~one poller tick, not 15s.
+const enforceCooldownSec = 3.0
 
 // Store holds mutable runtime + deadlines for one process.
 type Store struct {
