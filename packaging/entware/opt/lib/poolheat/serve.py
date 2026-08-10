@@ -321,6 +321,8 @@ TELEGRAM_CFG_FILE = DATA / "telegram_config.json"
 # Virtual / alias sensors (Peripherals → Sensors)
 SENSORS_CFG_FILE = DATA / "sensors_config.json"
 FIRMWARE_CFG_FILE = DATA / "firmware_config.json"
+# Software auto-update (GitHub OTA) — Keenetic-style toggle + schedule
+UPDATE_CFG_FILE = DATA / "update_config.json"
 # Policy / TG action log — survives restart (was RAM-only, wiped on OTA)
 POLICY_EVENTS_FILE = DATA / "policy_events.json"
 # Defaults; live limits come from logs_config.json (Advanced settings)
@@ -372,6 +374,27 @@ _update_state: dict = {
     "last_check": None,
     "last_apply": None,
 }
+_update_cfg_lock = threading.Lock()
+_auto_update_stop = threading.Event()
+
+# auto_update schedule keys (local router time)
+UPDATE_SCHEDULES = (
+    "always",  # works constantly
+    "night",  # 02:00–06:00 daily
+    "weekdays_night",  # Mon–Fri 02:00–06:00
+    "weekends_night",  # Sat–Sun 02:00–06:00
+)
+
+DEFAULT_UPDATE_CFG: dict = {
+    "auto_update": False,
+    "schedule": "always",
+    "check_interval_min": 360,  # how often to check when schedule allows
+    "last_check_ts": None,
+    "last_apply_ts": None,
+    "last_result": None,  # last auto check/apply summary
+}
+
+_update_cfg: dict = dict(DEFAULT_UPDATE_CFG)
 _miner_cfg_lock = threading.Lock()
 _zone_cfg_lock = threading.Lock()
 _policy_lock = threading.Lock()
@@ -16067,15 +16090,17 @@ def _flush_update_restart_notify() -> None:
             pass
 
 
-def apply_github_update(ref: str | None = None) -> dict:
+def apply_github_update(ref: str | None = None, *, source: str = "manual") -> dict:
     """
     Download GitHub archive (tag/branch) and install serve.py + UI + VERSION.
     Does not overwrite /opt/etc/poolheat/config.json.
+    ``source`` is written to the action log (manual | auto | telegram).
     """
     if not _update_lock.acquire(blocking=False):
         return {"ok": False, "error": "update already in progress"}
     _update_state["busy"] = True
     from_ver = get_app_version()
+    apply_source = (source or "manual").strip() or "manual"
     try:
         if not _is_entware_layout():
             # allow local demo install into ROOT / next to serve.py
@@ -16357,6 +16382,7 @@ def apply_github_update(ref: str | None = None) -> dict:
             "ref": target_ref,
             "url": used_url,
             "restart": entware,
+            "source": apply_source,
             "message": (
                 "Файлы обновлены"
                 + ("; сервис перезапускается…" if entware else "")
@@ -16364,14 +16390,259 @@ def apply_github_update(ref: str | None = None) -> dict:
             "applied_at": datetime.now().isoformat(timespec="seconds"),
         }
         _update_state["last_apply"] = result
+        # Action log (disk) — survives restart; written before process kill
+        try:
+            _log_update_apply(result, source=apply_source)
+        except Exception as e:
+            print(f"[update] log apply: {e}")
         if entware:
             _restart_poolheat_later()
         return result
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        err = {"ok": False, "error": str(e), "source": apply_source}
+        try:
+            _log_update_apply(err, source=apply_source)
+        except Exception:
+            pass
+        return err
     finally:
         _update_state["busy"] = False
         _update_lock.release()
+
+
+def _normalize_update_cfg(raw: dict | None) -> dict:
+    cfg = dict(DEFAULT_UPDATE_CFG)
+    if isinstance(raw, dict):
+        cfg.update({k: raw[k] for k in raw if k in DEFAULT_UPDATE_CFG or k in (
+            "auto_update", "schedule", "check_interval_min",
+            "last_check_ts", "last_apply_ts", "last_result",
+        )})
+    cfg["auto_update"] = bool(cfg.get("auto_update"))
+    sch = str(cfg.get("schedule") or "always").strip().lower()
+    if sch not in UPDATE_SCHEDULES:
+        sch = "always"
+    cfg["schedule"] = sch
+    try:
+        iv = int(cfg.get("check_interval_min") or 360)
+    except (TypeError, ValueError):
+        iv = 360
+    cfg["check_interval_min"] = max(30, min(24 * 60, iv))
+    return cfg
+
+
+def _load_update_cfg() -> None:
+    global _update_cfg
+    with _update_cfg_lock:
+        raw = _load_json(UPDATE_CFG_FILE, DEFAULT_UPDATE_CFG)
+        _update_cfg = _normalize_update_cfg(raw if isinstance(raw, dict) else None)
+
+
+def _save_update_cfg() -> None:
+    with _update_cfg_lock:
+        _save_json(UPDATE_CFG_FILE, dict(_update_cfg))
+
+
+def get_update_cfg() -> dict:
+    with _update_cfg_lock:
+        return dict(_update_cfg)
+
+
+def set_update_cfg(patch: dict | None) -> dict:
+    """Merge patch into update_config.json (auto_update / schedule / interval)."""
+    global _update_cfg
+    if not isinstance(patch, dict):
+        patch = {}
+    with _update_cfg_lock:
+        cur = dict(_update_cfg)
+        if "auto_update" in patch:
+            cur["auto_update"] = bool(patch.get("auto_update"))
+        if "schedule" in patch:
+            cur["schedule"] = str(patch.get("schedule") or "always")
+        if "check_interval_min" in patch:
+            try:
+                cur["check_interval_min"] = int(patch.get("check_interval_min"))
+            except (TypeError, ValueError):
+                pass
+        _update_cfg = _normalize_update_cfg(cur)
+        _save_json(UPDATE_CFG_FILE, dict(_update_cfg))
+        return dict(_update_cfg)
+
+
+def _update_schedule_active(cfg: dict | None = None, now: datetime | None = None) -> bool:
+    """True if auto-update may run under the selected schedule (router local time)."""
+    cfg = cfg if isinstance(cfg, dict) else get_update_cfg()
+    sch = str(cfg.get("schedule") or "always").strip().lower()
+    if sch == "always" or sch not in UPDATE_SCHEDULES:
+        return True
+    now = now or datetime.now()
+    # Night window 02:00 ≤ t < 06:00 (same spirit as Keenetic quiet hours)
+    night = 2 <= int(now.hour) < 6
+    wd = int(now.weekday())  # Mon=0 … Sun=6
+    if sch == "night":
+        return night
+    if sch == "weekdays_night":
+        return night and wd < 5
+    if sch == "weekends_night":
+        return night and wd >= 5
+    return True
+
+
+def _log_update_apply(result: dict, *, source: str = "manual") -> None:
+    """Write successful (or failed) OTA into action / policy event log."""
+    if not isinstance(result, dict):
+        return
+    src = (source or "manual").strip() or "manual"
+    if result.get("ok"):
+        fr = result.get("from_version") or "?"
+        to = result.get("to_version") or get_app_version() or "?"
+        ref = result.get("ref") or ""
+        msg = f"UPDATE {src}: {fr} → {to}"
+        if ref:
+            msg += f" ({ref})"
+        _policy_log(
+            "ok",
+            msg,
+            source=src,
+            from_version=fr,
+            to_version=to,
+            ref=ref or None,
+        )
+        # persist last success on disk (auto-update status UI)
+        try:
+            with _update_cfg_lock:
+                _update_cfg["last_apply_ts"] = time.time()
+                _update_cfg["last_result"] = {
+                    "ok": True,
+                    "source": src,
+                    "from_version": fr,
+                    "to_version": to,
+                    "ref": ref or None,
+                    "at": result.get("applied_at")
+                    or datetime.now().isoformat(timespec="seconds"),
+                }
+                _save_json(UPDATE_CFG_FILE, dict(_update_cfg))
+        except Exception:
+            pass
+    else:
+        err = str(result.get("error") or "failed")
+        _policy_log("err", f"UPDATE {src}: {err}", source=src, error=err)
+
+
+def auto_update_tick(*, force: bool = False) -> dict:
+    """
+    One auto-update cycle: if enabled + schedule window + interval → check GitHub;
+    install when update_available. Logs success to action log.
+    """
+    cfg = get_update_cfg()
+    out: dict = {
+        "ok": True,
+        "ran": False,
+        "skipped": None,
+        "auto_update": bool(cfg.get("auto_update")),
+        "schedule": cfg.get("schedule"),
+        "schedule_active": _update_schedule_active(cfg),
+    }
+    if not cfg.get("auto_update") and not force:
+        out["skipped"] = "disabled"
+        return out
+    if not _update_schedule_active(cfg) and not force:
+        out["skipped"] = "schedule"
+        return out
+    if _update_state.get("busy"):
+        out["skipped"] = "busy"
+        return out
+
+    now = time.time()
+    interval = max(30, int(cfg.get("check_interval_min") or 360)) * 60
+    last_ts = cfg.get("last_check_ts")
+    try:
+        last_f = float(last_ts) if last_ts is not None else 0.0
+    except (TypeError, ValueError):
+        last_f = 0.0
+    if not force and last_f > 0 and (now - last_f) < interval:
+        out["skipped"] = "interval"
+        out["next_check_in_sec"] = int(interval - (now - last_f))
+        return out
+
+    out["ran"] = True
+    try:
+        chk = check_github_update(lang="en")
+    except Exception as e:
+        out["ok"] = False
+        out["error"] = str(e)
+        try:
+            with _update_cfg_lock:
+                _update_cfg["last_check_ts"] = time.time()
+                _update_cfg["last_result"] = {
+                    "ok": False,
+                    "error": str(e),
+                    "at": datetime.now().isoformat(timespec="seconds"),
+                }
+                _save_json(UPDATE_CFG_FILE, dict(_update_cfg))
+        except Exception:
+            pass
+        return out
+
+    try:
+        with _update_cfg_lock:
+            _update_cfg["last_check_ts"] = time.time()
+            _update_cfg["last_result"] = {
+                "ok": bool(chk.get("ok")),
+                "status": chk.get("status"),
+                "current_version": chk.get("current_version"),
+                "latest_version": chk.get("latest_version"),
+                "update_available": bool(chk.get("update_available")),
+                "at": chk.get("checked_at")
+                or datetime.now().isoformat(timespec="seconds"),
+            }
+            _save_json(UPDATE_CFG_FILE, dict(_update_cfg))
+    except Exception:
+        pass
+
+    out["check"] = {
+        "status": chk.get("status"),
+        "update_available": bool(chk.get("update_available")),
+        "current_version": chk.get("current_version"),
+        "latest_version": chk.get("latest_version"),
+    }
+
+    if not chk.get("update_available"):
+        out["skipped"] = "up_to_date"
+        return out
+
+    # Install latest release / tag from last_check (logs once with source=auto)
+    result = apply_github_update(None, source="auto")
+    out["apply"] = {
+        "ok": bool(result.get("ok")) if isinstance(result, dict) else False,
+        "from_version": (result or {}).get("from_version") if isinstance(result, dict) else None,
+        "to_version": (result or {}).get("to_version") if isinstance(result, dict) else None,
+        "error": (result or {}).get("error") if isinstance(result, dict) else None,
+    }
+    out["ok"] = bool(out["apply"]["ok"])
+    return out
+
+
+def auto_update_loop() -> None:
+    """Background: check/install GitHub updates on schedule (Keenetic-style)."""
+    print("[update] auto-update loop start", flush=True)
+    # first pass after boot delay so network/DNS settle
+    time.sleep(45)
+    while not _auto_update_stop.is_set():
+        try:
+            cfg = get_update_cfg()
+            if cfg.get("auto_update"):
+                r = auto_update_tick(force=False)
+                if r.get("ran"):
+                    print(
+                        f"[update] auto tick: avail={ (r.get('check') or {}).get('update_available') } "
+                        f"skip={r.get('skipped')} apply={ (r.get('apply') or {}).get('ok') }",
+                        flush=True,
+                    )
+        except Exception as e:
+            print(f"[update] auto loop: {e}", flush=True)
+        # wake often enough for night windows; real throttle is check_interval_min
+        _auto_update_stop.wait(120)
+    print("[update] auto-update loop stop", flush=True)
 
 
 def _add_to_16(s: str) -> bytes:
@@ -24286,7 +24557,7 @@ def _tg_handle_callback(cq: dict) -> None:
 
                     def _do_install() -> None:
                         try:
-                            result = apply_github_update(None)
+                            result = apply_github_update(None, source="telegram")
                             ok = bool(result.get("ok"))
                             if ok:
                                 to_v = result.get("to_version") or get_app_version() or "?"
@@ -27590,6 +27861,22 @@ class Handler(SimpleHTTPRequestHandler):
                     "busy": bool(_update_state.get("busy")),
                     "last_check": _update_state.get("last_check"),
                     "last_apply": _update_state.get("last_apply"),
+                    "auto_update": get_update_cfg(),
+                    "schedule_active": _update_schedule_active(),
+                    "schedules": list(UPDATE_SCHEDULES),
+                },
+            )
+            return
+        if path in ("/api/update/config", "/api/update/auto"):
+            cfg = get_update_cfg()
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "config": cfg,
+                    "schedule_active": _update_schedule_active(cfg),
+                    "schedules": list(UPDATE_SCHEDULES),
+                    "busy": bool(_update_state.get("busy")),
                 },
             )
             return
@@ -28036,6 +28323,27 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
+        if path in ("/api/update/config", "/api/update/auto"):
+            try:
+                req = self._read_json_body()
+            except Exception:
+                req = {}
+            if not isinstance(req, dict):
+                req = {}
+            try:
+                cfg = set_update_cfg(req)
+                self._json_response(
+                    200,
+                    {
+                        "ok": True,
+                        "config": cfg,
+                        "schedule_active": _update_schedule_active(cfg),
+                        "schedules": list(UPDATE_SCHEDULES),
+                    },
+                )
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
         if path in ("/api/update/apply", "/api/update/install"):
             try:
                 req = self._read_json_body()
@@ -28055,7 +28363,9 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 return
             try:
-                result = apply_github_update(ref=str(ref) if ref else None)
+                result = apply_github_update(
+                    ref=str(ref) if ref else None, source="manual"
+                )
                 code = 200 if result.get("ok") else 500
                 self._json_response(code, result)
             except Exception as e:
@@ -29830,6 +30140,20 @@ def main() -> None:
         tp.start()
     else:
         print("policy:            off (edge_policy role disabled)")
+    # Software auto-update (GitHub) — independent of policy role
+    try:
+        _load_update_cfg()
+        print(
+            f"auto-update:       "
+            f"{'on' if get_update_cfg().get('auto_update') else 'off'} · "
+            f"schedule={get_update_cfg().get('schedule')}"
+        )
+        tu = threading.Thread(
+            target=auto_update_loop, name="auto-update", daemon=True
+        )
+        tu.start()
+    except Exception as e:
+        print(f"auto-update:       failed to start: {e}")
     if role_enabled("app_bot"):
         tt = threading.Thread(target=telegram_loop, name="telegram-bot", daemon=True)
         tt.start()

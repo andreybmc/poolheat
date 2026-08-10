@@ -2821,6 +2821,69 @@
       font-variant-numeric: tabular-nums;
     }
 
+    /* Software auto-update (Keenetic-style) */
+    .auto-update-block {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg2, var(--bg));
+    }
+    .auto-update-block .au-title {
+      font-size: 0.95rem;
+      font-weight: 650;
+      color: var(--text);
+      margin: 0;
+    }
+    .auto-update-block .au-desc {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.45;
+      margin: 0;
+    }
+    .auto-update-block .au-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 16px;
+    }
+    .auto-update-block .au-row .au-label {
+      font-size: 0.88rem;
+      color: var(--muted);
+      min-width: 10rem;
+    }
+    .auto-update-block .au-schedule {
+      flex: 1 1 220px;
+      min-width: 180px;
+      max-width: 360px;
+    }
+    .auto-update-block .au-schedule label {
+      display: block;
+      font-size: 0.72rem;
+      color: var(--dim);
+      margin-bottom: 4px;
+    }
+    .auto-update-block .au-schedule select {
+      width: 100%;
+    }
+    .auto-update-block .au-meta {
+      font-size: 0.75rem;
+      color: var(--dim);
+      margin: 0;
+      line-height: 1.4;
+    }
+    .auto-update-block .dev-switch-label {
+      min-width: 0;
+      margin-right: 0;
+      margin-left: 8px;
+      text-align: left;
+      font-size: 0.88rem;
+      font-weight: 500;
+      color: var(--muted);
+    }
+
     .update-notes {
       display: none;
       margin: 0;
@@ -8513,6 +8576,32 @@
               <span class="rn-label" data-i18n="info.release_notes">Release notes</span>
               <div id="info-update-notes-body"></div>
             </div>
+
+            <div class="auto-update-block" id="auto-update-block">
+              <p class="au-title" data-i18n="upd.auto_title">Automatic update</p>
+              <p class="au-desc" data-i18n="upd.auto_desc">
+                poolheat checks GitHub for new releases and installs them automatically.
+                Updates may not apply immediately after a release — only when the schedule window is open.
+              </p>
+              <div class="au-row">
+                <span class="au-label" data-i18n="upd.auto_toggle">Automatic update</span>
+                <label class="dev-switch" id="auto-update-switch" title="Automatic update">
+                  <input type="checkbox" id="auto-update-enabled" />
+                  <span class="dev-switch-track" aria-hidden="true"><span class="dev-switch-thumb"></span></span>
+                  <span class="dev-switch-label" id="auto-update-label" data-i18n="upd.auto_off">Off</span>
+                </label>
+              </div>
+              <div class="au-schedule" id="auto-update-schedule-wrap">
+                <label for="auto-update-schedule" data-i18n="upd.schedule">Work schedule</label>
+                <select id="auto-update-schedule">
+                  <option value="always" data-i18n="upd.sched.always">Works constantly</option>
+                  <option value="night" data-i18n="upd.sched.night">At night 02:00–06:00</option>
+                  <option value="weekdays_night" data-i18n="upd.sched.weekdays_night">Weekdays night 02:00–06:00</option>
+                  <option value="weekends_night" data-i18n="upd.sched.weekends_night">Weekends night 02:00–06:00</option>
+                </select>
+              </div>
+              <p class="au-meta" id="auto-update-meta">—</p>
+            </div>
           </div>
         </div>
 
@@ -9676,6 +9765,23 @@
         "info.source": "source —",
         "info.update_hint": "Click “Check for updates” — we compare version with the repository. Update installs UI+serve, does not touch config.json, restarts the service.",
         "info.release_notes": "Release notes",
+        "upd.auto_title": "Automatic update",
+        "upd.auto_desc": "poolheat checks GitHub for new releases and installs them automatically. Your device may not update immediately after a release — only when the schedule window is open. Successful installs are written to the action log.",
+        "upd.auto_toggle": "Automatic update",
+        "upd.auto_on": "On",
+        "upd.auto_off": "Off",
+        "upd.schedule": "Work schedule",
+        "upd.sched.always": "Works constantly",
+        "upd.sched.night": "At night 02:00–06:00",
+        "upd.sched.weekdays_night": "Weekdays night 02:00–06:00",
+        "upd.sched.weekends_night": "Weekends night 02:00–06:00",
+        "upd.auto_meta_off": "Auto-update off · check interval {min} min when enabled",
+        "upd.auto_meta_on": "Auto-update on · {sched} · window {win} · every {min} min",
+        "upd.auto_meta_last": "Last auto check: {at}",
+        "upd.auto_meta_apply": "Last auto install: {at} · {from} → {to}",
+        "upd.win_open": "open now",
+        "upd.win_closed": "closed now",
+        "upd.auto_saved": "Auto-update settings saved",
         "upd.up_to_date": "up to date",
         "upd.available": "update available",
         "upd.local_ahead": "locally newer",
@@ -10472,6 +10578,23 @@
         "info.commit": "commit —",
         "info.source": "источник —",
         "info.update_hint": "Нажмите «Проверить обновления» — сравним версию с репозиторием. Установка обновит UI+serve, config.json не трогает, перезапустит сервис.",
+        "upd.auto_title": "Автоматическое обновление",
+        "upd.auto_desc": "poolheat проверяет GitHub на новые релизы и устанавливает их автоматически. Устройство может обновиться не сразу после выпуска — только в окне расписания. Успешная установка пишется в журнал действий.",
+        "upd.auto_toggle": "Автоматическое обновление",
+        "upd.auto_on": "Вкл",
+        "upd.auto_off": "Выкл",
+        "upd.schedule": "Расписание работы",
+        "upd.sched.always": "Работает постоянно",
+        "upd.sched.night": "Ночью 02:00–06:00",
+        "upd.sched.weekdays_night": "Будни ночью 02:00–06:00",
+        "upd.sched.weekends_night": "Выходные ночью 02:00–06:00",
+        "upd.auto_meta_off": "Автообновление выкл · интервал проверки {min} мин (когда включено)",
+        "upd.auto_meta_on": "Автообновление вкл · {sched} · окно {win} · каждые {min} мин",
+        "upd.auto_meta_last": "Последняя авто-проверка: {at}",
+        "upd.auto_meta_apply": "Последняя авто-установка: {at} · {from} → {to}",
+        "upd.win_open": "сейчас открыто",
+        "upd.win_closed": "сейчас закрыто",
+        "upd.auto_saved": "Настройки автообновления сохранены",
         "info.release_notes": "Заметки к релизу",
         "upd.up_to_date": "актуально",
         "upd.available": "есть обновление",
@@ -23585,6 +23708,173 @@
       el.textContent = String(ver).replace(/^v/i, "");
     }
 
+    /** Auto-update config (Keenetic-style) — GET/POST /api/update/config */
+    let _autoUpdateCfg = null;
+    let _autoUpdateScheduleActive = false;
+    let _autoUpdateSaving = false;
+
+    function _schedLabel(key) {
+      const map = {
+        always: "upd.sched.always",
+        night: "upd.sched.night",
+        weekdays_night: "upd.sched.weekdays_night",
+        weekends_night: "upd.sched.weekends_night",
+      };
+      const fb = {
+        always: "Works constantly",
+        night: "At night 02:00–06:00",
+        weekdays_night: "Weekdays night 02:00–06:00",
+        weekends_night: "Weekends night 02:00–06:00",
+      };
+      const k = map[key] || map.always;
+      return typeof t === "function" ? t(k, fb[key] || fb.always) : fb[key] || fb.always;
+    }
+
+    function renderAutoUpdateUI(cfg, scheduleActive) {
+      _autoUpdateCfg = cfg && typeof cfg === "object" ? cfg : null;
+      _autoUpdateScheduleActive = !!scheduleActive;
+      const enEl = document.getElementById("auto-update-enabled");
+      const sw = document.getElementById("auto-update-switch");
+      const lab = document.getElementById("auto-update-label");
+      const sel = document.getElementById("auto-update-schedule");
+      const meta = document.getElementById("auto-update-meta");
+      const on = !!(cfg && cfg.auto_update);
+      if (enEl && enEl.checked !== on) enEl.checked = on;
+      if (sw) sw.classList.toggle("is-on", on);
+      if (lab) {
+        lab.textContent = on
+          ? typeof t === "function"
+            ? t("upd.auto_on", "On")
+            : "On"
+          : typeof t === "function"
+            ? t("upd.auto_off", "Off")
+            : "Off";
+      }
+      if (sel) {
+        const sch = (cfg && cfg.schedule) || "always";
+        if (sel.value !== sch) sel.value = sch;
+        sel.disabled = !on;
+      }
+      if (meta) {
+        const min = (cfg && cfg.check_interval_min) || 360;
+        const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
+        const lines = [];
+        if (!on) {
+          lines.push(
+            tr("upd.auto_meta_off", "Auto-update off · check interval {min} min when enabled").replace(
+              "{min}",
+              String(min)
+            )
+          );
+        } else {
+          const win = _autoUpdateScheduleActive
+            ? tr("upd.win_open", "open now")
+            : tr("upd.win_closed", "closed now");
+          lines.push(
+            tr(
+              "upd.auto_meta_on",
+              "Auto-update on · {sched} · window {win} · every {min} min"
+            )
+              .replace("{sched}", _schedLabel((cfg && cfg.schedule) || "always"))
+              .replace("{win}", win)
+              .replace("{min}", String(min))
+          );
+        }
+        const lr = cfg && cfg.last_result;
+        if (lr && lr.at) {
+          if (lr.from_version && lr.to_version && lr.ok) {
+            lines.push(
+              tr("upd.auto_meta_apply", "Last auto install: {at} · {from} → {to}")
+                .replace("{at}", String(lr.at))
+                .replace("{from}", String(lr.from_version))
+                .replace("{to}", String(lr.to_version))
+            );
+          } else {
+            lines.push(
+              tr("upd.auto_meta_last", "Last auto check: {at}").replace(
+                "{at}",
+                String(lr.at)
+              )
+            );
+          }
+        } else if (cfg && cfg.last_check_ts) {
+          try {
+            const d = new Date(Number(cfg.last_check_ts) * 1000);
+            if (!Number.isNaN(d.getTime())) {
+              lines.push(
+                tr("upd.auto_meta_last", "Last auto check: {at}").replace(
+                  "{at}",
+                  d.toLocaleString()
+                )
+              );
+            }
+          } catch (_) { /* ignore */ }
+        }
+        meta.textContent = lines.join(" · ");
+      }
+    }
+
+    async function loadAutoUpdateConfig() {
+      try {
+        const res = await fetch("/api/update/config", { cache: "no-store" });
+        const body = await res.json();
+        if (!res.ok || body.ok === false) return;
+        renderAutoUpdateUI(body.config || {}, body.schedule_active);
+      } catch (_) { /* ignore */ }
+    }
+
+    async function saveAutoUpdateConfig(patch) {
+      if (_autoUpdateSaving) return;
+      _autoUpdateSaving = true;
+      try {
+        const res = await fetch("/api/update/config", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch || {}),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        renderAutoUpdateUI(body.config || {}, body.schedule_active);
+        if (typeof toastSuccess === "function") {
+          toastSuccess(
+            typeof t === "function"
+              ? t("upd.auto_saved", "Auto-update settings saved")
+              : "Auto-update settings saved"
+          );
+        }
+      } catch (e) {
+        if (typeof toastError === "function") {
+          toastError("Auto-update: " + (e.message || e));
+        }
+        // reload authoritative state
+        void loadAutoUpdateConfig();
+      } finally {
+        _autoUpdateSaving = false;
+      }
+    }
+
+    function wireAutoUpdateUI() {
+      const enEl = document.getElementById("auto-update-enabled");
+      const sel = document.getElementById("auto-update-schedule");
+      enEl?.addEventListener("change", () => {
+        const on = !!enEl.checked;
+        void saveAutoUpdateConfig({
+          auto_update: on,
+          schedule: (sel && sel.value) || "always",
+        });
+      });
+      sel?.addEventListener("change", () => {
+        void saveAutoUpdateConfig({
+          auto_update: !!(enEl && enEl.checked),
+          schedule: sel.value || "always",
+        });
+      });
+    }
+    wireAutoUpdateUI();
+
     async function loadSystemInfo(opts) {
       opts = opts || {};
       const forceLive = opts.forceLive !== false;
@@ -23624,7 +23914,10 @@
     }
     document.getElementById("btn-info-refresh")?.addEventListener("click", () => {
       void loadSystemInfo({ forceLive: true });
+      void loadAutoUpdateConfig();
     });
+    // load auto-update block once (Info tab)
+    void loadAutoUpdateConfig();
     document.getElementById("btn-tmp-cleanup")?.addEventListener("click", async () => {
       const btn = document.getElementById("btn-tmp-cleanup");
       const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
