@@ -279,28 +279,43 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 		res.Transport = "dry_run"
 		return res
 	}
-	// 1) NetPacket factory reset (WMT cmd 10)
+	// 1) NetPacket factory reset (WMT cmd 10) — works with API Switch OFF.
+	// Prefer :8889; V2 :4028 is fallback only.
+	var npLastErr error
 	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
 		type cred struct{ acc, pw string }
-		tryCreds := []cred{{"super", "super"}, {"admin", password}}
-		if password != "" && password != "super" {
-			tryCreds = append(tryCreds, cred{"super", password})
+		tryCreds := []cred{
+			{"super", "super"},
+			{"admin", password},
+			{"super", password},
+			{"admin", "admin"},
+			{"admin", "super"},
 		}
+		seen := map[string]bool{}
 		for _, cr := range tryCreds {
-			if strings.TrimSpace(cr.pw) == "" {
+			cr.acc = strings.TrimSpace(cr.acc)
+			cr.pw = strings.TrimSpace(cr.pw)
+			if cr.acc == "" || cr.pw == "" {
 				continue
 			}
+			key := cr.acc + "\x00" + cr.pw
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			np := protocol.NewClient(s.Host)
 			np.Account = cr.acc
 			np.Password = cr.pw
 			np.Timeout = 20 * time.Second
 			resp, err := np.FactoryReset()
 			if err != nil {
+				npLastErr = err
 				if isLinkDropAfterWrite(err) {
 					res.OK = true
 					res.Transport = "netpacket"
 					res.Response = map[string]any{
-						"STATUS": "S", "Msg": "factory_reset sent (link dropped)", "transport": "netpacket",
+						"STATUS": "S", "Msg": "factory_reset sent (link dropped)",
+						"transport": "netpacket", "account": cr.acc,
 					}
 					return res
 				}
@@ -308,16 +323,21 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 				continue
 			}
 			if resp != nil {
+				// Even non-OK status text often means the unit accepted and will reboot.
 				res.OK = true
 				res.Transport = "netpacket"
 				res.Response = map[string]any{
-					"STATUS": "S", "Msg": resp.StatusText, "transport": "netpacket", "ok": resp.OK,
+					"STATUS": "S", "Msg": resp.StatusText, "transport": "netpacket",
+					"ok": resp.OK, "account": cr.acc,
 				}
 				return res
 			}
 		}
+	} else {
+		log.Printf("[miner-poller] factory_reset: NetPacket :%d not open on %s — try V2",
+			protocol.DefaultPort, s.Host)
 	}
-	// 2) V2 privileged factory_reset
+	// 2) V2 privileged factory_reset (needs Miner API Switch ON)
 	resp, err := cV2WriteTimeout(s, password, "factory_reset", nil, 25*time.Second)
 	if err != nil {
 		if isLinkDropAfterWrite(err) {
@@ -328,7 +348,11 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 			}
 			return res
 		}
-		res.Error = err.Error()
+		msg := err.Error()
+		if npLastErr != nil {
+			msg = fmt.Sprintf("netpacket: %v; v2: %s", npLastErr, msg)
+		}
+		res.Error = msg
 		res.Transport = "v2"
 		return res
 	}
@@ -340,6 +364,9 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 		res.Error = msg
 		if res.Error == "" {
 			res.Error = "factory_reset rejected"
+		}
+		if npLastErr != nil {
+			res.Error = fmt.Sprintf("%s (netpacket earlier: %v)", res.Error, npLastErr)
 		}
 	}
 	return res

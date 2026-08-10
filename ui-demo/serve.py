@@ -6402,7 +6402,11 @@ def _resolve_devices_poller_bin() -> str | None:
     for p in candidates:
         try:
             if p.is_file() and os.access(p, os.X_OK):
-                return str(p)
+                # resolve() so OTA-replaced path is the real inode we exec
+                try:
+                    return str(p.resolve())
+                except Exception:
+                    return str(p)
         except Exception:
             continue
     return None
@@ -6454,6 +6458,13 @@ def start_devices_poller_process() -> None:
             stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
             start_new_session=True,
         )
+        try:
+            DEVICES_POLLER_PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+            DEVICES_POLLER_PIDFILE.write_text(
+                str(_devices_poller_proc.pid) + "\n", encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"devices-poller:    pidfile seed: {e}", flush=True)
         print(
             f"devices-poller:    {kind} pid {_devices_poller_proc.pid} · "
             f"log {DEVICES_POLLER_LOG}"
@@ -6474,25 +6485,34 @@ def stop_devices_poller_process() -> None:
     global _devices_poller_proc
     proc = _devices_poller_proc
     _devices_poller_proc = None
-    if proc is None:
-        # try pidfile
+    pids: list[int] = []
+    if proc is not None:
         try:
-            if DEVICES_POLLER_PIDFILE.is_file():
-                pid = int(DEVICES_POLLER_PIDFILE.read_text().strip() or "0")
-                if pid > 0:
-                    os.kill(pid, signal.SIGTERM)
+            if proc.poll() is None:
+                pids.append(int(proc.pid))
+                proc.terminate()
         except Exception:
             pass
-        return
     try:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                proc.kill()
+        if DEVICES_POLLER_PIDFILE.is_file():
+            pid = int(DEVICES_POLLER_PIDFILE.read_text().strip() or "0")
+            if pid > 1 and pid != os.getpid():
+                pids.append(pid)
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception:
+                    pass
     except Exception:
         pass
+    if pids:
+        _wait_pids_dead(pids, timeout_sec=2.0)
+    if proc is not None:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=2)
+        except Exception:
+            pass
 
 
 def miner_live_loop() -> None:
@@ -6632,80 +6652,215 @@ def _resolve_miner_poller_bin() -> str | None:
     for p in candidates:
         try:
             if p.is_file() and os.access(p, os.X_OK):
-                return str(p)
+                # resolve() so OTA-replaced path is the real inode we exec
+                try:
+                    return str(p.resolve())
+                except Exception:
+                    return str(p)
         except Exception:
             continue
     return None
 
 
 
-def _kill_named_processes(*name_substrings: str, sig: int = signal.SIGTERM) -> list[int]:
-    """Best-effort kill of processes whose cmdline contains any substring."""
-    killed: list[int] = []
-    me = os.getpid()
+def _pid_exe_path(pid: int) -> str:
+    """/proc/pid/exe target (may end with ' (deleted)' after OTA replace)."""
     try:
-        # BusyBox/Linux: ps w
-        out = subprocess.check_output(
-            ["ps", "w"], stderr=subprocess.DEVNULL, text=True, timeout=5
-        )
+        return os.readlink(f"/proc/{int(pid)}/exe")
     except Exception:
-        try:
-            out = subprocess.check_output(
-                ["ps", "ax"], stderr=subprocess.DEVNULL, text=True, timeout=5
-            )
-        except Exception:
-            return killed
-    for line in out.splitlines():
-        low = line.lower()
-        if not any(s.lower() in low for s in name_substrings):
-            continue
-        parts = line.split()
-        if not parts:
-            continue
-        try:
-            pid = int(parts[0])
-        except ValueError:
-            # some ps: USER PID ...
+        return ""
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        if pid <= 1:
+            return False
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _find_pids_by_name(*name_substrings: str) -> list[int]:
+    """
+    Find PIDs whose cmdline or exe contains any substring.
+    Prefer /proc (reliable on BusyBox/Entware); fall back to `ps w`.
+    """
+    me = os.getpid()
+    needles = [s.lower() for s in name_substrings if s]
+    if not needles:
+        return []
+    found: set[int] = set()
+
+    # 1) /proc scan — works when `ps w` truncates or omits args
+    try:
+        for ent in Path("/proc").iterdir():
+            if not ent.name.isdigit():
+                continue
+            pid = int(ent.name)
+            if pid <= 1 or pid == me:
+                continue
             try:
-                pid = int(parts[1])
+                cmd = _pid_cmdline(pid).lower()
+            except Exception:
+                cmd = ""
+            try:
+                exe = _pid_exe_path(pid).lower()
+            except Exception:
+                exe = ""
+            blob = f"{cmd} {exe}"
+            if any(n in blob for n in needles):
+                found.add(pid)
+    except Exception:
+        pass
+
+    # 2) BusyBox/Linux ps fallback
+    if not found:
+        out = ""
+        for args in (["ps", "w"], ["ps", "ax"], ["ps"]):
+            try:
+                out = subprocess.check_output(
+                    args, stderr=subprocess.DEVNULL, text=True, timeout=5
+                )
+                break
             except Exception:
                 continue
-        if pid <= 1 or pid == me:
-            continue
+        for line in (out or "").splitlines():
+            low = line.lower()
+            if not any(n in low for n in needles):
+                continue
+            parts = line.split()
+            if not parts:
+                continue
+            pid = None
+            for tok in parts[:3]:
+                try:
+                    pid = int(tok)
+                    break
+                except ValueError:
+                    continue
+            if pid is None or pid <= 1 or pid == me:
+                continue
+            found.add(pid)
+
+    return sorted(found)
+
+
+def _kill_named_processes(*name_substrings: str, sig: int = signal.SIGTERM) -> list[int]:
+    """Best-effort kill of processes matching name substrings (cmdline/exe)."""
+    killed: list[int] = []
+    for pid in _find_pids_by_name(*name_substrings):
         try:
             os.kill(pid, sig)
             killed.append(pid)
         except Exception:
             pass
+        # also try process group (start_new_session=True → pgid == pid)
+        try:
+            os.killpg(pid, sig)
+        except Exception:
+            pass
     return killed
+
+
+def _wait_pids_dead(pids: list[int], timeout_sec: float = 5.0) -> list[int]:
+    """Wait until pids exit. Returns still-alive leftovers."""
+    deadline = time.time() + max(0.2, float(timeout_sec))
+    left = {int(p) for p in pids if p and p > 1}
+    while left and time.time() < deadline:
+        left = {p for p in left if _pid_alive(p)}
+        if not left:
+            break
+        time.sleep(0.1)
+    return sorted(left)
 
 
 def _force_stop_named_poller(kind: str, pidfile: Path, *name_substrings: str) -> dict:
     """
     Kill one poller family so a new binary is actually loaded after OTA.
     Linux keeps old inode mapped until process exit — replace alone is not enough.
+    Uses /proc discovery + SIGTERM wait + SIGKILL; only then drops pidfile.
     """
-    info: dict = {"kind": kind, "term": [], "kill": [], "pidfiles": []}
+    info: dict = {
+        "kind": kind,
+        "term": [],
+        "kill": [],
+        "waited_dead": [],
+        "leftover": [],
+        "pidfiles": [],
+        "pids_seen": [],
+    }
+    pids: set[int] = set()
+    me = os.getpid()
+
+    # pidfile first
     try:
         if pidfile.is_file():
             pid = int((pidfile.read_text(encoding="utf-8") or "").strip() or "0")
-            if pid > 0 and pid != os.getpid():
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                    info["term"].append(pid)
-                except Exception:
-                    pass
-            try:
-                pidfile.unlink()
-                info["pidfiles"].append(str(pidfile))
-            except Exception:
-                pass
+            if pid > 1 and pid != me and _pid_alive(pid):
+                pids.add(pid)
     except Exception:
         pass
-    info["term"] += _kill_named_processes(*name_substrings)
-    time.sleep(0.5)
-    leftovers = _kill_named_processes(*name_substrings, sig=signal.SIGKILL)
-    info["kill"] = leftovers
+
+    # /proc + ps
+    for pid in _find_pids_by_name(*name_substrings):
+        pids.add(pid)
+
+    info["pids_seen"] = sorted(pids)
+
+    # SIGTERM
+    for pid in list(pids):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            info["term"].append(pid)
+        except Exception:
+            pass
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except Exception:
+            pass
+
+    leftover = _wait_pids_dead(sorted(pids), timeout_sec=4.0)
+    info["waited_dead"] = sorted(set(pids) - set(leftover))
+
+    # SIGKILL leftovers + re-scan
+    if leftover or _find_pids_by_name(*name_substrings):
+        more = set(leftover) | set(_find_pids_by_name(*name_substrings))
+        for pid in more:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                info["kill"].append(pid)
+            except Exception:
+                pass
+            try:
+                os.killpg(pid, signal.SIGKILL)
+            except Exception:
+                pass
+        leftover = _wait_pids_dead(sorted(more), timeout_sec=3.0)
+
+    # final scan
+    leftover = sorted(set(leftover) | set(_find_pids_by_name(*name_substrings)))
+    info["leftover"] = leftover
+
+    # drop pidfile only after processes are gone (or we did our best)
+    if not leftover:
+        try:
+            if pidfile.is_file():
+                pidfile.unlink()
+                info["pidfiles"].append(str(pidfile))
+        except Exception:
+            pass
+    else:
+        # stale pidfile pointing at dead pid still hurts alive() checks
+        try:
+            if pidfile.is_file():
+                cur = int((pidfile.read_text(encoding="utf-8") or "").strip() or "0")
+                if cur > 0 and not _pid_alive(cur):
+                    pidfile.unlink()
+                    info["pidfiles"].append(str(pidfile))
+        except Exception:
+            pass
+
     return info
 
 
@@ -6728,15 +6883,40 @@ def _force_stop_edge_pollers() -> dict:
 
 
 
-
 _poller_ver_cache: dict[str, tuple[float, str]] = {}
-_POLLER_VER_TTL = 30.0  # seconds — avoid -version on every Info refresh
+_POLLER_VER_TTL = 8.0  # short TTL — after OTA/restart UI must show fresh version
 
 
-def _role_service_version(role: str, cmd: str = "") -> str | None:
+def _clear_poller_ver_cache(role: str | None = None) -> None:
+    """Invalidate cached service versions (call after restart/OTA)."""
+    global _poller_ver_cache
+    if not role:
+        _poller_ver_cache = {}
+        return
+    role = str(role).strip().lower()
+    drop = [k for k in _poller_ver_cache if k == role or k.startswith(f"{role}:")]
+    for k in drop:
+        _poller_ver_cache.pop(k, None)
+
+
+def _disk_bin_version(bin_path: str | None) -> str:
+    if not bin_path:
+        return ""
+    try:
+        bi = _poller_bin_info(bin_path)
+        v = str(bi.get("version") or "").strip()
+        if v.lower().startswith("version"):
+            v = v.split(None, 1)[-1] if " " in v else v
+        return v
+    except Exception:
+        return ""
+
+
+def _role_service_version(role: str, cmd: str = "", pid: int | None = None) -> str | None:
     """
     Version string for Info → Processes.
-    serve → app VERSION; Go pollers → `binary -version`.
+    serve → app VERSION; Go pollers → disk `-version`, plus flag if running
+    exe is a deleted (pre-OTA) inode that was not re-exec'd.
     """
     role = str(role or "").strip().lower()
     cmd = str(cmd or "")
@@ -6762,7 +6942,7 @@ def _role_service_version(role: str, cmd: str = "") -> str | None:
         for tok in cmd.split():
             if "poolheat-miner-poller" in tok or "poolheat-devices-poller" in tok:
                 if tok.startswith("/") or tok.startswith("./"):
-                    bin_path = tok
+                    bin_path = tok.split(" (deleted)")[0].strip()
                     break
         if not bin_path:
             if role == "miner-poller":
@@ -6775,33 +6955,73 @@ def _role_service_version(role: str, cmd: str = "") -> str | None:
         if not bin_path:
             # python poller child
             if "serve.py" in cmd:
-                return _cached(f"{role}:py", lambda: str(get_app_version() or "").strip() + " (py)")
+                return _cached(
+                    f"{role}:py",
+                    lambda: str(get_app_version() or "").strip() + " (py)",
+                )
             return None
 
+        exe = ""
+        if pid and int(pid) > 0:
+            exe = _pid_exe_path(int(pid))
+        deleted = bool(exe) and ("(deleted)" in exe)
+
         def _prod():
-            bi = _poller_bin_info(bin_path)
-            v = str(bi.get("version") or "").strip()
-            # strip noise
-            if v.lower().startswith("version"):
-                v = v.split(None, 1)[-1] if " " in v else v
+            v = _disk_bin_version(bin_path)
+            if deleted:
+                # Running process still maps pre-OTA inode — disk -version is misleading.
+                return (
+                    (v + " · STALE(exe deleted — restart needed)")
+                    if v
+                    else "STALE(exe deleted)"
+                )
             return v
 
-        return _cached(f"{role}:{bin_path}", _prod)
+        cache_key = f"{role}:{bin_path}:{pid or 0}:{1 if deleted else 0}"
+        return _cached(cache_key, _prod)
 
     if role == "sniffer":
         return None
     return None
 
 
+def _wait_poller_ready(pidfile: Path, *, timeout_sec: float = 6.0) -> dict:
+    """After spawn: wait until pidfile points at a live process."""
+    deadline = time.time() + max(1.0, float(timeout_sec))
+    last: dict = {"alive": False, "pid": None, "exe": "", "deleted": False}
+    while time.time() < deadline:
+        try:
+            if pidfile.is_file():
+                pid = int((pidfile.read_text(encoding="utf-8") or "").strip() or "0")
+                if pid > 1 and _pid_alive(pid):
+                    exe = _pid_exe_path(pid)
+                    last = {
+                        "alive": True,
+                        "pid": pid,
+                        "exe": exe,
+                        "deleted": bool(exe) and ("(deleted)" in exe),
+                    }
+                    if not last["deleted"]:
+                        return last
+        except Exception:
+            pass
+        time.sleep(0.15)
+    return last
+
+
 def restart_poolheat_role(role: str) -> dict:
     """
     Restart one Poolheat edge process from Info UI.
     roles: serve | miner-poller | devices-poller | all
+
+    Critical: must fully kill old process so Linux unmaps the old ELF inode;
+    then exec the on-disk binary (post-OTA).
     """
     role = str(role or "").strip().lower().replace("_", "-")
     if role in ("all", "edge", "*"):
         # full service restart (detached)
         try:
+            _clear_poller_ver_cache()
             _restart_poolheat_later()
         except Exception as e:
             return {"ok": False, "role": "all", "error": str(e)}
@@ -6823,13 +7043,50 @@ def restart_poolheat_role(role: str) -> dict:
                 "serve.py --miner-poller",
                 "serve.py --asic-poller",
             )
-            time.sleep(0.4)
+            if ki.get("leftover"):
+                for pid in list(ki["leftover"]):
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except Exception:
+                        pass
+                time.sleep(0.5)
+                ki["leftover"] = _find_pids_by_name(
+                    "poolheat-miner-poller",
+                    "serve.py --miner-poller",
+                    "serve.py --asic-poller",
+                )
+            if ki.get("leftover"):
+                return {
+                    "ok": False,
+                    "role": "miner-poller",
+                    "error": f"could not kill old poller pids {ki['leftover']}",
+                    "stopped": ki,
+                }
+            _clear_poller_ver_cache("miner-poller")
             start_miner_poller_process()
+            ready = _wait_poller_ready(MINER_POLLER_PIDFILE, timeout_sec=6.0)
+            bin_path = _resolve_miner_poller_bin()
+            ver = _disk_bin_version(bin_path)
+            ok = bool(ready.get("alive")) and not ready.get("deleted")
             return {
-                "ok": True,
+                "ok": ok,
                 "role": "miner-poller",
                 "stopped": ki,
-                "alive": miner_poller_process_alive(),
+                "alive": bool(ready.get("alive")),
+                "pid": ready.get("pid"),
+                "exe": ready.get("exe") or "",
+                "exe_deleted": bool(ready.get("deleted")),
+                "bin": bin_path,
+                "version": ver,
+                "message": (
+                    "miner-poller restarted · new binary loaded"
+                    if ok
+                    else (
+                        "miner-poller still maps deleted exe — kill manually"
+                        if ready.get("deleted")
+                        else "miner-poller failed to come up"
+                    )
+                ),
             }
         except Exception as e:
             return {"ok": False, "role": "miner-poller", "error": str(e)}
@@ -6845,18 +7102,55 @@ def restart_poolheat_role(role: str) -> dict:
                 "poolheat-devices-poller",
                 "serve.py --devices-poller",
             )
-            time.sleep(0.4)
+            if ki.get("leftover"):
+                for pid in list(ki["leftover"]):
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except Exception:
+                        pass
+                time.sleep(0.5)
+                ki["leftover"] = _find_pids_by_name(
+                    "poolheat-devices-poller",
+                    "serve.py --devices-poller",
+                )
+            if ki.get("leftover"):
+                return {
+                    "ok": False,
+                    "role": "devices-poller",
+                    "error": f"could not kill old poller pids {ki['leftover']}",
+                    "stopped": ki,
+                }
+            _clear_poller_ver_cache("devices-poller")
             start_devices_poller_process()
+            ready = _wait_poller_ready(DEVICES_POLLER_PIDFILE, timeout_sec=6.0)
+            bin_path = _resolve_devices_poller_bin()
+            ver = _disk_bin_version(bin_path)
+            ok = bool(ready.get("alive")) and not ready.get("deleted")
             return {
-                "ok": True,
+                "ok": ok,
                 "role": "devices-poller",
                 "stopped": ki,
-                "alive": devices_poller_process_alive(),
+                "alive": bool(ready.get("alive")),
+                "pid": ready.get("pid"),
+                "exe": ready.get("exe") or "",
+                "exe_deleted": bool(ready.get("deleted")),
+                "bin": bin_path,
+                "version": ver,
+                "message": (
+                    "devices-poller restarted · new binary loaded"
+                    if ok
+                    else (
+                        "devices-poller still maps deleted exe — kill manually"
+                        if ready.get("deleted")
+                        else "devices-poller failed to come up"
+                    )
+                ),
             }
         except Exception as e:
             return {"ok": False, "role": "devices-poller", "error": str(e)}
     if role in ("serve", "ui", "http"):
         try:
+            _clear_poller_ver_cache()
             _restart_poolheat_later()
         except Exception as e:
             return {"ok": False, "role": "serve", "error": str(e)}
@@ -6951,6 +7245,14 @@ def start_miner_poller_process() -> None:
             stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
             start_new_session=True,
         )
+        # Seed pidfile immediately so writes/alive work before Go Run() writes it.
+        try:
+            MINER_POLLER_PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+            MINER_POLLER_PIDFILE.write_text(
+                str(_miner_poller_proc.pid) + "\n", encoding="utf-8"
+            )
+        except Exception as e:
+            print(f"miner-poller:      pidfile seed: {e}", flush=True)
         print(
             f"miner-poller:      {kind} pid {_miner_poller_proc.pid} · "
             f"log {MINER_POLLER_LOG}"
@@ -7002,24 +7304,35 @@ def stop_miner_poller_process() -> None:
     global _miner_poller_proc
     proc = _miner_poller_proc
     _miner_poller_proc = None
-    if proc is None:
+    pids: list[int] = []
+    if proc is not None:
         try:
-            if MINER_POLLER_PIDFILE.is_file():
-                pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
-                if pid > 0:
-                    os.kill(pid, signal.SIGTERM)
+            if proc.poll() is None:
+                pids.append(int(proc.pid))
+                proc.terminate()
         except Exception:
             pass
-        return
     try:
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=8)
-            except Exception:
-                proc.kill()
+        if MINER_POLLER_PIDFILE.is_file():
+            pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
+            if pid > 1 and pid != os.getpid():
+                pids.append(pid)
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception:
+                    pass
     except Exception:
         pass
+    # wait briefly; force_stop will SIGKILL leftovers
+    if pids:
+        _wait_pids_dead(pids, timeout_sec=2.0)
+    if proc is not None:
+        try:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=2)
+        except Exception:
+            pass
 
 
 def get_device_status(did: str, *, probe_live: bool = False) -> dict:
@@ -9564,15 +9877,23 @@ def live_snapshot(*, max_age_sec: float | None = None, allow_direct: bool = Fals
 
 
 def miner_poller_process_alive() -> bool:
-    """True if miner-poller pidfile points to a live process (not us)."""
+    """True if miner-poller is live (pidfile or /proc scan)."""
+    me = os.getpid()
     try:
-        if not MINER_POLLER_PIDFILE.is_file():
-            return False
-        pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
-        if pid <= 0 or pid == os.getpid():
-            return False
-        os.kill(pid, 0)
-        return True
+        if MINER_POLLER_PIDFILE.is_file():
+            pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
+            if pid > 0 and pid != me and _pid_alive(pid):
+                return True
+    except Exception:
+        pass
+    try:
+        return bool(
+            _find_pids_by_name(
+                "poolheat-miner-poller",
+                "serve.py --miner-poller",
+                "serve.py --asic-poller",
+            )
+        )
     except Exception:
         return False
 
@@ -9601,15 +9922,22 @@ _db_lock = threading.Lock()
 
 
 def devices_poller_process_alive() -> bool:
-    """True if Go/Python devices-poller pidfile is a live process."""
+    """True if devices-poller is live (pidfile or /proc scan)."""
+    me = os.getpid()
     try:
-        if not DEVICES_POLLER_PIDFILE.is_file():
-            return False
-        pid = int((DEVICES_POLLER_PIDFILE.read_text(encoding="utf-8") or "").strip() or "0")
-        if pid <= 0 or pid == os.getpid():
-            return False
-        os.kill(pid, 0)
-        return True
+        if DEVICES_POLLER_PIDFILE.is_file():
+            pid = int((DEVICES_POLLER_PIDFILE.read_text(encoding="utf-8") or "").strip() or "0")
+            if pid > 0 and pid != me and _pid_alive(pid):
+                return True
+    except Exception:
+        pass
+    try:
+        return bool(
+            _find_pids_by_name(
+                "poolheat-devices-poller",
+                "serve.py --devices-poller",
+            )
+        )
     except Exception:
         return False
 
@@ -14830,7 +15158,8 @@ def _poolheat_process_roles() -> dict:
                 up = round(max(0.0, time.time() - float(_SERVE_BOOT_TS)), 1)
             except Exception:
                 up = None
-        ver = _role_service_version(role, cmd or "")
+        ver = _role_service_version(role, cmd or "", pid=pid)
+        exe = _pid_exe_path(pid) if role in ("miner-poller", "devices-poller") else ""
         found[role] = {
             "role": role,
             "pid": pid,
@@ -14839,6 +15168,8 @@ def _poolheat_process_roles() -> dict:
             "uptime_sec": up,
             "uptime": _fmt_uptime_short(up),
             "version": ver,
+            "exe": (exe or "")[:200] or None,
+            "exe_deleted": bool(exe) and ("(deleted)" in exe),
             "cmd": (cmd or "")[:160],
             "restartable": role in ("serve", "miner-poller", "devices-poller"),
         }
@@ -14942,7 +15273,9 @@ def _poolheat_process_roles() -> dict:
         if not p.get("version"):
             try:
                 p["version"] = _role_service_version(
-                    str(p.get("role") or ""), str(p.get("cmd") or "")
+                    str(p.get("role") or ""),
+                    str(p.get("cmd") or ""),
+                    pid=int(p.get("pid") or 0) or None,
                 )
             except Exception:
                 pass
@@ -16287,26 +16620,33 @@ if [ -x /opt/etc/init.d/S99poolheat-standalone ]; then
 elif [ -x /opt/etc/init.d/S99poolheat ]; then
   /opt/etc/init.d/S99poolheat stop || true
 fi
-for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{{print $1}}'); do
-  kill "$p" 2>/dev/null || true
-done
-for p in $(ps w 2>/dev/null | grep '[p]oolheat-devices-poller' | awk '{{print $1}}'); do
-  kill "$p" 2>/dev/null || true
-done
-for p in $(ps w 2>/dev/null | grep '[p]oolheat-miner-poller' | awk '{{print $1}}'); do
-  kill "$p" 2>/dev/null || true
-done
-for p in $(ps w 2>/dev/null | grep '[p]oolheatd' | awk '{{print $1}}'); do
-  kill "$p" 2>/dev/null || true
-done
+# Prefer /proc cmdline/exe scan — BusyBox `ps w` often misses on Keenetic.
+# Linux keeps old ELF mapped until process exit; must kill before re-exec.
+_ph_kill_match() {{
+  # $1 = signal number (15=TERM, 9=KILL)
+  _sig="${{1:-15}}"; shift
+  for _d in /proc/[0-9]*; do
+    [ -d "$_d" ] || continue
+    _pid="${{_d##*/}}"
+    case "$_pid" in *[!0-9]*|"") continue ;; esac
+    _cmd=$(tr '\\0' ' ' < "$_d/cmdline" 2>/dev/null || true)
+    _exe=$(readlink "$_d/exe" 2>/dev/null || true)
+    _blob="$_cmd $_exe"
+    for _n in "$@"; do
+      case "$_blob" in
+        *"$_n"*) kill -"$_sig" "$_pid" 2>/dev/null || true; break ;;
+      esac
+    done
+  done
+  for _n in "$@"; do
+    for p in $(ps w 2>/dev/null | grep -F "$_n" | grep -v grep | awk '{{print $1}}'); do
+      kill -"$_sig" "$p" 2>/dev/null || true
+    done
+  done
+}}
+_ph_kill_match 15 serve.py poolheat-devices-poller poolheat-miner-poller poolheatd
 sleep 1
-# hard kill leftovers (old binary stays mapped until process dies)
-for p in $(ps w 2>/dev/null | grep -E '[p]oolheat-(miner|devices)-poller' | awk '{{print $1}}'); do
-  kill -9 "$p" 2>/dev/null || true
-done
-for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{{print $1}}'); do
-  kill -9 "$p" 2>/dev/null || true
-done
+_ph_kill_match 9 serve.py poolheat-devices-poller poolheat-miner-poller poolheatd
 rm -f /opt/var/poolheat/devices_poller.pid /opt/var/poolheat/miner_poller.pid 2>/dev/null || true
 # ensure new binaries are executable (OTA may land them)
 chmod +x /opt/bin/poolheat-devices-poller /opt/bin/poolheat-miner-poller /opt/bin/poolheatd 2>/dev/null || true
@@ -17515,8 +17855,9 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
 
     if not miner_poller_process_alive():
         raise RuntimeError(
-            "miner-poller not running — ASIC writes disabled in serve "
-            "(start poolheat-miner-poller)"
+            "miner-poller not running — ASIC writes (factory_reset/reboot/pools/…) "
+            "go only via poller NetPacket/V2. Restart miner-poller from Info → Processes "
+            "or: /opt/bin/poolheat-miner-poller"
         )
     try:
         to = None
