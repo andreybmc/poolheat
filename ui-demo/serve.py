@@ -6412,17 +6412,17 @@ def start_devices_poller_process() -> None:
     if not role_enabled("edge_device_poller"):
         print("devices-poller:    off (edge_device_poller role disabled)")
         return
-    # kill stale poller if pidfile exists
     try:
-        if DEVICES_POLLER_PIDFILE.is_file():
-            old = int(DEVICES_POLLER_PIDFILE.read_text().strip() or "0")
-            if old > 0 and old != os.getpid():
-                try:
-                    os.kill(old, signal.SIGTERM)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+        ki = _force_stop_named_poller(
+            "devices",
+            DEVICES_POLLER_PIDFILE,
+            "poolheat-devices-poller",
+            "serve.py --devices-poller",
+        )
+        if ki.get("term") or ki.get("kill"):
+            print(f"devices-poller:    stopped old pids {ki}", flush=True)
+    except Exception as e:
+        print(f"devices-poller:    force-stop: {e}", flush=True)
     script = str(Path(__file__).resolve())
     logf = None
     try:
@@ -6636,6 +6636,123 @@ def _resolve_miner_poller_bin() -> str | None:
     return None
 
 
+
+def _kill_named_processes(*name_substrings: str, sig: int = signal.SIGTERM) -> list[int]:
+    """Best-effort kill of processes whose cmdline contains any substring."""
+    killed: list[int] = []
+    me = os.getpid()
+    try:
+        # BusyBox/Linux: ps w
+        out = subprocess.check_output(
+            ["ps", "w"], stderr=subprocess.DEVNULL, text=True, timeout=5
+        )
+    except Exception:
+        try:
+            out = subprocess.check_output(
+                ["ps", "ax"], stderr=subprocess.DEVNULL, text=True, timeout=5
+            )
+        except Exception:
+            return killed
+    for line in out.splitlines():
+        low = line.lower()
+        if not any(s.lower() in low for s in name_substrings):
+            continue
+        parts = line.split()
+        if not parts:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            # some ps: USER PID ...
+            try:
+                pid = int(parts[1])
+            except Exception:
+                continue
+        if pid <= 1 or pid == me:
+            continue
+        try:
+            os.kill(pid, sig)
+            killed.append(pid)
+        except Exception:
+            pass
+    return killed
+
+
+def _force_stop_named_poller(kind: str, pidfile: Path, *name_substrings: str) -> dict:
+    """
+    Kill one poller family so a new binary is actually loaded after OTA.
+    Linux keeps old inode mapped until process exit — replace alone is not enough.
+    """
+    info: dict = {"kind": kind, "term": [], "kill": [], "pidfiles": []}
+    try:
+        if pidfile.is_file():
+            pid = int((pidfile.read_text(encoding="utf-8") or "").strip() or "0")
+            if pid > 0 and pid != os.getpid():
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    info["term"].append(pid)
+                except Exception:
+                    pass
+            try:
+                pidfile.unlink()
+                info["pidfiles"].append(str(pidfile))
+            except Exception:
+                pass
+    except Exception:
+        pass
+    info["term"] += _kill_named_processes(*name_substrings)
+    time.sleep(0.5)
+    leftovers = _kill_named_processes(*name_substrings, sig=signal.SIGKILL)
+    info["kill"] = leftovers
+    return info
+
+
+def _force_stop_edge_pollers() -> dict:
+    """Kill both Go/Python pollers (OTA full restart)."""
+    a = _force_stop_named_poller(
+        "miner",
+        MINER_POLLER_PIDFILE,
+        "poolheat-miner-poller",
+        "serve.py --miner-poller",
+        "serve.py --asic-poller",
+    )
+    b = _force_stop_named_poller(
+        "devices",
+        DEVICES_POLLER_PIDFILE,
+        "poolheat-devices-poller",
+        "serve.py --devices-poller",
+    )
+    return {"miner": a, "devices": b}
+
+
+def _poller_bin_info(path: str | None) -> dict:
+    """version / mtime / size of a Go poller binary (for OTA verification)."""
+    out: dict = {"path": path, "ok": False}
+    if not path:
+        return out
+    p = Path(path)
+    try:
+        st = p.stat()
+        out["size"] = st.st_size
+        out["mtime"] = datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds")
+        out["ok"] = True
+    except Exception as e:
+        out["error"] = str(e)
+        return out
+    try:
+        r = subprocess.run(
+            [path, "-version"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        ver = (r.stdout or r.stderr or "").strip().splitlines()
+        out["version"] = ver[0] if ver else ""
+    except Exception as e:
+        out["version_error"] = str(e)
+    return out
+
+
 def start_miner_poller_process() -> None:
     """Spawn isolated ASIC poller (live + history + chipmap)."""
     global _miner_poller_proc
@@ -6644,16 +6761,19 @@ def start_miner_poller_process() -> None:
     ):
         print("miner-poller:      off (edge_miner/history roles disabled)")
         return
+    # Kill only miner-poller leftovers (OTA: old binary stays mapped until exit)
     try:
-        if MINER_POLLER_PIDFILE.is_file():
-            old = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
-            if old > 0 and old != os.getpid():
-                try:
-                    os.kill(old, signal.SIGTERM)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+        ki = _force_stop_named_poller(
+            "miner",
+            MINER_POLLER_PIDFILE,
+            "poolheat-miner-poller",
+            "serve.py --miner-poller",
+            "serve.py --asic-poller",
+        )
+        if ki.get("term") or ki.get("kill"):
+            print(f"miner-poller:      stopped old pids {ki}", flush=True)
+    except Exception as e:
+        print(f"miner-poller:      force-stop: {e}", flush=True)
     script = str(Path(__file__).resolve())
     logf = None
     try:
@@ -6694,6 +6814,16 @@ def start_miner_poller_process() -> None:
             + (f" · bin {go_bin}" if go_bin else ""),
             flush=True,
         )
+        if go_bin:
+            try:
+                bi = _poller_bin_info(go_bin)
+                print(
+                    f"miner-poller:      version={bi.get('version')!r} "
+                    f"size={bi.get('size')} mtime={bi.get('mtime')}",
+                    flush=True,
+                )
+            except Exception as e:
+                print(f"miner-poller:      version probe: {e}", flush=True)
         # Go poller: live_cache + mining_work + chipmap_cache.json.
         # History samples may stay in serve (read live_cache only, no ASIC).
         if go_bin:
@@ -15961,10 +16091,21 @@ done
 for p in $(ps w 2>/dev/null | grep '[p]oolheatd' | awk '{{print $1}}'); do
   kill "$p" 2>/dev/null || true
 done
+sleep 1
+# hard kill leftovers (old binary stays mapped until process dies)
+for p in $(ps w 2>/dev/null | grep -E '[p]oolheat-(miner|devices)-poller' | awk '{{print $1}}'); do
+  kill -9 "$p" 2>/dev/null || true
+done
+for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{{print $1}}'); do
+  kill -9 "$p" 2>/dev/null || true
+done
 rm -f /opt/var/poolheat/devices_poller.pid /opt/var/poolheat/miner_poller.pid 2>/dev/null || true
 # ensure new binaries are executable (OTA may land them)
 chmod +x /opt/bin/poolheat-devices-poller /opt/bin/poolheat-miner-poller /opt/bin/poolheatd 2>/dev/null || true
+sync 2>/dev/null || true
 ls -la /opt/bin/poolheat-*-poller /opt/bin/poolheatd 2>/dev/null || true
+/opt/bin/poolheat-miner-poller -version 2>/dev/null || true
+/opt/bin/poolheat-devices-poller -version 2>/dev/null || true
 sleep 1
 # start (prefer standalone — no rc.func / PROCS=poolheatd mismatch)
 ok=0
@@ -16395,6 +16536,14 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                     except Exception:
                         pass
                 installed.append(str(dst))
+                if dst.name in ("poolheat-miner-poller", "poolheat-devices-poller"):
+                    try:
+                        print(
+                            f"[update] installed {dst} size={dst.stat().st_size}",
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
 
         if not installed:
             return {
@@ -17163,7 +17312,18 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
         )
     try:
         to = None
-        if cname in ("update_pools", "set_pools", "reboot", "restart_btminer"):
+        if cname in (
+            "update_pools",
+            "set_pools",
+            "reboot",
+            "reboot_asic",
+            "system_reboot",
+            "restart_btminer",
+            "restart",
+            "restart_miner",
+            "restart_cgminer",
+            "btminer_restart",
+        ):
             to = max(float(MINER_WRITE_TIMEOUT_SEC), 60.0)
         return miner_write_via_poller(cmd, password, timeout_sec=to)
     except Exception as e:
