@@ -18684,6 +18684,68 @@ def _fetch_v3_device_msg(*, force: bool = False) -> dict | None:
     return _v3_device_msg_cache if isinstance(_v3_device_msg_cache, dict) else None
 
 
+def enrich_live_liquid(live: dict | None) -> dict | None:
+    """
+    Fill liquid / coolant when missing (Go miner-poller may lack V3 reach).
+    Uses cached get.device.info → power.liquid-temperature. Cheap when cached.
+    Also patches temps[] catalog entry for id=liquid.
+    """
+    if not isinstance(live, dict) or not live.get("ok"):
+        return live
+    cur = _f(live.get("liquid"))
+    if cur is not None and cur > 0.05:
+        return live
+    try:
+        v3_msg = _fetch_v3_device_msg(force=False)
+        liquid = _extract_liquid_temp(
+            live if isinstance(live.get("status"), dict) else {},
+            {},
+            {},
+            v3_msg=v3_msg,
+        )
+        if liquid is None:
+            return live
+        live = dict(live)
+        live["liquid"] = liquid
+        live["liquid_source"] = live.get("liquid_source") or "v3"
+        # patch temps catalog
+        temps = live.get("temps")
+        if isinstance(temps, list):
+            found = False
+            new_temps = []
+            for t in temps:
+                if isinstance(t, dict) and t.get("id") == "liquid":
+                    row = dict(t)
+                    row["value"] = round(float(liquid), 2)
+                    row["available"] = True
+                    row["source"] = "v3"
+                    new_temps.append(row)
+                    found = True
+                else:
+                    new_temps.append(t)
+            if not found:
+                new_temps.insert(
+                    1,
+                    {
+                        "id": "liquid",
+                        "group": "coolant",
+                        "label": "Liquid / coolant",
+                        "label_ru": "Жидкость / теплоноситель",
+                        "value": round(float(liquid), 2),
+                        "unit": "°C",
+                        "source": "v3",
+                        "available": True,
+                    },
+                )
+            live["temps"] = new_temps
+        # t_ctrl default liquid when sensor is liquid
+        if str(live.get("t_ctrl_sensor") or "liquid") == "liquid":
+            live["t_ctrl"] = liquid
+    except Exception as e:
+        print(f"[live] enrich liquid: {e}", flush=True)
+    return live
+
+
 def _normalize_psu_vin(raw) -> float | None:
     """
     PowerVin (input voltage, V).
@@ -28267,6 +28329,13 @@ class Handler(SimpleHTTPRequestHandler):
                 "ts": datetime.now().isoformat(timespec="seconds"),
                 "host": f"{HOST_MINER}:{PORT_MINER}",
             }
+
+        # Go miner-poller may omit liquid (V3 :4433); fill from get.device.info here
+        if body.get("ok"):
+            try:
+                body = enrich_live_liquid(body) or body
+            except Exception:
+                pass
 
         with _state_lock:
             body["power_pct_cmd"] = _state.get("power_pct_cmd")
