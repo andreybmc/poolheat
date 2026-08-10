@@ -5672,15 +5672,17 @@ def device_poll_status(
     try:
         out = _device_backend_dispatch(None, cfg)
         reported = None
+        phys = None
+        inverted = bool(cfg.get("inverted"))
         if out.get("transport") == "devices-poller" or out.get("on_is_logical"):
+            # poller returns logical on
             if out.get("on") is not None:
                 reported = bool(out.get("on"))
+                phys = _device_logical_to_physical(reported, inverted)
         else:
             phys = out.get("on")
             if phys is not None:
-                reported = _device_physical_to_logical(
-                    bool(phys), bool(cfg.get("inverted"))
-                )
+                reported = _device_physical_to_logical(bool(phys), inverted)
         power = _power_from_backend_out(out)
 
         def _mut(d):
@@ -5708,6 +5710,7 @@ def device_poll_status(
                     # after re-apply, reported should match desired
                     if enforced.get("on") is not None:
                         reported = bool(enforced.get("on"))
+                        phys = _device_logical_to_physical(reported, inverted)
             else:
                 _device_adopt_reported(did, reported)
 
