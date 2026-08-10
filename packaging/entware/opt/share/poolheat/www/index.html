@@ -2825,7 +2825,7 @@
     .auto-update-block {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
       padding: 12px 14px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
@@ -2840,14 +2840,14 @@
     .auto-update-block .au-desc {
       font-size: 0.78rem;
       color: var(--muted);
-      line-height: 1.45;
+      line-height: 1.4;
       margin: 0;
     }
     .auto-update-block .au-row {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      gap: 12px 16px;
+      gap: 10px 14px;
     }
     .auto-update-block .au-row .au-label {
       font-size: 0.88rem;
@@ -2872,7 +2872,26 @@
       font-size: 0.75rem;
       color: var(--dim);
       margin: 0;
-      line-height: 1.4;
+      line-height: 1.35;
+    }
+    .auto-update-block .au-meta:empty,
+    .auto-update-block .au-meta.is-empty {
+      display: none;
+    }
+    .auto-update-block .au-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+      margin: 0;
+    }
+    .auto-update-block .au-dirty {
+      font-size: 0.75rem;
+      color: var(--warn, #e6a23c);
+      margin: 0;
+    }
+    .auto-update-block .au-dirty[hidden] {
+      display: none !important;
     }
     .auto-update-block .dev-switch-label {
       min-width: 0;
@@ -2884,23 +2903,30 @@
       color: var(--muted);
     }
 
+    /* Release notes: fully collapsed when empty / hidden (no reserved gap) */
     .update-notes {
-      display: none;
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      max-height: 0 !important;
+      overflow: hidden;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.5;
+      word-break: break-word;
+      font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    }
+    .update-notes.is-visible:not([hidden]) {
+      display: block !important;
       margin: 0;
       padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg);
-      color: var(--muted);
-      font-size: 0.78rem;
-      line-height: 1.5;
-      word-break: break-word;
       max-height: 280px;
       overflow: auto;
-      font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-    }
-    .update-notes.is-visible {
-      display: block;
     }
     /* Title once, then short gap, then body (no duplicate «Release notes») */
     .update-notes .rn-label {
@@ -8600,7 +8626,13 @@
                   <option value="weekends_night" data-i18n="upd.sched.weekends_night">Weekends night 02:00–06:00</option>
                 </select>
               </div>
-              <p class="au-meta" id="auto-update-meta">—</p>
+              <div class="au-actions">
+                <button class="btn primary" type="button" id="btn-auto-update-save" data-i18n="btn.save" disabled>
+                  Save
+                </button>
+                <span class="au-dirty" id="auto-update-dirty" hidden data-i18n="upd.auto_dirty">Not saved</span>
+              </div>
+              <p class="au-meta is-empty" id="auto-update-meta"></p>
             </div>
           </div>
         </div>
@@ -9782,6 +9814,7 @@
         "upd.win_open": "open now",
         "upd.win_closed": "closed now",
         "upd.auto_saved": "Auto-update settings saved",
+        "upd.auto_dirty": "Not saved · press Save",
         "upd.up_to_date": "up to date",
         "upd.available": "update available",
         "upd.local_ahead": "locally newer",
@@ -10595,6 +10628,7 @@
         "upd.win_open": "сейчас открыто",
         "upd.win_closed": "сейчас закрыто",
         "upd.auto_saved": "Настройки автообновления сохранены",
+        "upd.auto_dirty": "Не сохранено · нажмите «Сохранить»",
         "info.release_notes": "Заметки к релизу",
         "upd.up_to_date": "актуально",
         "upd.available": "есть обновление",
@@ -23708,10 +23742,11 @@
       el.textContent = String(ver).replace(/^v/i, "");
     }
 
-    /** Auto-update config (Keenetic-style) — GET/POST /api/update/config */
+    /** Auto-update config — local edits, save only via button (no autosave). */
     let _autoUpdateCfg = null;
     let _autoUpdateScheduleActive = false;
     let _autoUpdateSaving = false;
+    let _autoUpdateDirty = false;
 
     function _schedLabel(key) {
       const map = {
@@ -23730,16 +23765,48 @@
       return typeof t === "function" ? t(k, fb[key] || fb.always) : fb[key] || fb.always;
     }
 
-    function renderAutoUpdateUI(cfg, scheduleActive) {
-      _autoUpdateCfg = cfg && typeof cfg === "object" ? cfg : null;
-      _autoUpdateScheduleActive = !!scheduleActive;
+    function _autoUpdateFormValues() {
       const enEl = document.getElementById("auto-update-enabled");
+      const sel = document.getElementById("auto-update-schedule");
+      return {
+        auto_update: !!(enEl && enEl.checked),
+        schedule: (sel && sel.value) || "always",
+      };
+    }
+
+    function syncAutoUpdateDirty() {
+      const btn = document.getElementById("btn-auto-update-save");
+      const dirtyEl = document.getElementById("auto-update-dirty");
+      const form = _autoUpdateFormValues();
+      const srvOn = !!( _autoUpdateCfg && _autoUpdateCfg.auto_update );
+      const srvSch = (_autoUpdateCfg && _autoUpdateCfg.schedule) || "always";
+      _autoUpdateDirty =
+        form.auto_update !== srvOn || String(form.schedule) !== String(srvSch);
+      if (btn) {
+        btn.disabled = !_autoUpdateDirty || _autoUpdateSaving;
+        btn.textContent = _autoUpdateSaving
+          ? typeof t === "function"
+            ? t("btn.saving", "Saving…")
+            : "Saving…"
+          : typeof t === "function"
+            ? t("btn.save", "Save")
+            : "Save";
+      }
+      if (dirtyEl) {
+        if (_autoUpdateDirty && !_autoUpdateSaving) {
+          dirtyEl.hidden = false;
+          dirtyEl.textContent =
+            typeof t === "function"
+              ? t("upd.auto_dirty", "Not saved · press Save")
+              : "Not saved · press Save";
+        } else {
+          dirtyEl.hidden = true;
+        }
+      }
+      // visual switch state follows checkbox (local, not server)
       const sw = document.getElementById("auto-update-switch");
       const lab = document.getElementById("auto-update-label");
-      const sel = document.getElementById("auto-update-schedule");
-      const meta = document.getElementById("auto-update-meta");
-      const on = !!(cfg && cfg.auto_update);
-      if (enEl && enEl.checked !== on) enEl.checked = on;
+      const on = form.auto_update;
       if (sw) sw.classList.toggle("is-on", on);
       if (lab) {
         lab.textContent = on
@@ -23750,68 +23817,89 @@
             ? t("upd.auto_off", "Off")
             : "Off";
       }
-      if (sel) {
-        const sch = (cfg && cfg.schedule) || "always";
-        if (sel.value !== sch) sel.value = sch;
-        sel.disabled = !on;
+    }
+
+    function renderAutoUpdateMeta(cfg, scheduleActive) {
+      const meta = document.getElementById("auto-update-meta");
+      if (!meta) return;
+      const on = !!(cfg && cfg.auto_update);
+      const min = (cfg && cfg.check_interval_min) || 360;
+      const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
+      const lines = [];
+      if (!on) {
+        lines.push(
+          tr(
+            "upd.auto_meta_off",
+            "Auto-update off · check interval {min} min when enabled"
+          ).replace("{min}", String(min))
+        );
+      } else {
+        const win = scheduleActive
+          ? tr("upd.win_open", "open now")
+          : tr("upd.win_closed", "closed now");
+        lines.push(
+          tr(
+            "upd.auto_meta_on",
+            "Auto-update on · {sched} · window {win} · every {min} min"
+          )
+            .replace("{sched}", _schedLabel((cfg && cfg.schedule) || "always"))
+            .replace("{win}", win)
+            .replace("{min}", String(min))
+        );
       }
-      if (meta) {
-        const min = (cfg && cfg.check_interval_min) || 360;
-        const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
-        const lines = [];
-        if (!on) {
+      const lr = cfg && cfg.last_result;
+      if (lr && lr.at) {
+        if (lr.from_version && lr.to_version && lr.ok) {
           lines.push(
-            tr("upd.auto_meta_off", "Auto-update off · check interval {min} min when enabled").replace(
-              "{min}",
-              String(min)
-            )
+            tr("upd.auto_meta_apply", "Last auto install: {at} · {from} → {to}")
+              .replace("{at}", String(lr.at))
+              .replace("{from}", String(lr.from_version))
+              .replace("{to}", String(lr.to_version))
           );
         } else {
-          const win = _autoUpdateScheduleActive
-            ? tr("upd.win_open", "open now")
-            : tr("upd.win_closed", "closed now");
           lines.push(
-            tr(
-              "upd.auto_meta_on",
-              "Auto-update on · {sched} · window {win} · every {min} min"
+            tr("upd.auto_meta_last", "Last auto check: {at}").replace(
+              "{at}",
+              String(lr.at)
             )
-              .replace("{sched}", _schedLabel((cfg && cfg.schedule) || "always"))
-              .replace("{win}", win)
-              .replace("{min}", String(min))
           );
         }
-        const lr = cfg && cfg.last_result;
-        if (lr && lr.at) {
-          if (lr.from_version && lr.to_version && lr.ok) {
-            lines.push(
-              tr("upd.auto_meta_apply", "Last auto install: {at} · {from} → {to}")
-                .replace("{at}", String(lr.at))
-                .replace("{from}", String(lr.from_version))
-                .replace("{to}", String(lr.to_version))
-            );
-          } else {
+      } else if (cfg && cfg.last_check_ts) {
+        try {
+          const d = new Date(Number(cfg.last_check_ts) * 1000);
+          if (!Number.isNaN(d.getTime())) {
             lines.push(
               tr("upd.auto_meta_last", "Last auto check: {at}").replace(
                 "{at}",
-                String(lr.at)
+                d.toLocaleString()
               )
             );
           }
-        } else if (cfg && cfg.last_check_ts) {
-          try {
-            const d = new Date(Number(cfg.last_check_ts) * 1000);
-            if (!Number.isNaN(d.getTime())) {
-              lines.push(
-                tr("upd.auto_meta_last", "Last auto check: {at}").replace(
-                  "{at}",
-                  d.toLocaleString()
-                )
-              );
-            }
-          } catch (_) { /* ignore */ }
-        }
-        meta.textContent = lines.join(" · ");
+        } catch (_) { /* ignore */ }
       }
+      const text = lines.join(" · ");
+      meta.textContent = text;
+      meta.classList.toggle("is-empty", !text);
+    }
+
+    function renderAutoUpdateUI(cfg, scheduleActive) {
+      _autoUpdateCfg = cfg && typeof cfg === "object" ? cfg : null;
+      _autoUpdateScheduleActive = !!scheduleActive;
+      const enEl = document.getElementById("auto-update-enabled");
+      const sel = document.getElementById("auto-update-schedule");
+      const on = !!(cfg && cfg.auto_update);
+      // Only reset form from server when not dirty (don't wipe unsaved edits)
+      if (!_autoUpdateDirty) {
+        if (enEl) enEl.checked = on;
+        if (sel) {
+          const sch = (cfg && cfg.schedule) || "always";
+          if (sel.value !== sch) sel.value = sch;
+        }
+      }
+      // Schedule always selectable so user can pick then Save
+      if (sel) sel.disabled = false;
+      renderAutoUpdateMeta(cfg, scheduleActive);
+      syncAutoUpdateDirty();
     }
 
     async function loadAutoUpdateConfig() {
@@ -23819,24 +23907,31 @@
         const res = await fetch("/api/update/config", { cache: "no-store" });
         const body = await res.json();
         if (!res.ok || body.ok === false) return;
+        _autoUpdateDirty = false;
         renderAutoUpdateUI(body.config || {}, body.schedule_active);
       } catch (_) { /* ignore */ }
     }
 
-    async function saveAutoUpdateConfig(patch) {
+    async function saveAutoUpdateConfig() {
       if (_autoUpdateSaving) return;
+      const form = _autoUpdateFormValues();
       _autoUpdateSaving = true;
+      syncAutoUpdateDirty();
       try {
         const res = await fetch("/api/update/config", {
           method: "POST",
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch || {}),
+          body: JSON.stringify({
+            auto_update: form.auto_update,
+            schedule: form.schedule,
+          }),
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || "HTTP " + res.status);
         }
+        _autoUpdateDirty = false;
         renderAutoUpdateUI(body.config || {}, body.schedule_active);
         if (typeof toastSuccess === "function") {
           toastSuccess(
@@ -23849,29 +23944,29 @@
         if (typeof toastError === "function") {
           toastError("Auto-update: " + (e.message || e));
         }
-        // reload authoritative state
         void loadAutoUpdateConfig();
       } finally {
         _autoUpdateSaving = false;
+        syncAutoUpdateDirty();
       }
     }
 
     function wireAutoUpdateUI() {
       const enEl = document.getElementById("auto-update-enabled");
       const sel = document.getElementById("auto-update-schedule");
-      enEl?.addEventListener("change", () => {
-        const on = !!enEl.checked;
-        void saveAutoUpdateConfig({
-          auto_update: on,
-          schedule: (sel && sel.value) || "always",
-        });
+      const btn = document.getElementById("btn-auto-update-save");
+      const onLocalChange = () => {
+        // Local-only: mark dirty, do NOT POST until Save
+        const sw = document.getElementById("auto-update-switch");
+        if (sw && enEl) sw.classList.toggle("is-on", !!enEl.checked);
+        syncAutoUpdateDirty();
+      };
+      enEl?.addEventListener("change", onLocalChange);
+      sel?.addEventListener("change", onLocalChange);
+      btn?.addEventListener("click", () => {
+        void saveAutoUpdateConfig();
       });
-      sel?.addEventListener("change", () => {
-        void saveAutoUpdateConfig({
-          auto_update: !!(enEl && enEl.checked),
-          schedule: sel.value || "always",
-        });
-      });
+      syncAutoUpdateDirty();
     }
     wireAutoUpdateUI();
 
