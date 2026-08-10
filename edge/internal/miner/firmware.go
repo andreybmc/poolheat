@@ -111,6 +111,19 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 		failFlash(s.DataDir, id, fmt.Sprintf("extract: %v", err))
 		return
 	}
+	log.Printf("[miner-poller] firmware extract id=%s platform=%s bytes=%d meta=%v",
+		id, platform, len(img), meta)
+	// Sanity: WMT lab container ~12MB; multi-GB means extract failed → ASIC RST mid-upload
+	if len(img) > 40_000_000 {
+		failFlash(s.DataDir, id, fmt.Sprintf(
+			"image too large (%d B) after extract — wrong package slice? platform=%s meta=%v",
+			len(img), platform, meta))
+		return
+	}
+	if len(img) < 100_000 {
+		failFlash(s.DataDir, id, fmt.Sprintf("image too small (%d B) after extract", len(img)))
+		return
+	}
 	writeFlashStatusMerge(s.DataDir, map[string]any{
 		"stage":   "auth",
 		"pct":     4,
@@ -124,6 +137,7 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 	}
 
 	// Try WMT default super/super first, then API password (same as WhatsMinerTool).
+	// Do NOT retry another account after mid-upload RST (ASIC may be wedged).
 	type cred struct{ acc, pw string }
 	tryCreds := []cred{{"super", "super"}, {"admin", pw}}
 	if pw != "" && pw != "super" {
@@ -134,6 +148,7 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 	var out map[string]any
 	var lastErr error
 	okFlash := false
+	var lastProgWrite time.Time
 	for _, cr := range tryCreds {
 		if strings.TrimSpace(cr.pw) == "" {
 			continue
@@ -148,10 +163,20 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 		np.Password = cr.pw
 		np.Timeout = 10 * time.Minute
 		statusLog = nil
+		streamStarted := false
 		out, lastErr = np.UpdateFirmware(img,
 			protocol.WithFirmwarePoll(true),
 			protocol.WithFirmwarePollAttempts(45),
 			protocol.WithFirmwareProgress(func(stage string, pct float64, extra map[string]any) {
+				if stage == "upload" || stage == "cmd7" {
+					streamStarted = true
+				}
+				// Throttle disk writes — blocking JSON on flash/USB caused TCP stalls → RST
+				now := time.Now()
+				if stage == "upload" && !lastProgWrite.IsZero() && now.Sub(lastProgWrite) < 500*time.Millisecond {
+					return
+				}
+				lastProgWrite = now
 				st := map[string]any{
 					"busy":  true,
 					"stage": stage,
@@ -174,9 +199,12 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 		)
 		if lastErr != nil {
 			log.Printf("[miner-poller] firmware auth/upload %s: %v", cr.acc, lastErr)
+			// After stream started (cmd7/upload), do not burn other creds — RST is not "wrong password"
+			if streamStarted || strings.Contains(strings.ToLower(lastErr.Error()), "upload:") {
+				break
+			}
 			continue
 		}
-		// uploaded without Go error — treat as success path even if upgrade unknown
 		okFlash = true
 		break
 	}
