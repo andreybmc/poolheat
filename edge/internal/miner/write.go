@@ -143,6 +143,8 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 	case "update_pools", "set_pools":
 		// Pools need special transport (NetPacket preferred, V2 flat pool1/worker1/…).
 		return executeWritePools(s, req, pw)
+	case "set_api_switch", "enable_api_switch", "api_switch":
+		return executeAPISwitch(s, req, pw, params)
 	}
 
 	resp, err := c.Write(cname, params)
@@ -435,6 +437,70 @@ func asBool(v any, def bool) bool {
 		}
 		return s == "1" || s == "true" || s == "yes" || s == "on"
 	}
+}
+
+// executeAPISwitch enables Miner API Switch via NetPacket :8889 (WMT path).
+func executeAPISwitch(s Settings, req WriteRequest, password string, params map[string]any) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{
+		ID:        req.ID,
+		TS:        now,
+		Action:    req.Action,
+		Value:     req.Value,
+		Transport: "netpacket",
+	}
+	if s.DryRun {
+		res.OK = true
+		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
+		res.Transport = "dry_run"
+		return res
+	}
+	on := true
+	if v := firstNonEmpty(params["enable"], params["on"], params["value"], params["api_switch"]); v != nil {
+		on = asBool(v, true)
+	}
+	if !protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
+		res.Error = "netpacket :8889 not reachable for api_switch"
+		return res
+	}
+	type cred struct{ acc, pw string }
+	tryCreds := []cred{{"super", "super"}, {"admin", password}}
+	if password != "" && password != "super" {
+		tryCreds = append(tryCreds, cred{"super", password})
+	}
+	var lastErr string
+	for _, cr := range tryCreds {
+		if strings.TrimSpace(cr.pw) == "" {
+			continue
+		}
+		np := protocol.NewClient(s.Host)
+		np.Timeout = 12 * time.Second
+		np.Account = cr.acc
+		np.Password = cr.pw
+		resp, err := np.SetAPISwitch(on)
+		if err != nil {
+			lastErr = err.Error()
+			continue
+		}
+		if resp != nil && resp.OK {
+			res.OK = true
+			res.Response = map[string]any{
+				"STATUS":    "S",
+				"Msg":       "ok",
+				"transport": "netpacket",
+				"enabled":   on,
+			}
+			return res
+		}
+		if resp != nil {
+			lastErr = resp.StatusText
+		}
+	}
+	if lastErr == "" {
+		lastErr = "SetAPISwitch failed"
+	}
+	res.Error = lastErr
+	return res
 }
 
 // minerWriteOK mirrors serve.py _miner_cmd_result loosely.

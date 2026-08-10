@@ -1,9 +1,10 @@
 // poolheat-miner-poller — Go replacement for `serve.py --miner-poller`.
 //
 // Polls Whatsminer (via wm-lib public API), writes:
-//   live_cache.json · mining_work.json · history.db samples
+//   live_cache.json · mining_work.json · chipmap_cache.json
+//   (+ history when enabled)
 //
-// Chipmap stays optional in serve.py when this binary is used.
+// serve.py must not talk to the ASIC — only read these JSON files / enqueue writes.
 package main
 
 import (

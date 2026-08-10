@@ -13,7 +13,8 @@ Low-RAM edge workers for Keenetic Entware.
 
 - Polls summary / status / devs / get_psu via wm-lib
 - Writes `live_cache.json` + `mining_work.json`
-- History samples + chipmap stay in `serve.py` (read cache, no :4028)
+- History samples may stay in `serve.py` (read `live_cache.json` only)
+- Chipmap is written by miner-poller to `chipmap_cache.json` (serve/UI read-only)
 - Target RSS: ~5–15 MiB (vs ~90 MiB Python)
 
 ### Build (host → arm64 static)

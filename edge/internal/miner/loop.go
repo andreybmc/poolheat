@@ -25,7 +25,9 @@ func Run(s Settings) error {
 	log.Printf("[miner-poller] go pid=%d data=%s miner=%s interval=%ds",
 		os.Getpid(), s.DataDir, hostLabel, s.PollIntervalSec)
 
-	log.Printf("[miner-poller] live loop start (writes via %s)", writeReqFile)
+	log.Printf("[miner-poller] live loop start (writes via %s · chipmap → %s)",
+		writeReqFile, chipmapCacheFile)
+	var chipSt ChipmapState
 	for {
 		if ctx.Err() != nil {
 			break
@@ -38,6 +40,9 @@ func Run(s Settings) error {
 		// Privileged writes first — serve enqueues miner_write_req.json.
 		// Keeps write latency low and serializes ASIC TCP in this process only.
 		handledWrite := ProcessPendingWrite(s)
+
+		// Chipmap: full boards always in chipmap_cache.json (serve/UI read-only).
+		ProcessChipmapTick(s, &chipSt)
 
 		live, err := FetchLive(s)
 		if err != nil {
@@ -93,6 +98,11 @@ func Run(s Settings) error {
 			if ProcessPendingWrite(s) {
 				// write mid-wait: refresh live next outer iteration soon
 				break
+			}
+			// On-demand chipmap refresh while waiting
+			reqPath := filepath.Join(s.DataDir, chipmapReqFile)
+			if _, err := os.Stat(reqPath); err == nil {
+				ProcessChipmapTick(s, &chipSt)
 			}
 		}
 		if ctx.Err() != nil {

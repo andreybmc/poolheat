@@ -51,12 +51,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-try:
-    from Crypto.Cipher import AES
-except ImportError:
-    from Cryptodome.Cipher import AES  # type: ignore
-
-from passlib.hash import md5_crypt
+# Crypto/passlib intentionally NOT imported at boot.
+# ASIC crypto lives in Go miner-poller (wm-lib). Tapo/Klap lazy-import Crypto.
 
 try:
     from miner_models import (
@@ -3607,7 +3603,7 @@ def filtration_set(on: bool, *, source: str = "manual", force: bool = False) -> 
             allow_off = bool(_filtration_cfg.get("allow_off_while_mining", False))
         if not allow_off:
             try:
-                live = fetch_live()
+                live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
                 if _live_work(live) == "resume":
                     raise RuntimeError(
                         "нельзя выключить фильтрацию при майнинге"
@@ -3721,7 +3717,7 @@ def get_filtration_status(*, probe_live: bool = False) -> dict:
     try:
         live = None
         if probe_live:
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
         else:
             with _cache_lock:
                 if isinstance(_cache, dict) and _cache.get("ok"):
@@ -6715,8 +6711,8 @@ def start_miner_poller_process() -> None:
             + (f" · bin {go_bin}" if go_bin else ""),
             flush=True,
         )
-        # Go poller: live_cache + mining_work only.
-        # History samples + chipmap stay in serve (read live_cache, no :4028).
+        # Go poller: live_cache + mining_work + chipmap_cache.json.
+        # History samples may stay in serve (read live_cache only, no ASIC).
         if go_bin:
             if role_enabled("edge_history"):
                 try:
@@ -6732,18 +6728,10 @@ def start_miner_poller_process() -> None:
                     )
                 except Exception as e:
                     print(f"history:           failed to start in serve: {e}", flush=True)
-            if role_enabled("edge_miner_poller"):
-                try:
-                    tc = threading.Thread(
-                        target=chipmap_loop, name="chipmap-poll", daemon=True
-                    )
-                    tc.start()
-                    print(
-                        "chipmap:           in serve (go miner-poller has no chipmap)",
-                        flush=True,
-                    )
-                except Exception as e:
-                    print(f"chipmap:           failed to start in serve: {e}", flush=True)
+            print(
+                "chipmap:           in miner-poller → chipmap_cache.json (serve read-only)",
+                flush=True,
+            )
     except Exception as e:
         print(f"miner-poller:      failed to start: {e}", flush=True)
         _miner_poller_proc = None
@@ -7527,7 +7515,7 @@ def _chipmap_attach_hash_estimates(payload: dict) -> dict:
     elapsed = None
     hr = None
     try:
-        live = fetch_live()
+        live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
         elapsed = _f(live.get("elapsed"))
         hr = _f(live.get("hashrate_th"))
     except Exception:
@@ -7582,7 +7570,7 @@ def _chipmap_is_mining() -> tuple[bool | None, str]:
       None  — miner live API unreachable (real offline / auth issue possible)
     """
     try:
-        live = fetch_live()
+        live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
     except Exception as e:
         return None, str(e)
     try:
@@ -7868,69 +7856,84 @@ def fetch_chipmap_from_luci(*, force: bool = False) -> dict:
         return out
 
 
+def request_chipmap_refresh(*, timeout_sec: float = 45.0) -> dict:
+    """
+    Ask Go miner-poller to refresh chipmap_cache.json (file IPC).
+    """
+    if not miner_poller_process_alive():
+        return {"ok": False, "error": "miner-poller not running"}
+    req_id = uuid.uuid4().hex
+    req_path = DATA / "chipmap_req.json"
+    res_path = DATA / "chipmap_result.json"
+    try:
+        if res_path.is_file():
+            res_path.unlink()
+    except Exception:
+        pass
+    _write_json_atomic(req_path, {"id": req_id, "ts": time.time(), "force": True})
+    deadline = time.time() + max(5.0, float(timeout_sec))
+    while time.time() < deadline:
+        time.sleep(0.25)
+        try:
+            if not res_path.is_file():
+                continue
+            raw = json.loads(res_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict) or str(raw.get("id") or "") != req_id:
+                continue
+            return raw
+        except Exception:
+            continue
+    # even without result file, cache may have been updated
+    disk = _read_chipmap_cache_disk()
+    if disk and disk.get("ok"):
+        return {"ok": True, "id": req_id, "from_cache": True}
+    return {"ok": False, "error": "timeout waiting for chipmap refresh", "id": req_id}
+
+
 def get_chipmap(*, force: bool = False) -> dict:
     """
-    Return chipmap for UI.
-    Disk is source of truth for full boards; RAM holds summary only
-    (never pin ~1k chips in process memory).
+    Return chipmap for UI from chipmap_cache.json only.
+    Poller writes the full ready JSON; serve never scrapes LuCI.
+    force=True enqueues chipmap_req.json and waits briefly for refresh.
     """
     if force:
-        return fetch_chipmap_from_luci(force=True)
-
-    mining, _ = _chipmap_is_mining()
-
-    # Always prefer disk for full map response — do not keep boards in RAM
-    if _chipmap_persist_cache_enabled():
-        disk = _read_chipmap_cache_disk()
-        if disk and disk.get("boards"):
-            out = dict(disk)
-            out["from_disk"] = True
-            out["boards_in_ram"] = False
-            if mining is False:
-                out["reason"] = out.get("reason") or "suspend"
-                out["stale"] = True
-                out["message"] = (
-                    out.get("message")
-                    or "last chip map from disk · miner not hashing"
-                )
-            else:
-                out = _chipmap_attach_hash_estimates(out)
-            # RAM stays summary-only
-            with _chipmap_lock:
-                _chipmap_cache.clear()
-                _chipmap_cache.update(_chipmap_summary_only(out))
-                if mining is False:
-                    _chipmap_cache["reason"] = "suspend"
-                _chipmap_cache["ok"] = True
-                _chipmap_cache["boards_in_ram"] = False
-            return out
-
+        request_chipmap_refresh(timeout_sec=45.0)
+    disk = _read_chipmap_cache_disk()
+    if disk and (disk.get("boards") is not None or disk.get("ok") is not None):
+        out = dict(disk)
+        out["from_disk"] = True
+        out["boards_in_ram"] = False
+        # light RAM summary only
+        with _chipmap_lock:
+            _chipmap_cache.clear()
+            _chipmap_cache.update(_chipmap_summary_only(out) if out.get("boards") else out)
+            _chipmap_cache["boards_in_ram"] = False
+        return out
     with _chipmap_lock:
         ram = dict(_chipmap_cache)
-    if ram.get("boards"):
-        # legacy path if something still left boards in RAM
-        out = ram
-        if out.get("reason") != "suspend" and mining is not False:
-            out = _chipmap_attach_hash_estimates(out)
-        return dict(out)
-
-    # Nothing cached — live scrape
-    return fetch_chipmap_from_luci(force=True)
+    if ram:
+        ram = dict(ram)
+        ram.setdefault("ok", False)
+        ram.setdefault("error", "no chipmap_cache.json yet — wait for miner-poller")
+        ram["from_disk"] = False
+        return ram
+    return {
+        "ok": False,
+        "error": "no chipmap_cache.json — miner-poller chipmap not ready",
+        "boards": [],
+        "chip_count": 0,
+        "from_disk": False,
+    }
 
 
 def chipmap_loop() -> None:
-    """Background poll of LuCI chip log — own interval, independent of live poll."""
-    _chipmap_stop.wait(timeout=4.0)
+    """
+    Deprecated in serve: chipmap is owned by Go miner-poller
+    (writes chipmap_cache.json). Kept as no-op for --miner-poller python fallback.
+    """
+    print("[chipmap] loop disabled in serve — use poolheat-miner-poller", flush=True)
     while not _chipmap_stop.is_set():
-        with _chipmap_lock:
-            enabled = bool(_chipmap_cfg.get("enabled", True))
-            interval = max(10, int(_chipmap_cfg.get("poll_interval_sec") or 30))
-        if enabled:
-            try:
-                fetch_chipmap_from_luci(force=True)
-            except Exception as e:
-                print(f"[chipmap] poll: {e}")
-        _chipmap_stop.wait(timeout=interval)
+        _chipmap_stop.wait(timeout=60.0)
 
 
 # ── LuCI reverse proxy (:8788 → miner web UI) ────────────────────────────────
@@ -9570,6 +9573,26 @@ def hydrate_live_from_disk(*, max_age_sec: float | None = None) -> dict | None:
         return dict(live)
     except Exception:
         return None
+
+
+
+def live_snapshot(*, max_age_sec: float | None = None, allow_direct: bool = False) -> dict:
+    """
+    Live data for serve logic: always prefer live_cache.json from miner-poller.
+    Direct fetch_live (ASIC TCP) only if allow_direct and poller is down.
+    """
+    age = float(LIVE_DISK_MAX_AGE_SEC if max_age_sec is None else max_age_sec)
+    live = hydrate_live_from_disk(max_age_sec=age)
+    if isinstance(live, dict) and live.get("ok"):
+        return live
+    with _cache_lock:
+        if isinstance(_cache, dict) and _cache.get("ok"):
+            return dict(_cache)
+    if allow_direct and not miner_poller_process_alive():
+        snap = fetch_live()
+        publish_live_snapshot(snap)
+        return snap
+    raise RuntimeError("no live snapshot (miner-poller / live_cache)")
 
 
 def miner_poller_process_alive() -> bool:
@@ -13592,22 +13615,19 @@ def _mark_miner_live_ok() -> None:
 
 def miner_is_online(*, max_age_sec: float | None = None, probe: bool = False) -> bool:
     """
-    True if we recently read live data successfully.
-    probe=True does a cheap summary ping when cache is stale.
+    True if we recently have live_cache from miner-poller.
+    probe no longer opens ASIC TCP from serve (ignored; disk hydrate only).
     """
     age = float(max_age_sec if max_age_sec is not None else _MINER_ONLINE_MAX_AGE_SEC)
     with _last_live_ok_lock:
         last = float(_last_live_ok_ts or 0)
     if last > 0 and (time.time() - last) <= age:
         return True
-    if not probe:
-        return False
-    try:
-        miner_cmd({"cmd": "summary"}, timeout=4.0)
+    live = hydrate_live_from_disk(max_age_sec=age)
+    if isinstance(live, dict) and live.get("ok"):
         _mark_miner_live_ok()
         return True
-    except Exception:
-        return False
+    return False
 
 
 def _parse_miner_json(text: str) -> dict:
@@ -13728,6 +13748,15 @@ def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
 
 
 def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
+    """
+    Direct TCP to ASIC. Forbidden while Go miner-poller is alive
+    (all ASIC I/O must go through the poller).
+    """
+    if miner_poller_process_alive():
+        raise RuntimeError(
+            "miner_cmd blocked: miner-poller owns ASIC TCP "
+            f"(cmd={cmd.get('cmd')!r}) — use live_cache / miner_write_req"
+        )
     with _miner_io_lock:
         return _miner_cmd_unlocked(cmd, timeout=timeout)
 
@@ -15279,8 +15308,8 @@ def _merge_board_rows(primary: list[dict], secondary: list[dict]) -> list[dict]:
 def _collect_miner_identity() -> dict:
     """
     ASIC identity for Info tab.
-    PCB SN + Tagged Hashrate come from hashboard EEPROM — available in Suspend
-    via API v3 get.device.info (devs often fails while mineroff).
+    When Go miner-poller is alive, serve must not open ASIC TCP — use last
+    identity disk cache + fields from live_cache.json.
     """
     out: dict = {
         "ok": False,
@@ -15310,6 +15339,37 @@ def _collect_miner_identity() -> dict:
         "hash_board": None,
         "error": None,
     }
+    if miner_poller_process_alive():
+        try:
+            disk = _load_miner_id_disk() or {}
+            if isinstance(disk, dict):
+                for k, v in disk.items():
+                    if k in out and v not in (None, "", []):
+                        out[k] = v
+            live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC) or {}
+            if isinstance(live, dict):
+                if live.get("psu_model") and not out.get("psu_model"):
+                    out["psu_model"] = live.get("psu_model")
+                if live.get("board_count") is not None:
+                    out["board_num"] = live.get("board_count")
+                if isinstance(live.get("boards"), list) and live["boards"]:
+                    # live boards are temps, not full identity — keep disk boards
+                    pass
+                out["host"] = live.get("host") or out["host"]
+            out["ok"] = bool(
+                out.get("miner_type") or out.get("minersn") or out.get("mac") or disk
+            )
+            if not out["ok"]:
+                out["error"] = (
+                    "identity from disk/live only (poller owns ASIC) — "
+                    "wait for first poller sample or restart once offline"
+                )
+            else:
+                out["error"] = None
+                out["source"] = "live_cache+disk"
+        except Exception as e:
+            out["error"] = str(e)
+        return out
     try:
         ver = miner_cmd({"cmd": "get_version"}, timeout=3).get("Msg") or {}
         if isinstance(ver, dict):
@@ -16960,72 +17020,11 @@ def get_token_data(
     *,
     max_attempts: int = 3,
     unlocked: bool = False,
-    force_refresh: bool = False,
 ) -> dict:
-    """
-    Privileged Whatsminer token. Cached ~25 min (API default ~30).
-
-    When unlocked=True (caller holds _miner_io_lock): NEVER sleep — only one
-    attempt. Sleeping under the I/O lock freezes live poll + Telegram status.
-
-    After over max connect: global TCP-write backoff (no further get_token
-    attempts) so policy cannot burn remaining slots. LuCI control still works.
-    """
-    if not force_refresh:
-        cached = _token_cache_get(password)
-        if cached:
-            return cached
-    # No cache and already exhausted — fail fast (do not open more sessions)
-    if _tcp_write_blocked() and not force_refresh:
-        raise RuntimeError(_tcp_write_blocked_msg())
-
-    last_err: Exception | None = None
-    # Under exclusive lock: single shot only (caller retries outside lock).
-    attempts = 1 if unlocked else max(1, int(max_attempts))
-    for attempt in range(attempts):
-        try:
-            if unlocked:
-                data = _miner_cmd_unlocked({"cmd": "get_token"}, timeout=6.0)
-            else:
-                data = miner_cmd({"cmd": "get_token"}, timeout=6.0)
-        except Exception as e:
-            last_err = e
-            if unlocked:
-                break
-            time.sleep(min(4.0, 1.0 + attempt * 1.0))
-            continue
-        msg = data.get("Msg") if isinstance(data, dict) else None
-        if _msg_is_over_max_connect(msg):
-            last_err = RuntimeError("over max connect")
-            _note_tcp_write_exhausted()
-            if unlocked:
-                # Do not sleep while holding _miner_io_lock.
-                break
-            # Outside lock path: brief wait between free-standing retries
-            time.sleep(min(30.0, 8.0 + attempt * 8.0))
-            continue
-        if not isinstance(msg, dict) or "salt" not in msg or "time" not in msg:
-            raise RuntimeError(f"get_token failed: {msg!r}")
-        pwd_hash = md5_crypt.hash(password, salt=msg["salt"])
-        host_passwd_md5 = pwd_hash.split("$")[3]
-        tmp = md5_crypt.hash(host_passwd_md5 + msg["time"], salt=msg["newsalt"])
-        host_sign = tmp.split("$")[3]
-        token = {"host_sign": host_sign, "host_passwd_md5": host_passwd_md5}
-        # timeout field: "0" = no expire; missing = 30 min (Whatsminer manual)
-        ttl = 25 * 60.0
-        try:
-            to = msg.get("timeout")
-            if to is not None and str(to).strip() not in ("", "0"):
-                ttl = max(60.0, min(30 * 60.0, float(to)))
-        except (TypeError, ValueError):
-            pass
-        _token_cache_put(password, token, ttl_sec=ttl)
-        return token
-    if last_err and "over max" in str(last_err).lower():
-        raise RuntimeError(_OVER_MAX_CONNECT_RU) from last_err
-    if last_err:
-        raise RuntimeError(f"get_token: {last_err}") from last_err
-    raise RuntimeError(_OVER_MAX_CONNECT_RU)
+    """Removed from serve — token crypto is in Go miner-poller / wm-lib."""
+    raise RuntimeError(
+        "get_token disabled in serve (no passlib) — use miner-poller writes"
+    )
 
 
 def _miner_write_ports() -> list[int]:
@@ -17048,151 +17047,21 @@ def privileged_cmd(
     token_attempts: int = 3,
     ports: list[int] | None = None,
 ) -> dict:
-    """
-    Encrypted privileged write. Reuses cached token.
-    Tries several TCP ports (4028 then 4029) — not a different crypto,
-    just alternate API listeners on newer firmwares.
-    Retries over max connect with sleep OUTSIDE _miner_io_lock so TG/live stay responsive.
-    """
-    last_err: Exception | None = None
-    attempts = max(1, int(token_attempts))
-    write_ports = list(ports) if ports else _miner_write_ports()
-    for port in write_ports:
-        for attempt in range(attempts):
-            try:
-                with _miner_io_lock:
-                    token = get_token_data(
-                        password, max_attempts=1, unlocked=True
-                    )
-                    out_cmd = dict(cmd)
-                    out_cmd["token"] = token["host_sign"]
-                    aeskey = binascii.unhexlify(
-                        hashlib.sha256(token["host_passwd_md5"].encode()).hexdigest()
-                    )
-                    cipher = AES.new(aeskey, AES.MODE_ECB)
-                    api_str = json.dumps(out_cmd, separators=(",", ":"))
-                    enc = base64.b64encode(
-                        cipher.encrypt(_add_to_16(api_str))
-                    ).decode()
-                    payload = (
-                        json.dumps({"enc": 1, "data": enc}, separators=(",", ":"))
-                        + "\n"
-                    ).encode()
-                    try:
-                        with socket.create_connection(
-                            (HOST_MINER, int(port)), timeout=8
-                        ) as sock:
-                            sock.sendall(payload)
-                            raw = _recv_json(sock, timeout=25)
-                    except (OSError, TimeoutError, socket.timeout) as e:
-                        cname = str(out_cmd.get("cmd") or "")
-                        if cname in ("factory_reset", "reboot", "net_config"):
-                            return {
-                                "STATUS": "S",
-                                "Msg": f"{cname} sent (link dropped: {e})",
-                                "Code": 131,
-                                "port": int(port),
-                            }
-                        # try next port
-                        last_err = e
-                        break
-                    if isinstance(raw, dict):
-                        dec = _decrypt_privileged_response(cipher, raw)
-                        try:
-                            st = str(dec.get("STATUS") or "").upper()
-                            msg = str(dec.get("Msg") or "").lower()
-                            code = dec.get("Code")
-                            if code == 135 or (
-                                "token" in msg
-                                and (
-                                    "error" in msg
-                                    or "invalid" in msg
-                                    or "check" in msg
-                                )
-                            ):
-                                _token_cache_clear()
-                            elif st in ("E", "F") and "token" in msg:
-                                _token_cache_clear()
-                        except Exception:
-                            pass
-                        if isinstance(dec, dict):
-                            dec = dict(dec)
-                            dec["_write_port"] = int(port)
-                            # Code 45: try next TCP port before giving up
-                            msg_l = str(dec.get("Msg") or "").lower()
-                            code_i = dec.get("Code")
-                            if code_i == 45 or "can't access write" in msg_l or (
-                                "cant access write" in msg_l
-                            ):
-                                last_err = RuntimeError(
-                                    str(dec.get("Msg") or "can't access write cmd")
-                                )
-                                break  # next port
-                        return dec
-                    return raw
-            except RuntimeError as e:
-                last_err = e
-                if "over max" not in str(e).lower():
-                    # can't access write / other: try next port then fall through
-                    if "can't access write" in str(e).lower() or "cant access write" in str(
-                        e
-                    ).lower():
-                        break
-                    # non-port-related auth errors should not spam all ports forever
-                    if "get_token" in str(e).lower() and "over max" not in str(e).lower():
-                        raise
-                    break
-                # Sleep outside lock — free live poll / Telegram
-                if attempt + 1 < attempts:
-                    time.sleep(min(45.0, 10.0 + attempt * 12.0))
-                    continue
-                # over max on this port — try next port without long wait
-                break
-    # all ports exhausted — return synthetic Code 45 so miner_write_cmd can LuCI-fallback
-    if last_err and "over max" in str(last_err).lower():
-        raise RuntimeError(_OVER_MAX_CONNECT_RU) from last_err
-    if last_err and (
-        "can't access write" in str(last_err).lower()
-        or "cant access write" in str(last_err).lower()
-    ):
-        return {
-            "STATUS": "E",
-            "Code": 45,
-            "Msg": "can't access write cmd",
-            "Description": str(last_err),
-        }
-    if last_err:
-        raise last_err if isinstance(last_err, Exception) else RuntimeError(str(last_err))
-    raise RuntimeError(_OVER_MAX_CONNECT_RU)
+    """Route privileged writes through miner-poller only."""
+    return miner_write_cmd(cmd, password)
 
 
-# ─── Whatsminer via whatsminer-lib (UniversalMiner) ───────────────────────────
-# Vendored package: next to serve.py as ``whatsminer/`` (also pip: whatsminer-lib).
-# Upstream: https://github.com/andreybmc/whatsminer-lib
-# Legacy monolith whatsminer_driver.py archived under projects/whatsminer/.
+# ─── ASIC I/O: Go miner-poller only (no whatsminer / passlib in serve) ───────
+# Live → live_cache.json · writes → miner_write_req.json · chipmap → chipmap_cache.json
+# This process never opens :4028/:4433/:8889 for normal operation.
 
-import sys as _sys
-
-_lib_dir = Path(__file__).resolve().parent
-# Always prefer /opt/lib/poolheat (and local ui-demo) on sys.path for vendored lib
-for _p in (str(_lib_dir), "/opt/lib/poolheat"):
-    if _p and _p not in _sys.path and Path(_p).is_dir():
-        _sys.path.insert(0, _p)
-
-_WM_IMPORT_ERROR: str | None = None
-try:
-    from whatsminer import LuCIClient, UniversalMiner  # type: ignore
-    from whatsminer.web.luci import LuCIError  # type: ignore
-except Exception as _wm_imp_err:  # pragma: no cover — keep UI up even if package missing
-    LuCIClient = None  # type: ignore
-    UniversalMiner = None  # type: ignore
-    LuCIError = RuntimeError  # type: ignore
-    _WM_IMPORT_ERROR = (
-        f"whatsminer-lib import failed: {_wm_imp_err!r}. "
-        "Expected /opt/lib/poolheat/whatsminer (vendored) or pip install whatsminer-lib. "
-        "Need pycryptodome/Cryptodome + passlib."
-    )
-    print(f"[poolheat] FATAL-soft: {_WM_IMPORT_ERROR}", flush=True)
+_WM_IMPORT_ERROR = (
+    "whatsminer removed from serve — use poolheat-miner-poller "
+    "(live_cache / miner_write_req / chipmap_cache)"
+)
+LuCIClient = None  # type: ignore
+UniversalMiner = None  # type: ignore
+LuCIError = RuntimeError  # type: ignore
 
 _wm_driver_lock = threading.Lock()
 _wm_driver: "PoolheatMiner | None" = None
@@ -17200,391 +17069,30 @@ _wm_driver_pw_fp: str = ""
 
 
 class _LuciCompat:
-    """
-    Thin compatibility layer for poolheat helpers that still call
-    luci.request / luci.clear / extract_token on the old LuciClient.
-    """
+    """Removed — LuCI lives in miner-poller / luci_proxy only."""
 
-    def __init__(self, luci: "LuCIClient"):
-        self._luci = luci
-
-    def __getattr__(self, name: str):
-        return getattr(self._luci, name)
-
-    @property
-    def password(self) -> str:
-        return str(getattr(self._luci, "password", "") or "")
-
-    @password.setter
-    def password(self, value: str) -> None:
-        self._luci.password = value
-
-    @property
-    def timeout(self) -> float:
-        return float(getattr(self._luci, "timeout", 10.0) or 10.0)
-
-    @timeout.setter
-    def timeout(self, value: float) -> None:
-        self._luci.timeout = float(value)
-
-    def clear(self) -> None:
-        # reset login state if available
-        for attr in ("_logged_in", "_token", "_wmoc_cache"):
-            if hasattr(self._luci, attr):
-                try:
-                    setattr(
-                        self._luci,
-                        attr,
-                        False if attr == "_logged_in" else None,
-                    )
-                except Exception:
-                    pass
-        cj = getattr(self._luci, "_cj", None)
-        if cj is not None:
-            try:
-                cj.clear()
-            except Exception:
-                pass
-
-    def login(self) -> None:
-        self._luci.login()
-
-    def request(
-        self,
-        path: str,
-        data: dict | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> tuple[int, str]:
-        """Return (status_code, body_text) like the old LuciClient.request."""
-        old_to = self.timeout
-        try:
-            if timeout is not None:
-                self.timeout = float(timeout)
-            if not path.startswith("/"):
-                path = "/" + path
-            if data:
-                # form POST
-                raw = urllib.parse.urlencode(
-                    {str(k): str(v) for k, v in data.items()}
-                ).encode("utf-8")
-                code, body, _ = self._luci._open(path, data=raw, method="POST")
-            else:
-                code, body, _ = self._luci._open(path)
-            text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
-            return int(code), text
-        finally:
-            self.timeout = old_to
-
-    @staticmethod
-    def extract_token(html: str | bytes) -> str:
-        if LuCIClient is None:
-            return ""
-        tok = LuCIClient._extract_token(html)
-        return tok or ""
-
-    def get_coin_type(self) -> str:
-        try:
-            pools = self._luci.get_pools()
-            return str((pools or {}).get("coin_type") or "").strip()
-        except Exception:
-            return ""
+    def __init__(self, *a, **k):
+        raise RuntimeError(_WM_IMPORT_ERROR)
 
 
 class PoolheatMiner:
-    """
-    Adapter: whatsminer-lib UniversalMiner + methods poolheat already calls
-    (set_power_mode, restart_btminer, set_pools, write_cmd, enable_api_switch).
+    """Removed — use miner_write_cmd → Go miner-poller."""
 
-    Privileged writes (power mode / limit / pct / suspend) go **WhatsMinerTool
-    NetPacket :8889 first** (same path as WMT), then public API / LuCI fallback.
-    """
-
-    def __init__(
-        self,
-        host: str,
-        *,
-        api_password: str = "admin",
-        luci_username: str = "admin",
-        luci_password: str | None = None,
-        wmt_password: str = "super",
-    ):
-        self.host = host
-        self.api_password = api_password
-        self.luci_password = luci_password if luci_password is not None else api_password
-        self._m = UniversalMiner(
-            host,
-            password=api_password,
-            account="super",
-            wmt_password=wmt_password,
-            luci_username=luci_username,
-            luci_password=self.luci_password,
-            auto_probe=True,
-            # Prefer WMT private NetPacket (:8889) — works with Miner API Switch OFF
-            # and avoids public get_token «over max connect» burn.
-            prefer_netpacket=True,
-            try_enable_api=False,
-        )
-        self._luci_compat = _LuciCompat(self._m.luci)
-
-    @property
-    def luci(self) -> _LuciCompat:
-        return self._luci_compat
-
-    def _wmt_first(self, action: str, wmt_fn, fallback_fn) -> dict:
-        """
-        Run WhatsMinerTool NetPacket method first; on failure use UniversalMiner
-        multi-transport fallback (public / LuCI).
-        """
-        errors: list[str] = []
-        try:
-            raw = wmt_fn()
-            if isinstance(raw, dict):
-                out = dict(raw)
-            else:
-                out = {"result": raw}
-            out.setdefault("ok", True)
-            out["transport"] = "netpacket"
-            out["action"] = action
-            return out
-        except Exception as e:
-            errors.append(f"netpacket: {e}")
-        try:
-            out = fallback_fn()
-            if isinstance(out, dict):
-                out.setdefault("action", action)
-                return out
-            return {"ok": True, "action": action, "result": out, "transport": "fallback"}
-        except Exception as e:
-            errors.append(str(e))
-            raise RuntimeError(
-                f"{self.host}: {action} failed · " + " · ".join(errors[:4])
-            ) from e
-
-    def set_power_mode(self, mode: str) -> dict:
-        """WMT Performance Mode (NetPacket cmd 5) via library."""
-        m = str(mode).lower().strip()
-        return self._wmt_first(
-            "set_power_mode",
-            lambda: self._m.wmt.set_power_mode(m),
-            lambda: self._m.set_power_mode(m),
-        )
-
-    def set_power_limit(self, watts: int | float | str) -> dict:
-        """WMT Power Limit watts (NetPacket cmd 13 param 14)."""
-        w = int(float(watts))
-        return self._wmt_first(
-            "set_power_limit",
-            lambda: self._m.wmt.set_power_limit(w),
-            lambda: self._m.set_power_limit(w),
-        )
-
-    def set_power_pct(self, percent: int | float | str, *, fast: bool = False) -> dict:
-        """WMT Adjust Power % (NetPacket cmd 13 param 20, or 9 if fast)."""
-        pct = int(float(percent))
-        return self._wmt_first(
-            "set_power_pct",
-            lambda: self._m.wmt.set_power_pct(pct, fast=fast),
-            lambda: self._m.set_power_pct(pct, fast=fast),
-        )
-
-    def power_off(self) -> dict:
-        """WMT Suspend Mining (NetPacket ``8=0``)."""
-        return self._wmt_first(
-            "power_off",
-            lambda: self._m.wmt.suspend(),
-            lambda: self._m.power_off(),
-        )
-
-    def power_on(self) -> dict:
-        """WMT Resume Mining (NetPacket ``8=1``)."""
-        return self._wmt_first(
-            "power_on",
-            lambda: self._m.wmt.resume(),
-            lambda: self._m.power_on(),
-        )
-
-    def reboot(self) -> dict:
-        return self._wmt_first(
-            "reboot",
-            lambda: self._m.wmt.reboot(),
-            lambda: self._m.reboot(),
-        )
-
-    def restart_btminer(self) -> dict:
-        return self._m.restart_mining()
-
-    def set_pools(
-        self,
-        pools: list,
-        *,
-        coin_type: str | None = None,
-        restart_mining: bool = True,
-    ) -> dict:
-        """
-        pools: [{url,user,pass|password}, …] up to 3.
-
-        ``coin_type`` (e.g. DGB from pool preset) is required for LuCI/UCI and
-        must not be dropped — previously update_pools ignored it and ASIC stayed
-        on BTC. ``restart_mining`` defaults True so stratum actually switches.
-        """
-        slots = [{"url": "", "user": "", "password": "x"} for _ in range(3)]
-        for i, p in enumerate((pools or [])[:3]):
-            if not isinstance(p, dict):
-                continue
-            url = str(p.get("url") or p.get("pool") or "")
-            user = str(p.get("user") or p.get("worker") or "")
-            pw = str(
-                p.get("pass")
-                if p.get("pass") is not None
-                else p.get("password")
-                if p.get("password") is not None
-                else p.get("passwd")
-                if p.get("passwd") is not None
-                else "x"
-            )
-            slots[i] = {"url": url, "user": user, "password": pw}
-        coin = str(coin_type or "").strip() or None
-        # Prefer universal update_pools (auto transport; NetPacket preferred)
-        # Always thread coin_type + restart so LuCI leg applies them.
-        try:
-            return self._m.update_pools(
-                slots[0]["url"],
-                slots[0]["user"],
-                slots[0]["password"],
-                slots[1]["url"],
-                slots[1]["user"],
-                slots[1]["password"],
-                slots[2]["url"],
-                slots[2]["user"],
-                slots[2]["password"],
-                coin_type=coin,
-                restart_mining=bool(restart_mining),
-            )
-        except Exception:
-            # LuCI-only fallback with coin_type + restart
-            return self._m.set_pools_luci(
-                [
-                    {
-                        "index": i,
-                        "url": slots[i]["url"],
-                        "user": slots[i]["user"],
-                        "password": slots[i]["password"],
-                    }
-                    for i in range(3)
-                    if slots[i]["url"] or slots[i]["user"]
-                ],
-                coin_type=str(coin or "BTC"),
-                restart_mining=bool(restart_mining),
-            )
-
-    def enable_api_switch(self, enable: bool = True) -> dict:
-        return self._m.set_api_switch(bool(enable))
-
-    def write_cmd(self, cmd: dict) -> dict:
-        """Map legacy privileged cmd dicts onto UniversalMiner / WMT actions."""
-        cname = str((cmd or {}).get("cmd") or "").strip()
-        if cname in ("set_low_power",):
-            return self.set_power_mode("low")
-        if cname in ("set_normal_power",):
-            return self.set_power_mode("normal")
-        if cname in ("set_high_power",):
-            return self.set_power_mode("high")
-        if cname == "reboot":
-            return self.reboot()
-        if cname in ("restart_btminer", "restart_cgminer"):
-            return self.restart_btminer()
-        if cname in ("adjust_power_limit", "set_power_limit", "power_limit"):
-            w = cmd.get("power_limit") or cmd.get("watts") or cmd.get("value")
-            return self.set_power_limit(w)
-        if cname in ("set_power_pct", "power_pct"):
-            pct = cmd.get("percent") or cmd.get("pct") or cmd.get("value")
-            return self.set_power_pct(pct)
-        if cname in ("sleep", "suspend", "power_off"):
-            return self.power_off()
-        if cname in ("resume", "power_on", "wakeup"):
-            return self.power_on()
-        if cname in ("factory_reset", "factory"):
-            # NetPacket-only (WhatsMinerTool) — see UniversalMiner.factory_reset
-            return self._m.factory_reset(netpacket_only=True)
-        if cname in ("update_pools", "set_pools"):
-            pools = cmd.get("pools") or []
-            ct = cmd.get("coin_type") or cmd.get("coin")
-            # restart unless caller explicitly disables (restart_mining=false / 0)
-            rm = cmd.get("restart_mining")
-            if rm is None:
-                rm = cmd.get("restart")
-            restart = True if rm is None else bool(rm)
-            return self.set_pools(
-                pools,
-                coin_type=str(ct) if ct else None,
-                restart_mining=restart,
-            )
-        # fall back to TCP privileged path still in serve.py
-        return privileged_cmd(cmd, self.api_password, token_attempts=1)
+    def __init__(self, *a, **k):
+        raise RuntimeError(_WM_IMPORT_ERROR)
 
 
-def get_whatsminer_driver(password: str | None = None) -> "PoolheatMiner":
-    """
-    Shared UniversalMiner adapter for poolheat writes.
-    Prefers WhatsMinerTool NetPacket :8889, then public API / LuCI.
-    """
-    global _wm_driver, _wm_driver_pw_fp
-    if UniversalMiner is None or LuCIClient is None:
-        raise RuntimeError(
-            _WM_IMPORT_ERROR
-            or "whatsminer-lib not available — reinstall poolheat 0.5.2+ "
-            "(package whatsminer next to serve.py)"
-        )
-    pw = (password or DEFAULT_API_PASSWORD or "admin").strip() or "admin"
-    fp = _password_fingerprint(pw)
-
-    with _wm_driver_lock:
-        # Drop stale adapter built with prefer_netpacket=False
-        if _wm_driver is not None:
-            try:
-                pref = bool(getattr(_wm_driver._m, "prefer_netpacket", False))
-            except Exception:
-                pref = False
-            if not pref or str(_wm_driver.host) != str(HOST_MINER):
-                _wm_driver = None
-                _wm_driver_pw_fp = None
-        if (
-            _wm_driver is not None
-            and _wm_driver_pw_fp == fp
-            and str(_wm_driver.host) == str(HOST_MINER)
-        ):
-            _wm_driver.api_password = pw
-            _wm_driver.luci_password = pw
-            try:
-                _wm_driver.luci.password = pw
-                _wm_driver._m.password = pw
-                _wm_driver._m.luci_password = pw
-                _wm_driver._m.v3_password = pw
-                # keep WMT preference sticky
-                _wm_driver._m.prefer_netpacket = True
-            except Exception:
-                pass
-            return _wm_driver
-        d = PoolheatMiner(
-            HOST_MINER,
-            api_password=pw,
-            luci_username="admin",
-            luci_password=pw,
-            wmt_password="super",
-        )
-        _wm_driver = d
-        _wm_driver_pw_fp = fp
-        return d
+def get_whatsminer_driver(password: str | None = None):
+    """Removed: ASIC I/O is Go miner-poller only."""
+    raise RuntimeError(_WM_IMPORT_ERROR)
 
 
 def _luci_clear_session() -> None:
+    """No-op: LuCI session no longer held in serve."""
+    global _wm_driver, _wm_driver_pw_fp
     with _wm_driver_lock:
-        if _wm_driver is not None:
-            try:
-                _wm_driver.luci.clear()
-            except Exception:
-                pass
+        _wm_driver = None
+        _wm_driver_pw_fp = ""
 
 
 def _luci_request(
@@ -17594,44 +17102,56 @@ def _luci_request(
     data: dict | None = None,
     timeout: float = 15.0,
 ) -> tuple[int, str]:
-    """Compat for chipmap / enable-write helpers — routes through LuCI."""
-    d = get_whatsminer_driver(password)
-    return d.luci.request(path, data=data, timeout=timeout)
+    raise RuntimeError(
+        "LuCI from serve disabled — use miner-poller / luci reverse proxy"
+    )
 
 
 def _luci_extract_token(html: str) -> str:
-    return _LuciCompat.extract_token(html)
+    return ""
 
 
 def luci_set_power_mode(mode: str, password: str) -> dict:
-    """Power Mode via best available transport (LuCI / NetPacket / API)."""
-    return get_whatsminer_driver(password).set_power_mode(mode)
+    """Power Mode via miner-poller write IPC."""
+    m = str(mode).lower().strip()
+    cmd_map = {
+        "low": "set_low_power",
+        "normal": "set_normal_power",
+        "high": "set_high_power",
+    }
+    if m not in cmd_map:
+        raise ValueError("mode must be low|normal|high")
+    return miner_write_cmd({"cmd": cmd_map[m]}, password)
 
 
 def luci_reboot_asic(password: str) -> dict:
-    """Full reboot via best available transport."""
-    return get_whatsminer_driver(password).reboot()
+    """Full reboot via miner-poller."""
+    return miner_write_cmd({"cmd": "reboot"}, password)
 
 
 def luci_restart_btminer(password: str) -> dict:
-    """Restart mining process (btminer)."""
-    return get_whatsminer_driver(password).restart_btminer()
+    """Restart mining process via miner-poller."""
+    return miner_write_cmd({"cmd": "restart_btminer"}, password)
 
 
 def luci_set_pools(
     pools: list, password: str, *, coin_type: str | None = None
 ) -> dict:
-    """Set up to 3 pools (auto transport)."""
-    return get_whatsminer_driver(password).set_pools(
-        pools, coin_type=coin_type
-    )
+    """Set up to 3 pools via miner-poller (NetPacket/V2)."""
+    cmd: dict = {"cmd": "update_pools", "pools": pools}
+    if coin_type:
+        cmd["coin_type"] = coin_type
+    return miner_write_cmd(cmd, password)
 
 
 def fetch_miner_coin_type() -> str:
-    """Best-effort Coin Type from LuCI pools form."""
+    """Coin type from live_cache if present."""
     try:
-        d = get_whatsminer_driver(DEFAULT_API_PASSWORD)
-        return str(d.luci.get_coin_type() or "").strip()
+        live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC)
+        if isinstance(live, dict):
+            ct = live.get("coin_type") or live.get("coin")
+            if ct:
+                return str(ct).strip()
     except Exception as e:
         print(f"[pools] coin_type: {e}")
     return ""
@@ -17639,11 +17159,13 @@ def fetch_miner_coin_type() -> str:
 
 def luci_enable_api_switch(password: str, *, enable: bool = True) -> dict:
     """
-    Enable Miner API Switch via NetPacket set_api_switch (WMT path).
-    Used when TCP privileged write is required (suspend, power_limit, …).
+    Enable Miner API Switch via miner-poller NetPacket (WMT :8889).
     """
     password = password or DEFAULT_API_PASSWORD
-    out = get_whatsminer_driver(password).enable_api_switch(enable)
+    out = miner_write_cmd(
+        {"cmd": "set_api_switch", "enable": bool(enable)},
+        password,
+    )
     _token_cache_clear()
     return out
 
@@ -17670,6 +17192,8 @@ PORT_MINER_V3 = 4433
 
 
 def _v3_send(payload: dict | str, *, timeout: float = 8.0) -> dict:
+    if miner_poller_process_alive():
+        raise RuntimeError("v3 blocked: miner-poller owns ASIC TCP")
     """Send one API v3 message: 4-byte LE length + JSON body."""
     if isinstance(payload, dict):
         raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -17703,6 +17227,10 @@ def _v3_token(cmd: str, password: str, salt: str, ts: int) -> str:
 
 
 def _v3_encrypt_param(param: str, cmd: str, password: str, salt: str, ts: int) -> str:
+    try:
+        from Crypto.Cipher import AES  # type: ignore
+    except ImportError:
+        from Cryptodome.Cipher import AES  # type: ignore
     src = f"{cmd}{password}{salt}{ts}"
     aes_key = hashlib.sha256(src.encode("utf-8")).digest()
     pad = 16 - (len(param) % 16)
@@ -17968,16 +17496,12 @@ def get_write_api_status(password: str | None = None) -> dict:
     else:
         out["v3_write_ok"] = False
 
-    # LuCI reachability (mode/pools/reboot work without TCP write unlock)
-    try:
-        get_whatsminer_driver(password).luci.login()
-        out["luci_ok"] = True
-    except Exception as e:
-        out["luci_ok"] = False
-        out["luci_error"] = str(e)
+    # LuCI from serve removed — poller/proxy only
+    out["luci_ok"] = None
+    out["luci_error"] = "luci probe moved to miner-poller / luci_proxy"
 
     out["write_ok"] = bool(
-        out.get("v2_write_ok") or out.get("v3_write_ok") or out.get("luci_ok")
+        out.get("v2_write_ok") or out.get("v3_write_ok")
     )
     if out.get("v2_write_ok") or out.get("v3_write_ok"):
         out["hint"] = "Write API доступен (TCP)"
@@ -18209,61 +17733,35 @@ def miner_write_via_poller(
 
 def miner_write_cmd(cmd: dict, password: str) -> dict:
     """
-    Unified write path.
-
-    Prefer Go miner-poller (file IPC) so serve never opens ASIC TCP for writes.
-    Fallback to whatsminer-lib only when poller is not running (emergency / bootstrap).
+    Unified write path — Go miner-poller only (file IPC).
+    serve never opens ASIC TCP / never loads whatsminer.
     """
     password = password or DEFAULT_API_PASSWORD
     cname = str(cmd.get("cmd") or "").strip()
 
-    # Offline short-circuit — no write, no auto-enable spam
-    if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True):
+    if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=False):
+        if not miner_poller_process_alive():
+            raise RuntimeError(
+                "ASIC offline · write skipped (нет live_cache — команда не отправлялась)"
+            )
+
+    if not miner_poller_process_alive():
         raise RuntimeError(
-            "ASIC offline · write skipped (нет read — команда не отправлялась)"
+            "miner-poller not running — ASIC writes disabled in serve "
+            "(start poolheat-miner-poller)"
         )
-
-    # Primary: poller owns all ASIC I/O (read + write)
-    if miner_poller_process_alive():
-        try:
-            # Pools + restart can take longer than power cmds
-            to = None
-            if cname in ("update_pools", "set_pools", "reboot", "restart_btminer"):
-                to = max(float(MINER_WRITE_TIMEOUT_SEC), 60.0)
-            return miner_write_via_poller(cmd, password, timeout_sec=to)
-        except Exception as e:
-            err = str(e)
-            if "over max" in err.lower() and "лимит" not in err.lower():
-                raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
-            raise
-
-    # Fallback (no poller): legacy UniversalMiner path
-    d = get_whatsminer_driver(password)
-
     try:
-        return d.write_cmd(cmd)
+        to = None
+        if cname in ("update_pools", "set_pools", "reboot", "restart_btminer"):
+            to = max(float(MINER_WRITE_TIMEOUT_SEC), 60.0)
+        return miner_write_via_poller(cmd, password, timeout_sec=to)
     except Exception as e:
         err = str(e)
         if "over max" in err.lower() and "лимит" not in err.lower():
             raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
-        # last resort: direct TCP privileged for unknown cmds
-        if cname and cname not in (
-            "set_low_power",
-            "set_normal_power",
-            "set_high_power",
-            "reboot",
-            "restart_btminer",
-            "restart_cgminer",
-            "update_pools",
-            "set_pools",
-        ):
-            try:
-                return privileged_cmd(cmd, password, token_attempts=1)
-            except Exception:
-                pass
         raise
 
-# Human tooltips (hover) for ErrorCode — not shown as Cause
+
 _MINER_ERROR_HINTS: dict[str, str] = {
     "2320": "Низкий хешрейт vs expected (LOW_HASH)",
     "2000": "Питание / PSU",
@@ -18442,17 +17940,7 @@ def _official_cause(code: str, *, native_cause: str | None = None) -> str | None
         nc = str(native_cause).strip()
         if nc.lower() not in (f"error code {c}".lower(), f"error {c}".lower()):
             return nc
-    try:
-        from whatsminer.support.error_codes import resolve_error  # type: ignore
-
-        for cand in (c, c2):
-            if not cand:
-                continue
-            r = resolve_error(cand, lang="en", cause=native_cause)
-            if r.get("known") and r.get("cause"):
-                return str(r["cause"])
-    except Exception:
-        pass
+    # whatsminer catalog removed from serve — use local web-UI map only
     if c in _MINER_ERROR_CAUSES:
         return _MINER_ERROR_CAUSES[c]
     if c2 in _MINER_ERROR_CAUSES:
@@ -19213,6 +18701,8 @@ def _fetch_customer_sn(*, force: bool = False) -> str | None:
 
 
 def _fetch_v3_device_msg(*, force: bool = False) -> dict | None:
+    if miner_poller_process_alive():
+        return None  # liquid/identity come from live_cache via poller
     """Best-effort API v3 get.device.info msg (for liquid temp / model). Cached ~30s."""
     global _v3_device_msg_cache, _v3_device_msg_ts
     now = time.time()
@@ -20415,7 +19905,7 @@ def apply_set(action: str, value, password: str) -> dict:
             raise ValueError("Power Mode must be low|normal|high (use action=working for suspend|resume)")
         # skip if already on this mode (mode change restarts mining)
         try:
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             cur = str(live.get("mode_norm") or live.get("mode") or "").strip().lower()
             if cur == v:
                 return {
@@ -20456,7 +19946,7 @@ def apply_set(action: str, value, password: str) -> dict:
         miner_cmd_name = cmd_map[stored]
         # skip only when solidly already in target state (not mid-transition)
         try:
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             have = str(live.get("work_measured") or _live_work(live) or "").lower()
             want = "suspend" if stored == "sleep" else "resume"
             mo = str(live.get("mineroff") or "").strip().lower()
@@ -20516,7 +20006,7 @@ def apply_set(action: str, value, password: str) -> dict:
             raise ValueError("power_pct must be 0..100")
         # skip if already at this pct — set_power_pct can disturb / restart hashing
         try:
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             have_cmd = _f(live.get("power_pct_cmd"))
             if have_cmd is None:
                 have_cmd = _f(_state.get("power_pct_cmd"))
@@ -20553,7 +20043,7 @@ def apply_set(action: str, value, password: str) -> dict:
         # skip if ASIC already reports this limit (prefer power_limit_set, not
         # summary Power Limit which is often 0 in Suspend)
         try:
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             cur = _live_power_limit_w(live)
             # do NOT skip based only on power_limit_cmd — user may re-apply after
             # miner reset; only skip when live ASIC readback matches
@@ -20584,7 +20074,7 @@ def apply_set(action: str, value, password: str) -> dict:
         )
         # Best-effort verify / refresh limit into cache after write
         try:
-            live2 = fetch_live()
+            live2 = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             got = _live_power_limit_w(live2 if isinstance(live2, dict) else None)
             if got is not None:
                 out["power_limit_set"] = got
@@ -23002,7 +22492,7 @@ def _tg_live_snapshot(
                 live = hydrate_live_from_disk(max_age_sec=LIVE_DISK_MAX_AGE_SEC)
                 if isinstance(live, dict) and live.get("ok"):
                     return live, True, None
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             publish_live_snapshot(live)
             return live, True, None
         except Exception as e:
@@ -27360,7 +26850,7 @@ def policy_tick() -> None:
         max_age = max(8.0, float(POLL_INTERVAL_SEC) * 3)
         live = hydrate_live_from_disk(max_age_sec=max_age)
         if live is None and not miner_poller_process_alive():
-            live = fetch_live()
+            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
             publish_live_snapshot(live)
         elif live is None:
             # poller should be writing cache — wait one short cycle, re-read
@@ -27865,10 +27355,14 @@ def collector_loop() -> None:
         if enabled or (metering_on and attach):
             try:
                 # Prefer snapshot from miner_live_loop (same process) to avoid double :4028
-                live = hydrate_live_from_disk(max_age_sec=max(5.0, float(interval)))
-                if live is None:
-                    live = fetch_live()
+                # serve never polls ASIC — only live_cache from miner-poller
+                live = hydrate_live_from_disk(max_age_sec=max(5.0, float(interval) * 2))
+                if live is None and not miner_poller_process_alive():
+                    # emergency local-only (no go poller): last resort
+                    live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
                     publish_live_snapshot(live)
+                if live is None:
+                    raise RuntimeError("no live_cache from miner-poller")
                 if enabled:
                     sample = live_to_sample(live)
                     insert_sample(sample)
