@@ -8357,11 +8357,19 @@
                   <input type="number" id="dev-poller-work-age" value="300" min="30" max="1800" step="10" />
                 </label>
               </div>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:14px;align-items:end;margin-top:12px">
+                <label class="field"><span data-i18n="field.dev_poller_hold">Hold check interval, sec</span>
+                  <input type="number" id="dev-poller-hold" value="5" min="3" max="120" step="1" />
+                </label>
+                <label class="field"><span data-i18n="field.dev_poller_enforce_cd">Enforce cooldown, sec</span>
+                  <input type="number" id="dev-poller-enforce-cd" value="3" min="0" max="60" step="1" />
+                </label>
+              </div>
               <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0;line-height:1.45" data-i18n="hint.devices_poller">
-                Interval — how often to poll each device (on/off, online, power…) and refresh reported state.
-                Timeout — max wait per device I/O (hung plug).
-                Backoff — skip a device for N sec after errors.
-                Mining age — ignore stale mining_work if policy/history stopped.
+                Interval — how often the poller reads each device (on/off, online, power).
+                Hold interval — how often to re-check devices with «Enforce desired» and restore if SmartLife changed them.
+                Enforce cooldown — min pause between two restores of the same mismatch (0 = every hold check).
+                Timeout — max wait per device I/O. Backoff — skip a device after errors.
                 Per device: Enforce desired + Auto ON/OFF in Peripherals → Devices.
               </p>
               <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="devices-poller-status">—</p>
@@ -9074,11 +9082,13 @@
         "sub.desc.devices_poller": "status poll · desired / reported · Auto ON/OFF · isolated process",
         "check.dev_poller": "Run poller",
         "check.dev_poller_desc": "device status + policy process",
-        "field.dev_poller_interval": "Interval, sec",
+        "field.dev_poller_interval": "Poll interval, sec",
         "field.dev_poller_timeout": "I/O timeout, sec",
         "field.dev_poller_backoff": "Error backoff, sec",
         "field.dev_poller_work_age": "Mining state max age, sec",
-        "hint.devices_poller": "Interval — how often to poll each device (on/off, online, power…) and refresh reported state. Timeout — max wait per device I/O (hung plug). Backoff — skip a device for N sec after errors. Mining age — ignore stale mining_work if policy/history stopped. Per device: Enforce desired + Auto ON/OFF in Peripherals → Devices.",
+        "field.dev_poller_hold": "Hold check interval, sec",
+        "field.dev_poller_enforce_cd": "Enforce cooldown, sec",
+        "hint.devices_poller": "Poll interval — status/power read. Hold interval — how often to restore «Enforce desired» after SmartLife. Enforce cooldown — min pause between two restores (0 = every hold check). Timeout / backoff — I/O limits. Per device: Enforce desired in Peripherals → Devices.",
         "toast.devices_poller_saved": "Devices poller saved",
         "check.energy_attach": "With history collector",
         "check.energy_attach_desc": "same live poll as charts",
@@ -9889,11 +9899,13 @@
         "sub.desc.devices_poller": "опрос статуса · desired / reported · Auto ON/OFF · отдельный процесс",
         "check.dev_poller": "Запускать поллер",
         "check.dev_poller_desc": "статус устройств + политика",
-        "field.dev_poller_interval": "Интервал, сек",
+        "field.dev_poller_interval": "Интервал опроса, сек",
         "field.dev_poller_timeout": "Таймаут I/O, сек",
         "field.dev_poller_backoff": "Пауза после ошибки, сек",
         "field.dev_poller_work_age": "Макс. возраст mining state, сек",
-        "hint.devices_poller": "Интервал — как часто опрашивать каждое устройство (вкл/выкл, online, мощность…) и обновлять reported. Таймаут — макс. ожидание I/O (зависшая розетка). Backoff — не трогать устройство N сек после ошибки. Mining age — игнорировать устаревший mining_work, если policy/history встали. На устройстве: Enforce desired + Auto ON/OFF — Периферия → Устройства.",
+        "field.dev_poller_hold": "Интервал удержания, сек",
+        "field.dev_poller_enforce_cd": "Пауза между restore, сек",
+        "hint.devices_poller": "Интервал опроса — чтение статуса/мощности. Интервал удержания — как часто проверять Enforce desired и возвращать состояние после SmartLife. Пауза между restore — мин. задержка между двумя возвратами (0 = на каждой проверке). Таймаут/backoff — лимиты I/O. На устройстве: Enforce desired — Периферия → Устройства.",
         "toast.devices_poller_saved": "Поллер устройств сохранён",
         "check.energy_attach": "Вместе с collector истории",
         "check.energy_attach_desc": "тот же live-опрос, что и графики",
@@ -17421,6 +17433,18 @@
       if (age)
         age.value =
           cfg.mining_work_max_age_sec != null ? cfg.mining_work_max_age_sec : 300;
+      const hold = document.getElementById("dev-poller-hold");
+      if (hold)
+        hold.value =
+          cfg.hold_interval_sec != null
+            ? cfg.hold_interval_sec
+            : cfg.interval_sec != null
+              ? cfg.interval_sec
+              : 5;
+      const ecd = document.getElementById("dev-poller-enforce-cd");
+      if (ecd)
+        ecd.value =
+          cfg.enforce_cooldown_sec != null ? cfg.enforce_cooldown_sec : 3;
     }
 
     function collectDevicesPollerForm() {
@@ -17431,6 +17455,10 @@
         error_backoff_sec: Number(document.getElementById("dev-poller-backoff")?.value),
         mining_work_max_age_sec: Number(
           document.getElementById("dev-poller-work-age")?.value
+        ),
+        hold_interval_sec: Number(document.getElementById("dev-poller-hold")?.value),
+        enforce_cooldown_sec: Number(
+          document.getElementById("dev-poller-enforce-cd")?.value
         ),
       };
     }
@@ -17446,10 +17474,12 @@
           const p = body.poller || {};
           st.textContent =
             (body.running ? "running" : "not running") +
-            " · interval " +
+            " · poll " +
             (p.interval_sec != null ? p.interval_sec : "—") +
-            "s · timeout " +
-            (p.set_timeout_sec != null ? p.set_timeout_sec : "—") +
+            "s · hold " +
+            (p.hold_interval_sec != null ? p.hold_interval_sec : "—") +
+            "s · cool " +
+            (p.enforce_cooldown_sec != null ? p.enforce_cooldown_sec : "—") +
             "s" +
             (p.enabled === false ? " · disabled" : "");
         }

@@ -3823,7 +3823,7 @@ DEVICE_RUNTIME_KEYS: frozenset[str] = frozenset(
 # Devices poller process (serve.py --devices-poller) — Advanced settings
 DEFAULT_DEVICES_POLLER: dict = {
     "enabled": True,
-    # how often to poll device status (+ mining auto policy)
+    # how often Go/Python poller probes status (+ mining auto policy)
     "interval_sec": 5,
     # max wait for one device I/O (status or set; hung Tapo/Shelly)
     "set_timeout_sec": 15,
@@ -3831,6 +3831,10 @@ DEFAULT_DEVICES_POLLER: dict = {
     "error_backoff_sec": 20,
     # ignore mining_work.json older than this (policy/collector stopped?)
     "mining_work_max_age_sec": 300,
+    # serve-side hold loop: how often re-check enforce_desired devices
+    "hold_interval_sec": 5,
+    # min seconds between restore attempts for the same mismatch
+    "enforce_cooldown_sec": 3,
 }
 
 DEFAULT_DEVICES_CFG: dict = {
@@ -3865,6 +3869,19 @@ def _normalize_devices_poller(raw: dict | None) -> dict:
         )
     except (TypeError, ValueError):
         out["mining_work_max_age_sec"] = 300
+    try:
+        # hold loop period (background restore without opening UI)
+        out["hold_interval_sec"] = max(
+            3, min(120, int(raw.get("hold_interval_sec", out["interval_sec"])))
+        )
+    except (TypeError, ValueError):
+        out["hold_interval_sec"] = int(out.get("interval_sec") or 5)
+    try:
+        out["enforce_cooldown_sec"] = max(
+            0, min(60, int(raw.get("enforce_cooldown_sec", 3)))
+        )
+    except (TypeError, ValueError):
+        out["enforce_cooldown_sec"] = 3
     return out
 
 
@@ -5466,12 +5483,15 @@ _DEVICES_ENFORCE_COOLDOWN_SEC = 3.0
 
 
 def _device_enforce_cooldown_sec() -> float:
-    """Cooldown between restores ≈ one poller tick (min 2s, max 15s)."""
+    """Min gap between restore attempts (Advanced → enforce_cooldown_sec)."""
     try:
-        iv = float(get_devices_poller_cfg().get("interval_sec") or 5)
+        pol = get_devices_poller_cfg()
+        if "enforce_cooldown_sec" in pol:
+            return max(0.0, min(60.0, float(pol.get("enforce_cooldown_sec") or 0)))
+        iv = float(pol.get("hold_interval_sec") or pol.get("interval_sec") or 5)
     except Exception:
-        iv = 5.0
-    return max(2.0, min(15.0, iv))
+        iv = 3.0
+    return max(0.0, min(60.0, iv))
 
 
 def _device_enforce_desired(
@@ -6907,9 +6927,19 @@ def devices_hold_loop() -> None:
             if not pol.get("enabled", True):
                 _devices_hold_stop.wait(30)
                 continue
-            # Same interval as devices poller (default 5s) — do not floor at 8s
+            # Advanced: hold_interval_sec (fallback = status interval_sec)
             try:
-                iv = max(3, min(120, int(pol.get("interval_sec") or 5)))
+                iv = max(
+                    3,
+                    min(
+                        120,
+                        int(
+                            pol.get("hold_interval_sec")
+                            or pol.get("interval_sec")
+                            or 5
+                        ),
+                    ),
+                )
             except (TypeError, ValueError):
                 iv = 5
             summary = devices_hold_tick()
@@ -6917,7 +6947,7 @@ def devices_hold_loop() -> None:
                 print(
                     f"[devices-hold] checked={summary.get('checked')} "
                     f"restored={summary.get('restored')} "
-                    f"err={summary.get('errors')} interval={iv}s",
+                    f"err={summary.get('errors')} hold_interval={iv}s",
                     flush=True,
                 )
         except Exception as e:
