@@ -42,3 +42,7 @@ ui-demo/telegram_config.json
 ui-demo/energy_config.json
 ui-demo/luci_proxy_config.json
 tools/whatsminer-proxy/config.json
+
+# Go build artifacts
+edge/bin/
+*.exe

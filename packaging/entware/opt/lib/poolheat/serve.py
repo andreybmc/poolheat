@@ -6320,6 +6320,39 @@ def devices_poller_main() -> None:
             pass
 
 
+def _resolve_devices_poller_bin() -> str | None:
+    """
+    Prefer Go poolheat-devices-poller (low RAM) over Python --devices-poller.
+    Override: POOLHEAT_DEVICES_POLLER=/path/to/bin
+    """
+    candidates: list[Path] = []
+    env = (os.environ.get("POOLHEAT_DEVICES_POLLER") or "").strip()
+    if env:
+        candidates.append(Path(env))
+    here = Path(__file__).resolve().parent
+    candidates.extend(
+        [
+            Path("/opt/bin/poolheat-devices-poller"),
+            here / "poolheat-devices-poller",
+            here.parent / "bin" / "poolheat-devices-poller",
+        ]
+    )
+    # USB install: /opt/lib/poolheat may be symlink → sibling bin
+    try:
+        real_lib = here.resolve()
+        candidates.append(real_lib.parent / "bin" / "poolheat-devices-poller")
+        candidates.append(real_lib / "poolheat-devices-poller")
+    except Exception:
+        pass
+    for p in candidates:
+        try:
+            if p.is_file() and os.access(p, os.X_OK):
+                return str(p)
+        except Exception:
+            continue
+    return None
+
+
 def start_devices_poller_process() -> None:
     """Spawn isolated devices poller subprocess (non-blocking for serve)."""
     global _devices_poller_proc
@@ -6347,17 +6380,28 @@ def start_devices_poller_process() -> None:
         logf.flush()
     except Exception:
         logf = None
+    go_bin = _resolve_devices_poller_bin()
+    if go_bin:
+        cmd = [go_bin]
+        kind = "go"
+    else:
+        cmd = [sys.executable, script, "--devices-poller"]
+        kind = "python"
     try:
+        env = os.environ.copy()
+        env.setdefault("POOLHEAT_DATA", str(DATA))
         _devices_poller_proc = subprocess.Popen(
-            [sys.executable, script, "--devices-poller"],
+            cmd,
             cwd=str(Path(__file__).resolve().parent),
-            env=os.environ.copy(),
+            env=env,
             stdout=logf or subprocess.DEVNULL,
             stderr=subprocess.STDOUT if logf else subprocess.DEVNULL,
             start_new_session=True,
         )
         print(
-            f"devices-poller:    pid {_devices_poller_proc.pid} · log {DEVICES_POLLER_LOG}",
+            f"devices-poller:    {kind} pid {_devices_poller_proc.pid} · "
+            f"log {DEVICES_POLLER_LOG}"
+            + (f" · bin {go_bin}" if go_bin else ""),
             flush=True,
         )
     except Exception as e:
@@ -14389,11 +14433,19 @@ def _poolheat_process_roles() -> dict:
             if pid == self_pid:
                 continue
             cmd = _pid_cmdline(pid)
-            if "serve.py" not in cmd and "poolheat" not in cmd:
+            if (
+                "serve.py" not in cmd
+                and "poolheat" not in cmd
+                and "devices-poller" not in cmd
+            ):
                 continue
             if "--miner-poller" in cmd or "miner-poller" in cmd:
                 _add("miner-poller", pid, cmd)
-            elif "--devices-poller" in cmd or "devices-poller" in cmd:
+            elif (
+                "--devices-poller" in cmd
+                or "devices-poller" in cmd
+                or "poolheat-devices-poller" in cmd
+            ):
                 _add("devices-poller", pid, cmd)
             elif "serve.py" in cmd:
                 # only one "serve" — prefer lower pid if conflict
@@ -15991,6 +16043,7 @@ def apply_github_update(ref: str | None = None) -> dict:
                             "ui-demo/index.html",
                             "VERSION",
                             "packaging/entware/opt/bin/poolheatd",
+                            "packaging/entware/opt/bin/poolheat-devices-poller",
                             "packaging/entware/opt/etc/init.d/S99poolheat",
                             "packaging/entware/opt/etc/init.d/S99poolheat-standalone",
                         ):
@@ -16098,6 +16151,11 @@ def apply_github_update(ref: str | None = None) -> dict:
                         ),
                         (
                             src_root
+                            / "packaging/entware/opt/bin/poolheat-devices-poller",
+                            Path("/opt/bin/poolheat-devices-poller"),
+                        ),
+                        (
+                            src_root
                             / "packaging/entware/opt/etc/init.d/S99poolheat",
                             Path("/opt/etc/init.d/S99poolheat"),
                         ),
@@ -16117,7 +16175,13 @@ def apply_github_update(ref: str | None = None) -> dict:
                 tmp = dst.with_suffix(dst.suffix + ".new")
                 tmp.write_bytes(data)
                 tmp.replace(dst)
-                if dst.name in ("poolheatd", "S99poolheat", "S99poolheat-standalone", "serve.py"):
+                if dst.name in (
+                    "poolheatd",
+                    "poolheat-devices-poller",
+                    "S99poolheat",
+                    "S99poolheat-standalone",
+                    "serve.py",
+                ):
                     try:
                         os.chmod(dst, 0o755)
                     except Exception:
