@@ -2859,31 +2859,6 @@
       word-break: break-word;
     }
 
-    .sim-panel {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 14px;
-      background: var(--bg2);
-      border: 1px dashed var(--border2);
-      border-radius: var(--radius-sm);
-      margin-bottom: 16px;
-    }
-
-    .sim-panel label {
-      font-size: 0.78rem;
-      color: var(--muted);
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .sim-panel input[type="range"] {
-      width: 140px;
-      accent-color: var(--accent);
-    }
-
     .divider {
       height: 1px;
       background: var(--border);
@@ -5186,30 +5161,6 @@
       <label class="check" style="margin:0 0 0 auto">
         <input type="checkbox" id="use-live" checked />
         <span data-i18n="check.live">Live</span>
-      </label>
-    </div>
-
-    <div class="sim-panel" id="sim-panel" title="Only when Live is off" style="display:none">
-      <span class="tag">SIM</span>
-      <label>liquid °C
-        <input type="range" id="sim-liquid" min="15" max="45" step="0.1" value="27.1" />
-        <strong id="sim-liquid-v">27.1</strong>
-      </label>
-      <label>env °C
-        <input type="range" id="sim-env" min="10" max="45" step="0.1" value="26.5" />
-        <strong id="sim-env-v">26.5</strong>
-      </label>
-      <label>board0/1/2 °C
-        <input type="range" id="sim-tctrl" min="25" max="60" step="0.1" value="41.3" />
-        <strong id="sim-tctrl-v">41.3</strong>
-      </label>
-      <label>chip max °C
-        <input type="range" id="sim-chip" min="30" max="80" step="0.1" value="58.0" />
-        <strong id="sim-chip-v">58.0</strong>
-      </label>
-      <label class="check" style="margin:0">
-        <input type="checkbox" id="sim-upfreq" />
-        <span>upfreq / not ready</span>
       </label>
     </div>
 
@@ -8104,7 +8055,7 @@
             <div class="metric" id="ready-metric">
               <label><span class="tip" data-tip-key="miner_ready" data-i18n="label.miner_ready">Miner ready</span></label>
               <div class="val" style="font-size:1.1rem;color:var(--warn)" id="ready-val">—</div>
-              <div class="hint" data-i18n="hint.warmup_sim">SIM: clear “upfreq / not ready” to allow ↑</div>
+              <div class="hint" data-i18n="hint.warmup_ready">Ready when upfreq complete and hash stable</div>
             </div>
           </div>
         </div>
@@ -9281,7 +9232,7 @@
         "banner.dry_span": "Auto zones not written · Safety active · log only",
         "banner.warmup_span": "Miner still warming up — upward blocked. Downward and Critical allowed.",
         "banner.override_span": "Auto zones Z0–Z2 paused · Safety Critical active · left",
-        "live.sim_off": "simulation · Live off · updated ",
+        "live.paused": "updates paused · last ",
         "live.updated_sep": " · updated ",
         "live.online": "Online",
         "live.offline": "Offline",
@@ -9580,7 +9531,7 @@
         "ready.false_upfreq": "not ready · upfreq",
         "ready.hash_settling": "ready · upfreq ok · hash settling",
         "ready.ok": "ready",
-        "hint.warmup_sim": "SIM: clear “upfreq / not ready” to allow ↑",
+        "hint.warmup_ready": "Ready when upfreq complete and hash stable",
         "h2.keenetic": "Keenetic",
         "h2.whatsminer": "Whatsminer",
         "h2.hashboards": "Hashboards · PCB SN · Tagged",
@@ -10078,7 +10029,7 @@
         "banner.dry_span": "Авто-зоны не пишутся · Safety работает · только лог",
         "banner.warmup_span": "Майнер ещё выходит на режим — upward заблокирован. Downward и Critical разрешены.",
         "banner.override_span": "Авто-зоны Z0–Z2 на паузе · Safety Critical работает · осталось",
-        "live.sim_off": "симуляция · Live выкл · обновлено ",
+        "live.paused": "обновления на паузе · последнее ",
         "live.updated_sep": " · обновлено ",
         "live.online": "Online",
         "live.offline": "Offline",
@@ -10377,7 +10328,7 @@
         "ready.false_upfreq": "не готов · upfreq",
         "ready.hash_settling": "готов · upfreq ok · hash settling",
         "ready.ok": "готов",
-        "hint.warmup_sim": "SIM: снимите «upfreq / not ready», чтобы разрешить ↑",
+        "hint.warmup_ready": "Готов, когда upfreq complete и hash stable",
         "h2.keenetic": "Keenetic",
         "h2.whatsminer": "Whatsminer",
         "h2.hashboards": "Hashboards · PCB SN · Tagged",
@@ -11094,7 +11045,7 @@
       },
       api_live: {
         title: "API live",
-        body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe and SIM/error.",
+        body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe / offline.\nLive checkbox off = UI stops auto-refresh (last snapshot stays).",
       },
       lan_token: {
         title: "LAN · token",
@@ -11199,7 +11150,7 @@
         },
         api_live: {
           title: "API live",
-          body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe / SIM / error.",
+          body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe / offline.\nLive off = UI stops auto-refresh.",
         },
         lan_token: {
           title: "LAN · token",
@@ -11273,7 +11224,7 @@
         },
         api_live: {
           title: "API live",
-          body: "Whatsminer TCP :4028 через serve.py.\nOK = последний опрос успешен.\nFail → fail-safe / SIM / ошибка.",
+          body: "Whatsminer TCP :4028 через serve.py.\nOK = последний опрос успешен.\nFail → fail-safe / offline.\nLive выкл = UI не автообновляется.",
         },
         warmup: {
           title: "Прогрев / upfreq",
@@ -11993,14 +11944,8 @@
       recompute();
     }
 
-    /* —— live / sim state —— */
+    /* —— live state (Live checkbox = auto-refresh on/off; no simulation) —— */
     const useLive = document.getElementById("use-live");
-    const simPanel = document.getElementById("sim-panel");
-    const simT = document.getElementById("sim-tctrl");
-    const simLiquid = document.getElementById("sim-liquid");
-    const simEnv = document.getElementById("sim-env");
-    const simChip = document.getElementById("sim-chip");
-    const simUp = document.getElementById("sim-upfreq");
     const dryRunEl = document.getElementById("dry-run");
 
     /** @type {object|null} */
@@ -12554,7 +12499,7 @@
       }
     }
 
-    /** Resolve T_ctrl °C from a live/sim reading using selected sensor. */
+    /** Resolve T_ctrl °C from a live reading using selected sensor. */
     function resolveTctrl(r, sensor) {
       const sens = sensor || getTctrlSensor();
       // Peripheral virtual sensor (Peripherals → Sensors)
@@ -14079,12 +14024,12 @@
       }
       const tstr = lastLiveStatusTime || new Date().toLocaleTimeString();
       if (!useLive.checked) {
-        if (tag) tag.textContent = "SIM";
+        if (tag) tag.textContent = "PAUSED";
         if (det) {
           det.textContent =
             (typeof t === "function"
-              ? t("live.sim_off")
-              : "simulation · Live off · updated ") + tstr;
+              ? t("live.paused")
+              : "updates paused · last ") + tstr;
         }
         return;
       }
@@ -14135,36 +14080,7 @@
     }
 
     function getReading() {
-      // Explicit SIM only when Live checkbox is off
-      if (!useLive.checked) {
-        const b01 = parseFloat(simT.value);
-        const b23 = b01 - 6.5;
-        return {
-          liquid: parseFloat(simLiquid.value),
-          env: parseFloat(simEnv.value),
-          boards: [b01, b01, b23, b23],
-          upfreq: simUp.checked ? [0, 0, 1, 1] : [1, 1, 1, 1],
-          chip_min: parseFloat(simChip.value) - 10,
-          chip_avg: parseFloat(simChip.value) - 5,
-          chip_max: parseFloat(simChip.value),
-          power: 5700,
-          mode: "Low",
-          freq: 390,
-          hashrate_th: 300,
-          psu_temp: 42,
-          psu_fan: 6000,
-          psu_vin: 380,
-          psu_iin: 15.2,
-          uptime: 3600 * 26, // sim: 1d 2h
-          elapsed: 3600 * 5,
-          upfreq_block: simUp.checked,
-          dry: !!(dryRunEl && dryRunEl.checked),
-          source: "sim",
-          online: false,
-        };
-      }
-
-      // Live mode — online
+      // Last snapshot from /api/live (frozen when Live checkbox is off — no simulation).
       if (live && live.ok !== false && !liveError) {
         const boards = live.boards || [0, 0, 0, 0];
         const upfreq = live.upfreq || [1, 1, 1, 1];
@@ -14193,7 +14109,7 @@
           upfreq_block: upfreqBusy,
           hash_stable: !notStable,
           dry: !!(dryRunEl && dryRunEl.checked),
-          source: "live",
+          source: useLive.checked ? "live" : "paused",
           temps: Array.isArray(live.temps) ? live.temps : [],
           board_count: live.board_count,
           board_layout_note: live.board_layout_note,
@@ -14203,7 +14119,7 @@
         };
       }
 
-      // Live mode — Offline (miner/API fail). Do NOT fall back to SIM.
+      // Offline (miner/API fail) or no snapshot yet.
       return {
         liquid: NaN,
         env: NaN,
@@ -16185,11 +16101,6 @@
         renderMinerErrors(null);
       }
 
-      // SIM labels
-      if (simLiquid) document.getElementById("sim-liquid-v").textContent = fmt(r.liquid);
-      if (simEnv) document.getElementById("sim-env-v").textContent = fmt(r.env);
-      if (simT) document.getElementById("sim-tctrl-v").textContent = fmt(boardMax);
-      if (simChip) document.getElementById("sim-chip-v").textContent = fmt(r.chip_max);
     }
 
     /**
@@ -17895,17 +17806,15 @@
 
       // API pill
       const apiPill = document.getElementById("pill-api");
-      if (useLive.checked) {
-        if (!r.online) {
-          apiPill.className = "pill danger";
-          apiPill.innerHTML = '<span class="dot"></span> Offline';
-        } else {
-          apiPill.className = "pill ok";
-          apiPill.innerHTML = '<span class="dot"></span> API live';
-        }
+      if (!useLive.checked) {
+        apiPill.className = "pill warn";
+        apiPill.innerHTML = '<span class="dot"></span> Paused';
+      } else if (!r.online) {
+        apiPill.className = "pill danger";
+        apiPill.innerHTML = '<span class="dot"></span> Offline';
       } else {
-        apiPill.className = "pill accent";
-        apiPill.innerHTML = '<span class="dot"></span> SIM';
+        apiPill.className = "pill ok";
+        apiPill.innerHTML = '<span class="dot"></span> API live';
       }
 
       updateSrcBar(r);
@@ -18187,8 +18096,8 @@
     }
 
     async function fetchLive(manual) {
-      if (!useLive.checked) {
-        lastLiveStatusTime = new Date().toLocaleTimeString();
+      // Live off: freeze UI (no auto-poll). Manual Refresh still pulls once.
+      if (!useLive.checked && !manual) {
         try {
           recompute();
         } catch (e) {
@@ -18233,7 +18142,7 @@
           if (manual) toastWarn("Offline · HTTP " + res.status);
         }
       } catch (e) {
-        // poolheat UI itself unreachable (network) — still Offline, not SIM
+        // poolheat UI itself unreachable (network)
         liveError = String(e.message || e);
         live = { ok: false, host: minerHostLabel(), error: liveError };
         markDashLiveReady();
@@ -18271,15 +18180,20 @@
     }
 
     function onLiveToggle() {
-      simPanel.style.display = useLive.checked ? "none" : "flex";
-      fetchLive(false);
+      if (useLive.checked) {
+        fetchLive(false);
+      } else {
+        // Stop realtime updates; keep last snapshot on screen.
+        lastLiveStatusTime = new Date().toLocaleTimeString();
+        try {
+          recompute();
+        } catch (e) {
+          console.warn("recompute", e);
+        }
+      }
     }
 
     useLive.addEventListener("change", onLiveToggle);
-    [simT, simLiquid, simEnv, simChip].forEach((el) => {
-      if (el) el.addEventListener("input", recompute);
-    });
-    simUp.addEventListener("change", recompute);
     // Dry Run: server is source of truth; save only via «Save»
     let dryRunServer = true;
     let dryRunDirty = false;
@@ -24300,9 +24214,6 @@
             Tliq = parseFloat(String(el.textContent).replace(",", "."));
           }
         } catch (_) { /* ignore */ }
-      }
-      if (!Number.isFinite(Tliq) && simLiquid && waterSens === "liquid") {
-        Tliq = parseFloat(simLiquid.value);
       }
       const Tw = Number.isFinite(Tliq) ? Tliq : NaN;
 
