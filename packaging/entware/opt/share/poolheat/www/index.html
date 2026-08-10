@@ -583,6 +583,34 @@
       align-items: center;
       overflow: hidden;
     }
+    /* Zoom dropdown must paint above chart body (not clipped by card-h) */
+    #panel-chart-temps,
+    #panel-chart-power {
+      overflow: visible;
+      position: relative;
+      z-index: 2;
+    }
+    #panel-chart-temps > .card-h,
+    #panel-chart-power > .card-h {
+      overflow: visible;
+      position: relative;
+      z-index: 5;
+    }
+    #panel-chart-temps > .card-b,
+    #panel-chart-power > .card-b {
+      position: relative;
+      z-index: 1;
+    }
+    .dash-item[data-dash-id="chart_temps"],
+    .dash-item[data-dash-id="chart_power"] {
+      overflow: visible;
+      position: relative;
+      z-index: 2;
+    }
+    .dash-item[data-dash-id="chart_temps"]:has(.chart-zoom-dd.open),
+    .dash-item[data-dash-id="chart_power"]:has(.chart-zoom-dd.open) {
+      z-index: 40;
+    }
     #panel-chart-temps > .card-h > div:first-child,
     #panel-chart-power > .card-h > div:first-child,
     #panel-chart-energy-dash > .card-h > div:first-child,
@@ -718,7 +746,7 @@
       top: calc(100% + 6px);
       left: 50%;
       transform: translateX(-50%);
-      z-index: 80;
+      z-index: 200;
       min-width: 4.6rem;
       padding: 6px;
       border-radius: 12px;
@@ -726,8 +754,19 @@
       background: var(--panel, #151b24);
       box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
     }
+    .chart-zoom-dd.open {
+      z-index: 200;
+    }
     .chart-zoom-dd.open .chart-zoom-menu {
       display: block;
+    }
+    .chart-header-toolbar {
+      position: relative;
+      z-index: 6;
+    }
+    .chart-zoom-wrap {
+      position: relative;
+      z-index: 7;
     }
     .chart-zoom-menu-title {
       font-size: 0.68rem;
@@ -2155,11 +2194,19 @@
       display: flex;
       flex-direction: column;
     }
+    .dash-charts-pack > .dash-item[data-dash-id="chart_temps"],
+    .dash-charts-pack > .dash-item[data-dash-id="chart_power"] {
+      overflow: visible;
+    }
     .dash-charts-pack > .dash-item > .card,
     .dash-charts-pack > .dash-item > .temp-card {
       flex: 1 1 auto;
       height: 100%;
       min-height: 0;
+    }
+    .dash-charts-pack > .dash-item[data-dash-id="chart_temps"] > .card,
+    .dash-charts-pack > .dash-item[data-dash-id="chart_power"] > .card {
+      overflow: visible;
     }
     .dash-charts-pack > .dash-item[data-dash-id="errors"] > .card.errors-card {
       height: 100%;
