@@ -8492,7 +8492,7 @@
             <div class="metric" style="margin:0">
               <label data-i18n="info.processes">Poolheat processes · RSS</label>
               <div class="val" style="font-size:1.05rem" id="info-proc-total">—</div>
-              <div class="hint" data-i18n="info.processes_hint">serve · miner-poller · devices-poller</div>
+              <div class="hint" data-i18n="info.processes_hint">serve · miner-poller · devices-poller · sniffer</div>
               <div id="info-processes" class="stack" style="gap:6px;margin-top:8px"></div>
             </div>
             <!-- USB free space when install is on stick -->
@@ -9413,7 +9413,7 @@
         "h2.resources": "Resources",
         "sub.resources": "disk · RAM · uptime · processes · history.db",
         "info.processes": "Poolheat processes · RSS",
-        "info.processes_hint": "serve · miner-poller · devices-poller",
+        "info.processes_hint": "serve · miner-poller · devices-poller · sniffer",
         "btn.tmp_cleanup": "Clean /tmp",
         "msg.tmp_cleanup_ok": "Freed {mib} MiB · removed {n}",
         "msg.tmp_cleanup_fail": "Cleanup failed",
@@ -10207,7 +10207,7 @@
         "h2.resources": "Ресурсы",
         "sub.resources": "диск · RAM · uptime · процессы · history.db",
         "info.processes": "Процессы Poolheat · RSS",
-        "info.processes_hint": "serve · miner-poller · devices-poller",
+        "info.processes_hint": "serve · miner-poller · devices-poller · sniffer",
         "btn.tmp_cleanup": "Чистить /tmp",
         "msg.tmp_cleanup_ok": "Освобождено {mib} MiB · удалено {n}",
         "msg.tmp_cleanup_fail": "Очистка не удалась",
@@ -23014,6 +23014,7 @@
           serve: "serve",
           "miner-poller": "miner-poller",
           "devices-poller": "devices-poller",
+          sniffer: "sniffer",
         };
         procWrap.innerHTML = list
           .map((p) => {

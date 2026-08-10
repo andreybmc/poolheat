@@ -54,14 +54,9 @@ func FetchLive(s Settings) (map[string]any, error) {
 		psuTemp = fPtr(psu["temp0"])
 		psuFan = fPtr(psu["fan_speed"])
 		psuPin = fPtr(psu["pin"])
-		psuVin = fPtr(psu["vin"])
-		if psuVin == nil {
-			psuVin = fPtr(psu["Vin"])
-		}
-		psuIin = fPtr(psu["iin"])
-		if psuIin == nil {
-			psuIin = fPtr(psu["Iin"])
-		}
+		// get_psu Vin often ×100 (39200 → 392.0 V); Iin often mA integer
+		psuVin = normalizePsuVin(firstNonEmpty(psu["vin"], psu["Vin"]))
+		psuIin = normalizePsuIin(firstNonEmpty(psu["iin"], psu["Iin"]))
 		psuModel = firstNonEmpty(psu["model"], psu["name"])
 	}
 
@@ -222,17 +217,195 @@ func FetchLive(s Settings) (map[string]any, error) {
 		"source":       "go-miner-poller",
 	}
 
+	// Temperature sensors catalog (UI panel "Temperature sensors")
+	body["temps"] = buildTempCatalog(
+		summary, status, liquid, liquidSrc,
+		boards, boardChipMin, boardChipMax, boardChipAvg,
+		psuTemp, nBoards,
+	)
+
 	// run_status simplified
 	rs := runStatus(body)
 	body["run_status"] = rs
 	body["run_status_en"] = rs
 	body["run_status_ru"] = rs
 
-	// t_ctrl default liquid
-	body["t_ctrl"] = liquid
-	body["t_ctrl_sensor"] = "liquid"
+	// t_ctrl: prefer liquid when present, else chip_avg
+	if liquid != nil {
+		body["t_ctrl"] = liquid
+		body["t_ctrl_sensor"] = "liquid"
+	} else {
+		body["t_ctrl"] = fOrNil(summary["Chip Temp Avg"])
+		body["t_ctrl_sensor"] = "chip_avg"
+	}
 
 	return body, nil
+}
+
+// normalizePsuVin: get_psu often reports centivolts (39200 → 392.0 V).
+func normalizePsuVin(raw any) *float64 {
+	if raw == nil {
+		return nil
+	}
+	v := asF(raw)
+	if v < 0 {
+		return nil
+	}
+	if v > 1000 {
+		r := round2(v / 100.0)
+		return &r
+	}
+	r := round2(v)
+	return &r
+}
+
+// normalizePsuIin: get_psu integer mA ("12515") → A; floats already amps.
+func normalizePsuIin(raw any) *float64 {
+	if raw == nil {
+		return nil
+	}
+	v := asF(raw)
+	if v < 0 {
+		return nil
+	}
+	s := strings.TrimSpace(fmt.Sprint(raw))
+	s = strings.ReplaceAll(s, ",", ".")
+	// integer / no decimal → milliamps from get_psu
+	if s != "" && !strings.Contains(s, ".") && v >= 1 {
+		r := round3(v / 1000.0)
+		return &r
+	}
+	r := round3(v)
+	return &r
+}
+
+func round2(v float64) float64 { return math.Round(v*100) / 100 }
+func round3(v float64) float64 { return math.Round(v*1000) / 1000 }
+
+// buildTempCatalog mirrors serve.py _build_temp_sensors_catalog (core rows).
+func buildTempCatalog(
+	summary, status map[string]any,
+	liquid *float64, liquidSrc any,
+	boards, boardChipMin, boardChipMax, boardChipAvg []any,
+	psuTemp *float64,
+	nBoards int,
+) []map[string]any {
+	out := make([]map[string]any, 0, 16)
+	add := func(id, group, label, labelRU string, value any, source string, expect bool) {
+		v := fPtr(value)
+		if v != nil && (*v <= 0.05 || *v > 150) {
+			v = nil
+		}
+		available := v != nil
+		if !available && !expect {
+			return
+		}
+		var val any
+		if v != nil {
+			val = round2(*v)
+		}
+		out = append(out, map[string]any{
+			"id":        id,
+			"group":     group,
+			"label":     label,
+			"label_ru":  labelRU,
+			"value":     val,
+			"unit":      "°C",
+			"source":    source,
+			"available": available,
+		})
+	}
+
+	add("env", "ambient", "Env Temp", "Окружающая (Env)", summary["Env Temp"], "summary", true)
+	src := "—"
+	if liquidSrc != nil {
+		src = fmt.Sprint(liquidSrc)
+	}
+	// liquid expected on hydro family; list even if missing so UI shows n/a
+	add("liquid", "coolant", "Liquid / coolant", "Жидкость / теплоноситель", liquid, src, true)
+
+	for _, key := range []struct{ k, id, lab, labRU string }{
+		{"Inlet Temp", "inlet", "Inlet Temp", "Вход (Inlet)"},
+		{"Outlet Temp", "outlet", "Outlet Temp", "Выход (Outlet)"},
+		{"inlet_temp", "inlet", "Inlet Temp", "Вход (Inlet)"},
+		{"outlet_temp", "outlet", "Outlet Temp", "Выход (Outlet)"},
+	} {
+		raw := summary[key.k]
+		if raw == nil {
+			raw = status[key.k]
+		}
+		if raw != nil {
+			add(key.id, "coolant", key.lab, key.labRU, raw, "summary/status", true)
+		}
+	}
+
+	add("chip_min", "chip", "Chip Temp Min", "Чипы min", summary["Chip Temp Min"], "summary", true)
+	add("chip_avg", "chip", "Chip Temp Avg", "Чипы avg", summary["Chip Temp Avg"], "summary", true)
+	add("chip_max", "chip", "Chip Temp Max", "Чипы max", summary["Chip Temp Max"], "summary", true)
+
+	// Per-slot PCB
+	for i := 0; i < nBoards; i++ {
+		var pcb any
+		if i < len(boards) {
+			pcb = boards[i]
+		}
+		add(fmt.Sprintf("sm%d_pcb", i), "board",
+			fmt.Sprintf("SM%d PCB", i), fmt.Sprintf("SM%d PCB", i),
+			pcb, "devs", true)
+		// chip min/avg/max only when DEVS provides real values
+		slotOK := func(v any) bool {
+			p := fPtr(v)
+			return p != nil && *p > 0.05 && *p <= 150
+		}
+		var cmin, cavg, cmax any
+		if i < len(boardChipMin) {
+			cmin = boardChipMin[i]
+		}
+		if i < len(boardChipAvg) {
+			cavg = boardChipAvg[i]
+		}
+		if i < len(boardChipMax) {
+			cmax = boardChipMax[i]
+		}
+		if slotOK(cmin) || slotOK(cavg) || slotOK(cmax) {
+			add(fmt.Sprintf("sm%d_chip_min", i), "board_chip",
+				fmt.Sprintf("SM%d Chip Min", i), fmt.Sprintf("SM%d чип min", i),
+				cmin, "devs", false)
+			add(fmt.Sprintf("sm%d_chip_avg", i), "board_chip",
+				fmt.Sprintf("SM%d Chip Avg", i), fmt.Sprintf("SM%d чип avg", i),
+				cavg, "devs", false)
+			add(fmt.Sprintf("sm%d_chip_max", i), "board_chip",
+				fmt.Sprintf("SM%d Chip Max", i), fmt.Sprintf("SM%d чип max", i),
+				cmax, "devs", false)
+		}
+	}
+
+	add("psu", "psu", "PSU temp0", "БП temp0", psuTemp, "get_psu", true)
+
+	// derived board max/min/avg
+	pcbVals := []float64{}
+	for _, b := range boards {
+		if p := fPtr(b); p != nil {
+			pcbVals = append(pcbVals, *p)
+		}
+	}
+	if len(pcbVals) > 0 {
+		mn, mx, sum := pcbVals[0], pcbVals[0], 0.0
+		for _, v := range pcbVals {
+			if v < mn {
+				mn = v
+			}
+			if v > mx {
+				mx = v
+			}
+			sum += v
+		}
+		add("board_max", "board", "Boards max (PCB)", "Платы max (PCB)", mx, "derived", true)
+		add("board_min", "board", "Boards min (PCB)", "Платы min (PCB)", mn, "derived", true)
+		add("board_avg", "board", "Boards avg (PCB)", "Платы avg (PCB)", sum/float64(len(pcbVals)), "derived", true)
+	}
+
+	return out
 }
 
 func measuredWork(live map[string]any) string {

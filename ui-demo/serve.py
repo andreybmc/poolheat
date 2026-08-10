@@ -14447,8 +14447,8 @@ def _pid_cmdline(pid: int) -> str:
 
 def _poolheat_process_roles() -> dict:
     """
-    RSS for poolheat Python processes: main serve, miner-poller, devices-poller.
-    Uses pidfiles + /proc scan fallback.
+    RSS for poolheat processes: serve, miner-poller, devices-poller,
+    and sniffer (tcpdump / miner_sniffer) when capture is running.
 
     Returns dict:
       processes: [{role, pid, rss_b, rss_mib, cmd}, ...]
@@ -14467,7 +14467,35 @@ def _poolheat_process_roles() -> dict:
         if not cmd:
             cmd = _pid_cmdline(pid)
         prev = found.get(role)
+        # sniffer may be multi-process (python + tcpdump) — keep largest RSS
         if prev and prev.get("pid") == pid:
+            return
+        if prev and role == "sniffer" and (prev.get("rss_b") or 0) >= (rss or 0):
+            return
+        # allow multiple sniffer rows via unique role keys later; merge as one role
+        # with max rss + note child pids in cmd if replacing
+        if prev and role == "sniffer" and prev.get("pid") != pid:
+            # sum RSS of sniffer family under one role
+            prev_rss = int(prev.get("rss_b") or 0)
+            new_rss = int(rss or 0)
+            total = prev_rss + new_rss
+            found[role] = {
+                "role": role,
+                "pid": prev.get("pid"),
+                "pids": sorted(
+                    {
+                        int(prev.get("pid") or 0),
+                        int(pid),
+                        *[int(x) for x in (prev.get("pids") or []) if x],
+                    }
+                    - {0}
+                ),
+                "rss_b": total,
+                "rss_mib": round(total / (1024 * 1024), 1),
+                "cmd": (prev.get("cmd") or "")[:80]
+                + " · +"
+                + (cmd or str(pid))[:60],
+            }
             return
         found[role] = {
             "role": role,
@@ -14499,7 +14527,31 @@ def _poolheat_process_roles() -> dict:
         except Exception:
             pass
 
-    # Scan /proc for any serve.py we missed (poolheatd, etc.)
+    # Sniffer when capture is running (module status + /proc)
+    try:
+        sn_pid = None
+        st: dict = {}
+        if _sniffer_mod is not None or _sniffer_module_present():
+            try:
+                cfg_body = get_sniffer_cfg()
+                st = (
+                    cfg_body.get("status")
+                    if isinstance(cfg_body, dict)
+                    else {}
+                ) or {}
+            except Exception:
+                st = {}
+        if isinstance(st, dict) and st.get("running"):
+            try:
+                sn_pid = int(st.get("pid") or 0) or None
+            except (TypeError, ValueError):
+                sn_pid = None
+            if sn_pid:
+                _add("sniffer", sn_pid, _pid_cmdline(sn_pid) or "miner_sniffer")
+    except Exception:
+        pass
+
+    # Scan /proc for pollers + sniffer (tcpdump / miner_sniffer)
     try:
         for ent in Path("/proc").iterdir():
             if not ent.name.isdigit():
@@ -14508,12 +14560,7 @@ def _poolheat_process_roles() -> dict:
             if pid == self_pid:
                 continue
             cmd = _pid_cmdline(pid)
-            if (
-                "serve.py" not in cmd
-                and "poolheat" not in cmd
-                and "devices-poller" not in cmd
-            ):
-                continue
+            low = cmd.lower()
             if (
                 "--miner-poller" in cmd
                 or "miner-poller" in cmd
@@ -14526,15 +14573,32 @@ def _poolheat_process_roles() -> dict:
                 or "poolheat-devices-poller" in cmd
             ):
                 _add("devices-poller", pid, cmd)
-            elif "serve.py" in cmd:
-                # only one "serve" — prefer lower pid if conflict
+            elif (
+                "miner_sniffer" in low
+                or "poolheat-sniffer" in low
+                or (
+                    "tcpdump" in low
+                    and (
+                        "poolheat" in low
+                        or "sniffer" in low
+                        or "/tmp/poolheat" in low
+                    )
+                )
+            ):
+                _add("sniffer", pid, cmd)
+            elif "serve.py" in cmd and "--miner-poller" not in cmd and "--devices-poller" not in cmd:
                 if "serve" not in found:
                     _add("serve", pid, cmd)
     except Exception:
         pass
 
     # stable order
-    order = {"serve": 0, "miner-poller": 1, "devices-poller": 2}
+    order = {
+        "serve": 0,
+        "miner-poller": 1,
+        "devices-poller": 2,
+        "sniffer": 3,
+    }
     procs = sorted(found.values(), key=lambda p: order.get(p["role"], 9))
     total_rss = sum(int(p["rss_b"] or 0) for p in procs)
     return {
