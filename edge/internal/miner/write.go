@@ -149,6 +149,8 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		return executeReboot(s, req, pw)
 	case "restart_btminer", "restart", "restart_miner", "restart_cgminer", "btminer_restart":
 		return executeRestartMining(s, req, pw)
+	case "factory_reset", "factory", "restore_factory", "reset_factory":
+		return executeFactoryReset(s, req, pw)
 	}
 
 	// Longer timeout for privileged cmds that may stall the API briefly.
@@ -262,6 +264,82 @@ func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
 		res.Error = msg
 		if res.Error == "" {
 			res.Error = "reboot rejected"
+		}
+	}
+	return res
+}
+
+// executeFactoryReset — WhatsMinerTool NetPacket cmd 10 (preferred), then V2.
+func executeFactoryReset(s Settings, req WriteRequest, password string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
+	if s.DryRun {
+		res.OK = true
+		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
+		res.Transport = "dry_run"
+		return res
+	}
+	// 1) NetPacket factory reset (WMT cmd 10)
+	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
+		type cred struct{ acc, pw string }
+		tryCreds := []cred{{"super", "super"}, {"admin", password}}
+		if password != "" && password != "super" {
+			tryCreds = append(tryCreds, cred{"super", password})
+		}
+		for _, cr := range tryCreds {
+			if strings.TrimSpace(cr.pw) == "" {
+				continue
+			}
+			np := protocol.NewClient(s.Host)
+			np.Account = cr.acc
+			np.Password = cr.pw
+			np.Timeout = 20 * time.Second
+			resp, err := np.FactoryReset()
+			if err != nil {
+				if isLinkDropAfterWrite(err) {
+					res.OK = true
+					res.Transport = "netpacket"
+					res.Response = map[string]any{
+						"STATUS": "S", "Msg": "factory_reset sent (link dropped)", "transport": "netpacket",
+					}
+					return res
+				}
+				log.Printf("[miner-poller] netpacket factory_reset %s: %v", cr.acc, err)
+				continue
+			}
+			if resp != nil {
+				res.OK = true
+				res.Transport = "netpacket"
+				res.Response = map[string]any{
+					"STATUS": "S", "Msg": resp.StatusText, "transport": "netpacket", "ok": resp.OK,
+				}
+				return res
+			}
+		}
+	}
+	// 2) V2 privileged factory_reset
+	resp, err := cV2WriteTimeout(s, password, "factory_reset", nil, 25*time.Second)
+	if err != nil {
+		if isLinkDropAfterWrite(err) {
+			res.OK = true
+			res.Transport = "v2"
+			res.Response = map[string]any{
+				"STATUS": "S", "Msg": "factory_reset sent (link dropped)", "transport": "v2",
+			}
+			return res
+		}
+		res.Error = err.Error()
+		res.Transport = "v2"
+		return res
+	}
+	res.Response = resp
+	res.Transport = "v2"
+	ok, msg := minerWriteOK(resp)
+	res.OK = ok
+	if !ok {
+		res.Error = msg
+		if res.Error == "" {
+			res.Error = "factory_reset rejected"
 		}
 	}
 	return res

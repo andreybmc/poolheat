@@ -9645,7 +9645,10 @@
         "h2.resources": "Resources",
         "sub.resources": "disk · RAM · uptime · processes · history.db",
         "info.processes": "Poolheat processes · RSS",
-        "info.processes_hint": "serve · miner-poller · devices-poller · sniffer",
+        "info.processes_hint": "serve · miner-poller · devices-poller · sniffer · uptime · restart",
+        "info.proc_restart": "Restart",
+        "info.proc_restart_confirm": "Restart this Poolheat process?",
+        "info.proc_restart_ok": "Restart queued",
         "btn.tmp_cleanup": "Clean /tmp",
         "msg.tmp_cleanup_ok": "Freed {mib} MiB · removed {n}",
         "msg.tmp_cleanup_fail": "Cleanup failed",
@@ -10468,7 +10471,10 @@
         "h2.resources": "Ресурсы",
         "sub.resources": "диск · RAM · uptime · процессы · history.db",
         "info.processes": "Процессы Poolheat · RSS",
-        "info.processes_hint": "serve · miner-poller · devices-poller · sniffer",
+        "info.processes_hint": "serve · miner-poller · devices-poller · sniffer · uptime · restart",
+        "info.proc_restart": "Рестарт",
+        "info.proc_restart_confirm": "Перезапустить этот процесс Poolheat?",
+        "info.proc_restart_ok": "Рестарт поставлен в очередь",
         "btn.tmp_cleanup": "Чистить /tmp",
         "msg.tmp_cleanup_ok": "Освобождено {mib} MiB · удалено {n}",
         "msg.tmp_cleanup_fail": "Очистка не удалась",
@@ -23405,9 +23411,25 @@
                   ? fmtBytes(p.rss_b)
                   : "—";
             const pid = p.pid != null ? "pid " + p.pid : "";
+            const up =
+              p.uptime ||
+              (p.uptime_sec != null ? fmtUptime(p.uptime_sec) : "—");
+            const canRestart =
+              p.restartable !== false &&
+              ["serve", "miner-poller", "devices-poller"].includes(p.role);
+            const btn = canRestart
+              ? '<button type="button" class="btn ghost btn-proc-restart" data-role="' +
+                String(p.role).replace(/"/g, "") +
+                '" style="font-size:0.72rem;padding:2px 8px;margin-left:8px" title="Restart process">' +
+                (typeof t === "function"
+                  ? t("info.proc_restart", "Restart")
+                  : "Restart") +
+                "</button>"
+              : "";
             return (
-              '<div style="display:flex;justify-content:space-between;gap:10px;font-size:0.9rem;padding:4px 0;border-bottom:1px solid var(--border,rgba(255,255,255,0.06))">' +
-              '<span><strong>' +
+              '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:0.9rem;padding:6px 0;border-bottom:1px solid var(--border,rgba(255,255,255,0.06))">' +
+              '<span style="min-width:0">' +
+              "<strong>" +
               role +
               "</strong>" +
               (pid
@@ -23415,13 +23437,64 @@
                   pid +
                   "</span>"
                 : "") +
-              "</span>" +
-              '<span style="font-variant-numeric:tabular-nums">' +
+              '<div style="opacity:0.65;font-size:0.78rem;margin-top:2px">↑ ' +
+              up +
+              "</div></span>" +
+              '<span style="display:flex;align-items:center;gap:4px;font-variant-numeric:tabular-nums;white-space:nowrap">' +
               rss +
+              btn +
               "</span></div>"
             );
           })
           .join("");
+        // bind restart buttons
+        procWrap.querySelectorAll(".btn-proc-restart").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const role = btn.getAttribute("data-role") || "";
+            if (!role) return;
+            const label =
+              roleLabel[role] || role;
+            if (
+              !confirm(
+                (typeof t === "function"
+                  ? t("info.proc_restart_confirm", "Restart process?")
+                  : "Restart process?") +
+                  "\n\n" +
+                  label
+              )
+            )
+              return;
+            btn.disabled = true;
+            try {
+              const res = await fetch("/api/system/process/restart", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ role }),
+              });
+              const data = await res.json();
+              if (!res.ok || data.ok === false)
+                throw new Error(data.error || "HTTP " + res.status);
+              if (typeof toastSuccess === "function")
+                toastSuccess(
+                  (typeof t === "function"
+                    ? t("info.proc_restart_ok", "Restart queued")
+                    : "Restart queued") +
+                    " · " +
+                    label
+                );
+              // refresh info panel after a short delay
+              setTimeout(() => {
+                if (typeof loadSystemInfo === "function") loadSystemInfo();
+                else if (typeof refreshInfo === "function") refreshInfo();
+              }, role === "serve" || role === "all" ? 2500 : 800);
+            } catch (e) {
+              if (typeof toastError === "function")
+                toastError("Restart: " + (e.message || e));
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
       })();
       if (resrc.uptime_sec != null || !fromCache) {
         setTxt("info-uptime", fmtUptime(resrc.uptime_sec));

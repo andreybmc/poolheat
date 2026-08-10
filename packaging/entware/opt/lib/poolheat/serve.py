@@ -305,6 +305,8 @@ DEVICES_POLLER_PIDFILE = DATA / "devices_poller.pid"
 DEVICES_POLLER_LOG = DATA / "devices_poller.log"
 MINER_POLLER_PIDFILE = DATA / "miner_poller.pid"
 MINER_POLLER_LOG = DATA / "miner_poller.log"
+# Wall-clock when this serve process started (uptime display)
+_SERVE_BOOT_TS = time.time()
 # ASIC write IPC (serve → Go miner-poller → :4028). serve does not open miner TCP for writes.
 MINER_WRITE_REQ_FILE = DATA / "miner_write_req.json"
 MINER_WRITE_RESULT_FILE = DATA / "miner_write_result.json"
@@ -6723,6 +6725,82 @@ def _force_stop_edge_pollers() -> dict:
         "serve.py --devices-poller",
     )
     return {"miner": a, "devices": b}
+
+
+
+def restart_poolheat_role(role: str) -> dict:
+    """
+    Restart one Poolheat edge process from Info UI.
+    roles: serve | miner-poller | devices-poller | all
+    """
+    role = str(role or "").strip().lower().replace("_", "-")
+    if role in ("all", "edge", "*"):
+        # full service restart (detached)
+        try:
+            _restart_poolheat_later()
+        except Exception as e:
+            return {"ok": False, "role": "all", "error": str(e)}
+        return {
+            "ok": True,
+            "role": "all",
+            "message": "full service restart queued (1–2s)",
+        }
+    if role in ("miner-poller", "miner", "asic-poller"):
+        try:
+            stop_miner_poller_process()
+        except Exception:
+            pass
+        try:
+            ki = _force_stop_named_poller(
+                "miner",
+                MINER_POLLER_PIDFILE,
+                "poolheat-miner-poller",
+                "serve.py --miner-poller",
+                "serve.py --asic-poller",
+            )
+            time.sleep(0.4)
+            start_miner_poller_process()
+            return {
+                "ok": True,
+                "role": "miner-poller",
+                "stopped": ki,
+                "alive": miner_poller_process_alive(),
+            }
+        except Exception as e:
+            return {"ok": False, "role": "miner-poller", "error": str(e)}
+    if role in ("devices-poller", "devices", "device-poller"):
+        try:
+            stop_devices_poller_process()
+        except Exception:
+            pass
+        try:
+            ki = _force_stop_named_poller(
+                "devices",
+                DEVICES_POLLER_PIDFILE,
+                "poolheat-devices-poller",
+                "serve.py --devices-poller",
+            )
+            time.sleep(0.4)
+            start_devices_poller_process()
+            return {
+                "ok": True,
+                "role": "devices-poller",
+                "stopped": ki,
+                "alive": devices_poller_process_alive(),
+            }
+        except Exception as e:
+            return {"ok": False, "role": "devices-poller", "error": str(e)}
+    if role in ("serve", "ui", "http"):
+        try:
+            _restart_poolheat_later()
+        except Exception as e:
+            return {"ok": False, "role": "serve", "error": str(e)}
+        return {
+            "ok": True,
+            "role": "serve",
+            "message": "serve restart queued (poolheatd / init.d)",
+        }
+    return {"ok": False, "error": f"unknown role: {role}"}
 
 
 def _poller_bin_info(path: str | None) -> dict:
@@ -14583,6 +14661,52 @@ def _pid_cmdline(pid: int) -> str:
         return ""
 
 
+
+def _pid_uptime_sec(pid: int) -> float | None:
+    """Process uptime in seconds (Linux /proc; None on other OS)."""
+    try:
+        # /proc/uptime: seconds since boot
+        up = float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
+        # /proc/pid/stat field 22 (1-based) = starttime in clock ticks
+        stat = Path(f"/proc/{int(pid)}/stat").read_text(encoding="utf-8")
+        # comm may contain spaces in () — split after last )
+        rpar = stat.rfind(")")
+        fields = stat[rpar + 2 :].split()
+        # after comm: state is fields[0], starttime is fields[19] (stat field 22)
+        start_ticks = float(fields[19])
+        clk = float(os.sysconf("SC_CLK_TCK") or 100)
+        start_sec = start_ticks / clk
+        ut = up - start_sec
+        if ut < 0:
+            ut = 0.0
+        return round(ut, 1)
+    except Exception:
+        return None
+
+
+def _fmt_uptime_short(sec: float | None, *, lang: str = "en") -> str:
+    if sec is None:
+        return "—"
+    try:
+        s = int(max(0, float(sec)))
+    except (TypeError, ValueError):
+        return "—"
+    d, s = divmod(s, 86400)
+    h, s = divmod(s, 3600)
+    m, s = divmod(s, 60)
+    if lang.startswith("ru"):
+        if d:
+            return f"{d}д {h}ч {m}м"
+        if h:
+            return f"{h}ч {m}м"
+        return f"{m}м {s}с"
+    if d:
+        return f"{d}d {h}h {m}m"
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m {s}s"
+
+
 def _poolheat_process_roles() -> dict:
     """
     RSS for poolheat processes: serve, miner-poller, devices-poller,
@@ -14635,12 +14759,21 @@ def _poolheat_process_roles() -> dict:
                 + (cmd or str(pid))[:60],
             }
             return
+        up = _pid_uptime_sec(pid)
+        if role == "serve" and up is None:
+            try:
+                up = round(max(0.0, time.time() - float(_SERVE_BOOT_TS)), 1)
+            except Exception:
+                up = None
         found[role] = {
             "role": role,
             "pid": pid,
             "rss_b": rss,
             "rss_mib": round(rss / (1024 * 1024), 1) if rss is not None else None,
+            "uptime_sec": up,
+            "uptime": _fmt_uptime_short(up),
             "cmd": (cmd or "")[:160],
+            "restartable": role in ("serve", "miner-poller", "devices-poller"),
         }
 
     # Self = main HTTP serve (unless we are a poller child)
@@ -17323,6 +17456,10 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
             "restart_miner",
             "restart_cgminer",
             "btminer_restart",
+            "factory_reset",
+            "factory",
+            "restore_factory",
+            "reset_factory",
         ):
             to = max(float(MINER_WRITE_TIMEOUT_SEC), 60.0)
         return miner_write_via_poller(cmd, password, timeout_sec=to)
@@ -19711,8 +19848,7 @@ def apply_set(action: str, value, password: str) -> dict:
             pass
         return out
 
-    # Factory reset — NetPacket :8889 only (WhatsMinerTool cmd 10).
-    # Public API factory_reset is unreliable / burns get_token slots.
+    # Factory reset — Go miner-poller (NetPacket cmd 10, then V2).
     if action in (
         "factory_reset",
         "factory",
@@ -19725,19 +19861,12 @@ def apply_set(action: str, value, password: str) -> dict:
                 "factory_reset requires value=yes (double confirm in UI)"
             )
         try:
-            _policy_log("warn", "FACTORY_RESET via NetPacket · settings → defaults")
+            _policy_log("warn", "FACTORY_RESET via miner-poller · settings → defaults")
         except Exception:
             pass
+        resp = miner_write_cmd({"cmd": "factory_reset"}, password)
         try:
-            with _miner_io_lock:
-                np = _netpacket_client(password, timeout=15.0)
-                resp = np.factory_reset()
-        except Exception as e:
-            err = str(e)
-            # optional: if caller insists on public API when write is on — still prefer NP
-            raise RuntimeError(f"factory_reset NetPacket failed: {err}") from e
-        try:
-            _policy_log("ok", "FACTORY_RESET NetPacket · ASIC will reboot / reconfigure")
+            _policy_log("ok", "FACTORY_RESET poller · ASIC will reboot / reconfigure")
         except Exception:
             pass
         try:
@@ -19752,12 +19881,14 @@ def apply_set(action: str, value, password: str) -> dict:
             "asic",
             resp if isinstance(resp, dict) else {"result": resp},
             warning=(
-                "Factory reset via NetPacket · ASIC reboot / defaults. "
+                "Factory reset via miner-poller (NetPacket) · ASIC reboot / defaults. "
                 "IP may change (DHCP)."
             ),
         )
-        if isinstance(out, dict):
-            out["transport"] = "netpacket"
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
+        elif isinstance(out, dict):
+            out["transport"] = "go-miner-poller"
         return out
 
     raise ValueError(f"unknown action: {action}")
@@ -23448,11 +23579,14 @@ def _tg_info_resources_text(lang: str = "ru") -> str:
             rss_s = _tg_fmt_mib(p.get("rss_b"))
         pid = p.get("pid")
         pid_s = f"pid {pid}" if pid is not None else ""
+        up = p.get("uptime") or _fmt_uptime_short(p.get("uptime_sec"), lang=lang)
         label = role_label.get(role, role)
+        bits = [rss_s]
+        if up and up != "—":
+            bits.append(f"↑{up}")
         if pid_s:
-            lines.append(f"  {label}: {rss_s} · {pid_s}")
-        else:
-            lines.append(f"  {label}: {rss_s}")
+            bits.append(pid_s)
+        lines.append(f"  {label}: " + " · ".join(bits))
     # any extra roles
     for p in procs:
         if not isinstance(p, dict):
@@ -23464,10 +23598,13 @@ def _tg_info_resources_text(lang: str = "ru") -> str:
         rss = p.get("rss_mib")
         rss_s = f"{rss} MiB" if rss is not None else _tg_fmt_mib(p.get("rss_b"))
         pid = p.get("pid")
-        lines.append(
-            f"  {role or '?'}: {rss_s}"
-            + (f" · pid {pid}" if pid is not None else "")
-        )
+        up = p.get("uptime") or _fmt_uptime_short(p.get("uptime_sec"), lang=lang)
+        bits = [rss_s]
+        if up and up != "—":
+            bits.append(f"↑{up}")
+        if pid is not None:
+            bits.append(f"pid {pid}")
+        lines.append(f"  {role or '?'}: " + " · ".join(bits))
 
     if shown == 0:
         lines.append("  —")
@@ -27418,6 +27555,31 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception:
                     pass
                 self._json_response(200, body)
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/system/process/restart",
+            "/api/system/processes/restart",
+            "/api/process/restart",
+        ):
+            try:
+                req = self._read_json_body() or {}
+            except Exception:
+                req = {}
+            if not isinstance(req, dict):
+                req = {}
+            role = str(
+                req.get("role") or req.get("name") or req.get("process") or ""
+            ).strip()
+            try:
+                body = restart_poolheat_role(role)
+                code = 200 if body.get("ok") else 400
+                try:
+                    body["processes"] = _poolheat_process_roles()
+                except Exception:
+                    pass
+                self._json_response(code, body)
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
