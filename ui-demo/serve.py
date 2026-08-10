@@ -309,6 +309,10 @@ DEVICES_POLLER_PIDFILE = DATA / "devices_poller.pid"
 DEVICES_POLLER_LOG = DATA / "devices_poller.log"
 MINER_POLLER_PIDFILE = DATA / "miner_poller.pid"
 MINER_POLLER_LOG = DATA / "miner_poller.log"
+# ASIC write IPC (serve → Go miner-poller → :4028). serve does not open miner TCP for writes.
+MINER_WRITE_REQ_FILE = DATA / "miner_write_req.json"
+MINER_WRITE_RESULT_FILE = DATA / "miner_write_result.json"
+MINER_WRITE_TIMEOUT_SEC = float(os.environ.get("POOLHEAT_MINER_WRITE_TIMEOUT", "35") or 35)
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
@@ -17669,14 +17673,84 @@ def enable_write_api(
     }
 
 
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+_miner_write_ipc_lock = threading.Lock()
+
+
+def miner_write_via_poller(
+    cmd: dict,
+    password: str,
+    *,
+    action: str | None = None,
+    value=None,
+    timeout_sec: float | None = None,
+) -> dict:
+    """
+    Enqueue privileged write for Go miner-poller (file IPC).
+    serve never opens :4028/:4433 for writes when poller is alive.
+    """
+    if not miner_poller_process_alive():
+        raise RuntimeError("miner-poller not running — write skipped")
+    req_id = uuid.uuid4().hex
+    timeout = float(timeout_sec if timeout_sec is not None else MINER_WRITE_TIMEOUT_SEC)
+    req = {
+        "id": req_id,
+        "ts": time.time(),
+        "cmd": dict(cmd or {}),
+        "password": password or DEFAULT_API_PASSWORD,
+        "action": action,
+        "value": value,
+    }
+    with _miner_write_ipc_lock:
+        # Drop stale result so we don't match an old id
+        try:
+            if MINER_WRITE_RESULT_FILE.is_file():
+                MINER_WRITE_RESULT_FILE.unlink()
+        except Exception:
+            pass
+        _write_json_atomic(MINER_WRITE_REQ_FILE, req)
+        deadline = time.time() + max(3.0, timeout)
+        last_err = "timeout waiting for miner-poller write result"
+        while time.time() < deadline:
+            time.sleep(0.15)
+            try:
+                if not MINER_WRITE_RESULT_FILE.is_file():
+                    if not miner_poller_process_alive():
+                        raise RuntimeError("miner-poller died during write")
+                    continue
+                raw = json.loads(MINER_WRITE_RESULT_FILE.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict) or str(raw.get("id") or "") != req_id:
+                    continue
+                if not raw.get("ok"):
+                    err = str(raw.get("error") or "miner rejected command")
+                    raise RuntimeError(err)
+                resp = raw.get("response")
+                if not isinstance(resp, dict):
+                    resp = {"STATUS": "S", "Msg": "ok", "transport": "go-miner-poller"}
+                else:
+                    resp = dict(resp)
+                resp.setdefault("transport", raw.get("transport") or "go-miner-poller")
+                return resp
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_err = str(e)
+                continue
+        raise RuntimeError(last_err)
+
+
 def miner_write_cmd(cmd: dict, password: str) -> dict:
     """
-    Unified write path via whatsminer-lib UniversalMiner (PoolheatMiner adapter):
+    Unified write path.
 
-      0) Refuse if ASIC offline
-      A) High-level ops: mode / reboot / restart / pools / limit / suspend
-         — transport auto (V3/V2 → NetPacket :8889 → LuCI)
-      B) Fallback: legacy TCP privileged_cmd for obscure cmds
+    Prefer Go miner-poller (file IPC) so serve never opens ASIC TCP for writes.
+    Fallback to whatsminer-lib only when poller is not running (emergency / bootstrap).
     """
     password = password or DEFAULT_API_PASSWORD
     cname = str(cmd.get("cmd") or "").strip()
@@ -17687,6 +17761,17 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
             "ASIC offline · write skipped (нет read — команда не отправлялась)"
         )
 
+    # Primary: poller owns all ASIC I/O (read + write)
+    if miner_poller_process_alive():
+        try:
+            return miner_write_via_poller(cmd, password)
+        except Exception as e:
+            err = str(e)
+            if "over max" in err.lower() and "лимит" not in err.lower():
+                raise RuntimeError(_OVER_MAX_CONNECT_RU) from e
+            raise
+
+    # Fallback (no poller): legacy UniversalMiner path
     d = get_whatsminer_driver(password)
 
     try:

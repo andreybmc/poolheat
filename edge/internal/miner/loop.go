@@ -25,7 +25,7 @@ func Run(s Settings) error {
 	log.Printf("[miner-poller] go pid=%d data=%s miner=%s interval=%ds",
 		os.Getpid(), s.DataDir, hostLabel, s.PollIntervalSec)
 
-	log.Printf("[miner-poller] live loop start")
+	log.Printf("[miner-poller] live loop start (writes via %s)", writeReqFile)
 	for {
 		if ctx.Err() != nil {
 			break
@@ -34,6 +34,10 @@ func Run(s Settings) error {
 		// reload host/interval each tick (config may change via UI)
 		s = LoadSettings()
 		hostLabel = fmt.Sprintf("%s:%d", s.Host, s.Port)
+
+		// Privileged writes first — serve enqueues miner_write_req.json.
+		// Keeps write latency low and serializes ASIC TCP in this process only.
+		handledWrite := ProcessPendingWrite(s)
 
 		live, err := FetchLive(s)
 		if err != nil {
@@ -51,8 +55,8 @@ func Run(s Settings) error {
 			}
 			// light log every ~30s
 			if time.Now().Unix()%30 < int64(s.PollIntervalSec) {
-				log.Printf("[miner-poller] ok power=%v th=%.1f work=%s",
-					live["power"], asF(live["hashrate_th"]), work)
+				log.Printf("[miner-poller] ok power=%v th=%.1f work=%s liquid=%v",
+					live["power"], asF(live["hashrate_th"]), work, live["liquid"])
 			}
 		}
 
@@ -60,14 +64,36 @@ func Run(s Settings) error {
 		if interval < 2*time.Second {
 			interval = 2 * time.Second
 		}
+		// After a write, re-poll sooner so UI sees new state; also check writes often.
+		if handledWrite {
+			interval = 2 * time.Second
+		}
 		spent := time.Since(t0)
 		wait := interval - spent
-		if wait < time.Second {
-			wait = time.Second
+		if wait < 500*time.Millisecond {
+			wait = 500 * time.Millisecond
 		}
-		select {
-		case <-ctx.Done():
-		case <-time.After(wait):
+		// Slice long waits so pending write requests are picked up quickly.
+		deadline := time.Now().Add(wait)
+		for time.Now().Before(deadline) {
+			if ctx.Err() != nil {
+				break
+			}
+			slice := 500 * time.Millisecond
+			if rem := time.Until(deadline); rem < slice {
+				slice = rem
+			}
+			if slice < 50*time.Millisecond {
+				break
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(slice):
+			}
+			if ProcessPendingWrite(s) {
+				// write mid-wait: refresh live next outer iteration soon
+				break
+			}
 		}
 		if ctx.Err() != nil {
 			break

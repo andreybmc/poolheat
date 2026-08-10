@@ -10,10 +10,23 @@ import (
 	"github.com/andreybmc/wm-lib/api"
 )
 
+// Last-good liquid so a transient V3 blip does not blank the UI sensor.
+var (
+	liquidCacheVal *float64
+	liquidCacheAt  time.Time
+	liquidCacheTTL = 90 * time.Second
+)
+
 // FetchLive polls Whatsminer public API (V2 :4028 + V3 liquid) and builds
 // poolheat live JSON. Shape matches serve.py fetch_live() core fields used by
 // UI / history / policy. serve never talks to the ASIC for live — only this poller.
 func FetchLive(s Settings) (map[string]any, error) {
+	// Liquid FIRST on :4433 — before V2 opens several :4028 sessions (over max connect).
+	var liquid *float64
+	var liquidSrc any
+	var v3Err string
+	liquid, liquidSrc, v3Err = fetchLiquidTempC(s.Host)
+
 	c := api.NewV2(s.Host)
 	c.Port = s.Port
 	c.Password = s.Password
@@ -62,23 +75,18 @@ func FetchLive(s Settings) (map[string]any, error) {
 		psuModel = firstNonEmpty(psuMap["model"], psuMap["name"])
 	}
 
-	// Liquid / coolant: V2 status/summary/psu first; M63+ → wm-lib V3 LiquidTempC (:4433).
-	// Single V3 call only when classic fields lack liquid — no custom TCP here.
-	var liquid *float64
-	var liquidSrc any
-	var v3Err string
-	liquid, liquidSrc = extractLiquidTemp(status, summary, psuMap, nil)
-	if liquid == nil {
-		v3 := api.NewV3(s.Host)
-		v3.Timeout = 8 * time.Second
-		lt, errV3 := v3.LiquidTempC()
-		if errV3 != nil {
-			v3Err = errV3.Error()
-			log.Printf("[miner-poller] v3 LiquidTempC host=%s: %v", s.Host, errV3)
-		} else if lt != nil {
-			liquid = lt
-			liquidSrc = "v3"
-		}
+	// Prefer V2 fields when present; else keep V3 / sticky cache.
+	if v2liq, src := extractLiquidTemp(status, summary, psuMap, nil); v2liq != nil {
+		liquid, liquidSrc = v2liq, src
+	}
+	if liquid != nil {
+		v := *liquid
+		liquidCacheVal = &v
+		liquidCacheAt = time.Now()
+	} else if liquidCacheVal != nil && time.Since(liquidCacheAt) < liquidCacheTTL {
+		v := *liquidCacheVal
+		liquid = &v
+		liquidSrc = "cache"
 	}
 
 	// Temperature fallback from classic field
@@ -246,6 +254,30 @@ func FetchLive(s Settings) (map[string]any, error) {
 	}
 
 	return body, nil
+}
+
+// fetchLiquidTempC reads M63+ coolant via wm-lib V3 (TCP :4433), with retries.
+func fetchLiquidTempC(host string) (*float64, any, string) {
+	v3 := api.NewV3(host)
+	v3.Timeout = 6 * time.Second
+	var lastErr string
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+		}
+		lt, err := v3.LiquidTempC()
+		if err != nil {
+			lastErr = err.Error()
+			log.Printf("[miner-poller] v3 LiquidTempC host=%s attempt=%d: %v", host, attempt+1, err)
+			continue
+		}
+		if lt != nil {
+			return lt, "v3", ""
+		}
+		// field missing — no point retrying hard
+		return nil, nil, ""
+	}
+	return nil, nil, lastErr
 }
 
 // extractLiquidTemp mirrors serve.py _extract_liquid_temp.
