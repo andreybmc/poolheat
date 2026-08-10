@@ -8593,8 +8593,8 @@
               </div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45" id="info-update-msg" data-i18n="info.update_hint">
-              Click “Check for updates” — we compare version with the repository.
-              Update installs UI+serve, does not touch config.json, restarts the service.
+              Click “Check for updates” — compare with the repository.
+              Update installs the full package (UI, serve, pollers, daemon). config.json is kept; service restarts.
             </p>
             <div class="update-notes" id="info-update-notes" hidden>
               <span class="rn-label" data-i18n="info.release_notes">Release notes</span>
@@ -9793,7 +9793,7 @@
         "info.status": "Status",
         "info.commit": "commit —",
         "info.source": "source —",
-        "info.update_hint": "Click “Check for updates” — we compare version with the repository. Update installs UI+serve, does not touch config.json, restarts the service.",
+        "info.update_hint": "Click “Check for updates” — compare with the repository. Update installs the full package (UI, serve, pollers, daemon). config.json is kept; service restarts.",
         "info.release_notes": "Release notes",
         "upd.auto_title": "Automatic update",
         "upd.auto_desc": "poolheat checks GitHub for new releases and installs them automatically. Your device may not update immediately after a release — only when the schedule window is open. Successful installs are written to the action log.",
@@ -9825,7 +9825,7 @@
         "upd.install": "Install",
         "upd.install_from": "Install from repository",
         "upd.msg_match": "Version matches the repository ({ver}, source {src}). You can reinstall from {ref}.",
-        "upd.msg_avail": "Available {latest} (now {cur}). Install downloads the package and restarts the service. config.json is kept.",
+        "upd.msg_avail": "Available {latest} (now {cur}). Install downloads the full package (UI, serve, pollers) and restarts the service. config.json is kept.",
         "upd.msg_local_ahead": "Locally {cur} is newer than repository ({latest}). Publish a new release to catch up.",
         "upd.msg_branch": "No release version in repository yet — you can install channel {branch}.",
         "upd.msg_checked": "Checked: {at}",
@@ -9837,7 +9837,7 @@
         "upd.toast_branch": "No release version yet · you can install channel {branch}",
         "upd.toast_check": "Check: {msg}",
         "upd.toast_err": "Update check: {msg}",
-        "upd.install_confirm": "Install poolheat from repository?\n\nVersion: {ver}\nCurrent: {cur}\n\nconfig.json is kept. Service will restart.",
+        "upd.install_confirm": "Install poolheat from repository?\n\nVersion: {ver}\nCurrent: {cur}\n\nFull package (UI, serve, pollers). config.json is kept. Service will restart.",
         "upd.installing": "Installing…",
         "footer.powered": "Powered by poolheat_WM"
       },
@@ -10608,7 +10608,7 @@
         "info.status": "Статус",
         "info.commit": "commit —",
         "info.source": "источник —",
-        "info.update_hint": "Нажмите «Проверить обновления» — сравним версию с репозиторием. Установка обновит UI+serve, config.json не трогает, перезапустит сервис.",
+        "info.update_hint": "Нажмите «Проверить обновления» — сравним версию с репозиторием. Установка обновит весь пакет (UI, serve, поллеры, daemon). config.json не трогает; сервис перезапустится.",
         "upd.auto_title": "Автоматическое обновление",
         "upd.auto_desc": "poolheat проверяет GitHub на новые релизы и устанавливает их автоматически. Устройство может обновиться не сразу после выпуска — только в окне расписания. Успешная установка пишется в журнал действий.",
         "upd.auto_toggle": "Автоматическое обновление",
@@ -10640,7 +10640,7 @@
         "upd.install": "Установить",
         "upd.install_from": "Установить из репозитория",
         "upd.msg_match": "Версия совпадает с репозиторием ({ver}, источник {src}). Можно переустановить из {ref}.",
-        "upd.msg_avail": "Доступна {latest} (сейчас {cur}). Установка скачает пакет и перезапустит сервис. config.json сохранится.",
+        "upd.msg_avail": "Доступна {latest} (сейчас {cur}). Установка скачает весь пакет (UI, serve, поллеры) и перезапустит сервис. config.json сохранится.",
         "upd.msg_local_ahead": "Локально {cur} новее репозитория ({latest}). Опубликуйте новый релиз, чтобы догнать.",
         "upd.msg_branch": "В репозитории ещё нет версии релиза — можно поставить канал {branch}.",
         "upd.msg_checked": "Проверено: {at}",
@@ -10652,7 +10652,7 @@
         "upd.toast_branch": "Версии релиза ещё нет · можно поставить канал {branch}",
         "upd.toast_check": "Проверка: {msg}",
         "upd.toast_err": "Проверка обновлений: {msg}",
-        "upd.install_confirm": "Установить poolheat из репозитория?\n\nВерсия: {ver}\nСейчас: {cur}\n\nconfig.json сохранится. Сервис перезапустится.",
+        "upd.install_confirm": "Установить poolheat из репозитория?\n\nВерсия: {ver}\nСейчас: {cur}\n\nВесь пакет (UI, serve, поллеры). config.json сохранится. Сервис перезапустится.",
         "upd.installing": "Установка…",
         "footer.powered": "Работает на poolheat_WM"
       },

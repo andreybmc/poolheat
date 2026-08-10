@@ -2275,12 +2275,12 @@ def list_filtration_backends() -> list[dict]:
     return list(FILTRATION_BACKENDS)
 
 
-def _as_bool(v) -> bool:
+def _as_bool(v, default: bool = False) -> bool:
     """Truthy parse for JSON/form bools (true/1/yes/on)."""
     if isinstance(v, bool):
         return v
     if v is None:
-        return False
+        return bool(default)
     if isinstance(v, (int, float)):
         return v != 0
     s = str(v).strip().lower()
@@ -6822,30 +6822,47 @@ def devices_hold_tick() -> dict:
             and _as_bool(d.get("enforce_desired"), False)
             and str(d.get("id") or "")
         ]
+    if not rows:
+        # also pick from merged snapshot (enforce flag only on config is enough)
+        pass
     for d in rows:
         did = str(d.get("id") or "")
         cfg = _device_cfg_snapshot(did)
-        if not cfg or not _device_ready(cfg):
+        if not cfg:
+            continue
+        # re-check enforce on merged cfg (config is source of truth)
+        if not _as_bool(cfg.get("enforce_desired"), False):
+            continue
+        if not _device_ready(cfg):
+            print(
+                f"[devices-hold] skip {cfg.get('alias') or did}: not ready",
+                flush=True,
+            )
             continue
         checked += 1
-        before = cfg.get("desired_on")
+        desired_before = cfg.get("desired_on")
+        reported_before = cfg.get("last_on")
         try:
             res = device_poll_status(
                 did, source="hold", apply_policy=True, use_timeout_for_enforce=True
             )
             if not res.get("ok"):
                 errors += 1
+                print(
+                    f"[devices-hold] {cfg.get('alias') or did}: "
+                    f"{res.get('error') or 'fail'}",
+                    flush=True,
+                )
                 continue
-            # restored if enforce ran and reported now matches desired
             en = res.get("enforce_result")
             if isinstance(en, dict) and en.get("ok") and not en.get("skipped"):
                 restored += 1
-            elif (
-                before is not None
-                and res.get("reported_on") is not None
-                and bool(res.get("reported_on")) == bool(before)
-                and res.get("enforced")
-            ):
+                print(
+                    f"[devices-hold] restored {cfg.get('alias') or did}: "
+                    f"desired={desired_before} was={reported_before}",
+                    flush=True,
+                )
+            elif res.get("enforced") and isinstance(en, dict) and en.get("ok"):
                 restored += 1
         except Exception as e:
             errors += 1
@@ -6856,22 +6873,27 @@ def devices_hold_tick() -> dict:
 def devices_hold_loop() -> None:
     """Daemon: restore enforce_desired devices in background (UI-refresh path)."""
     print("[devices-hold] loop start", flush=True)
-    # boot delay so poller / network settle
-    time.sleep(20)
+    # shorter boot delay — hold must work without opening UI
+    time.sleep(8)
     while not _devices_hold_stop.is_set():
-        iv = 12
+        iv = 10
         try:
+            # reload config from disk each tick (OTA / UI saves)
+            try:
+                _load_devices_cfg()
+            except Exception:
+                pass
             pol = get_devices_poller_cfg()
             if not pol.get("enabled", True):
                 _devices_hold_stop.wait(30)
                 continue
-            # interval: at least 8s (same spirit as UI refresh hold)
             try:
-                iv = max(8, min(120, int(pol.get("interval_sec") or 10)))
+                iv = max(8, min(60, int(pol.get("interval_sec") or 10)))
             except (TypeError, ValueError):
-                iv = 12
+                iv = 10
             summary = devices_hold_tick()
-            if summary.get("restored") or summary.get("errors"):
+            # always log summary lightly so we can see hold is alive
+            if summary.get("checked") or summary.get("restored") or summary.get("errors"):
                 print(
                     f"[devices-hold] checked={summary.get('checked')} "
                     f"restored={summary.get('restored')} "
@@ -16030,7 +16052,7 @@ def _restart_poolheat_later() -> None:
 exec >>{log} 2>&1
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart begin"
 sleep 1
-# stop any serve.py / tracked pid
+# stop service + children (serve, Go pollers, python pollers)
 if [ -x /opt/etc/init.d/S99poolheat-standalone ]; then
   /opt/etc/init.d/S99poolheat-standalone stop || true
 elif [ -x /opt/etc/init.d/S99poolheat ]; then
@@ -16039,6 +16061,19 @@ fi
 for p in $(ps w 2>/dev/null | grep '[s]erve.py' | awk '{{print $1}}'); do
   kill "$p" 2>/dev/null || true
 done
+for p in $(ps w 2>/dev/null | grep '[p]oolheat-devices-poller' | awk '{{print $1}}'); do
+  kill "$p" 2>/dev/null || true
+done
+for p in $(ps w 2>/dev/null | grep '[p]oolheat-miner-poller' | awk '{{print $1}}'); do
+  kill "$p" 2>/dev/null || true
+done
+for p in $(ps w 2>/dev/null | grep '[p]oolheatd' | awk '{{print $1}}'); do
+  kill "$p" 2>/dev/null || true
+done
+rm -f /opt/var/poolheat/devices_poller.pid /opt/var/poolheat/miner_poller.pid 2>/dev/null || true
+# ensure new binaries are executable (OTA may land them)
+chmod +x /opt/bin/poolheat-devices-poller /opt/bin/poolheat-miner-poller /opt/bin/poolheatd 2>/dev/null || true
+ls -la /opt/bin/poolheat-*-poller /opt/bin/poolheatd 2>/dev/null || true
 sleep 1
 # start (prefer standalone — no rc.func / PROCS=poolheatd mismatch)
 ok=0
@@ -16061,6 +16096,9 @@ if [ "$ok" -eq 0 ]; then
 fi
 if ps w 2>/dev/null | grep -q '[s]erve.py'; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart OK"
+  # confirm pollers / hold after boot
+  sleep 3
+  ps w 2>/dev/null | grep -E 'poolheat-(devices|miner)-poller|serve.py' | head -20 || true
 else
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart FAILED — no serve.py"
 fi
@@ -16191,7 +16229,8 @@ def _flush_update_restart_notify() -> None:
 
 def apply_github_update(ref: str | None = None, *, source: str = "manual") -> dict:
     """
-    Download GitHub archive (tag/branch) and install serve.py + UI + VERSION.
+    Download GitHub archive and install full package: serve, UI, VERSION,
+    whatsminer lib, poolheatd, Go pollers (devices/miner), init scripts.
     Does not overwrite /opt/etc/poolheat/config.json.
     ``source`` is written to the action log (manual | auto | telegram).
     """
@@ -16483,7 +16522,7 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
             "restart": entware,
             "source": apply_source,
             "message": (
-                "Файлы обновлены"
+                "Обновление установлено (serve, UI, поллеры, daemon)"
                 + ("; сервис перезапускается…" if entware else "")
             ),
             "applied_at": datetime.now().isoformat(timespec="seconds"),
@@ -24553,9 +24592,9 @@ def _tg_update_text(lang: str = "ru", check: dict | None = None) -> str:
     if chk.get("status") == "update_available":
         lines.append("")
         lines.append(
-            "Install will replace serve.py + UI, then restart."
+            "Install updates the package and restarts the service."
             if en
-            else "Установка заменит serve.py + UI и перезапустит сервис."
+            else "Установка обновит пакет и перезапустит сервис."
         )
     return "\n".join(lines)
 
@@ -24802,13 +24841,11 @@ def _tg_handle_callback(cq: dict) -> None:
                         f"⬇️ Install update?\n"
                         f"————————————\n"
                         f"Target: {lv}\n"
-                        f"serve.py + UI will be replaced.\n"
                         f"Service restarts after install."
                         if en
                         else f"⬇️ Установить обновление?\n"
                         f"————————————\n"
                         f"Цель: {lv}\n"
-                        f"Будут заменены serve.py + UI.\n"
                         f"После установки сервис перезапустится."
                     )
                     tg_edit_message(
