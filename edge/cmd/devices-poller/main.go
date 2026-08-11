@@ -31,6 +31,7 @@ func main() {
 	if dataDir == "" {
 		dataDir = paths.DataDir()
 	}
+	log.Printf("[devices-poller] version=%s", version)
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		log.Fatalf("[devices-poller] data dir: %v", err)
 	}

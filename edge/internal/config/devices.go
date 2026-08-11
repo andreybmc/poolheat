@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/andreybmc/poolheat/edge/internal/jsonutil"
 )
@@ -14,6 +15,11 @@ type PollerCfg struct {
 	SetTimeoutSec       int  `json:"set_timeout_sec"`
 	ErrorBackoffSec     int  `json:"error_backoff_sec"`
 	MiningWorkMaxAgeSec int  `json:"mining_work_max_age_sec"`
+	// HoldIntervalSec: background probe period when enforce_desired devices exist.
+	// Loop uses min(IntervalSec, HoldIntervalSec) so hold is not slower than status.
+	HoldIntervalSec int `json:"hold_interval_sec"`
+	// EnforceCooldownSec: min gap between restore attempts for the same device.
+	EnforceCooldownSec int `json:"enforce_cooldown_sec"`
 }
 
 func DefaultPoller() PollerCfg {
@@ -23,6 +29,8 @@ func DefaultPoller() PollerCfg {
 		SetTimeoutSec:       15,
 		ErrorBackoffSec:     20,
 		MiningWorkMaxAgeSec: 300,
+		HoldIntervalSec:     5,
+		EnforceCooldownSec:  3,
 	}
 }
 
@@ -44,9 +52,56 @@ func NormalizePoller(p *PollerCfg) PollerCfg {
 	if p.MiningWorkMaxAgeSec > 0 {
 		out.MiningWorkMaxAgeSec = clamp(p.MiningWorkMaxAgeSec, 30, 1800)
 	}
-	// JSON may omit enabled → treat missing as true via pointer? Our struct bool
-	// defaults false on omit. Python defaults true. Re-read with map if needed.
+	if p.HoldIntervalSec > 0 {
+		out.HoldIntervalSec = clamp(p.HoldIntervalSec, 3, 120)
+	}
+	if p.EnforceCooldownSec >= 0 {
+		out.EnforceCooldownSec = clamp(p.EnforceCooldownSec, 0, 60)
+	}
 	return out
+}
+
+// StatusTimeout is the per-device status probe budget.
+// Floor 8s: set_timeout_sec=3 (common in UI) is too short for Tuya/Tapo LAN.
+func (p PollerCfg) StatusTimeout() time.Duration {
+	sec := p.SetTimeoutSec
+	if sec < 8 {
+		sec = 8
+	}
+	if sec > 60 {
+		sec = 60
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// SetTimeout is the per-device set/enforce budget (needs re-read after write).
+func (p PollerCfg) SetTimeout() time.Duration {
+	sec := p.SetTimeoutSec
+	if sec < 15 {
+		sec = 15
+	}
+	if sec > 60 {
+		sec = 60
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// LoopInterval is how often the background poll+hold tick runs.
+func (p PollerCfg) LoopInterval() int {
+	iv := p.IntervalSec
+	if iv < 3 {
+		iv = 5
+	}
+	if p.HoldIntervalSec > 0 && p.HoldIntervalSec < iv {
+		iv = p.HoldIntervalSec
+	}
+	if iv < 3 {
+		iv = 3
+	}
+	if iv > 120 {
+		iv = 120
+	}
+	return iv
 }
 
 // DeviceCfg is settings-only (from devices_config.json).
@@ -200,6 +255,12 @@ func parsePoller(m map[string]any) PollerCfg {
 	}
 	if v, ok := asInt(m["mining_work_max_age_sec"]); ok {
 		p.MiningWorkMaxAgeSec = clamp(v, 30, 1800)
+	}
+	if v, ok := asInt(m["hold_interval_sec"]); ok {
+		p.HoldIntervalSec = clamp(v, 3, 120)
+	}
+	if v, ok := asInt(m["enforce_cooldown_sec"]); ok {
+		p.EnforceCooldownSec = clamp(v, 0, 60)
 	}
 	return p
 }

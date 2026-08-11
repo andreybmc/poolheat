@@ -13,18 +13,19 @@ import (
 	"github.com/andreybmc/poolheat/edge/internal/state"
 )
 
-// Short cooldown so external OFF is restored within one poller interval.
-// Was 3s; keep low — PollAll already serializes sets.
-const enforceCooldownSec = 1.5
+// Default enforce cooldown when poller config omits enforce_cooldown_sec.
+const defaultEnforceCooldownSec = 1.5
 
 // Store holds mutable runtime + deadlines for one process.
 type Store struct {
 	// DataDir is POOLHEAT_DATA — used to write policy_events.json (UI Action log).
-	DataDir   string
-	ByID      map[string]state.Runtime
-	Deadlines map[string]float64
-	SyncTS    map[string]float64
-	EnforceTS map[string]float64
+	DataDir string
+	// EnforceCooldownSec from devices_config poller (override default).
+	EnforceCooldownSec float64
+	ByID               map[string]state.Runtime
+	Deadlines          map[string]float64
+	SyncTS             map[string]float64
+	EnforceTS          map[string]float64
 	// DesiredTouched: ids whose desired_on we set this tick (don't clobber from disk on save)
 	DesiredTouched map[string]bool
 }
@@ -206,7 +207,11 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 		return nil
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
-	if now-s.EnforceTS[did] < enforceCooldownSec {
+	cool := s.EnforceCooldownSec
+	if cool <= 0 {
+		cool = defaultEnforceCooldownSec
+	}
+	if now-s.EnforceTS[did] < cool {
 		return nil
 	}
 	s.EnforceTS[did] = now
@@ -298,27 +303,26 @@ func (s *Store) AdoptReported(did string, reported bool) {
 }
 
 // PollAll: phase1 status all devices, phase2 enforce/adopt with fresh timeouts.
-// Split so background hold is not starved by status I/O (UI probe used to be
-// the only path that restored because it ran set in a new Python call).
+// Background hold is independent of UI pokes: every tick status → if enforce and
+// reported≠desired → set. UI may also enqueue device_req for set/status.
 func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol config.PollerCfg) (probed, errors, enforced int) {
 	backoff := float64(pol.ErrorBackoffSec)
 	if backoff < 5 {
 		backoff = 5
 	}
-	timeout := time.Duration(pol.SetTimeoutSec) * time.Second
-	if timeout < 3*time.Second {
-		timeout = 15 * time.Second
-	}
-	// enforce gets dedicated budget (status timeout can be short e.g. 3s in config)
-	setTimeout := timeout
-	if setTimeout < 15*time.Second {
-		setTimeout = 15 * time.Second
+	statusTimeout := pol.StatusTimeout()
+	setTimeout := pol.SetTimeout()
+	// per-tick cooldown from config (UI Advanced → enforce_cooldown_sec)
+	if pol.EnforceCooldownSec > 0 {
+		s.EnforceCooldownSec = float64(pol.EnforceCooldownSec)
+	} else if s.EnforceCooldownSec <= 0 {
+		s.EnforceCooldownSec = defaultEnforceCooldownSec
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
 
 	type item struct {
 		cfg config.DeviceCfg
-		ok  bool
+		ok  bool // true = fresh status this tick
 	}
 	var batch []item
 
@@ -334,16 +338,18 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 			continue
 		}
 		rt := s.getRT(cfg.ID)
-		// Back off only after status probe failures
+		// Back off only after status probe failures (not enforce fails)
 		if rt.LastError != nil && rt.LastAction != nil {
 			act := *rt.LastAction
 			if strings.HasSuffix(act, "_fail") && !strings.Contains(act, "enforce") {
 				if now-s.SyncTS[cfg.ID] < backoff {
+					// still allow hold on last known mismatch without new status
+					batch = append(batch, item{cfg: cfg, ok: false})
 					continue
 				}
 			}
 		}
-		cctx, cancel := context.WithTimeout(ctx, timeout)
+		cctx, cancel := context.WithTimeout(ctx, statusTimeout)
 		err := s.PollStatus(cctx, cfg, "poll")
 		cancel()
 		if err != nil {
@@ -357,14 +363,33 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 		batch = append(batch, item{cfg: cfg, ok: true})
 	}
 
-	// ── phase 2: enforce / adopt with dedicated timeout per device ─────
+	// ── phase 2: enforce / adopt ───────────────────────────────────────
+	// adopt only on fresh status; enforce (hold) also on last-known mismatch
+	// when status failed this tick (still try to push desired on the wire).
 	for _, it := range batch {
-		if !it.ok {
-			continue
-		}
 		cfg := it.cfg
 		rt := s.getRT(cfg.ID)
 		if rt.LastOn == nil {
+			continue
+		}
+		if !it.ok {
+			// no fresh status: only hold if enforce + known mismatch
+			if !cfg.EnforceDesired || rt.DesiredOn == nil || *rt.DesiredOn == *rt.LastOn {
+				continue
+			}
+			log.Printf("[devices-poller] hold (stale status) %s: last=%s desired=%s → restore",
+				cfg.Label(), onOff(*rt.LastOn), onOff(*rt.DesiredOn))
+			cctx, cancel := context.WithTimeout(ctx, setTimeout)
+			err := s.EnforceDesired(cctx, cfg, *rt.LastOn)
+			cancel()
+			if err != nil {
+				log.Printf("[devices-poller] policy %s: %v", cfg.Label(), err)
+				continue
+			}
+			rt2 := s.getRT(cfg.ID)
+			if rt2.LastOn != nil && rt2.DesiredOn != nil && *rt2.LastOn == *rt2.DesiredOn {
+				enforced++
+			}
 			continue
 		}
 		needRestore := cfg.EnforceDesired && rt.DesiredOn != nil && *rt.DesiredOn != *rt.LastOn
@@ -402,10 +427,7 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 	if work != "resume" && work != "suspend" {
 		return
 	}
-	timeout := time.Duration(pol.SetTimeoutSec) * time.Second
-	if timeout < 3*time.Second {
-		timeout = 15 * time.Second
-	}
+	timeout := pol.SetTimeout()
 	backoff := float64(pol.ErrorBackoffSec)
 	if backoff < 5 {
 		backoff = 5
@@ -418,10 +440,13 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		}
 		did := cfg.ID
 		rt := s.getRT(did)
-		// error backoff
-		if rt.LastError != nil && rt.LastAction != nil && strings.HasSuffix(*rt.LastAction, "_fail") {
-			if now-s.SyncTS[did] < backoff {
-				continue
+		// error backoff (status fails only — not enforce)
+		if rt.LastError != nil && rt.LastAction != nil {
+			act := *rt.LastAction
+			if strings.HasSuffix(act, "_fail") && !strings.Contains(act, "enforce") {
+				if now-s.SyncTS[did] < backoff {
+					continue
+				}
 			}
 		}
 		var reported *bool

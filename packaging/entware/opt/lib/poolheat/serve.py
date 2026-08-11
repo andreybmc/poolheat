@@ -4677,11 +4677,19 @@ def _device_update_in_store(did: str, mutator) -> dict | None:
     """
     Apply mutator to **runtime state** only (devices_state.json).
     Never rewrites devices_config.json — poller-safe.
+
+    Always reloads disk first so concurrent devices-poller writes
+    (desired_on / last_on) are not wiped by a stale in-memory snapshot.
     """
     did = str(did or "").strip()
     if not did:
         return None
     with _devices_cfg_lock:
+        # pick up poller shadow before we rewrite the whole by_id map
+        try:
+            _load_devices_state()
+        except Exception:
+            pass
         exists = any(
             str(d.get("id") or "") == did
             for d in (_devices_cfg.get("devices") or [])
@@ -5781,6 +5789,11 @@ def device_set(
 ) -> dict:
     """
     Set device logical ON/OFF.
+
+    Design:
+      1) UI/API stamps desired_on immediately (hold target for devices-poller)
+      2) poke poller via device_req to apply set now
+      3) poller background loop keeps reported == desired when enforce_desired is on
     Gates: allow_off_while_mining / allow_on_while_suspend (unless force).
     Inverted devices flip physical polarity.
     """
@@ -5825,15 +5838,16 @@ def device_set(
                 ),
                 "id": did,
             }
+    # Always write desired first — poller hold must not depend on set success.
+    def _mut_desired(d):
+        d["desired_on"] = bool(on)
+
+    _device_update_in_store(did, _mut_desired)
+
     physical = _device_logical_to_physical(on, inverted)
     prev = cfg.get("last_on")
     # No-op if already in desired logical state (avoids Tuya toggle-on-repeat)
     if prev is not None and bool(prev) is on and not force:
-        # still stamp desired_on so hold has a target after UI toggle skip
-        def _mut_skip(d):
-            d["desired_on"] = bool(on)
-
-        _device_update_in_store(did, _mut_skip)
         return {
             "ok": True,
             "id": did,
@@ -5870,7 +5884,7 @@ def device_set(
 
         def _mut(d):
             d["last_on"] = bool(got_logical)  # reported
-            d["desired_on"] = bool(on)  # commanded
+            d["desired_on"] = bool(on)  # commanded (keep hold target)
             d["online"] = True
             d["last_error"] = None
             d["last_ok_ts"] = datetime.now().isoformat(timespec="seconds")
@@ -5908,6 +5922,8 @@ def device_set(
         pretty = _device_user_error(e, on=on, backend=be, lang=error_lang)
 
         def _mut_err(d):
+            # keep desired_on — background poller will retry hold
+            d["desired_on"] = bool(on)
             d["online"] = False
             d["last_error"] = pretty_store
             d["last_action"] = f"{source}_fail"
@@ -5919,6 +5935,7 @@ def device_set(
             "id": did,
             "source": source,
             "backend": be,
+            "desired_on": bool(on),
         }
 
 

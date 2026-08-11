@@ -33,7 +33,8 @@ func Run(dataDir string) error {
 	store := device.NewStore(byID, deadlines, syncTS)
 	store.DataDir = dataDir // policy_events.json (UI Action log) on auto-restore
 
-	log.Printf("[devices-poller] loop start (device_req IPC + hold)")
+	// Design: UI writes desired_on; this loop owns status+hold; UI may poke via device_req.
+	log.Printf("[devices-poller] loop start (background hold + device_req IPC)")
 	for {
 		if ctx.Err() != nil {
 			break
@@ -133,26 +134,26 @@ func Run(dataDir string) error {
 			}
 		}()
 
-		interval := pol.IntervalSec
-		if interval < 3 {
-			interval = 5
-		}
-		if interval > 120 {
-			interval = 120
-		}
+		// Loop interval: min(interval_sec, hold_interval_sec) so hold is timely.
+		interval := pol.LoopInterval()
 		spent := time.Since(t0)
 		wait := time.Duration(interval)*time.Second - spent
 		if wait < 500*time.Millisecond {
 			wait = 500 * time.Millisecond
 		}
-		// Slice wait so UI device_req is picked up quickly (no tinytuya in serve).
+		// Slice wait so UI device_req (set/status) is picked up quickly.
 		deadline := time.Now().Add(wait)
 		for time.Now().Before(deadline) {
 			if ctx.Err() != nil {
 				break
 			}
 			if ProcessPendingDeviceCmd(ctx, dataDir, store) {
-				break
+				// After UI set, re-merge desired and continue wait (don't skip hold tick long)
+				if disk2, err := state.Load(paths.DevicesState(dataDir)); err == nil {
+					store.MergeDesiredFromDisk(disk2)
+				}
+				// keep draining req queue but stay in wait for next full status cycle
+				continue
 			}
 			slice := 300 * time.Millisecond
 			if rem := time.Until(deadline); rem < slice {

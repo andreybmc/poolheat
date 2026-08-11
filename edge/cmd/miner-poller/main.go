@@ -34,6 +34,7 @@ func main() {
 	if *host != "" {
 		_ = os.Setenv("POOLHEAT_MINER_HOST", *host)
 	}
+	log.Printf("[miner-poller] version=%s", version)
 	s := miner.LoadSettings()
 	if err := os.MkdirAll(s.DataDir, 0o755); err != nil {
 		log.Fatalf("[miner-poller] data dir: %v", err)
