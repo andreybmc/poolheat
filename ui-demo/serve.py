@@ -15779,9 +15779,10 @@ def _merge_board_rows(primary: list[dict], secondary: list[dict]) -> list[dict]:
 
 def _collect_miner_identity() -> dict:
     """
-    ASIC identity for Info tab.
-    When Go miner-poller is alive, serve must not open ASIC TCP — use last
-    identity disk cache + fields from live_cache.json.
+    ASIC identity for Info tab (PCB SN · Tagged · model · PSU).
+
+    All ASIC I/O via miner_cmd → miner-poller IPC (no direct :4028/:4433).
+    Disk cache seeds last-good boards so UI is not empty mid-refresh.
     """
     out: dict = {
         "ok": False,
@@ -15811,63 +15812,66 @@ def _collect_miner_identity() -> dict:
         "hash_board": None,
         "error": None,
     }
-    if miner_poller_process_alive():
-        try:
-            disk = _load_miner_id_disk() or {}
-            if isinstance(disk, dict):
-                for k, v in disk.items():
-                    if k in out and v not in (None, "", []):
-                        out[k] = v
-            live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC) or {}
-            if isinstance(live, dict):
-                if live.get("psu_model") and not out.get("psu_model"):
-                    out["psu_model"] = live.get("psu_model")
-                if live.get("board_count") is not None:
-                    out["board_num"] = live.get("board_count")
-                if isinstance(live.get("boards"), list) and live["boards"]:
-                    # live boards are temps, not full identity — keep disk boards
-                    pass
-                out["host"] = live.get("host") or out["host"]
-            out["ok"] = bool(
-                out.get("miner_type") or out.get("minersn") or out.get("mac") or disk
-            )
-            if not out["ok"]:
-                out["error"] = (
-                    "identity from disk/live only (poller owns ASIC) — "
-                    "wait for first poller sample or restart once offline"
-                )
-            else:
-                out["error"] = None
-                out["source"] = "live_cache+disk"
-        except Exception as e:
-            out["error"] = str(e)
-        return out
+    # Seed last-good identity so boards don't flash empty while we re-read
     try:
-        ver = miner_cmd({"cmd": "get_version"}, timeout=3).get("Msg") or {}
+        disk = _load_miner_id_disk() or {}
+        if isinstance(disk, dict):
+            for k, v in disk.items():
+                if k in out and v not in (None, "", []):
+                    out[k] = v
+    except Exception:
+        pass
+    try:
+        live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC) or {}
+        if isinstance(live, dict):
+            if live.get("psu_model") and not out.get("psu_model"):
+                out["psu_model"] = live.get("psu_model")
+            if live.get("board_count") is not None and not out.get("board_num"):
+                out["board_num"] = live.get("board_count")
+            out["host"] = live.get("host") or out["host"]
+    except Exception:
+        pass
+
+    if not miner_poller_process_alive():
+        out["ok"] = bool(
+            out.get("miner_type")
+            or out.get("minersn")
+            or out.get("mac")
+            or (out.get("boards") or [])
+        )
+        if not out["ok"]:
+            out["error"] = "miner-poller not running — cannot refresh identity"
+        else:
+            out["error"] = None
+            out["source"] = "disk+live (poller down)"
+        return out
+
+    try:
+        ver = miner_cmd({"cmd": "get_version"}, timeout=8).get("Msg") or {}
         if isinstance(ver, dict):
-            out["miner_type"] = ver.get("miner_type")
-            out["fw_ver"] = ver.get("fw_ver")
-            out["api_ver"] = ver.get("api_ver")
-            out["platform"] = ver.get("platform")
-            out["chip"] = ver.get("chip")
-        info = miner_cmd({"cmd": "get_miner_info"}, timeout=3).get("Msg") or {}
+            out["miner_type"] = ver.get("miner_type") or out.get("miner_type")
+            out["fw_ver"] = ver.get("fw_ver") or out.get("fw_ver")
+            out["api_ver"] = ver.get("api_ver") or out.get("api_ver")
+            out["platform"] = ver.get("platform") or out.get("platform")
+            out["chip"] = ver.get("chip") or out.get("chip")
+        info = miner_cmd({"cmd": "get_miner_info"}, timeout=8).get("Msg") or {}
         if isinstance(info, dict):
-            out["mac"] = info.get("mac")
-            out["minersn"] = _normalize_sn(info.get("minersn"))
-            out["powersn"] = info.get("powersn") or None
-            out["hostname"] = info.get("hostname")
-            if not out["powersn"]:
-                out["powersn"] = None
-            # empty string → None for cleaner UI
-            if out["minersn"] == "":
-                out["minersn"] = None
+            out["mac"] = info.get("mac") or out.get("mac")
+            msn = _normalize_sn(info.get("minersn"))
+            if msn:
+                out["minersn"] = msn
+            psn = info.get("powersn")
+            if psn not in (None, ""):
+                out["powersn"] = psn
+            if info.get("hostname"):
+                out["hostname"] = info.get("hostname")
         try:
-            psu = miner_cmd({"cmd": "get_psu"}, timeout=3).get("Msg") or {}
+            psu = miner_cmd({"cmd": "get_psu"}, timeout=8).get("Msg") or {}
             if isinstance(psu, dict):
-                out["psu_model"] = psu.get("model") or psu.get("name")
-                out["psu_hw_version"] = psu.get("hw_version")
-                out["psu_sw_version"] = psu.get("sw_version")
-                if not out["powersn"]:
+                out["psu_model"] = psu.get("model") or psu.get("name") or out.get("psu_model")
+                out["psu_hw_version"] = psu.get("hw_version") or out.get("psu_hw_version")
+                out["psu_sw_version"] = psu.get("sw_version") or out.get("psu_sw_version")
+                if not out.get("powersn"):
                     sn = psu.get("serial_no")
                     out["powersn"] = sn if sn not in (None, "") else None
         except Exception:
@@ -15875,7 +15879,7 @@ def _collect_miner_identity() -> dict:
 
         # summary.Factory GHS — EEPROM total; works in Suspend
         try:
-            sm = miner_cmd({"cmd": "summary"}, timeout=3).get("Msg") or {}
+            sm = miner_cmd({"cmd": "summary"}, timeout=8).get("Msg") or {}
             if isinstance(sm, dict):
                 fg = _f(sm.get("Factory GHS") or sm.get("factory_ghs"))
                 if fg is not None and fg > 0:
@@ -15886,7 +15890,7 @@ def _collect_miner_identity() -> dict:
 
         boards_devs: list[dict] = []
         try:
-            devs_raw = miner_cmd({"cmd": "devs"}, timeout=3)
+            devs_raw = miner_cmd({"cmd": "devs"}, timeout=10)
             devs = (
                 (devs_raw.get("DEVS") if isinstance(devs_raw, dict) else None) or []
             )
@@ -16032,8 +16036,18 @@ def _collect_miner_identity() -> dict:
             or out.get("factory_ghs")
             or out.get("customer_sn")
         )
+        out["error"] = None
+        out["source"] = "poller-ipc"
     except Exception as e:
         out["error"] = str(e)
+        # keep seeded boards / type from disk if live refresh failed
+        if not out.get("ok"):
+            out["ok"] = bool(
+                out.get("miner_type")
+                or out.get("mac")
+                or out.get("boards")
+                or out.get("factory_ghs")
+            )
     return out
 
 
@@ -18914,8 +18928,40 @@ def _fetch_customer_sn(*, force: bool = False) -> str | None:
 
 
 def _fetch_v3_device_msg(*, force: bool = False) -> dict | None:
-    """Liquid/identity from live_cache only when poller owns ASIC."""
-    return None
+    """
+    get.device.info msg via miner-poller IPC (TCP :4433 stays in poller).
+    Cached briefly — used for PCB SN / detect-hash-rate when Suspend.
+    """
+    global _v3_device_msg_cache, _v3_device_msg_ts
+    now = time.time()
+    if (
+        not force
+        and isinstance(_v3_device_msg_cache, dict)
+        and (now - float(_v3_device_msg_ts or 0)) < _V3_DEVICE_MSG_TTL_SEC
+    ):
+        return _v3_device_msg_cache
+    if not miner_poller_process_alive():
+        return _v3_device_msg_cache if isinstance(_v3_device_msg_cache, dict) else None
+    try:
+        # poller returns {STATUS, Msg: <device.info msg>} for get.device.info
+        raw = miner_cmd({"cmd": "get.device.info"}, timeout=12)
+        msg = None
+        if isinstance(raw, dict):
+            msg = raw.get("Msg")
+            if msg is None and isinstance(raw.get("msg"), dict):
+                msg = raw.get("msg")
+            # some poller shapes nest under response already unwrapped
+            if msg is None and (
+                "miner" in raw or "power" in raw or "system" in raw
+            ):
+                msg = raw
+        if isinstance(msg, dict) and msg:
+            _v3_device_msg_cache = msg
+            _v3_device_msg_ts = now
+            return msg
+    except Exception as e:
+        print(f"[ident] v3 get.device.info: {e}", flush=True)
+    return _v3_device_msg_cache if isinstance(_v3_device_msg_cache, dict) else None
 
 
 def _normalize_psu_vin(raw) -> float | None:

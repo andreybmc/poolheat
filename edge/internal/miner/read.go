@@ -108,7 +108,8 @@ func executeRead(s Settings, req ReadRequest) ReadResult {
 	}
 
 	// Normalize aliases used by UI / legacy serve.
-	switch strings.ToLower(cname) {
+	low := strings.ToLower(cname)
+	switch low {
 	case "pools", "get_pools", "pool":
 		cname = "pools"
 	case "summary", "get_summary":
@@ -128,6 +129,9 @@ func executeRead(s Settings, req ReadRequest) ReadResult {
 		if strings.EqualFold(cname, "error_code") {
 			cname = "get_error_code"
 		}
+	case "get.device.info", "device_info", "v3_device_info", "get_device_info":
+		// API v3 TCP :4433 — PCB SN / detect-hash-rate / liquid identity
+		return executeV3DeviceInfo(s, req)
 	}
 
 	resp, err := c.Read(cname, params)
@@ -156,5 +160,40 @@ func executeRead(s Settings, req ReadRequest) ReadResult {
 	res.OK = true
 	res.Response = resp
 	res.Transport = "v2"
+	return res
+}
+
+// executeV3DeviceInfo runs get.device.info over :4433 (EEPROM SN, detect-hash-rate).
+func executeV3DeviceInfo(s Settings, req ReadRequest) ReadResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := ReadResult{ID: req.ID, TS: now, Transport: "v3"}
+	v3 := api.NewV3(s.Host)
+	v3.Timeout = 10 * time.Second
+	// optional param filter from cmd.param (e.g. "power", "miner")
+	var param any
+	if p, ok := req.Cmd["param"]; ok {
+		param = p
+	}
+	msg, err := v3.DeviceInfoMsg(param)
+	if err != nil {
+		// retry full info once
+		msg, err = v3.DeviceInfoMsg(nil)
+	}
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if msg == nil {
+		res.Error = "empty v3 device.info msg"
+		return res
+	}
+	// Shape like V2 so serve miner_cmd(...).get("Msg") works
+	res.OK = true
+	res.Response = map[string]any{
+		"STATUS": "S",
+		"Msg":    msg,
+		"Code":   0,
+	}
+	res.Transport = "v3"
 	return res
 }
