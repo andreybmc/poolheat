@@ -11624,6 +11624,7 @@
       "settings",
       "advanced",
       "firmware",
+      "miner-poller",
       "info",
       "logs",
     ];
@@ -11656,6 +11657,11 @@
       firmwares: "firmware",
       proshivki: "firmware",
       "settings-firmware": "firmware",
+      minerpoller: "miner-poller",
+      "miner_poller": "miner-poller",
+      "settings-miner-poller": "miner-poller",
+      "settings-minerpoller": "miner-poller",
+      discovery: "miner-poller",
       about: "info",
       log: "logs",
       errors: "logs",
@@ -11872,6 +11878,13 @@
       } else if (tabId === "firmware") {
         mainTab = "settings";
         settingsSub = "firmware";
+      } else if (
+        tabId === "miner-poller" ||
+        tabId === "minerpoller" ||
+        tabId === "miner_poller"
+      ) {
+        mainTab = "settings";
+        settingsSub = "miner-poller";
       } else if (tabId === "sensors") {
         mainTab = "periph";
         periphSub = "sensors";
@@ -11957,6 +11970,9 @@
       }
       if (mainTab === "settings" && settingsSub === "firmware") {
         if (typeof loadFirmwarePanel === "function") void loadFirmwarePanel();
+      }
+      if (mainTab === "settings" && settingsSub === "miner-poller") {
+        if (typeof loadMinerPollerPanel === "function") void loadMinerPollerPanel();
       }
       if (mainTab === "periph" && periphSub === "sensors") {
         if (typeof loadSensors === "function") loadSensors();
@@ -12097,6 +12113,7 @@
         const s = btn.dataset.subtab;
         if (s === "advanced") activateTab("advanced");
         else if (s === "firmware") activateTab("firmware");
+        else if (s === "miner-poller") activateTab("miner-poller");
         else activateTab("settings");
       });
     });
