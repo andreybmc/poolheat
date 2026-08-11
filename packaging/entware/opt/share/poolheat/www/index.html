@@ -1829,6 +1829,74 @@
       background: transparent;
       cursor: pointer;
     }
+
+    /* Managed miner edit dialog */
+    .mp-edit-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 9000;
+      background: rgba(0, 0, 0, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .mp-edit-backdrop[hidden] { display: none !important; }
+    .mp-edit-modal {
+      width: min(520px, 100%);
+      max-height: min(90vh, 720px);
+      overflow: auto;
+      background: var(--card, #1a1f2e);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+      padding: 16px 18px 14px;
+    }
+    .mp-edit-modal h3 {
+      margin: 0 0 4px;
+      font-size: 1.05rem;
+    }
+    .mp-edit-modal .sub {
+      margin: 0 0 12px;
+      font-size: 0.78rem;
+      color: var(--dim);
+    }
+    .mp-edit-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px 12px;
+    }
+    .mp-edit-grid .field { margin: 0; }
+    .mp-edit-grid .field.span2 { grid-column: 1 / -1; }
+    .mp-edit-grid input,
+    .mp-edit-grid select {
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .mp-edit-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    @media (max-width: 520px) {
+      .mp-edit-grid { grid-template-columns: 1fr; }
+      .mp-edit-grid .field.span2 { grid-column: auto; }
+    }
+    #mp-managed-table { font-size: 0.82rem; }
+    #mp-managed-table th,
+    #mp-managed-table td {
+      white-space: nowrap;
+      max-width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #mp-managed-table td.mp-id-cell {
+      font-family: ui-monospace, monospace;
+      font-size: 0.75rem;
+      max-width: 100px;
+    }
     .sched-ex-list { display: flex; flex-direction: column; gap: 8px; }
     .sched-ex-row {
       display: grid;
@@ -8397,21 +8465,81 @@
             <table class="err-table" id="mp-managed-table">
               <thead>
                 <tr>
-                  <th>Alias</th>
-                  <th>IP</th>
+                  <th data-i18n="mp.col.id">ID</th>
+                  <th data-i18n="mp.col.alias">Alias</th>
+                  <th data-i18n="mp.col.name">Name</th>
+                  <th data-i18n="mp.col.cell">Cell</th>
                   <th data-i18n="mp.vendor">Vendor</th>
+                  <th data-i18n="mp.col.model">Model</th>
+                  <th data-i18n="mp.col.model_code">Code</th>
+                  <th data-i18n="mp.col.serial">Serial</th>
+                  <th data-i18n="mp.col.inventory">Inv #</th>
+                  <th>IP</th>
                   <th>Role</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="mp-managed-body">
-                <tr><td colspan="5" style="color:var(--muted)">—</td></tr>
+                <tr><td colspan="12" style="color:var(--muted)">—</td></tr>
               </tbody>
             </table>
           </div>
         </div>
       </div>
       </div><!-- /subview-settings-miner-poller -->
+
+      <!-- Managed miner edit dialog (portal-style fixed) -->
+      <div class="mp-edit-backdrop" id="mp-edit-backdrop" hidden>
+        <div class="mp-edit-modal" role="dialog" aria-modal="true" aria-labelledby="mp-edit-title">
+          <h3 id="mp-edit-title" data-i18n="mp.edit_title">Edit miner</h3>
+          <p class="sub" id="mp-edit-sub">—</p>
+          <div class="mp-edit-grid">
+            <label class="field"><span data-i18n="mp.col.id">ID</span>
+              <input type="text" id="mp-edit-id" readonly />
+            </label>
+            <label class="field"><span data-i18n="mp.col.alias">Alias</span>
+              <input type="text" id="mp-edit-alias" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.name">Name</span>
+              <input type="text" id="mp-edit-name" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.cell">Cell / location</span>
+              <input type="text" id="mp-edit-cell" maxlength="64" placeholder="A1 · rack 2" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.vendor">Vendor</span>
+              <select id="mp-edit-vendor">
+                <option value="whatsminer">whatsminer</option>
+                <option value="antminer">antminer</option>
+              </select>
+            </label>
+            <label class="field"><span data-i18n="mp.col.model">Model</span>
+              <input type="text" id="mp-edit-model" maxlength="64" placeholder="Whatsminer M63S" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.model_code">Model code</span>
+              <input type="text" id="mp-edit-model-code" maxlength="64" placeholder="M63_VK28" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.serial">Serial number</span>
+              <input type="text" id="mp-edit-serial" maxlength="96" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.inventory">Inventory #</span>
+              <input type="text" id="mp-edit-inventory" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field"><span>Host / IP</span>
+              <input type="text" id="mp-edit-host" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field"><span>Port</span>
+              <input type="number" id="mp-edit-port" min="1" max="65535" step="1" />
+            </label>
+            <label class="field span2"><span data-i18n="field.api_password">API password</span>
+              <input type="password" id="mp-edit-password" maxlength="64" autocomplete="new-password" placeholder="(leave empty to keep)" />
+            </label>
+          </div>
+          <div class="mp-edit-actions">
+            <button type="button" class="btn ghost" id="mp-edit-cancel" data-i18n="btn.cancel">Cancel</button>
+            <button type="button" class="btn primary" id="mp-edit-save" data-i18n="btn.save">Save</button>
+          </div>
+        </div>
+      </div>
 
       <div class="subview" id="subview-settings-firmware">
       <div class="stack">
@@ -9419,6 +9547,18 @@
         "mp.discovered_sub": "Found on LAN · not yet in system",
         "mp.managed_title": "In system (managed)",
         "mp.managed_sub": "Imported · polling candidates · one active",
+        "mp.col.id": "ID",
+        "mp.col.alias": "Alias",
+        "mp.col.name": "Name",
+        "mp.col.cell": "Cell",
+        "mp.col.model": "Model",
+        "mp.col.model_code": "Code",
+        "mp.col.serial": "Serial",
+        "mp.col.inventory": "Inv #",
+        "mp.edit": "Edit",
+        "mp.edit_title": "Edit miner",
+        "mp.edit_saved": "Miner saved",
+        "mp.edit_fail": "Save failed",
         "mp.vendor": "Vendor",
         "mp.type": "Type",
         "mp.add_manual": "Add by IP",
@@ -10282,6 +10422,18 @@
         "mp.discovered_sub": "В LAN · ещё не в системе",
         "mp.managed_title": "В системе (managed)",
         "mp.managed_sub": "Импортированные · кандидаты на опрос · один active",
+        "mp.col.id": "ID",
+        "mp.col.alias": "Alias",
+        "mp.col.name": "Имя",
+        "mp.col.cell": "Ячейка",
+        "mp.col.model": "Модель",
+        "mp.col.model_code": "Код",
+        "mp.col.serial": "Серийный",
+        "mp.col.inventory": "Инв. №",
+        "mp.edit": "Изм.",
+        "mp.edit_title": "Редактировать майнер",
+        "mp.edit_saved": "Майнер сохранён",
+        "mp.edit_fail": "Не сохранено",
         "mp.vendor": "Вендор",
         "mp.type": "Тип",
         "mp.add_manual": "Добавить IP",
@@ -22272,6 +22424,13 @@
       }
     }
 
+    let managedMinersCache = [];
+
+    function mpCell(v) {
+      const s = v == null || v === "" ? "—" : String(v);
+      return escapeLogHtml(s);
+    }
+
     async function refreshManagedTable() {
       const tbody = document.getElementById("mp-managed-body");
       if (!tbody) return;
@@ -22279,30 +22438,63 @@
         const res = await fetch("/api/miner/managed", { cache: "no-store" });
         const body = await res.json();
         const miners = body.miners || [];
+        managedMinersCache = miners;
         if (!miners.length) {
           tbody.innerHTML =
-            '<tr><td colspan="5" style="color:var(--muted)">empty · import or add by IP</td></tr>';
+            '<tr><td colspan="12" style="color:var(--muted)">empty · import or add by IP</td></tr>';
           return;
         }
+        const editL =
+          typeof t === "function" ? t("mp.edit", "Edit") : "Edit";
         tbody.innerHTML = miners
           .map((m) => {
             const id = m.id || "";
             const role = m.role === "active" ? "★ active" : "standby";
             return (
-              "<tr>" +
+              "<tr data-mp-id=\"" +
+              escapeLogHtml(id) +
+              "\">" +
+              '<td class="mp-id-cell" title="' +
+              escapeLogHtml(id) +
+              '">' +
+              mpCell(id) +
+              "</td>" +
               "<td>" +
-              escapeLogHtml(m.alias || m.host || "—") +
+              mpCell(m.alias) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.name) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.cell) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.vendor) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.model) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.model_code || m.miner_type) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.serial) +
+              "</td>" +
+              "<td>" +
+              mpCell(m.inventory) +
               "</td>" +
               '<td style="font-family:ui-monospace,monospace">' +
-              escapeLogHtml(m.host || "—") +
-              "</td>" +
-              "<td>" +
-              escapeLogHtml(m.vendor || "—") +
+              mpCell(m.host) +
               "</td>" +
               "<td>" +
               escapeLogHtml(role) +
               "</td>" +
               '<td style="white-space:nowrap">' +
+              '<button type="button" class="btn" data-mp-edit="' +
+              escapeLogHtml(id) +
+              '" style="padding:4px 8px;font-size:0.75rem">' +
+              escapeLogHtml(editL) +
+              "</button> " +
               (m.role === "active"
                 ? ""
                 : '<button type="button" class="btn" data-mp-active="' +
@@ -22317,9 +22509,102 @@
           .join("");
       } catch (e) {
         tbody.innerHTML =
-          '<tr><td colspan="5" style="color:var(--warn)">error: ' +
+          '<tr><td colspan="12" style="color:var(--warn)">error: ' +
           escapeLogHtml(e.message) +
           "</td></tr>";
+      }
+    }
+
+    function closeManagedEditDialog() {
+      const bd = document.getElementById("mp-edit-backdrop");
+      if (bd) bd.hidden = true;
+    }
+
+    function openManagedEditDialog(mid) {
+      const m =
+        (managedMinersCache || []).find((x) => x.id === mid) || null;
+      if (!m) {
+        toastError("Miner not found");
+        return;
+      }
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = v == null ? "" : String(v);
+      };
+      set("mp-edit-id", m.id || "");
+      set("mp-edit-alias", m.alias || "");
+      set("mp-edit-name", m.name || "");
+      set("mp-edit-cell", m.cell || "");
+      set("mp-edit-vendor", m.vendor || "whatsminer");
+      set("mp-edit-model", m.model || "");
+      set("mp-edit-model-code", m.model_code || m.miner_type || "");
+      set("mp-edit-serial", m.serial || "");
+      set("mp-edit-inventory", m.inventory || "");
+      set("mp-edit-host", m.host || "");
+      set("mp-edit-port", m.port != null ? m.port : 4028);
+      set("mp-edit-password", "");
+      const sub = document.getElementById("mp-edit-sub");
+      if (sub) {
+        sub.textContent =
+          (m.role === "active" ? "★ active · " : "standby · ") +
+          (m.host || "—") +
+          (m.source ? " · " + m.source : "");
+      }
+      const bd = document.getElementById("mp-edit-backdrop");
+      if (bd) bd.hidden = false;
+      document.getElementById("mp-edit-alias")?.focus();
+    }
+
+    async function saveManagedEditDialog() {
+      const id = (document.getElementById("mp-edit-id")?.value || "").trim();
+      if (!id) return;
+      const fields = {
+        alias: (document.getElementById("mp-edit-alias")?.value || "").trim(),
+        name: (document.getElementById("mp-edit-name")?.value || "").trim(),
+        cell: (document.getElementById("mp-edit-cell")?.value || "").trim(),
+        vendor: (document.getElementById("mp-edit-vendor")?.value || "whatsminer").trim(),
+        model: (document.getElementById("mp-edit-model")?.value || "").trim(),
+        model_code: (
+          document.getElementById("mp-edit-model-code")?.value || ""
+        ).trim(),
+        serial: (document.getElementById("mp-edit-serial")?.value || "").trim(),
+        inventory: (
+          document.getElementById("mp-edit-inventory")?.value || ""
+        ).trim(),
+        host: (document.getElementById("mp-edit-host")?.value || "").trim(),
+        port: Number(document.getElementById("mp-edit-port")?.value) || 4028,
+      };
+      const pw = document.getElementById("mp-edit-password")?.value;
+      if (pw) fields.password = pw;
+      if (!fields.host) {
+        toastWarn("Host / IP required");
+        return;
+      }
+      try {
+        const res = await fetch("/api/miner/managed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update", id, fields }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false || body.error)
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        closeManagedEditDialog();
+        toastSuccess(
+          typeof t === "function" ? t("mp.edit_saved", "Miner saved") : "Miner saved"
+        );
+        await refreshManagedTable();
+        if (typeof loadMinerConfig === "function") {
+          try {
+            await loadMinerConfig();
+          } catch (_) { /* ignore */ }
+        }
+      } catch (e) {
+        toastError(
+          (typeof t === "function" ? t("mp.edit_fail", "Save failed") : "Save failed") +
+            ": " +
+            e.message
+        );
       }
     }
 
@@ -22640,8 +22925,13 @@
     document.getElementById("mp-managed-body")?.addEventListener("click", async (ev) => {
       const t = ev.target;
       if (!t || !t.getAttribute) return;
+      const edit = t.getAttribute("data-mp-edit");
       const act = t.getAttribute("data-mp-active");
       const rem = t.getAttribute("data-mp-remove");
+      if (edit) {
+        openManagedEditDialog(edit);
+        return;
+      }
       if (act) {
         try {
           const res = await fetch("/api/miner/managed", {
@@ -22678,6 +22968,23 @@
           toastError("Remove: " + e.message);
         }
       }
+    });
+    document
+      .getElementById("mp-edit-cancel")
+      ?.addEventListener("click", () => closeManagedEditDialog());
+    document
+      .getElementById("mp-edit-save")
+      ?.addEventListener("click", () => void saveManagedEditDialog());
+    document
+      .getElementById("mp-edit-backdrop")
+      ?.addEventListener("click", (ev) => {
+        if (ev.target && ev.target.id === "mp-edit-backdrop")
+          closeManagedEditDialog();
+      });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Escape") return;
+      const bd = document.getElementById("mp-edit-backdrop");
+      if (bd && !bd.hidden) closeManagedEditDialog();
     });
 
     function formatWriteApiStatus(body) {

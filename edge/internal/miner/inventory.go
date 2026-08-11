@@ -252,7 +252,13 @@ type ManagedMiner struct {
 	Enabled    bool   `json:"enabled"`
 	Role       string `json:"role"` // active | standby
 	Alias      string `json:"alias,omitempty"`
-	MinerType   string `json:"miner_type,omitempty"`
+	Name       string `json:"name,omitempty"`        // display name
+	Cell       string `json:"cell,omitempty"`        // location / rack cell
+	Model      string `json:"model,omitempty"`       // human model label
+	ModelCode  string `json:"model_code,omitempty"`  // e.g. M63_VK28
+	Serial     string `json:"serial,omitempty"`      // factory / customer SN
+	Inventory  string `json:"inventory,omitempty"`   // inventory / asset number
+	MinerType  string `json:"miner_type,omitempty"`  // raw type from API
 	MAC        string `json:"mac,omitempty"`
 	FW         string `json:"fw_ver,omitempty"`
 	ImportedAt string `json:"imported_at,omitempty"`

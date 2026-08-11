@@ -9269,6 +9269,66 @@ def get_miners_discovered() -> dict:
     }
 
 
+def _normalize_managed_miner(raw: dict | None) -> dict:
+    """Ensure inventory fields exist on a managed miner row."""
+    m = dict(raw) if isinstance(raw, dict) else {}
+    mid = str(m.get("id") or "").strip() or ("m_" + uuid.uuid4().hex[:10])
+    vendor = str(m.get("vendor") or "whatsminer").strip().lower() or "whatsminer"
+    host = str(m.get("host") or m.get("ip") or "").strip()
+    try:
+        port = int(m.get("port") or (4028 if vendor == "whatsminer" else 80))
+    except (TypeError, ValueError):
+        port = 4028
+    role = str(m.get("role") or "standby").strip().lower()
+    if role not in ("active", "standby"):
+        role = "standby"
+    miner_type = str(m.get("miner_type") or m.get("type") or "").strip()
+    model_code = str(
+        m.get("model_code") or m.get("modelCode") or miner_type or ""
+    ).strip()
+    model = str(m.get("model") or "").strip()
+    if not model and model_code:
+        model = model_code
+    alias = str(m.get("alias") or "").strip()
+    name = str(m.get("name") or "").strip()
+    if not alias:
+        alias = name or host or mid
+    if not name:
+        name = alias
+    serial = str(
+        m.get("serial")
+        or m.get("minersn")
+        or m.get("customer_sn")
+        or m.get("sn")
+        or ""
+    ).strip()
+    return {
+        "id": mid[:48],
+        "vendor": vendor,
+        "host": host,
+        "port": port,
+        "password": m.get("password") if m.get("password") is not None else "",
+        "enabled": bool(m.get("enabled", True)),
+        "role": role,
+        "alias": alias[:64],
+        "name": name[:64],
+        "cell": str(m.get("cell") or m.get("location") or "")[:64],
+        "model": model[:64],
+        "model_code": model_code[:64],
+        "serial": serial[:96],
+        "inventory": str(
+            m.get("inventory") or m.get("inventory_number") or m.get("inv") or ""
+        )[:64],
+        "miner_type": miner_type[:64] or model_code[:64],
+        "mac": str(m.get("mac") or "").strip()[:32] or None,
+        "fw_ver": str(m.get("fw_ver") or m.get("fw") or "").strip()[:64] or None,
+        "source": str(m.get("source") or "").strip() or None,
+        "imported_at": m.get("imported_at"),
+        "last_ok_ts": m.get("last_ok_ts"),
+        "last_error": m.get("last_error"),
+    }
+
+
 def get_miners_managed() -> dict:
     raw = _load_json(MINERS_MANAGED_FILE, {"version": 1, "miners": []})
     if not isinstance(raw, dict):
@@ -9276,20 +9336,25 @@ def get_miners_managed() -> dict:
     miners = raw.get("miners") if isinstance(raw.get("miners"), list) else []
     return {
         "ok": True,
-        "miners": [m for m in miners if isinstance(m, dict)],
+        "miners": [
+            _normalize_managed_miner(m) for m in miners if isinstance(m, dict)
+        ],
     }
 
 
 def _save_miners_managed(miners: list) -> dict:
-    payload = {"version": 1, "miners": list(miners)}
+    clean = [
+        _normalize_managed_miner(m) for m in (miners or []) if isinstance(m, dict)
+    ]
     # exactly one active
-    actives = [i for i, m in enumerate(miners) if m.get("role") == "active"]
-    if not actives and miners:
-        miners[0]["role"] = "active"
+    actives = [i for i, m in enumerate(clean) if m.get("role") == "active"]
+    if not actives and clean:
+        clean[0]["role"] = "active"
     elif len(actives) > 1:
-        for i, m in enumerate(miners):
+        for i, m in enumerate(clean):
             if m.get("role") == "active" and i != actives[0]:
                 m["role"] = "standby"
+    payload = {"version": 1, "miners": clean}
     _save_json_atomic(MINERS_MANAGED_FILE, payload)
     return get_miners_managed()
 
@@ -9322,6 +9387,12 @@ def _seed_managed_from_active() -> None:
                 "enabled": True,
                 "role": "active",
                 "alias": "primary",
+                "name": "primary",
+                "cell": "",
+                "model": "",
+                "model_code": "",
+                "serial": "",
+                "inventory": "",
                 "source": "manual",
                 "imported_at": datetime.now().isoformat(timespec="seconds"),
             }
@@ -9359,6 +9430,7 @@ def import_discovered_miner(
             break
     vendor = str(found.get("vendor") or "whatsminer")
     port = int(found.get("port") or (4028 if vendor == "whatsminer" else 80))
+    mtype = str(found.get("miner_type") or "").strip()
     row = {
         "id": managed[idx]["id"] if idx is not None else ("m_" + uuid.uuid4().hex[:10]),
         "vendor": vendor,
@@ -9367,21 +9439,36 @@ def import_discovered_miner(
         "password": DEFAULT_API_PASSWORD or "admin",
         "enabled": True,
         "role": "standby",
-        "alias": (alias or found.get("miner_type") or ip)[:64],
-        "miner_type": found.get("miner_type"),
+        "alias": (alias or mtype or ip)[:64],
+        "name": (alias or mtype or ip)[:64],
+        "cell": "",
+        "model": mtype,
+        "model_code": mtype,
+        "serial": str(found.get("serial") or found.get("minersn") or "").strip(),
+        "inventory": "",
+        "miner_type": mtype,
         "mac": found.get("mac"),
         "fw_ver": found.get("fw_ver"),
         "source": "discovery",
         "imported_at": datetime.now().isoformat(timespec="seconds"),
     }
     if idx is not None:
-        # keep role/password if already managed
+        # keep role/password/inventory labels if already managed
         prev = managed[idx]
         row["role"] = prev.get("role") or "standby"
         if prev.get("password"):
             row["password"] = prev["password"]
-        if prev.get("alias"):
-            row["alias"] = prev["alias"]
+        for k in (
+            "alias",
+            "name",
+            "cell",
+            "model",
+            "model_code",
+            "serial",
+            "inventory",
+        ):
+            if prev.get(k) not in (None, ""):
+                row[k] = prev[k]
         managed[idx] = row
     else:
         managed.append(row)
@@ -9430,6 +9517,12 @@ def add_managed_manual(
         "enabled": True,
         "role": "standby",
         "alias": (alias or host)[:64],
+        "name": (alias or host)[:64],
+        "cell": "",
+        "model": "",
+        "model_code": "",
+        "serial": "",
+        "inventory": "",
         "source": "manual",
         "imported_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -9445,6 +9538,74 @@ def add_managed_manual(
             persist=True,
         )
     return _save_miners_managed(managed)
+
+
+def update_managed(mid: str, fields: dict | None) -> dict:
+    """
+    Patch inventory / identity fields of a managed miner.
+    id is stable key; optional fields.alias/name/cell/model/model_code/serial/inventory
+    plus host/port/vendor/password/enabled.
+    """
+    mid = str(mid or "").strip()
+    if not mid:
+        raise ValueError("id required")
+    if not isinstance(fields, dict):
+        fields = {}
+    managed = list(get_miners_managed().get("miners") or [])
+    found = None
+    for m in managed:
+        if str(m.get("id") or "") == mid:
+            found = m
+            break
+    if not found:
+        raise ValueError(f"miner not found: {mid}")
+    # editable inventory / connection fields
+    str_keys = (
+        "alias",
+        "name",
+        "cell",
+        "model",
+        "model_code",
+        "serial",
+        "inventory",
+        "vendor",
+        "host",
+        "password",
+        "miner_type",
+    )
+    for k in str_keys:
+        if k in fields and fields[k] is not None:
+            found[k] = str(fields[k]).strip()
+    if "port" in fields and fields["port"] is not None:
+        try:
+            found["port"] = int(fields["port"])
+        except (TypeError, ValueError) as e:
+            raise ValueError("port invalid") from e
+    if "enabled" in fields:
+        found["enabled"] = bool(fields["enabled"])
+    # keep model_code ↔ miner_type in sync when only one set
+    if found.get("model_code") and not found.get("miner_type"):
+        found["miner_type"] = found["model_code"]
+    if found.get("miner_type") and not found.get("model_code"):
+        found["model_code"] = found["miner_type"]
+    if found.get("model_code") and not found.get("model"):
+        found["model"] = found["model_code"]
+    was_active = found.get("role") == "active"
+    out = _save_miners_managed(managed)
+    # if active connection fields changed — re-apply
+    if was_active and any(k in fields for k in ("host", "port", "password")):
+        try:
+            apply_miner_settings(
+                host=found.get("host"),
+                port=int(found.get("port") or 4028),
+                password=found.get("password"),
+                persist=True,
+            )
+        except Exception as e:
+            print(f"[managed] re-apply after edit: {e}", flush=True)
+    out["updated"] = mid
+    out["ok"] = True
+    return out
 
 
 def set_managed_active(mid: str) -> dict:
@@ -29281,6 +29442,23 @@ class Handler(SimpleHTTPRequestHandler):
                     out = set_managed_active(str(req.get("id") or ""))
                 elif action in ("remove", "delete"):
                     out = remove_managed(str(req.get("id") or ""))
+                elif action in ("update", "edit", "patch", "save"):
+                    fields = req.get("fields") if isinstance(req.get("fields"), dict) else req
+                    # strip control keys
+                    fields = {
+                        k: v
+                        for k, v in (fields or {}).items()
+                        if k
+                        not in (
+                            "action",
+                            "fields",
+                            "id",
+                            "cmd",
+                        )
+                    }
+                    # allow id at top-level, fields nested or flat
+                    mid = str(req.get("id") or fields.get("id") or "").strip()
+                    out = update_managed(mid, fields)
                 elif action in ("ignore",):
                     out = ignore_discovered(
                         str(req.get("ip") or ""),
