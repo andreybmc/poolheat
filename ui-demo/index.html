@@ -5702,7 +5702,7 @@
           <div class="card-h">
             <div>
               <h2 class="tip" data-tip-key="dry_run" data-i18n="h2.dry">Dry Run</h2>
-              <div class="sub" data-i18n="sub.dry">auto zones · Safety always · then Save</div>
+              <div class="sub" data-i18n="sub.dry">auto zones off · manual always · Safety · Save</div>
             </div>
             <div class="btn-row" style="gap:10px;align-items:center">
               <label class="check" style="margin:0">
@@ -9794,7 +9794,7 @@
         "sub.advanced_card": "history · energy · devices poller · logs · chip map · rare options",
         "sub.access": "Remote · auth · LuCI proxy :8788",
         "sub.software": "version · update check",
-        "sub.dry": "auto zones · Safety always · then Save",
+        "sub.dry": "auto zones off · manual always · Safety · Save",
         "sub.chip_poll": "own interval · web admin · separate from live poll",
         "sub.keenetic": "model · firmware · hostname",
         "sub.action_log": "policy events · last write · live",
@@ -10620,7 +10620,7 @@
         "sub.advanced_card": "история · учёт энергии · поллер устройств · логи · кеш карты чипов · редкие опции",
         "sub.access": "Remote · auth · LuCI proxy :8788",
         "sub.software": "версия · проверка обновлений",
-        "sub.dry": "авто-зоны · Safety всегда · после галки — Сохранить",
+        "sub.dry": "авто-зоны выкл · ручное всегда · Safety · Сохранить",
         "sub.chip_poll": "отдельный интервал · web admin · не смешивается с live poll",
         "sub.keenetic": "модель · прошивка · hostname",
         "sub.action_log": "события policy · last write · live",
@@ -11166,7 +11166,7 @@
       },
       dry_run: {
         title: "Dry Run",
-        body: "Server flag (after Save).\nOn — zones ignored: miner mode “as is” (mode/limit/MC not touched).\nOnly Safety Critical (chip ≥ T_crit) writes to the ASIC.\nZones log DRY_RUN would … (preview).\nOff — auto zones write again.\nManual miner buttons: open Power settings panel.",
+        body: "Server flag (after Save).\nOn — auto zones/schedule ignored (mode/limit/MC not auto-touched).\nSafety Critical (chip ≥ T_crit) still writes.\nManual miner controls (mode, power, pools, reboot, factory…) always work.\nZones log DRY_RUN would … (preview only).\nOff — auto zones write to ASIC again.",
       },
       schedule: {
         title: "Schedule · time map",
@@ -11339,7 +11339,7 @@
         },
         dry_run: {
           title: "Dry Run",
-          body: "Auto zone writes disabled. Safety Critical still applies. Actions are logged only.",
+          body: "Auto zone/schedule writes off. Safety Critical still writes. Manual miner controls always work. Zone changes only in the event log (preview).",
         },
         api_live: {
           title: "API live",
@@ -11413,7 +11413,7 @@
         },
         dry_run: {
           title: "Dry Run",
-          body: "Автозапись зон отключена. Safety Critical всё равно применяется. Действия только в лог.",
+          body: "Авто-зоны/расписание не пишут. Safety Critical пишет. Ручное управление майнером всегда работает. Зоны — только preview в логе.",
         },
         api_live: {
           title: "API live",

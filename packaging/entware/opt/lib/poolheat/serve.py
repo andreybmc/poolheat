@@ -355,7 +355,9 @@ POLL_INTERVAL_SEC = int(
     or 5
 )
 POLL_INTERVAL_SEC = max(2, min(300, POLL_INTERVAL_SEC))
-# Dry Run: ignore heat-zone auto (mode/limit/pct/MC); keep current miner mode.
+# Dry Run: policy-only — ignore heat-zone auto (mode/limit/pct/MC).
+# Manual miner UI/API/TG controls and Safety Critical still write to ASIC.
+# (miner-poller must NOT short-circuit writes when config dry_run=true)
 # Only Safety Critical (chip temp) still writes.
 _fc0 = _APP.get("file_cfg") or {}
 DRY_RUN = bool(_fc0["dry_run"]) if "dry_run" in _fc0 else True
@@ -1296,7 +1298,7 @@ def delete_mode_profile(profile_id: str) -> dict:
 
 
 def apply_mode_profile(profile_id: str, *, password: str | None = None) -> dict:
-    """Manual apply profile commands to ASIC (respects dry_run via apply_set path)."""
+    """Manual apply profile commands to ASIC (always real write; dry_run is policy-only)."""
     p = get_mode_profile(profile_id)
     if not p:
         raise ValueError(f"profile not found: {profile_id}")

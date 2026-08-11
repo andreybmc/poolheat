@@ -44,6 +44,9 @@ type WriteResult struct {
 
 // ProcessPendingWrite reads miner_write_req.json once and executes it.
 // Returns true if a request was handled (success or fail).
+//
+// Note: config dry_run is policy-only (serve auto zones). Manual / API / Safety
+// writes enqueued here always go to the ASIC — never short-circuited by DryRun.
 func ProcessPendingWrite(s Settings) bool {
 	path := filepath.Join(s.DataDir, writeReqFile)
 	b, err := os.ReadFile(path)
@@ -85,12 +88,6 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		Action:    req.Action,
 		Value:     req.Value,
 		Transport: "v2",
-	}
-	if s.DryRun {
-		res.OK = true
-		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
-		res.Transport = "dry_run"
-		return res
 	}
 
 	cname := strings.TrimSpace(fmt.Sprint(req.Cmd["cmd"]))
@@ -186,12 +183,6 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
 	now := float64(time.Now().UnixNano()) / 1e9
 	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
-	if s.DryRun {
-		res.OK = true
-		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
-		res.Transport = "dry_run"
-		return res
-	}
 	// 1) NetPacket reboot (WMT cmd 8)
 	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
 		type cred struct{ acc, pw string }
@@ -276,12 +267,6 @@ func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
 func executeFactoryReset(s Settings, req WriteRequest, password string) WriteResult {
 	now := float64(time.Now().UnixNano()) / 1e9
 	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
-	if s.DryRun {
-		res.OK = true
-		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
-		res.Transport = "dry_run"
-		return res
-	}
 
 	var npLastErr error
 	var npLastStatus string
@@ -428,12 +413,6 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 func executeRestartMining(s Settings, req WriteRequest, password string) WriteResult {
 	now := float64(time.Now().UnixNano()) / 1e9
 	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value, Transport: "v2"}
-	if s.DryRun {
-		res.OK = true
-		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
-		res.Transport = "dry_run"
-		return res
-	}
 	var lastErr error
 	for _, cmd := range []string{"restart_btminer", "restart_cgminer"} {
 		resp, err := cV2WriteTimeout(s, password, cmd, nil, 25*time.Second)
@@ -554,12 +533,6 @@ func executeWritePools(s Settings, req WriteRequest, password string) WriteResul
 		TS:     now,
 		Action: req.Action,
 		Value:  req.Value,
-	}
-	if s.DryRun {
-		res.OK = true
-		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
-		res.Transport = "dry_run"
-		return res
 	}
 
 	slots := extractPoolSlots(req.Cmd)
@@ -826,12 +799,6 @@ func executeAPISwitch(s Settings, req WriteRequest, password string, params map[
 		Action:    req.Action,
 		Value:     req.Value,
 		Transport: "netpacket",
-	}
-	if s.DryRun {
-		res.OK = true
-		res.Response = map[string]any{"STATUS": "S", "Msg": "dry_run"}
-		res.Transport = "dry_run"
-		return res
 	}
 	on := true
 	if v := firstNonEmpty(params["enable"], params["on"], params["value"], params["api_switch"]); v != nil {
