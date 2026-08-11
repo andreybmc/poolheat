@@ -47,25 +47,30 @@ func controlTapo(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result, e
 		return out, nil
 	}
 	want := *on
-	// read current
-	cur, err := c.getOn(ctx)
-	if err == nil && cur == want {
-		out := Result{On: &cur, Backend: "tapo", Skipped: true, Reason: "already_in_state"}
-		if pm := c.getPower(ctx); pm != nil {
-			out.Power = pm
-		}
-		return out, nil
-	}
+	// Always send set (no already_in_state skip). External app toggles must be
+	// overridden by enforce_desired even if a stale status read looks matching.
 	if err := c.setOn(ctx, want); err != nil {
 		return Result{}, err
 	}
+	// settle + confirm
 	got := want
-	if g2, err2 := c.getOn(ctx); err2 == nil {
-		got = g2
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			_ = c.setOn(ctx, want)
+		}
+		if g2, err2 := c.getOn(ctx); err2 == nil {
+			got = g2
+			if got == want {
+				break
+			}
+		}
 	}
 	out := Result{On: &got, Backend: "tapo"}
 	if pm := c.getPower(ctx); pm != nil {
 		out.Power = pm
+	}
+	if got != want {
+		return out, fmt.Errorf("after set: reported=%v want=%v", got, want)
 	}
 	return out, nil
 }
@@ -345,8 +350,26 @@ func (c *tapoKlap) getOn(ctx context.Context) (bool, error) {
 	if code, _ := asIntAny(inner["error_code"]); code != 0 {
 		return false, fmt.Errorf("get_device_info error_code=%v", inner["error_code"])
 	}
-	res, _ := inner["result"].(map[string]any)
+	res, ok := inner["result"].(map[string]any)
+	if !ok || res == nil {
+		return false, fmt.Errorf("get_device_info: missing result")
+	}
+	if _, has := res["device_on"]; !has {
+		// some firmwares use "open" / "relay_status"
+		if v, ok2 := res["open"]; ok2 {
+			return asBoolAny(v), nil
+		}
+		return false, fmt.Errorf("get_device_info: no device_on in result keys=%v", mapKeys(res))
+	}
 	return asBoolAny(res["device_on"]), nil
+}
+
+func mapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func (c *tapoKlap) setOn(ctx context.Context, on bool) error {

@@ -71,48 +71,71 @@ func controlTuya(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result, e
 		return out, nil
 	}
 	want := *on
-	if cur != nil && *cur == want {
-		out := Result{On: cur, Backend: "tuya", Skipped: true, Reason: "already_in_state", Extra: map[string]any{"dps": dps}}
-		if pm := tuyaDPSPower(dps); pm != nil {
-			out.Power = pm
-		}
-		return out, nil
+	// Never skip on set: enforce_desired must re-send after external SmartLife toggle.
+	// (old already_in_state skip caused false "restored ON" while hardware stayed OFF)
+
+	dpsKey := strconv.Itoa(switchDPS)
+	// Prefer bool (tinytuya default); if re-read disagrees, retry with 0/1 int.
+	tryVals := []any{want}
+	if want {
+		tryVals = append(tryVals, 1, "true")
+	} else {
+		tryVals = append(tryVals, 0, "false")
 	}
 
-	// set DPS
-	dpsKey := strconv.Itoa(switchDPS)
-	payload := map[string]any{
-		"dps": map[string]any{dpsKey: want},
-		"t":   time.Now().Unix(),
-	}
-	if ver == proto.Version31 {
-		payload["gwId"] = devID
-		payload["devId"] = devID
-		payload["uid"] = ""
-	}
 	cmd := proto.CmdIdTypeControlNew
 	if ver == proto.Version31 {
 		cmd = proto.CmdIdTypeControl
 	}
-	if err := cl.Send(cmd, payload); err != nil {
-		return Result{}, fmt.Errorf("Tuya set: %w", err)
-	}
-	// some devices reply; ignore empty
-	var discard map[string]any
-	_ = cl.Read(&discard)
 
-	// re-read status
-	got := want
-	if dps2, err2 := tuyaStatus(cl, ver, devID); err2 == nil {
-		dps = dps2
-		if b := dpsBool(dps2, switchDPS); b != nil {
-			got = *b
+	var got bool
+	var lastSetErr error
+	for i, val := range tryVals {
+		payload := map[string]any{
+			"dps": map[string]any{dpsKey: val},
+			"t":   time.Now().Unix(),
 		}
+		if ver == proto.Version31 {
+			payload["gwId"] = devID
+			payload["devId"] = devID
+			payload["uid"] = ""
+		}
+		if err := cl.Send(cmd, payload); err != nil {
+			lastSetErr = fmt.Errorf("Tuya set: %w", err)
+			continue
+		}
+		var discard map[string]any
+		_ = cl.Read(&discard)
+		// brief settle before re-read (local LAN + DPS confirm)
+		time.Sleep(200 * time.Millisecond)
+
+		got = want
+		if dps2, err2 := tuyaStatus(cl, ver, devID); err2 == nil {
+			dps = dps2
+			if b := dpsBool(dps2, switchDPS); b != nil {
+				got = *b
+			}
+		}
+		if got == want {
+			out := Result{On: &got, Backend: "tuya", Extra: map[string]any{
+				"dps": dps, "device_id": devID, "set_attempt": i + 1, "set_val": fmt.Sprint(val),
+			}}
+			if pm := tuyaDPSPower(dps); pm != nil {
+				out.Power = pm
+			}
+			return out, nil
+		}
+		lastSetErr = fmt.Errorf("after set dps=%s val=%v still reported=%v want=%v", dpsKey, val, got, want)
+	}
+	if lastSetErr != nil {
+		// return last observed state so enforce keeps retrying
+		out := Result{On: &got, Backend: "tuya", Extra: map[string]any{"dps": dps, "device_id": devID}}
+		if pm := tuyaDPSPower(dps); pm != nil {
+			out.Power = pm
+		}
+		return out, lastSetErr
 	}
 	out := Result{On: &got, Backend: "tuya", Extra: map[string]any{"dps": dps, "device_id": devID}}
-	if pm := tuyaDPSPower(dps); pm != nil {
-		out.Power = pm
-	}
 	return out, nil
 }
 

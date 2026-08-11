@@ -12,8 +12,9 @@ import (
 	"github.com/andreybmc/poolheat/edge/internal/state"
 )
 
-// Align with serve.py hold: ~one poller tick, not 15s.
-const enforceCooldownSec = 3.0
+// Short cooldown so external OFF is restored within one poller interval.
+// Was 3s; keep low — PollAll already serializes sets.
+const enforceCooldownSec = 1.5
 
 // Store holds mutable runtime + deadlines for one process.
 type Store struct {
@@ -209,14 +210,25 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 	driver := backend.DriverLabel(cfg.Backend)
 	log.Printf("[devices] enforce desired %s/%s: reported=%s → desired=%s",
 		cfg.Label(), driver, onOff(reported), onOff(desired))
-	// force=true: ignore cached LastOn, re-apply on wire (SmartLife external change)
+	// force=true: ignore cached LastOn, re-apply on wire (SmartLife/Tapo external change)
 	err := s.SetLogical(ctx, cfg, desired, "enforce_desired", true)
 	if err != nil {
 		log.Printf("[devices] enforce desired %s FAILED: %v", cfg.Label(), err)
-	} else {
-		log.Printf("[devices] enforce desired %s OK restored %s", cfg.Label(), onOff(desired))
+		return err
 	}
-	return err
+	// Re-check runtime after set — refuse false success (skipped/already_in_state lies).
+	rt2 := s.getRT(did)
+	if rt2.LastOn == nil || *rt2.LastOn != desired {
+		rep := "?"
+		if rt2.LastOn != nil {
+			rep = onOff(*rt2.LastOn)
+		}
+		err = fmt.Errorf("still reported=%s after set desired=%s", rep, onOff(desired))
+		log.Printf("[devices] enforce desired %s FAILED: %v", cfg.Label(), err)
+		return err
+	}
+	log.Printf("[devices] enforce desired %s OK restored %s", cfg.Label(), onOff(desired))
+	return nil
 }
 
 func (s *Store) AdoptReported(did string, reported bool) {
@@ -242,10 +254,10 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 	if timeout < 3*time.Second {
 		timeout = 15 * time.Second
 	}
-	// enforce gets at least as long as status; prefer a bit more for Tuya set+reread
+	// enforce gets dedicated budget (status timeout can be short e.g. 3s in config)
 	setTimeout := timeout
-	if setTimeout < 12*time.Second {
-		setTimeout = 12 * time.Second
+	if setTimeout < 15*time.Second {
+		setTimeout = 15 * time.Second
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
 
