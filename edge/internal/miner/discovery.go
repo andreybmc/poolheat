@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/andreybmc/wm-lib/api"
 )
 
 const (
@@ -276,49 +278,55 @@ func ipLess(a, b string) bool {
 // probeHost tries Whatsminer then Antminer fingerprints.
 func probeHost(ip string, timeout time.Duration, passwords []string) (DiscoveredMiner, bool) {
 	t0 := time.Now()
-	// 1) Whatsminer :4028
+	// 1) Whatsminer classic API :4028 (wm-lib V2)
 	if m, ok := probeWhatsminer(ip, 4028, timeout, passwords); ok {
 		m.RTTMs = int(time.Since(t0).Milliseconds())
 		return m, true
 	}
-	// 2) Whatsminer V3 :4433 (optional light — TCP open only + try if needed)
-	if m, ok := probeWhatsminer(ip, 4433, timeout, passwords); ok {
-		m.RTTMs = int(time.Since(t0).Milliseconds())
-		return m, true
-	}
-	// 3) Antminer HTTP :80
+	// 2) Antminer HTTP :80
 	if m, ok := probeAntminerHTTP(ip, 80, timeout); ok {
 		m.RTTMs = int(time.Since(t0).Milliseconds())
 		return m, true
 	}
-	// 4) Antminer HTTPS rarely used for local — skip for speed
 	return DiscoveredMiner{}, false
 }
 
 func probeWhatsminer(ip string, port int, timeout time.Duration, passwords []string) (DiscoveredMiner, bool) {
+	// Quick TCP reachability first (fail fast on closed ports)
 	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	c0, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return DiscoveredMiner{}, false
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
+	_ = c0.Close()
 
-	// Unencrypted get_version works on many FW builds without auth.
-	payload := []byte(`{"cmd":"get_version"}`)
-	if _, err := conn.Write(payload); err != nil {
+	// Use wm-lib V2 (encrypted JSON) — raw {"cmd":...} is ignored on modern FW.
+	// Only meaningful on classic ASIC API port (4028); 4433 is V3 binary framing.
+	if port != 4028 && port != 4029 {
 		return DiscoveredMiner{}, false
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil && n == 0 {
+	to := timeout
+	if to < 800*time.Millisecond {
+		to = 800 * time.Millisecond
+	}
+	if to > 3*time.Second {
+		to = 3 * time.Second
+	}
+	pw := "admin"
+	if len(passwords) > 0 && strings.TrimSpace(passwords[0]) != "" {
+		pw = passwords[0]
+	}
+	cl := api.NewV2(ip)
+	cl.Port = port
+	cl.Password = pw
+	cl.Timeout = to
+	resp, err := cl.Read("get_version", nil)
+	if err != nil || resp == nil {
 		return DiscoveredMiner{}, false
 	}
-	raw := string(buf[:n])
-	// Must look like Whatsminer JSON
-	if !strings.Contains(raw, "STATUS") && !strings.Contains(raw, "Msg") && !strings.Contains(raw, "miner_type") {
-		// port open but not Whatsminer API
+	// STATUS S/E still means Whatsminer stack answered
+	st, _ := resp["STATUS"].(string)
+	if st == "" && resp["Msg"] == nil && resp["Code"] == nil {
 		return DiscoveredMiner{}, false
 	}
 	m := DiscoveredMiner{
@@ -327,55 +335,18 @@ func probeWhatsminer(ip string, port int, timeout time.Duration, passwords []str
 		Port:   port,
 		Status: "online",
 	}
-	// try parse Msg
-	var resp map[string]any
-	// strip trailing nulls / noise
-	raw = strings.TrimRight(raw, "\x00\r\n\t ")
-	if i := strings.Index(raw, "{"); i >= 0 {
-		raw = raw[i:]
+	if msg, ok := resp["Msg"].(map[string]any); ok {
+		m.MinerType = strAny(msg["miner_type"])
+		m.FW = strAny(msg["fw_ver"])
+		m.Platform = strAny(msg["platform"])
 	}
-	if json.Unmarshal([]byte(raw), &resp) == nil {
-		if msg, ok := resp["Msg"].(map[string]any); ok {
-			m.MinerType = strAny(msg["miner_type"])
-			m.FW = strAny(msg["fw_ver"])
-			m.Platform = strAny(msg["platform"])
+	// optional MAC
+	if info, err2 := cl.Read("get_miner_info", nil); err2 == nil && info != nil {
+		if msg, ok := info["Msg"].(map[string]any); ok {
+			m.MAC = strAny(msg["mac"])
 		}
 	}
-	// optional: try get_miner_info for MAC with password (quick second connect)
-	if mac := probeWhatsminerMAC(ip, port, timeout, passwords); mac != "" {
-		m.MAC = mac
-	}
 	return m, true
-}
-
-func probeWhatsminerMAC(ip string, port int, timeout time.Duration, passwords []string) string {
-	// Lightweight: many units answer get_miner_info without token on LAN.
-	addr := net.JoinHostPort(ip, fmt.Sprintf("%d", port))
-	conn, err := net.DialTimeout("tcp", addr, timeout)
-	if err != nil {
-		return ""
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(timeout))
-	_, _ = conn.Write([]byte(`{"cmd":"get_miner_info"}`))
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if n <= 0 {
-		return ""
-	}
-	raw := strings.TrimRight(string(buf[:n]), "\x00\r\n\t ")
-	if i := strings.Index(raw, "{"); i >= 0 {
-		raw = raw[i:]
-	}
-	var resp map[string]any
-	if json.Unmarshal([]byte(raw), &resp) != nil {
-		return ""
-	}
-	if msg, ok := resp["Msg"].(map[string]any); ok {
-		return strAny(msg["mac"])
-	}
-	_ = passwords // reserved for auth variants later
-	return ""
 }
 
 func probeAntminerHTTP(ip string, port int, timeout time.Duration) (DiscoveredMiner, bool) {
