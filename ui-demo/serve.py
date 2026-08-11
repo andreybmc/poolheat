@@ -16605,14 +16605,22 @@ def _restart_poolheat_later() -> None:
     Restart after GitHub apply. Must outlive this process: killing serve.py
     would otherwise abort an in-process restart (or a timed-out foreground
     poolheatd) and leave the service dead.
+
+    Critical (0.6.35): script is written to a file and run as `sh path`, NOT
+    `sh -c '…serve.py…'`. Inline -c puts the whole script in argv, so a
+    /proc kill matching ``serve.py`` suicides the restart shell and leaves
+    poolheat dead after OTA (seen 2026-08-11 06:32 on Keenetic).
     """
     def _run() -> None:
         time.sleep(1.2)
         log = "/opt/var/poolheat/poolheat.log"
+        script_path = "/opt/var/poolheat/ota-restart.sh"
         # Detached shell in a new session — survives kill of current serve.py
-        script = f"""
+        # Keep needles SPECIFIC (full binary names / paths) — never match self.
+        script = f"""#!/bin/sh
 exec >>{log} 2>&1
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart begin"
+SELF=$$
 sleep 1
 # stop service + children (serve, Go pollers, python pollers)
 if [ -x /opt/etc/init.d/S99poolheat-standalone ]; then
@@ -16622,14 +16630,18 @@ elif [ -x /opt/etc/init.d/S99poolheat ]; then
 fi
 # Prefer /proc cmdline/exe scan — BusyBox `ps w` often misses on Keenetic.
 # Linux keeps old ELF mapped until process exit; must kill before re-exec.
+# NEVER kill SELF / PPID (this restart script).
 _ph_kill_match() {{
-  # $1 = signal number (15=TERM, 9=KILL)
   _sig="${{1:-15}}"; shift
   for _d in /proc/[0-9]*; do
     [ -d "$_d" ] || continue
     _pid="${{_d##*/}}"
     case "$_pid" in *[!0-9]*|"") continue ;; esac
+    [ "$_pid" = "$SELF" ] && continue
+    [ "$_pid" = "$PPID" ] && continue
     _cmd=$(tr '\\0' ' ' < "$_d/cmdline" 2>/dev/null || true)
+    # Skip our own ota-restart.sh if it ever appears
+    case "$_cmd" in *ota-restart.sh*) continue ;; esac
     _exe=$(readlink "$_d/exe" 2>/dev/null || true)
     _blob="$_cmd $_exe"
     for _n in "$@"; do
@@ -16638,15 +16650,11 @@ _ph_kill_match() {{
       esac
     done
   done
-  for _n in "$@"; do
-    for p in $(ps w 2>/dev/null | grep -F "$_n" | grep -v grep | awk '{{print $1}}'); do
-      kill -"$_sig" "$p" 2>/dev/null || true
-    done
-  done
 }}
-_ph_kill_match 15 serve.py poolheat-devices-poller poolheat-miner-poller poolheatd
+# Specific names only (avoid bare "serve.py" matching huge argv of sh -c).
+_ph_kill_match 15 /opt/lib/poolheat/serve.py poolheat-devices-poller poolheat-miner-poller /opt/bin/poolheatd
 sleep 1
-_ph_kill_match 9 serve.py poolheat-devices-poller poolheat-miner-poller poolheatd
+_ph_kill_match 9 /opt/lib/poolheat/serve.py poolheat-devices-poller poolheat-miner-poller /opt/bin/poolheatd
 rm -f /opt/var/poolheat/devices_poller.pid /opt/var/poolheat/miner_poller.pid 2>/dev/null || true
 # ensure new binaries are executable (OTA may land them)
 chmod +x /opt/bin/poolheat-devices-poller /opt/bin/poolheat-miner-poller /opt/bin/poolheatd 2>/dev/null || true
@@ -16674,18 +16682,34 @@ if [ "$ok" -eq 0 ]; then
   fi
   sleep 1
 fi
-if ps w 2>/dev/null | grep -q '[s]erve.py'; then
+# detect live serve by /proc (not only ps)
+alive=0
+for _d in /proc/[0-9]*; do
+  _cmd=$(tr '\\0' ' ' < "$_d/cmdline" 2>/dev/null || true)
+  case "$_cmd" in
+    */opt/lib/poolheat/serve.py*|*/opt/bin/python3*serve.py*) alive=1; break ;;
+  esac
+done
+if [ "$alive" -eq 1 ] || ps w 2>/dev/null | grep -q '[s]erve.py'; then
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart OK"
-  # confirm pollers / hold after boot
   sleep 3
   ps w 2>/dev/null | grep -E 'poolheat-(devices|miner)-poller|serve.py' | head -20 || true
 else
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] poolheat update: restart FAILED — no serve.py"
+  # last-ditch start
+  /opt/etc/init.d/S99poolheat-standalone start 2>/dev/null || true
 fi
 """
         try:
+            sp = Path(script_path)
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            sp.write_text(script, encoding="utf-8")
+            try:
+                sp.chmod(0o755)
+            except Exception:
+                pass
             subprocess.Popen(
-                ["sh", "-c", script],
+                ["sh", str(sp)],
                 start_new_session=True,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
