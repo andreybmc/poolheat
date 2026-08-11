@@ -7457,12 +7457,42 @@
         <div class="card">
           <div class="card-h">
             <div>
+              <h2 data-i18n="h2.heat_pools">Pools</h2>
+              <div class="sub" data-i18n="sub.heat_pools">create · edit geometry · bind miners for heating</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-heat-pool-new" data-i18n="btn.new_pool">+ New pool</button>
+              <button class="btn danger" type="button" id="btn-heat-pool-delete" data-i18n="btn.delete">Delete</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <div class="row" style="grid-template-columns:1fr auto auto;gap:10px;align-items:end">
+              <label class="field" style="margin:0"><span data-i18n="field.heat_pool">Pool</span>
+                <select id="heat-pool-select">
+                  <option value="">—</option>
+                </select>
+              </label>
+              <button class="btn primary" type="button" id="btn-heat-pool-activate" data-i18n="btn.activate_pool" title="Use this pool for live heat model">
+                Set active
+              </button>
+              <button class="btn ghost" type="button" id="btn-heat-pool-rename" data-i18n="btn.rename">Rename</button>
+            </div>
+            <p id="heat-pool-meta" style="font-size:0.75rem;color:var(--dim);margin:0">—</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
               <h2 data-i18n="h2.pool_geo">Pool · geometry</h2>
               <div class="sub" data-i18n="sub.pool_geo">shape · volume and surface calculated automatically</div>
             </div>
             <button class="btn primary" type="button" id="btn-pool-save" data-i18n="btn.save">Save</button>
           </div>
           <div class="card-b stack" style="gap:14px">
+            <label class="field"><span data-i18n="field.pool_name">Name</span>
+              <input type="text" id="pool-name" maxlength="64" placeholder="Main pool" autocomplete="off" />
+            </label>
             <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
               <select id="pool-shape">
                 <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
@@ -7521,6 +7551,24 @@
                 <div class="val" style="font-size:1.15rem"><span id="pool-turnover">—</span> <small>h</small></div>
                 <div class="hint">T = V × 1000 / Q</div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.pool_miners">Miners on this pool</h2>
+              <div class="sub" data-i18n="sub.pool_miners">ASICs bound for heating · hydro / immersion</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-pool-miners-save" data-i18n="btn.save">Save binding</button>
+          </div>
+          <div class="card-b stack" style="gap:10px">
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="hint.pool_miners">
+              Select managed miners that heat this pool. Binding is stored on the miner (pool_id).
+            </p>
+            <div id="pool-miners-bind-list" class="stack" style="gap:6px">
+              <div style="color:var(--muted);font-size:0.85rem">—</div>
             </div>
           </div>
         </div>
@@ -8499,13 +8547,15 @@
                   <th data-i18n="mp.col.model_code">Code</th>
                   <th data-i18n="mp.col.serial">Serial</th>
                   <th data-i18n="mp.col.inventory">Inv #</th>
+                  <th data-i18n="mp.col.cooling">Cooling</th>
+                  <th data-i18n="mp.col.pool">Pool</th>
                   <th>IP</th>
                   <th>Role</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody id="mp-managed-body">
-                <tr><td colspan="12" style="color:var(--muted)">—</td></tr>
+                <tr><td colspan="14" style="color:var(--muted)">—</td></tr>
               </tbody>
             </table>
           </div>
@@ -8548,6 +8598,18 @@
             </label>
             <label class="field"><span data-i18n="mp.col.inventory">Inventory #</span>
               <input type="text" id="mp-edit-inventory" maxlength="64" autocomplete="off" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.cooling">Cooling</span>
+              <select id="mp-edit-cooling">
+                <option value="air">Air</option>
+                <option value="hydro">Hydro</option>
+                <option value="immersion">Immersion</option>
+              </select>
+            </label>
+            <label class="field"><span data-i18n="mp.col.pool">Heat pool</span>
+              <select id="mp-edit-pool">
+                <option value="">— none —</option>
+              </select>
             </label>
             <label class="field"><span>Host / IP</span>
               <input type="text" id="mp-edit-host" maxlength="64" autocomplete="off" />
@@ -9580,10 +9642,21 @@
         "mp.col.model_code": "Code",
         "mp.col.serial": "Serial",
         "mp.col.inventory": "Inv #",
+        "mp.col.cooling": "Cooling",
+        "mp.col.pool": "Pool",
         "mp.edit": "Edit",
         "mp.edit_title": "Edit miner",
         "mp.edit_saved": "Miner saved",
         "mp.edit_fail": "Save failed",
+        "h2.heat_pools": "Pools",
+        "sub.heat_pools": "create · edit geometry · bind miners for heating",
+        "field.heat_pool": "Pool",
+        "field.pool_name": "Name",
+        "btn.new_pool": "+ New pool",
+        "btn.activate_pool": "Set active",
+        "h2.pool_miners": "Miners on this pool",
+        "sub.pool_miners": "ASICs bound for heating · hydro / immersion",
+        "hint.pool_miners": "Select managed miners that heat this pool. Binding is stored on the miner (pool_id).",
         "mp.vendor": "Vendor",
         "mp.type": "Type",
         "mp.add_manual": "Add by IP",
@@ -10455,10 +10528,21 @@
         "mp.col.model_code": "Код",
         "mp.col.serial": "Серийный",
         "mp.col.inventory": "Инв. №",
+        "mp.col.cooling": "Охлаждение",
+        "mp.col.pool": "Бассейн",
         "mp.edit": "Изм.",
         "mp.edit_title": "Редактировать майнер",
         "mp.edit_saved": "Майнер сохранён",
         "mp.edit_fail": "Не сохранено",
+        "h2.heat_pools": "Бассейны",
+        "sub.heat_pools": "создать · геометрия · привязка майнеров на обогрев",
+        "field.heat_pool": "Бассейн",
+        "field.pool_name": "Имя",
+        "btn.new_pool": "+ Новый бассейн",
+        "btn.activate_pool": "Сделать активным",
+        "h2.pool_miners": "Майнеры на бассейне",
+        "sub.pool_miners": "ASIC на обогрев · hydro / immersion",
+        "hint.pool_miners": "Отметьте managed-майнеры, которые греют этот бассейн. Связь хранится у майнера (pool_id).",
         "mp.vendor": "Вендор",
         "mp.type": "Тип",
         "mp.add_manual": "Добавить IP",
@@ -22452,6 +22536,28 @@
 
     let managedMinersCache = [];
     let minerVendorsCache = { vendors: [] };
+    let heatPoolsCache = { pools: [], active_id: null };
+    let selectedHeatPoolId = null;
+
+    const COOLING_LABELS = {
+      air: { en: "Air", ru: "Воздух" },
+      hydro: { en: "Hydro", ru: "Гидро" },
+      immersion: { en: "Immersion", ru: "Иммерсия" },
+    };
+
+    function coolingLabel(id) {
+      const k = String(id || "air").toLowerCase();
+      const row = COOLING_LABELS[k] || { en: k, ru: k };
+      const lang =
+        typeof _uiLang !== "undefined" && _uiLang === "ru" ? "ru" : "en";
+      return row[lang] || row.en || k;
+    }
+
+    function poolNameById(pid) {
+      if (!pid) return "—";
+      const p = (heatPoolsCache.pools || []).find((x) => x.id === pid);
+      return p ? p.name || p.id : pid;
+    }
 
     function mpCell(v) {
       const s = v == null || v === "" ? "—" : String(v);
@@ -22594,7 +22700,7 @@
         managedMinersCache = miners;
         if (!miners.length) {
           tbody.innerHTML =
-            '<tr><td colspan="12" style="color:var(--muted)">empty · import or add by IP</td></tr>';
+            '<tr><td colspan="14" style="color:var(--muted)">empty · import or add by IP</td></tr>';
           return;
         }
         const editL =
@@ -22636,6 +22742,12 @@
               "<td>" +
               mpCell(m.inventory) +
               "</td>" +
+              "<td>" +
+              mpCell(m.cooling_name || coolingLabel(m.cooling)) +
+              "</td>" +
+              "<td>" +
+              mpCell(poolNameById(m.pool_id)) +
+              "</td>" +
               '<td style="font-family:ui-monospace,monospace">' +
               mpCell(m.host) +
               "</td>" +
@@ -22662,7 +22774,7 @@
           .join("");
       } catch (e) {
         tbody.innerHTML =
-          '<tr><td colspan="12" style="color:var(--warn)">error: ' +
+          '<tr><td colspan="14" style="color:var(--warn)">error: ' +
           escapeLogHtml(e.message) +
           "</td></tr>";
       }
@@ -22673,12 +22785,17 @@
       if (bd) bd.hidden = true;
     }
 
-    function openManagedEditDialog(mid) {
+    async function openManagedEditDialog(mid) {
       const m =
         (managedMinersCache || []).find((x) => x.id === mid) || null;
       if (!m) {
         toastError("Miner not found");
         return;
+      }
+      if (!(heatPoolsCache.pools || []).length) {
+        try {
+          await loadHeatPools();
+        } catch (_) { /* ignore */ }
       }
       const set = (id, v) => {
         const el = document.getElementById(id);
@@ -22696,6 +22813,8 @@
       set("mp-edit-model-code", m.model_code || m.miner_type || "");
       set("mp-edit-serial", m.serial || "");
       set("mp-edit-inventory", m.inventory || "");
+      set("mp-edit-cooling", m.cooling || "air");
+      fillHeatPoolSelect(document.getElementById("mp-edit-pool"), m.pool_id || "");
       set("mp-edit-host", m.host || "");
       set("mp-edit-port", m.port != null ? m.port : 4028);
       set("mp-edit-password", "");
@@ -22704,6 +22823,8 @@
         sub.textContent =
           (m.role === "active" ? "★ active · " : "standby · ") +
           vendorDisplayName(m.vendor) +
+          " · " +
+          coolingLabel(m.cooling) +
           " · " +
           (m.host || "—") +
           (m.source ? " · " + m.source : "");
@@ -22729,6 +22850,8 @@
         inventory: (
           document.getElementById("mp-edit-inventory")?.value || ""
         ).trim(),
+        cooling: (document.getElementById("mp-edit-cooling")?.value || "air").trim(),
+        pool_id: (document.getElementById("mp-edit-pool")?.value || "").trim(),
         host: (document.getElementById("mp-edit-host")?.value || "").trim(),
         port: Number(document.getElementById("mp-edit-port")?.value) || 4028,
       };
@@ -23110,7 +23233,7 @@
       const act = t.getAttribute("data-mp-active");
       const rem = t.getAttribute("data-mp-remove");
       if (edit) {
-        openManagedEditDialog(edit);
+        void openManagedEditDialog(edit);
         return;
       }
       if (act) {
@@ -26922,17 +27045,205 @@
       }
     }
 
+    function fillHeatPoolSelect(sel, selectedId) {
+      if (!sel) return;
+      const cur = selectedId != null ? selectedId : sel.value;
+      const list = heatPoolsCache.pools || [];
+      sel.innerHTML = "";
+      const o0 = document.createElement("option");
+      o0.value = "";
+      o0.textContent = "— none —";
+      sel.appendChild(o0);
+      list.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.id;
+        let label = p.name || p.id;
+        if (p.active || p.id === heatPoolsCache.active_id) label = "● " + label;
+        o.textContent = label;
+        sel.appendChild(o);
+      });
+      if (cur && list.some((p) => p.id === cur)) sel.value = cur;
+      else if (cur === "") sel.value = "";
+    }
+
+    function renderHeatPoolSelectMain() {
+      const sel = document.getElementById("heat-pool-select");
+      if (!sel) return;
+      const list = heatPoolsCache.pools || [];
+      const cur =
+        selectedHeatPoolId ||
+        heatPoolsCache.active_id ||
+        (list[0] && list[0].id) ||
+        "";
+      sel.innerHTML = "";
+      list.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.id;
+        let label = p.name || p.id;
+        if (p.active || p.id === heatPoolsCache.active_id) label = "● " + label;
+        if (p.miner_count != null) label += " · " + p.miner_count + " ASIC";
+        o.textContent = label;
+        sel.appendChild(o);
+      });
+      if (cur && list.some((p) => p.id === cur)) {
+        sel.value = cur;
+        selectedHeatPoolId = cur;
+      } else if (list[0]) {
+        sel.value = list[0].id;
+        selectedHeatPoolId = list[0].id;
+      }
+      updateHeatPoolMetaLine();
+    }
+
+    function updateHeatPoolMetaLine() {
+      const meta = document.getElementById("heat-pool-meta");
+      if (!meta) return;
+      const p = (heatPoolsCache.pools || []).find(
+        (x) => x.id === selectedHeatPoolId
+      );
+      if (!p) {
+        meta.textContent = "—";
+        return;
+      }
+      const act =
+        p.id === heatPoolsCache.active_id
+          ? " · active (live heat model)"
+          : "";
+      meta.textContent =
+        (p.name || p.id) +
+        (p.derived && p.derived.volume_m3 != null
+          ? " · V=" + Number(p.derived.volume_m3).toFixed(2) + " m³"
+          : "") +
+        (p.miner_count != null ? " · miners " + p.miner_count : "") +
+        act;
+    }
+
+    function renderPoolMinersBindList() {
+      const box = document.getElementById("pool-miners-bind-list");
+      if (!box) return;
+      const pid = selectedHeatPoolId;
+      const miners = managedMinersCache || [];
+      if (!pid) {
+        box.innerHTML =
+          '<div style="color:var(--muted);font-size:0.85rem">select a pool</div>';
+        return;
+      }
+      if (!miners.length) {
+        box.innerHTML =
+          '<div style="color:var(--muted);font-size:0.85rem">no managed miners — import in Settings → Miner-poller</div>';
+        return;
+      }
+      box.innerHTML = miners
+        .map((m) => {
+          const checked = m.pool_id === pid ? " checked" : "";
+          const cool = coolingLabel(m.cooling);
+          return (
+            '<label class="check" style="margin:0">' +
+            '<input type="checkbox" class="pool-bind-cb" data-mid="' +
+            escapeLogHtml(m.id || "") +
+            '"' +
+            checked +
+            " />" +
+            "<span>" +
+            escapeLogHtml(m.alias || m.name || m.host || m.id) +
+            " · " +
+            escapeLogHtml(m.host || "") +
+            " · " +
+            escapeLogHtml(cool) +
+            (m.role === "active" ? " · ★" : "") +
+            "</span></label>"
+          );
+        })
+        .join("");
+    }
+
+    async function loadHeatPools() {
+      try {
+        const res = await fetch("/api/heat/pools", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok && !body.pools)
+          throw new Error(body.error || "heat pools fail");
+        heatPoolsCache = {
+          pools: body.pools || [],
+          active_id: body.active_id || null,
+        };
+        if (
+          !selectedHeatPoolId ||
+          !(heatPoolsCache.pools || []).some((p) => p.id === selectedHeatPoolId)
+        ) {
+          selectedHeatPoolId =
+            heatPoolsCache.active_id ||
+            (heatPoolsCache.pools[0] && heatPoolsCache.pools[0].id) ||
+            null;
+        }
+        renderHeatPoolSelectMain();
+        fillHeatPoolSelect(document.getElementById("mp-edit-pool"));
+        renderPoolMinersBindList();
+        return heatPoolsCache;
+      } catch (e) {
+        console.warn("heat pools:", e);
+        return null;
+      }
+    }
+
+    async function heatPoolApi(payload) {
+      const res = await fetch("/api/heat/pools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+      });
+      const body = await res.json();
+      if (!res.ok || body.ok === false)
+        throw new Error((body && body.error) || "HTTP " + res.status);
+      return body;
+    }
+
+    function collectPoolGeometryFromUI() {
+      const flowLph = Number(document.getElementById("pool-flow")?.value);
+      const shape = getPoolShape();
+      let width = Number(document.getElementById("pool-width")?.value);
+      const length = Number(document.getElementById("pool-length")?.value);
+      if (shape === "circle") width = length;
+      return {
+        length_m: length,
+        width_m: width,
+        depth_m: Number(document.getElementById("pool-depth")?.value),
+        flow_m3h: Number.isFinite(flowLph) ? flowLph / 1000 : 0,
+        shape,
+        water_sensor:
+          document.getElementById("pool-water-sensor")?.value || "liquid",
+      };
+    }
+
     async function loadPoolConfig() {
       try {
+        await loadHeatPools();
+        if (!(managedMinersCache || []).length) {
+          try {
+            const r = await fetch("/api/miner/managed", { cache: "no-store" });
+            const b = await r.json();
+            managedMinersCache = b.miners || [];
+          } catch (_) { /* ignore */ }
+        }
         const res = await fetch("/api/pool/config");
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "pool config fail");
-        const c = body.config || {};
-        const d = body.derived || {};
+        // prefer selected heat pool config when available
+        let c = body.config || {};
+        let d = body.derived || {};
+        const p = (heatPoolsCache.pools || []).find(
+          (x) => x.id === selectedHeatPoolId
+        );
+        if (p && p.config) {
+          c = p.config;
+          d = p.derived || d;
+        }
         const setVal = (id, v) => {
           const el = document.getElementById(id);
           if (el && v != null) el.value = v;
         };
+        const nameEl = document.getElementById("pool-name");
+        if (nameEl) nameEl.value = (p && p.name) || nameEl.value || "Main pool";
         const shapeEl = document.getElementById("pool-shape");
         if (shapeEl && c.shape) shapeEl.value = c.shape;
         setVal("pool-length", c.length_m);
@@ -26947,15 +27258,17 @@
           selectedWs,
           (d && d.water_sensor_options) || body.water_sensor_options || null
         );
-        // keep sensorsValues fresh when pool tab uses virtual sensors
         if (typeof loadSensors === "function") {
           void loadSensors();
         }
         syncPoolShapeUI();
-        const setTxt = (id, v, d) => {
+        const setTxt = (id, v, dig) => {
           const el = document.getElementById(id);
           if (!el) return;
-          el.textContent = v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(d) : "—";
+          el.textContent =
+            v != null && Number.isFinite(Number(v))
+              ? Number(v).toFixed(dig)
+              : "—";
         };
         setTxt("pool-volume", d.volume_m3, 2);
         setTxt("pool-surface", d.surface_m2, 2);
@@ -26967,6 +27280,7 @@
         if (fs) fs.textContent = t("pool.hint.surface", "water surface area");
         poolDerived = d;
         updateHeatLoss();
+        renderPoolMinersBindList();
         return body;
       } catch (e) {
         toastError(tf("pool.toast_cfg_fail", { err: e.message }, "Pool config: " + e.message));
@@ -26976,37 +27290,94 @@
     }
 
     async function savePoolConfig() {
-      const flowLph = Number(document.getElementById("pool-flow").value);
-      const shape = getPoolShape();
-      let width = Number(document.getElementById("pool-width").value);
-      const length = Number(document.getElementById("pool-length").value);
-      if (shape === "circle") width = length; // diameter both axes
-      const payload = {
-        length_m: length,
-        width_m: width,
-        depth_m: Number(document.getElementById("pool-depth").value),
-        flow_m3h: Number.isFinite(flowLph) ? flowLph / 1000 : 0,
-        shape,
-        water_sensor:
-          document.getElementById("pool-water-sensor")?.value || "liquid",
-      };
+      const cfg = collectPoolGeometryFromUI();
+      const name = (
+        document.getElementById("pool-name")?.value || "Pool"
+      ).trim();
       try {
-        const res = await fetch("/api/pool/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        const body = await res.json();
-        if (!body.ok) throw new Error(body.error || "save fail");
-        const d = body.derived || {};
-        toastSuccess(tf("pool.toast_saved", {
-          vol: d.volume_m3 != null ? d.volume_m3 : "—",
-          surf: d.surface_m2 != null ? d.surface_m2 : "—",
-          turn: d.turnover_h != null ? d.turnover_h + " h" : "—",
-        }, "Pool: V={vol} m³ · S={surf} m² · turnover {turn}"));
+        let body;
+        if (selectedHeatPoolId) {
+          body = await heatPoolApi({
+            action: "update",
+            id: selectedHeatPoolId,
+            name: name || "Pool",
+            config: cfg,
+          });
+          heatPoolsCache = {
+            pools: body.pools || [],
+            active_id: body.active_id || heatPoolsCache.active_id,
+          };
+        } else {
+          // legacy single-config path
+          const res = await fetch("/api/pool/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cfg),
+          });
+          body = await res.json();
+          if (!body.ok) throw new Error(body.error || "save fail");
+        }
+        const d =
+          (body.pools &&
+            (body.pools.find((p) => p.id === selectedHeatPoolId) || {})
+              .derived) ||
+          body.derived ||
+          {};
+        toastSuccess(
+          tf(
+            "pool.toast_saved",
+            {
+              vol: d.volume_m3 != null ? d.volume_m3 : "—",
+              surf: d.surface_m2 != null ? d.surface_m2 : "—",
+              turn: d.turnover_h != null ? d.turnover_h + " h" : "—",
+            },
+            "Pool: V={vol} m³ · S={surf} m² · turnover {turn}"
+          )
+        );
         await loadPoolConfig();
       } catch (e) {
-        toastError(tf("pool.toast_fail", { err: e.message }, "Failed to save pool: " + e.message));
+        toastError(
+          tf(
+            "pool.toast_fail",
+            { err: e.message },
+            "Failed to save pool: " + e.message
+          )
+        );
+      }
+    }
+
+    async function savePoolMinersBinding() {
+      if (!selectedHeatPoolId) {
+        toastWarn("Select a pool first");
+        return;
+      }
+      const mids = [];
+      document.querySelectorAll(".pool-bind-cb:checked").forEach((cb) => {
+        const id = cb.getAttribute("data-mid");
+        if (id) mids.push(id);
+      });
+      try {
+        const body = await heatPoolApi({
+          action: "bind",
+          id: selectedHeatPoolId,
+          miner_ids: mids,
+        });
+        heatPoolsCache = {
+          pools: body.pools || [],
+          active_id: body.active_id || heatPoolsCache.active_id,
+        };
+        // refresh managed cache
+        try {
+          const r = await fetch("/api/miner/managed", { cache: "no-store" });
+          const b = await r.json();
+          managedMinersCache = b.miners || [];
+        } catch (_) { /* ignore */ }
+        renderHeatPoolSelectMain();
+        renderPoolMinersBindList();
+        if (typeof refreshManagedTable === "function") await refreshManagedTable();
+        toastSuccess("Miners bound · " + mids.length);
+      } catch (e) {
+        toastError("Bind: " + e.message);
       }
     }
 
@@ -27025,6 +27396,123 @@
       updateHeatLoss();
     });
     document.getElementById("btn-pool-save")?.addEventListener("click", savePoolConfig);
+    document
+      .getElementById("btn-pool-miners-save")
+      ?.addEventListener("click", () => void savePoolMinersBinding());
+    document
+      .getElementById("heat-pool-select")
+      ?.addEventListener("change", async () => {
+        selectedHeatPoolId =
+          document.getElementById("heat-pool-select")?.value || null;
+        updateHeatPoolMetaLine();
+        await loadPoolConfig();
+      });
+    document
+      .getElementById("btn-heat-pool-new")
+      ?.addEventListener("click", async () => {
+        const name = prompt(
+          typeof t === "function" ? t("field.pool_name", "Name") : "Name",
+          "Pool " + ((heatPoolsCache.pools || []).length + 1)
+        );
+        if (name == null) return;
+        const n = String(name).trim();
+        if (!n) return;
+        try {
+          const cfg = collectPoolGeometryFromUI();
+          const body = await heatPoolApi({
+            action: "create",
+            name: n,
+            config: cfg,
+            make_active: false,
+          });
+          heatPoolsCache = {
+            pools: body.pools || [],
+            active_id: body.active_id || null,
+          };
+          selectedHeatPoolId = body.id || selectedHeatPoolId;
+          renderHeatPoolSelectMain();
+          await loadPoolConfig();
+          toastSuccess("Pool created · " + n);
+        } catch (e) {
+          toastError(e.message);
+        }
+      });
+    document
+      .getElementById("btn-heat-pool-delete")
+      ?.addEventListener("click", async () => {
+        if (!selectedHeatPoolId) return;
+        const p = (heatPoolsCache.pools || []).find(
+          (x) => x.id === selectedHeatPoolId
+        );
+        if (!confirm("Delete pool “" + ((p && p.name) || selectedHeatPoolId) + "”?"))
+          return;
+        try {
+          const body = await heatPoolApi({
+            action: "delete",
+            id: selectedHeatPoolId,
+          });
+          heatPoolsCache = {
+            pools: body.pools || [],
+            active_id: body.active_id || null,
+          };
+          selectedHeatPoolId = heatPoolsCache.active_id;
+          await loadPoolConfig();
+          toastSuccess("Pool deleted");
+        } catch (e) {
+          toastError(e.message);
+        }
+      });
+    document
+      .getElementById("btn-heat-pool-activate")
+      ?.addEventListener("click", async () => {
+        if (!selectedHeatPoolId) return;
+        try {
+          const body = await heatPoolApi({
+            action: "activate",
+            id: selectedHeatPoolId,
+          });
+          heatPoolsCache = {
+            pools: body.pools || [],
+            active_id: body.active_id || null,
+          };
+          await loadPoolConfig();
+          toastSuccess("Active pool updated");
+        } catch (e) {
+          toastError(e.message);
+        }
+      });
+    document
+      .getElementById("btn-heat-pool-rename")
+      ?.addEventListener("click", async () => {
+        if (!selectedHeatPoolId) return;
+        const p = (heatPoolsCache.pools || []).find(
+          (x) => x.id === selectedHeatPoolId
+        );
+        const name = prompt(
+          typeof t === "function" ? t("field.pool_name", "Name") : "Name",
+          (p && p.name) || ""
+        );
+        if (name == null) return;
+        const n = String(name).trim();
+        if (!n) return;
+        try {
+          const body = await heatPoolApi({
+            action: "update",
+            id: selectedHeatPoolId,
+            name: n,
+          });
+          heatPoolsCache = {
+            pools: body.pools || [],
+            active_id: body.active_id || null,
+          };
+          renderHeatPoolSelectMain();
+          const nameEl = document.getElementById("pool-name");
+          if (nameEl) nameEl.value = n;
+          toastSuccess("Renamed · " + n);
+        } catch (e) {
+          toastError(e.message);
+        }
+      });
 
     // welcome once per session
     try {

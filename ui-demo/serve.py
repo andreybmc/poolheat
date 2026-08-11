@@ -285,6 +285,8 @@ WEATHER_CFG_FILE = DATA / "weather_config.json"
 ENERGY_CFG_FILE = DATA / "energy_config.json"
 VIRTUAL_METER_ID = "virtual_miner"
 POOL_CFG_FILE = DATA / "pool_config.json"
+# Multi-pool catalog (geometry + bound miners for heating)
+HEAT_POOLS_FILE = DATA / "heat_pools.json"
 ZONE_CFG_FILE = DATA / "zone_map_config.json"
 ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
 MODE_PROFILES_FILE = DATA / "mode_profiles.json"
@@ -9466,6 +9468,10 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         or m.get("sn")
         or ""
     ).strip()
+    cooling = _normalize_miner_cooling(
+        m.get("cooling") or m.get("cooling_type") or m.get("cool")
+    )
+    pool_id = str(m.get("pool_id") or m.get("heat_pool_id") or "").strip()
     return {
         "id": mid[:48],
         "vendor": vendor,
@@ -9485,6 +9491,9 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         "inventory": str(
             m.get("inventory") or m.get("inventory_number") or m.get("inv") or ""
         )[:64],
+        "cooling": cooling,
+        "cooling_name": _miner_cooling_name(cooling),
+        "pool_id": pool_id[:48] if pool_id else "",
         "miner_type": miner_type[:64] or model_code[:64],
         "mac": str(m.get("mac") or "").strip()[:32] or None,
         "fw_ver": str(m.get("fw_ver") or m.get("fw") or "").strip()[:64] or None,
@@ -9493,6 +9502,41 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         "last_ok_ts": m.get("last_ok_ts"),
         "last_error": m.get("last_error"),
     }
+
+
+def _normalize_miner_cooling(raw) -> str:
+    s = str(raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "air": "air",
+        "aircool": "air",
+        "air_cooled": "air",
+        "fan": "air",
+        "hydro": "hydro",
+        "liquid": "hydro",
+        "water": "hydro",
+        "hyd": "hydro",
+        "immersion": "immersion",
+        "immerse": "immersion",
+        "oil": "immersion",
+    }
+    s = aliases.get(s, s)
+    if s in ("air", "hydro", "immersion"):
+        return s
+    return "air"
+
+
+def _miner_cooling_name(cid: str, *, lang: str = "en") -> str:
+    cid = _normalize_miner_cooling(cid)
+    for t in MINER_COOLING_TYPES:
+        if t["id"] == cid:
+            if str(lang).startswith("ru"):
+                return str(t.get("name_ru") or t.get("name") or cid)
+            return str(t.get("name") or cid)
+    return cid
+
+
+def list_miner_cooling_types() -> list[dict]:
+    return [dict(t) for t in MINER_COOLING_TYPES]
 
 
 def get_miners_managed() -> dict:
@@ -9738,10 +9782,15 @@ def update_managed(mid: str, fields: dict | None) -> dict:
         "host",
         "password",
         "miner_type",
+        "pool_id",
     )
     for k in str_keys:
         if k in fields and fields[k] is not None:
             found[k] = str(fields[k]).strip()
+    if "cooling" in fields or "cooling_type" in fields:
+        found["cooling"] = _normalize_miner_cooling(
+            fields.get("cooling", fields.get("cooling_type"))
+        )
     if "port" in fields and fields["port"] is not None:
         try:
             found["port"] = int(fields["port"])
@@ -10593,6 +10642,13 @@ DEFAULT_POOL_CFG = {
     "water_sensor": "liquid",
     "shape": "rect",
 }
+
+# Miner cooling types (managed inventory)
+MINER_COOLING_TYPES: tuple[dict, ...] = (
+    {"id": "air", "name": "Air", "name_ru": "Воздух"},
+    {"id": "hydro", "name": "Hydro", "name_ru": "Гидро (жидкостное)"},
+    {"id": "immersion", "name": "Immersion", "name_ru": "Иммерсия"},
+)
 
 # Sensors selectable as «вода в бассейне» (pool water °C)
 POOL_WATER_SENSORS: tuple[str, ...] = (
@@ -11721,6 +11777,340 @@ def resolve_pool_water(
 def _save_pool_cfg() -> None:
     with _pool_cfg_lock:
         _save_json(POOL_CFG_FILE, _pool_cfg)
+    # keep active heat-pool config in sync
+    try:
+        _sync_active_heat_pool_from_legacy()
+    except Exception as e:
+        print(f"[heat-pools] sync active from legacy: {e}", flush=True)
+
+
+# ── Multi heat-pools (geometry catalog + miner binding) ─────────────────────
+
+_heat_pools_lock = threading.Lock()
+_heat_pools: dict = {"version": 1, "active_id": None, "pools": []}
+
+
+def _new_heat_pool_id() -> str:
+    return "pool_" + uuid.uuid4().hex[:10]
+
+
+def _coerce_pool_geometry(cfg: dict | None) -> dict:
+    """Normalize geometry fields (same rules as single pool_config)."""
+    base = dict(DEFAULT_POOL_CFG)
+    if isinstance(cfg, dict):
+        base.update(cfg)
+    out = dict(DEFAULT_POOL_CFG)
+    for key, default in (
+        ("length_m", 8.0),
+        ("width_m", 4.0),
+        ("depth_m", 1.5),
+        ("flow_m3h", 12.0),
+    ):
+        try:
+            v = float(base.get(key, default))
+        except (TypeError, ValueError):
+            v = default
+        if key == "flow_m3h":
+            v = max(0.0, min(500.0, v))
+        else:
+            v = max(0.1, min(200.0, v))
+        out[key] = v
+    shape = str(base.get("shape") or "rect").lower()
+    if shape in ("round", "circular", "circle"):
+        shape = "circle"
+    elif shape in ("ellipse", "elliptic", "oval"):
+        shape = "oval"
+    else:
+        shape = "rect"
+    out["shape"] = shape
+    out["water_sensor"] = _normalize_pool_water_sensor(
+        base.get("water_sensor", "liquid")
+    )
+    return out
+
+
+def _load_heat_pools() -> None:
+    global _heat_pools
+    with _heat_pools_lock:
+        raw = _load_json(HEAT_POOLS_FILE, None)
+        if not isinstance(raw, dict) or not isinstance(raw.get("pools"), list):
+            # migrate from single pool_config.json
+            with _pool_cfg_lock:
+                legacy = dict(_pool_cfg)
+            pid = "pool_default"
+            _heat_pools = {
+                "version": 1,
+                "active_id": pid,
+                "pools": [
+                    {
+                        "id": pid,
+                        "name": "Main pool",
+                        "enabled": True,
+                        "config": _coerce_pool_geometry(legacy),
+                        "updated_ts": datetime.now().isoformat(timespec="seconds"),
+                    }
+                ],
+            }
+            try:
+                _save_json(HEAT_POOLS_FILE, _heat_pools)
+            except Exception:
+                pass
+            return
+        pools: list[dict] = []
+        for p in raw.get("pools") or []:
+            if not isinstance(p, dict):
+                continue
+            pid = str(p.get("id") or "").strip() or _new_heat_pool_id()
+            name = str(p.get("name") or "Pool").strip()[:64] or "Pool"
+            pools.append(
+                {
+                    "id": pid,
+                    "name": name,
+                    "enabled": bool(p.get("enabled", True)),
+                    "config": _coerce_pool_geometry(
+                        p.get("config") if isinstance(p.get("config"), dict) else p
+                    ),
+                    "updated_ts": p.get("updated_ts")
+                    or datetime.now().isoformat(timespec="seconds"),
+                }
+            )
+        if not pools:
+            pid = "pool_default"
+            with _pool_cfg_lock:
+                legacy = dict(_pool_cfg)
+            pools = [
+                {
+                    "id": pid,
+                    "name": "Main pool",
+                    "enabled": True,
+                    "config": _coerce_pool_geometry(legacy),
+                    "updated_ts": datetime.now().isoformat(timespec="seconds"),
+                }
+            ]
+        active = str(raw.get("active_id") or "").strip()
+        if not any(p["id"] == active for p in pools):
+            active = pools[0]["id"]
+        _heat_pools = {"version": 1, "active_id": active, "pools": pools}
+
+
+def _save_heat_pools() -> None:
+    with _heat_pools_lock:
+        _save_json(HEAT_POOLS_FILE, _heat_pools)
+
+
+def _sync_active_heat_pool_from_legacy() -> None:
+    """When /api/pool/config is saved, mirror into active heat-pool entry."""
+    with _heat_pools_lock:
+        if not _heat_pools.get("pools"):
+            return
+        active = str(_heat_pools.get("active_id") or "")
+        with _pool_cfg_lock:
+            cfg = _coerce_pool_geometry(_pool_cfg)
+        for p in _heat_pools.get("pools") or []:
+            if p.get("id") == active:
+                p["config"] = cfg
+                p["updated_ts"] = datetime.now().isoformat(timespec="seconds")
+                break
+        _save_json(HEAT_POOLS_FILE, _heat_pools)
+
+
+def _apply_heat_pool_to_legacy(pool: dict) -> None:
+    """Push selected pool geometry into legacy _pool_cfg (live heat model)."""
+    cfg = _coerce_pool_geometry(
+        pool.get("config") if isinstance(pool, dict) else None
+    )
+    with _pool_cfg_lock:
+        _pool_cfg.clear()
+        _pool_cfg.update(cfg)
+    # avoid recursive sync loop: write file only
+    with _pool_cfg_lock:
+        _save_json(POOL_CFG_FILE, _pool_cfg)
+
+
+def list_heat_pools() -> dict:
+    with _heat_pools_lock:
+        pools = list(_heat_pools.get("pools") or [])
+        active = _heat_pools.get("active_id")
+    # attach bound miners
+    managed = get_miners_managed().get("miners") or []
+    by_pool: dict[str, list] = {}
+    for m in managed:
+        pid = str(m.get("pool_id") or "").strip()
+        if not pid:
+            continue
+        by_pool.setdefault(pid, []).append(
+            {
+                "id": m.get("id"),
+                "alias": m.get("alias"),
+                "name": m.get("name"),
+                "host": m.get("host"),
+                "role": m.get("role"),
+                "cooling": m.get("cooling"),
+            }
+        )
+    items = []
+    for p in pools:
+        pid = p.get("id")
+        cfg = p.get("config") or {}
+        items.append(
+            {
+                "id": pid,
+                "name": p.get("name"),
+                "enabled": p.get("enabled", True),
+                "config": cfg,
+                "derived": pool_derived(cfg),
+                "updated_ts": p.get("updated_ts"),
+                "miners": by_pool.get(pid, []),
+                "miner_count": len(by_pool.get(pid, [])),
+                "active": pid == active,
+            }
+        )
+    return {
+        "ok": True,
+        "active_id": active,
+        "pools": items,
+        "cooling_types": list_miner_cooling_types(),
+    }
+
+
+def get_heat_pool(pool_id: str) -> dict | None:
+    pid = str(pool_id or "").strip()
+    with _heat_pools_lock:
+        for p in _heat_pools.get("pools") or []:
+            if p.get("id") == pid:
+                return json.loads(json.dumps(p))
+    return None
+
+
+def save_heat_pool(
+    name: str,
+    config: dict | None = None,
+    *,
+    pool_id: str | None = None,
+    enabled: bool | None = None,
+    make_active: bool = False,
+) -> dict:
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("name empty")
+    if len(name) > 64:
+        name = name[:64]
+    cfg = _coerce_pool_geometry(config)
+    now = datetime.now().isoformat(timespec="seconds")
+    with _heat_pools_lock:
+        pools = list(_heat_pools.get("pools") or [])
+        if pool_id:
+            pid = str(pool_id).strip()
+            found = False
+            for i, p in enumerate(pools):
+                if p.get("id") == pid:
+                    row = dict(p)
+                    row["name"] = name
+                    row["config"] = cfg
+                    row["updated_ts"] = now
+                    if enabled is not None:
+                        row["enabled"] = bool(enabled)
+                    pools[i] = row
+                    found = True
+                    out_id = pid
+                    break
+            if not found:
+                raise ValueError(f"pool not found: {pid}")
+        else:
+            out_id = _new_heat_pool_id()
+            pools.append(
+                {
+                    "id": out_id,
+                    "name": name,
+                    "enabled": True if enabled is None else bool(enabled),
+                    "config": cfg,
+                    "updated_ts": now,
+                }
+            )
+        _heat_pools["pools"] = pools
+        if make_active or not _heat_pools.get("active_id"):
+            _heat_pools["active_id"] = out_id
+        active_id = _heat_pools.get("active_id")
+    _save_heat_pools()
+    # if this is the active pool — push to legacy live config
+    if active_id == out_id:
+        p = get_heat_pool(out_id)
+        if p:
+            _apply_heat_pool_to_legacy(p)
+    return {"ok": True, "id": out_id, **list_heat_pools()}
+
+
+def delete_heat_pool(pool_id: str) -> dict:
+    pid = str(pool_id or "").strip()
+    if not pid:
+        raise ValueError("id empty")
+    with _heat_pools_lock:
+        pools = [p for p in (_heat_pools.get("pools") or []) if p.get("id") != pid]
+        if len(pools) == len(_heat_pools.get("pools") or []):
+            raise ValueError(f"pool not found: {pid}")
+        if not pools:
+            raise ValueError("cannot delete the last pool")
+        _heat_pools["pools"] = pools
+        if _heat_pools.get("active_id") == pid:
+            _heat_pools["active_id"] = pools[0]["id"]
+            active = pools[0]
+        else:
+            active = None
+            for p in pools:
+                if p.get("id") == _heat_pools.get("active_id"):
+                    active = p
+                    break
+    _save_heat_pools()
+    # unbind miners from deleted pool
+    managed = list(get_miners_managed().get("miners") or [])
+    dirty = False
+    for m in managed:
+        if str(m.get("pool_id") or "") == pid:
+            m["pool_id"] = ""
+            dirty = True
+    if dirty:
+        _save_miners_managed(managed)
+    if active:
+        _apply_heat_pool_to_legacy(active)
+    return list_heat_pools()
+
+
+def set_active_heat_pool(pool_id: str) -> dict:
+    p = get_heat_pool(pool_id)
+    if not p:
+        raise ValueError(f"pool not found: {pool_id}")
+    with _heat_pools_lock:
+        _heat_pools["active_id"] = p["id"]
+    _save_heat_pools()
+    _apply_heat_pool_to_legacy(p)
+    return {"ok": True, "active_id": p["id"], **list_heat_pools()}
+
+
+def bind_miners_to_heat_pool(pool_id: str, miner_ids: list | None) -> dict:
+    """
+    Set which managed miners heat this pool.
+    miner_ids — full list for this pool (others unbind if they pointed here).
+    """
+    pid = str(pool_id or "").strip()
+    if not pid:
+        raise ValueError("pool_id required")
+    if not get_heat_pool(pid):
+        raise ValueError(f"pool not found: {pid}")
+    want = set()
+    for x in miner_ids or []:
+        s = str(x or "").strip()
+        if s:
+            want.add(s)
+    managed = list(get_miners_managed().get("miners") or [])
+    for m in managed:
+        mid = str(m.get("id") or "")
+        cur = str(m.get("pool_id") or "")
+        if mid in want:
+            m["pool_id"] = pid
+        elif cur == pid:
+            m["pool_id"] = ""
+    _save_miners_managed(managed)
+    return list_heat_pools()
 
 
 def pool_derived(cfg: dict | None = None) -> dict:
@@ -12046,6 +12436,7 @@ _load_logs_cfg()
 _load_sensors_cfg()
 _load_weather_cfg()
 _load_pool_cfg()
+_load_heat_pools()
 _load_zone_cfg()
 _load_zone_presets()
 _load_mode_profiles()
@@ -21708,6 +22099,8 @@ def _load_telegram_cfg() -> None:
         if isinstance(raw, dict) and "notify_policy" in raw and "notify_events" not in raw:
             cfg["notify_events"] = bool(raw.get("notify_policy"))
         cfg.pop("notify_policy", None)
+        # legacy rudiment (filtration menu removed)
+        cfg.pop("show_filtration", None)
         if isinstance(raw, dict):
             raw.pop("notify_policy", None)  # no-op on file; keep cfg clean
         for k in _TG_BOOL_PREF_KEYS:
@@ -28885,6 +29278,17 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/pool/config":
             self._api_pool_config_get()
             return
+        if path in (
+            "/api/heat/pools",
+            "/api/pools/heat",
+            "/api/heat_pools",
+            "/api/pools/catalog",
+        ):
+            try:
+                self._json_response(200, list_heat_pools())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
         if path == "/api/zone/config":
             self._api_zone_config_get()
             return
@@ -29344,6 +29748,14 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/pool/config":
             self._api_pool_config_post()
+            return
+        if path in (
+            "/api/heat/pools",
+            "/api/pools/heat",
+            "/api/heat_pools",
+            "/api/pools/catalog",
+        ):
+            self._api_heat_pools_post()
             return
         if path == "/api/zone/config":
             self._api_zone_config_post()
@@ -30970,7 +31382,98 @@ class Handler(SimpleHTTPRequestHandler):
         with _pool_cfg_lock:
             cfg = dict(_pool_cfg)
         derived = pool_derived(cfg)
-        self._json_response(200, {"ok": True, "config": cfg, "derived": derived})
+        # include multi-pool context for UI
+        try:
+            hp = list_heat_pools()
+            active_id = hp.get("active_id")
+        except Exception:
+            hp = {"pools": []}
+            active_id = None
+        self._json_response(
+            200,
+            {
+                "ok": True,
+                "config": cfg,
+                "derived": derived,
+                "active_pool_id": active_id,
+                "heat_pools": hp.get("pools") or [],
+                "cooling_types": list_miner_cooling_types(),
+            },
+        )
+
+    def _api_heat_pools_post(self) -> None:
+        """
+        Multi heat-pools:
+          {action: list}
+          {action: save|create, name, config?}
+          {action: update, id, name?, config?, enabled?}
+          {action: delete, id}
+          {action: activate|set_active, id}
+          {action: bind, id, miner_ids:[]}
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected JSON object")
+            action = str(req.get("action") or "list").strip().lower()
+            if action in ("list", "ls"):
+                self._json_response(200, list_heat_pools())
+                return
+            if action in ("save", "create", "add"):
+                cfg = req.get("config") if isinstance(req.get("config"), dict) else None
+                out = save_heat_pool(
+                    str(req.get("name") or ""),
+                    cfg,
+                    pool_id=None,
+                    make_active=bool(req.get("make_active", False)),
+                )
+                self._json_response(200, out)
+                return
+            if action in ("update", "edit"):
+                pid = str(req.get("id") or "").strip()
+                if not pid:
+                    raise ValueError("id required")
+                existing = get_heat_pool(pid)
+                if not existing:
+                    raise ValueError("pool not found")
+                name = req.get("name")
+                if name is None or str(name).strip() == "":
+                    name = existing.get("name")
+                cfg = (
+                    req.get("config")
+                    if isinstance(req.get("config"), dict)
+                    else existing.get("config")
+                )
+                if req.get("from_current") or req.get("use_current"):
+                    with _pool_cfg_lock:
+                        cfg = dict(_pool_cfg)
+                out = save_heat_pool(
+                    str(name),
+                    cfg,
+                    pool_id=pid,
+                    enabled=req.get("enabled") if "enabled" in req else None,
+                    make_active=bool(req.get("make_active", False)),
+                )
+                self._json_response(200, out)
+                return
+            if action in ("delete", "remove", "del"):
+                out = delete_heat_pool(str(req.get("id") or ""))
+                self._json_response(200, out)
+                return
+            if action in ("activate", "set_active", "active", "select"):
+                out = set_active_heat_pool(str(req.get("id") or ""))
+                self._json_response(200, out)
+                return
+            if action in ("bind", "bind_miners", "set_miners"):
+                mids = req.get("miner_ids") or req.get("miners") or []
+                if not isinstance(mids, list):
+                    raise ValueError("miner_ids must be array")
+                out = bind_miners_to_heat_pool(str(req.get("id") or ""), mids)
+                self._json_response(200, out)
+                return
+            raise ValueError(f"unknown action: {action}")
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_miner_error_log(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
