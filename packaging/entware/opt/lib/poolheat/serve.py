@@ -9081,6 +9081,388 @@ def get_miner_settings() -> dict:
         }
 
 
+# ─── Miner-poller: discovery + managed inventory ────────────────────────────
+MINER_POLLER_CFG_FILE = DATA / "miner_poller_config.json"
+MINERS_DISCOVERED_FILE = DATA / "miners_discovered.json"
+MINERS_MANAGED_FILE = DATA / "miners_managed.json"
+MINER_SCAN_REQ_FILE = DATA / "miner_scan_req.json"
+MINER_SCAN_RESULT_FILE = DATA / "miner_scan_result.json"
+MINER_SCAN_STATUS_FILE = DATA / "miner_scan_status.json"
+
+_DEFAULT_MINER_POLLER_CFG: dict = {
+    "version": 1,
+    "discovery": {
+        "enabled": False,
+        "ranges": [],
+        "interval_sec": 600,
+        "probe_timeout_ms": 500,
+        "concurrency": 48,
+        "ports": [4028, 80, 4433],
+        "passwords": ["admin"],
+        "ignore_ips": [],
+    },
+    "poll": {
+        "max_parallel": 4,
+        "interval_sec": 0,
+        "per_miner_timeout_sec": 8,
+    },
+}
+
+
+def _normalize_miner_poller_cfg(raw: dict | None) -> dict:
+    out = json.loads(json.dumps(_DEFAULT_MINER_POLLER_CFG))
+    if not isinstance(raw, dict):
+        return out
+    d = raw.get("discovery") if isinstance(raw.get("discovery"), dict) else {}
+    p = raw.get("poll") if isinstance(raw.get("poll"), dict) else {}
+    out["discovery"]["enabled"] = bool(d.get("enabled", False))
+    ranges = d.get("ranges")
+    if isinstance(ranges, list):
+        out["discovery"]["ranges"] = [
+            str(x).strip() for x in ranges if str(x).strip()
+        ]
+    elif isinstance(ranges, str) and ranges.strip():
+        out["discovery"]["ranges"] = [
+            ln.strip()
+            for ln in ranges.replace(",", "\n").splitlines()
+            if ln.strip()
+        ]
+    try:
+        out["discovery"]["interval_sec"] = max(
+            60, min(86400, int(d.get("interval_sec", 600) or 600))
+        )
+    except (TypeError, ValueError):
+        pass
+    try:
+        out["discovery"]["probe_timeout_ms"] = max(
+            100, min(5000, int(d.get("probe_timeout_ms", 500) or 500))
+        )
+    except (TypeError, ValueError):
+        pass
+    try:
+        out["discovery"]["concurrency"] = max(
+            1, min(128, int(d.get("concurrency", 48) or 48))
+        )
+    except (TypeError, ValueError):
+        pass
+    ports = d.get("ports")
+    if isinstance(ports, list) and ports:
+        out["discovery"]["ports"] = [
+            int(x) for x in ports if str(x).strip().isdigit() and 1 <= int(x) <= 65535
+        ] or [4028, 80, 4433]
+    pws = d.get("passwords")
+    if isinstance(pws, list):
+        out["discovery"]["passwords"] = [
+            str(x) for x in pws if str(x).strip() != ""
+        ] or ["admin"]
+    ign = d.get("ignore_ips")
+    if isinstance(ign, list):
+        out["discovery"]["ignore_ips"] = [
+            str(x).strip() for x in ign if str(x).strip()
+        ]
+    try:
+        out["poll"]["max_parallel"] = max(
+            1, min(32, int(p.get("max_parallel", 4) or 4))
+        )
+    except (TypeError, ValueError):
+        pass
+    try:
+        out["poll"]["per_miner_timeout_sec"] = max(
+            3, min(60, int(p.get("per_miner_timeout_sec", 8) or 8))
+        )
+    except (TypeError, ValueError):
+        pass
+    try:
+        iv = int(p.get("interval_sec", 0) or 0)
+        out["poll"]["interval_sec"] = max(0, min(300, iv))
+    except (TypeError, ValueError):
+        pass
+    return out
+
+
+def get_miner_poller_cfg() -> dict:
+    raw = _load_json(MINER_POLLER_CFG_FILE, {})
+    return _normalize_miner_poller_cfg(raw if isinstance(raw, dict) else {})
+
+
+def save_miner_poller_cfg(raw: dict | None) -> dict:
+    cfg = _normalize_miner_poller_cfg(raw if isinstance(raw, dict) else {})
+    _save_json_atomic(MINER_POLLER_CFG_FILE, cfg)
+    return cfg
+
+
+def get_miners_discovered() -> dict:
+    raw = _load_json(
+        MINERS_DISCOVERED_FILE,
+        {"version": 1, "miners": [], "updated_ts": None},
+    )
+    if not isinstance(raw, dict):
+        raw = {"version": 1, "miners": []}
+    miners = raw.get("miners") if isinstance(raw.get("miners"), list) else []
+    # hide ignored by default unless caller wants all
+    return {
+        "ok": True,
+        "updated_ts": raw.get("updated_ts"),
+        "probed": raw.get("probed"),
+        "found": raw.get("found"),
+        "scan_ms": raw.get("scan_ms"),
+        "miners": [m for m in miners if isinstance(m, dict)],
+    }
+
+
+def get_miners_managed() -> dict:
+    raw = _load_json(MINERS_MANAGED_FILE, {"version": 1, "miners": []})
+    if not isinstance(raw, dict):
+        raw = {"version": 1, "miners": []}
+    miners = raw.get("miners") if isinstance(raw.get("miners"), list) else []
+    return {
+        "ok": True,
+        "miners": [m for m in miners if isinstance(m, dict)],
+    }
+
+
+def _save_miners_managed(miners: list) -> dict:
+    payload = {"version": 1, "miners": list(miners)}
+    # exactly one active
+    actives = [i for i, m in enumerate(miners) if m.get("role") == "active"]
+    if not actives and miners:
+        miners[0]["role"] = "active"
+    elif len(actives) > 1:
+        for i, m in enumerate(miners):
+            if m.get("role") == "active" and i != actives[0]:
+                m["role"] = "standby"
+    _save_json_atomic(MINERS_MANAGED_FILE, payload)
+    return get_miners_managed()
+
+
+def _seed_managed_from_active() -> None:
+    """If inventory empty, seed from current miner_host."""
+    cur = get_miners_managed()
+    if cur.get("miners"):
+        return
+    host = str(HOST_MINER or "").strip()
+    if not host:
+        return
+    _save_miners_managed(
+        [
+            {
+                "id": "m_default",
+                "vendor": "whatsminer",
+                "host": host,
+                "port": int(PORT_MINER or 4028),
+                "password": DEFAULT_API_PASSWORD or "admin",
+                "enabled": True,
+                "role": "active",
+                "alias": "primary",
+                "source": "manual",
+                "imported_at": datetime.now().isoformat(timespec="seconds"),
+            }
+        ]
+    )
+
+
+def import_discovered_miner(
+    ip: str,
+    *,
+    make_active: bool = False,
+    alias: str | None = None,
+) -> dict:
+    ip = str(ip or "").strip()
+    if not ip:
+        raise ValueError("ip required")
+    disc = get_miners_discovered()
+    found = None
+    for m in disc.get("miners") or []:
+        if str(m.get("ip") or "") == ip and not m.get("ignored"):
+            found = m
+            break
+    if not found:
+        raise ValueError(f"ip {ip} not in discovered list")
+    managed = list(get_miners_managed().get("miners") or [])
+    # match by MAC or IP
+    mac = str(found.get("mac") or "").strip().lower()
+    idx = None
+    for i, m in enumerate(managed):
+        if mac and str(m.get("mac") or "").strip().lower() == mac:
+            idx = i
+            break
+        if str(m.get("host") or "") == ip:
+            idx = i
+            break
+    vendor = str(found.get("vendor") or "whatsminer")
+    port = int(found.get("port") or (4028 if vendor == "whatsminer" else 80))
+    row = {
+        "id": managed[idx]["id"] if idx is not None else ("m_" + uuid.uuid4().hex[:10]),
+        "vendor": vendor,
+        "host": ip,
+        "port": port,
+        "password": DEFAULT_API_PASSWORD or "admin",
+        "enabled": True,
+        "role": "standby",
+        "alias": (alias or found.get("miner_type") or ip)[:64],
+        "miner_type": found.get("miner_type"),
+        "mac": found.get("mac"),
+        "fw_ver": found.get("fw_ver"),
+        "source": "discovery",
+        "imported_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    if idx is not None:
+        # keep role/password if already managed
+        prev = managed[idx]
+        row["role"] = prev.get("role") or "standby"
+        if prev.get("password"):
+            row["password"] = prev["password"]
+        if prev.get("alias"):
+            row["alias"] = prev["alias"]
+        managed[idx] = row
+    else:
+        managed.append(row)
+    if make_active or not any(m.get("role") == "active" for m in managed):
+        for m in managed:
+            m["role"] = "standby"
+        row["role"] = "active"
+        # sync active connection
+        apply_miner_settings(
+            host=row["host"],
+            port=int(row["port"]),
+            password=row.get("password"),
+            persist=True,
+        )
+    return _save_miners_managed(managed)
+
+
+def add_managed_manual(
+    host: str,
+    *,
+    port: int | None = None,
+    vendor: str = "whatsminer",
+    password: str | None = None,
+    make_active: bool = True,
+    alias: str | None = None,
+) -> dict:
+    host = str(host or "").strip()
+    if not host:
+        raise ValueError("host required")
+    vendor = str(vendor or "whatsminer").strip().lower()
+    if vendor not in ("whatsminer", "antminer"):
+        vendor = "whatsminer"
+    if port is None:
+        port = 4028 if vendor == "whatsminer" else 80
+    port = int(port)
+    managed = list(get_miners_managed().get("miners") or [])
+    for m in managed:
+        if str(m.get("host") or "") == host:
+            raise ValueError(f"host {host} already managed")
+    row = {
+        "id": "m_" + uuid.uuid4().hex[:10],
+        "vendor": vendor,
+        "host": host,
+        "port": port,
+        "password": password or DEFAULT_API_PASSWORD or "admin",
+        "enabled": True,
+        "role": "standby",
+        "alias": (alias or host)[:64],
+        "source": "manual",
+        "imported_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    managed.append(row)
+    if make_active or not any(m.get("role") == "active" for m in managed):
+        for m in managed:
+            m["role"] = "standby"
+        row["role"] = "active"
+        apply_miner_settings(
+            host=row["host"],
+            port=int(row["port"]),
+            password=row.get("password"),
+            persist=True,
+        )
+    return _save_miners_managed(managed)
+
+
+def set_managed_active(mid: str) -> dict:
+    mid = str(mid or "").strip()
+    managed = list(get_miners_managed().get("miners") or [])
+    found = None
+    for m in managed:
+        if str(m.get("id") or "") == mid:
+            found = m
+            m["role"] = "active"
+            m["enabled"] = True
+        else:
+            if m.get("role") == "active":
+                m["role"] = "standby"
+    if not found:
+        raise ValueError("miner not found")
+    apply_miner_settings(
+        host=found["host"],
+        port=int(found.get("port") or 4028),
+        password=found.get("password"),
+        persist=True,
+    )
+    return _save_miners_managed(managed)
+
+
+def remove_managed(mid: str) -> dict:
+    mid = str(mid or "").strip()
+    managed = [
+        m
+        for m in (get_miners_managed().get("miners") or [])
+        if str(m.get("id") or "") != mid
+    ]
+    if managed and not any(m.get("role") == "active" for m in managed):
+        managed[0]["role"] = "active"
+        apply_miner_settings(
+            host=managed[0]["host"],
+            port=int(managed[0].get("port") or 4028),
+            password=managed[0].get("password"),
+            persist=True,
+        )
+    return _save_miners_managed(managed)
+
+
+def ignore_discovered(ip: str, ignored: bool = True) -> dict:
+    ip = str(ip or "").strip()
+    raw = _load_json(MINERS_DISCOVERED_FILE, {"version": 1, "miners": []})
+    if not isinstance(raw, dict):
+        raw = {"version": 1, "miners": []}
+    miners = raw.get("miners") if isinstance(raw.get("miners"), list) else []
+    for m in miners:
+        if isinstance(m, dict) and str(m.get("ip") or "") == ip:
+            m["ignored"] = bool(ignored)
+    raw["miners"] = miners
+    _save_json_atomic(MINERS_DISCOVERED_FILE, raw)
+    return get_miners_discovered()
+
+
+def start_miner_scan(ranges: list[str] | None = None) -> dict:
+    if not miner_poller_process_alive():
+        raise RuntimeError("miner-poller not running — scan only via poller")
+    req_id = uuid.uuid4().hex
+    req = {
+        "id": req_id,
+        "ts": time.time(),
+        "ranges": list(ranges) if ranges else [],
+    }
+    try:
+        if MINER_SCAN_RESULT_FILE.is_file():
+            MINER_SCAN_RESULT_FILE.unlink()
+    except Exception:
+        pass
+    _save_json_atomic(MINER_SCAN_REQ_FILE, req)
+    return {"ok": True, "id": req_id, "queued": True}
+
+
+def miner_scan_status() -> dict:
+    st = _load_json(MINER_SCAN_STATUS_FILE, {})
+    res = _load_json(MINER_SCAN_RESULT_FILE, {})
+    return {
+        "ok": True,
+        "status": st if isinstance(st, dict) else {},
+        "last_result": res if isinstance(res, dict) else {},
+        "discovered": get_miners_discovered(),
+    }
+
+
 def apply_miner_settings(
     host: str | None = None,
     port: int | None = None,
@@ -27926,6 +28308,31 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/miner/config":
             self._api_miner_config_get()
             return
+        if path in ("/api/miner/poller", "/api/miner-poller/config"):
+            try:
+                self._json_response(200, {"ok": True, "config": get_miner_poller_cfg()})
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/discovered", "/api/miners/discovered"):
+            try:
+                self._json_response(200, get_miners_discovered())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/managed", "/api/miners/managed"):
+            try:
+                _seed_managed_from_active()
+                self._json_response(200, get_miners_managed())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/scan", "/api/miner/scan/status"):
+            try:
+                self._json_response(200, miner_scan_status())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
         if path in ("/api/config/backup", "/api/backup/config", "/api/config/export"):
             self._api_config_backup_get()
             return
@@ -28473,6 +28880,82 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/miner/config":
             self._api_miner_config_post()
+            return
+        if path in ("/api/miner/poller", "/api/miner-poller/config"):
+            try:
+                req = self._read_json_body()
+                cfg = save_miner_poller_cfg(req if isinstance(req, dict) else {})
+                # also allow nested {discovery, poll} or full body as config
+                if isinstance(req, dict) and (
+                    "discovery" in req or "poll" in req or "version" in req
+                ):
+                    cfg = save_miner_poller_cfg(req)
+                self._json_response(200, {"ok": True, "config": cfg})
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/scan", "/api/miners/scan"):
+            try:
+                try:
+                    req = self._read_json_body()
+                except Exception:
+                    req = {}
+                ranges = None
+                if isinstance(req, dict):
+                    r = req.get("ranges")
+                    if isinstance(r, list):
+                        ranges = [str(x) for x in r]
+                    elif isinstance(r, str) and r.strip():
+                        ranges = [
+                            ln.strip()
+                            for ln in r.replace(",", "\n").splitlines()
+                            if ln.strip()
+                        ]
+                out = start_miner_scan(ranges)
+                self._json_response(200, out)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/import", "/api/miners/import"):
+            try:
+                req = self._read_json_body()
+                ip = str(req.get("ip") or req.get("host") or "").strip()
+                out = import_discovered_miner(
+                    ip,
+                    make_active=bool(req.get("make_active", False)),
+                    alias=req.get("alias"),
+                )
+                self._json_response(200, out)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/managed", "/api/miners/managed"):
+            try:
+                req = self._read_json_body()
+                action = str(req.get("action") or "add").strip().lower()
+                if action in ("add", "manual"):
+                    out = add_managed_manual(
+                        str(req.get("host") or req.get("ip") or ""),
+                        port=req.get("port"),
+                        vendor=str(req.get("vendor") or "whatsminer"),
+                        password=req.get("password"),
+                        make_active=bool(req.get("make_active", True)),
+                        alias=req.get("alias"),
+                    )
+                elif action in ("active", "set_active", "make_active"):
+                    out = set_managed_active(str(req.get("id") or ""))
+                elif action in ("remove", "delete"):
+                    out = remove_managed(str(req.get("id") or ""))
+                elif action in ("ignore",):
+                    out = ignore_discovered(
+                        str(req.get("ip") or ""),
+                        ignored=bool(req.get("ignored", True)),
+                    )
+                else:
+                    raise ValueError(f"unknown action: {action}")
+                self._json_response(200, out)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
             return
         if path in ("/api/config/restore", "/api/backup/restore", "/api/config/import"):
             self._api_config_restore_post()

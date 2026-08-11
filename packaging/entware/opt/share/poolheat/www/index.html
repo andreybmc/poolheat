@@ -7869,6 +7869,7 @@
     <section class="view" id="view-settings">
       <nav class="subtabs" role="tablist" aria-label="Settings">
         <button type="button" class="active" data-subtab="main" data-i18n="sub.main">General</button>
+        <button type="button" data-subtab="miner-poller" data-i18n="sub.miner_poller">Miner-poller</button>
         <button type="button" data-subtab="firmware" data-i18n="sub.firmware">Firmware</button>
         <button type="button" data-subtab="advanced" data-i18n="sub.advanced">Advanced</button>
       </nav>
@@ -7953,56 +7954,18 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2 data-i18n="h2.connection">Whatsminer connection</h2>
-              <div class="sub" data-i18n="sub.connection">TCP · saved to config.json · applied immediately</div>
+              <h2 data-i18n="field.project_name">Project name</h2>
+              <div class="sub" data-i18n="field.project_name_hint">In UI header and Telegram (/status). Default poolheat_WM.</div>
             </div>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-test-conn" data-i18n="btn.test">Test</button>
-              <button class="btn" type="button" id="btn-write-api-check" data-i18n="btn.write_api" data-i18n-title="btn.write_api_title" title="Miner API Switch / write status">Write API</button>
-              <button class="btn primary" type="button" id="btn-write-api-enable" data-i18n="btn.enable_write" data-i18n-title="btn.enable_write_title" title="Try enable + password cycle">Enable Write</button>
-              <button class="btn primary" type="button" id="btn-save-miner" data-i18n="btn.save">Save</button>
-            </div>
+            <button class="btn primary" type="button" id="btn-save-project-name" data-i18n="btn.save">Save</button>
           </div>
           <div class="card-b">
-            <div class="row">
-              <label class="field"><span data-i18n="field.project_name">Project name</span>
-                <input type="text" id="settings-project-name" value="poolheat_WM" maxlength="64" autocomplete="off" placeholder="poolheat_WM" />
-              </label>
-            </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:4px 0 10px" data-i18n="field.project_name_hint">
-              In UI header and Telegram (/status). Default poolheat_WM.
-            </p>
-            <div class="row">
-              <label class="field"><span class="req" data-i18n="field.ip_host">IP / host</span>
-                <input type="text" id="settings-miner-host" value="192.168.1.10" autocomplete="off" />
-              </label>
-              <label class="field"><span data-i18n="field.port">Port</span>
-                <input type="number" id="settings-miner-port" value="4028" min="1" max="65535" step="1" />
-              </label>
-            </div>
-            <div class="row" style="margin-top:12px">
-              <label class="field"><span data-i18n="field.api_password">API password</span>
-                <span class="pw-wrap">
-                  <input type="password" id="settings-api-password" value="admin" autocomplete="off" />
-                  <button type="button" class="pw-eye" data-pw-for="settings-api-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
-                </span>
-              </label>
-              <label class="field"><span class="tip" data-tip-key="poll" data-i18n="field.poll_interval">Poll interval, sec</span>
-                <input type="number" id="settings-poll-interval" value="5" min="2" max="300" step="1" />
-              </label>
-            </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0" id="miner-cfg-status">
-              host: —
-            </p>
-            <div id="write-api-status" style="font-size:0.78rem;color:var(--dim);margin:10px 0 0;line-height:1.45;white-space:pre-wrap">
-              Write API: —
-            </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.45" data-i18n-html="write.enable_desc">
-              <b>Enable Write</b> opens write via LuCI (<code>open_by_api</code>) —
-              like Tools → Miner API Switch, without changing the password.
-              Then: Suspend/Resume, Power Mode, Power Limit on :4028/:4433.
-              Mode/reboot also via LuCI if write is still closed. Auto-enable
-              on the first write command if the switch was off.
+            <label class="field"><span data-i18n="field.project_name">Project name</span>
+              <input type="text" id="settings-project-name" value="poolheat_WM" maxlength="64" autocomplete="off" placeholder="poolheat_WM" />
+            </label>
+            <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" data-i18n-html="mp.moved_hint">
+              ASIC connection, discovery and inventory →
+              <strong>Settings → Miner-poller</strong>
             </p>
           </div>
         </div>
@@ -8157,6 +8120,145 @@
 
       </div>
       </div><!-- /subview-settings-main -->
+
+      <div class="subview" id="subview-settings-miner-poller">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.connection">Active miner connection</h2>
+              <div class="sub" data-i18n="sub.connection">TCP · active managed · saved to config.json</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-test-conn" data-i18n="btn.test">Test</button>
+              <button class="btn" type="button" id="btn-write-api-check" data-i18n="btn.write_api" data-i18n-title="btn.write_api_title" title="Miner API Switch / write status">Write API</button>
+              <button class="btn primary" type="button" id="btn-write-api-enable" data-i18n="btn.enable_write" data-i18n-title="btn.enable_write_title" title="Try enable + password cycle">Enable Write</button>
+              <button class="btn primary" type="button" id="btn-save-miner" data-i18n="btn.save">Save</button>
+            </div>
+          </div>
+          <div class="card-b">
+            <div class="row">
+              <label class="field"><span class="req" data-i18n="field.ip_host">IP / host</span>
+                <input type="text" id="settings-miner-host" value="192.168.1.10" autocomplete="off" />
+              </label>
+              <label class="field"><span data-i18n="field.port">Port</span>
+                <input type="number" id="settings-miner-port" value="4028" min="1" max="65535" step="1" />
+              </label>
+            </div>
+            <div class="row" style="margin-top:12px">
+              <label class="field"><span data-i18n="field.api_password">API password</span>
+                <span class="pw-wrap">
+                  <input type="password" id="settings-api-password" value="admin" autocomplete="off" />
+                  <button type="button" class="pw-eye" data-pw-for="settings-api-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
+                </span>
+              </label>
+              <label class="field"><span class="tip" data-tip-key="poll" data-i18n="field.poll_interval">Poll interval, sec</span>
+                <input type="number" id="settings-poll-interval" value="5" min="2" max="300" step="1" />
+              </label>
+            </div>
+            <div class="row" style="margin-top:12px">
+              <label class="field"><span data-i18n="mp.max_parallel">Poll max parallel</span>
+                <input type="number" id="mp-max-parallel" value="4" min="1" max="32" step="1" />
+              </label>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted);margin:12px 0 0" id="miner-cfg-status">host: —</p>
+            <div id="write-api-status" style="font-size:0.78rem;color:var(--dim);margin:10px 0 0;line-height:1.45;white-space:pre-wrap">Write API: —</div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.45" data-i18n-html="write.enable_desc">
+              <b>Enable Write</b> opens write via LuCI (<code>open_by_api</code>).
+            </p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="mp.discovery_title">Network discovery</h2>
+              <div class="sub" data-i18n="mp.discovery_sub">Independent of live poll · Whatsminer + Antminer</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-mp-scan" data-i18n="mp.scan_now">Scan now</button>
+              <button class="btn primary" type="button" id="btn-mp-disc-save" data-i18n="btn.save">Save</button>
+            </div>
+          </div>
+          <div class="card-b">
+            <label class="check" style="margin-bottom:10px">
+              <input type="checkbox" id="mp-disc-enabled" />
+              <span data-i18n="mp.auto_scan">Auto-scan on interval</span>
+            </label>
+            <label class="field"><span data-i18n="mp.ranges">Scan ranges (CIDR / start-end / IP, one per line)</span>
+              <textarea id="mp-disc-ranges" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem" placeholder="192.168.10.0/24&#10;192.168.1.1-192.168.1.50"></textarea>
+            </label>
+            <div class="row" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:12px">
+              <label class="field"><span data-i18n="mp.interval">Interval, sec</span>
+                <input type="number" id="mp-disc-interval" value="600" min="60" max="86400" step="30" />
+              </label>
+              <label class="field"><span data-i18n="mp.timeout">Probe timeout, ms</span>
+                <input type="number" id="mp-disc-timeout" value="500" min="100" max="5000" step="50" />
+              </label>
+              <label class="field"><span data-i18n="mp.concurrency">Concurrency</span>
+                <input type="number" id="mp-disc-conc" value="48" min="1" max="128" step="1" />
+              </label>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="mp-disc-status">—</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="mp.discovered_title">Discovered</h2>
+              <div class="sub" data-i18n="mp.discovered_sub">Found on LAN · not yet in system</div>
+            </div>
+            <button class="btn" type="button" id="btn-mp-disc-refresh" data-i18n="btn.refresh">Refresh</button>
+          </div>
+          <div class="card-b" style="padding-top:8px;overflow:auto">
+            <table class="err-table" id="mp-discovered-table">
+              <thead>
+                <tr>
+                  <th>IP</th>
+                  <th data-i18n="mp.vendor">Vendor</th>
+                  <th data-i18n="mp.type">Type</th>
+                  <th>MAC</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="mp-discovered-body">
+                <tr><td colspan="5" style="color:var(--muted)">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="mp.managed_title">In system (managed)</h2>
+              <div class="sub" data-i18n="mp.managed_sub">Imported · polling candidates · one active</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn" type="button" id="btn-mp-add-manual" data-i18n="mp.add_manual">Add by IP</button>
+              <button class="btn" type="button" id="btn-mp-managed-refresh" data-i18n="btn.refresh">Refresh</button>
+            </div>
+          </div>
+          <div class="card-b" style="padding-top:8px;overflow:auto">
+            <table class="err-table" id="mp-managed-table">
+              <thead>
+                <tr>
+                  <th>Alias</th>
+                  <th>IP</th>
+                  <th data-i18n="mp.vendor">Vendor</th>
+                  <th>Role</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="mp-managed-body">
+                <tr><td colspan="5" style="color:var(--muted)">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-settings-miner-poller -->
 
       <div class="subview" id="subview-settings-firmware">
       <div class="stack">
@@ -9137,10 +9239,28 @@
         "sub.chips": "Chips",
         "sub.info": "Info",
         "sub.main": "General",
+        "sub.miner_poller": "Miner-poller",
         "sub.advanced": "Advanced",
         "sub.logs": "Logs",
         "sub.sensors": "Sensors",
         "sub.devices": "Devices",
+        "mp.moved_hint": "ASIC connection, discovery and inventory → <strong>Settings → Miner-poller</strong>",
+        "mp.discovery_title": "Network discovery",
+        "mp.discovery_sub": "Independent of live poll · Whatsminer + Antminer",
+        "mp.scan_now": "Scan now",
+        "mp.auto_scan": "Auto-scan on interval",
+        "mp.ranges": "Scan ranges (CIDR / start-end / IP, one per line)",
+        "mp.interval": "Interval, sec",
+        "mp.timeout": "Probe timeout, ms",
+        "mp.concurrency": "Concurrency",
+        "mp.max_parallel": "Poll max parallel",
+        "mp.discovered_title": "Discovered",
+        "mp.discovered_sub": "Found on LAN · not yet in system",
+        "mp.managed_title": "In system (managed)",
+        "mp.managed_sub": "Imported · polling candidates · one active",
+        "mp.vendor": "Vendor",
+        "mp.type": "Type",
+        "mp.add_manual": "Add by IP",
         "h2.sensors": "Sensors",
         "h2.devices": "Devices",
         "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
@@ -9963,10 +10083,28 @@
         "sub.chips": "Чипы",
         "sub.info": "Инфо",
         "sub.main": "Основные",
+        "sub.miner_poller": "Miner-poller",
         "sub.advanced": "Расширенные",
         "sub.logs": "Логи",
         "sub.sensors": "Датчики",
         "sub.devices": "Устройства",
+        "mp.moved_hint": "Подключение ASIC, discovery и inventory → <strong>Настройки → Miner-poller</strong>",
+        "mp.discovery_title": "Поиск в сети",
+        "mp.discovery_sub": "Отдельно от live-опроса · Whatsminer + Antminer",
+        "mp.scan_now": "Сканировать",
+        "mp.auto_scan": "Автоскан по интервалу",
+        "mp.ranges": "Диапазоны (CIDR / start-end / IP, по строке)",
+        "mp.interval": "Интервал, сек",
+        "mp.timeout": "Таймаут probe, мс",
+        "mp.concurrency": "Параллельность",
+        "mp.max_parallel": "Poll max parallel",
+        "mp.discovered_title": "Найденные",
+        "mp.discovered_sub": "В LAN · ещё не в системе",
+        "mp.managed_title": "В системе (managed)",
+        "mp.managed_sub": "Импортированные · кандидаты на опрос · один active",
+        "mp.vendor": "Вендор",
+        "mp.type": "Тип",
+        "mp.add_manual": "Добавить IP",
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
         "sub.sensors_card": "Создавайте пользовательские датчики (например outdoor, pool_water). Источники опрашиваются по приоритету — побеждает первый с данными. Виртуальные правила.",
@@ -11547,7 +11685,7 @@
     }
 
     function setSettingsSubtab(subId) {
-      const allowed = { main: 1, advanced: 1, firmware: 1 };
+      const allowed = { main: 1, advanced: 1, firmware: 1, "miner-poller": 1 };
       const sub = allowed[subId] ? subId : "main";
       document.querySelectorAll("#view-settings nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
@@ -11560,6 +11698,9 @@
       });
       if (sub === "firmware" && typeof loadFirmwarePanel === "function") {
         void loadFirmwarePanel();
+      }
+      if (sub === "miner-poller" && typeof loadMinerPollerPanel === "function") {
+        void loadMinerPollerPanel();
       }
       return sub;
     }
@@ -21661,8 +21802,190 @@
             (c.host || host + ":" + port)
         );
         if (typeof fetchLive === "function") fetchLive(true);
+        // also persist poll max_parallel
+        try {
+          await saveMinerPollerCfgPartial();
+        } catch (_) { /* ignore */ }
       } catch (e) {
         toastError("Not saved: " + e.message);
+      }
+    }
+
+    async function loadMinerPollerPanel() {
+      if (typeof loadMinerConfig === "function") await loadMinerConfig();
+      await loadMinerPollerCfg();
+      await refreshDiscoveredTable();
+      await refreshManagedTable();
+    }
+
+    async function loadMinerPollerCfg() {
+      const st = document.getElementById("mp-disc-status");
+      try {
+        const res = await fetch("/api/miner/poller", { cache: "no-store" });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "load fail");
+        const c = body.config || {};
+        const d = c.discovery || {};
+        const p = c.poll || {};
+        const en = document.getElementById("mp-disc-enabled");
+        if (en) en.checked = !!d.enabled;
+        const ranges = document.getElementById("mp-disc-ranges");
+        if (ranges) ranges.value = (d.ranges || []).join("\n");
+        const iv = document.getElementById("mp-disc-interval");
+        if (iv && d.interval_sec != null) iv.value = d.interval_sec;
+        const to = document.getElementById("mp-disc-timeout");
+        if (to && d.probe_timeout_ms != null) to.value = d.probe_timeout_ms;
+        const conc = document.getElementById("mp-disc-conc");
+        if (conc && d.concurrency != null) conc.value = d.concurrency;
+        const mp = document.getElementById("mp-max-parallel");
+        if (mp && p.max_parallel != null) mp.value = p.max_parallel;
+        if (st) {
+          st.textContent =
+            (d.enabled ? "auto-scan on" : "auto-scan off") +
+            " · ranges " +
+            ((d.ranges || []).length || 0);
+        }
+      } catch (e) {
+        if (st) st.textContent = "failed: " + e.message;
+      }
+    }
+
+    function collectMinerPollerCfgFromUI() {
+      const rangesEl = document.getElementById("mp-disc-ranges");
+      const ranges = String(rangesEl && rangesEl.value != null ? rangesEl.value : "")
+        .split(/\r?\n|,/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return {
+        version: 1,
+        discovery: {
+          enabled: !!document.getElementById("mp-disc-enabled")?.checked,
+          ranges,
+          interval_sec: Number(document.getElementById("mp-disc-interval")?.value) || 600,
+          probe_timeout_ms: Number(document.getElementById("mp-disc-timeout")?.value) || 500,
+          concurrency: Number(document.getElementById("mp-disc-conc")?.value) || 48,
+          ports: [4028, 80, 4433],
+          passwords: ["admin"],
+          ignore_ips: [],
+        },
+        poll: {
+          max_parallel: Number(document.getElementById("mp-max-parallel")?.value) || 4,
+          interval_sec: 0,
+          per_miner_timeout_sec: 8,
+        },
+      };
+    }
+
+    async function saveMinerPollerCfgPartial() {
+      const cfg = collectMinerPollerCfgFromUI();
+      const res = await fetch("/api/miner/poller", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+      });
+      const body = await res.json();
+      if (!body.ok) throw new Error(body.error || "save fail");
+      return body.config;
+    }
+
+    async function refreshDiscoveredTable() {
+      const tbody = document.getElementById("mp-discovered-body");
+      if (!tbody) return;
+      try {
+        const res = await fetch("/api/miner/discovered", { cache: "no-store" });
+        const body = await res.json();
+        const miners = (body.miners || []).filter((m) => !m.ignored);
+        if (!miners.length) {
+          tbody.innerHTML =
+            '<tr><td colspan="5" style="color:var(--muted)">' +
+            (body.updated_ts ? "empty · last scan " + body.updated_ts : "empty · run Scan now") +
+            "</td></tr>";
+          return;
+        }
+        tbody.innerHTML = miners
+          .map((m) => {
+            const ip = m.ip || "";
+            return (
+              "<tr>" +
+              '<td style="font-family:ui-monospace,monospace">' +
+              escapeLogHtml(ip) +
+              "</td>" +
+              "<td>" +
+              escapeLogHtml(m.vendor || "—") +
+              "</td>" +
+              "<td>" +
+              escapeLogHtml(m.miner_type || "—") +
+              "</td>" +
+              '<td style="font-size:0.78rem">' +
+              escapeLogHtml(m.mac || "—") +
+              "</td>" +
+              '<td style="white-space:nowrap">' +
+              '<button type="button" class="btn" data-mp-import="' +
+              escapeLogHtml(ip) +
+              '" style="padding:4px 8px;font-size:0.75rem">Import</button> ' +
+              '<button type="button" class="btn" data-mp-ignore="' +
+              escapeLogHtml(ip) +
+              '" style="padding:4px 8px;font-size:0.75rem">Ignore</button>' +
+              "</td></tr>"
+            );
+          })
+          .join("");
+      } catch (e) {
+        tbody.innerHTML =
+          '<tr><td colspan="5" style="color:var(--warn)">error: ' +
+          escapeLogHtml(e.message) +
+          "</td></tr>";
+      }
+    }
+
+    async function refreshManagedTable() {
+      const tbody = document.getElementById("mp-managed-body");
+      if (!tbody) return;
+      try {
+        const res = await fetch("/api/miner/managed", { cache: "no-store" });
+        const body = await res.json();
+        const miners = body.miners || [];
+        if (!miners.length) {
+          tbody.innerHTML =
+            '<tr><td colspan="5" style="color:var(--muted)">empty · import or add by IP</td></tr>';
+          return;
+        }
+        tbody.innerHTML = miners
+          .map((m) => {
+            const id = m.id || "";
+            const role = m.role === "active" ? "★ active" : "standby";
+            return (
+              "<tr>" +
+              "<td>" +
+              escapeLogHtml(m.alias || m.host || "—") +
+              "</td>" +
+              '<td style="font-family:ui-monospace,monospace">' +
+              escapeLogHtml(m.host || "—") +
+              "</td>" +
+              "<td>" +
+              escapeLogHtml(m.vendor || "—") +
+              "</td>" +
+              "<td>" +
+              escapeLogHtml(role) +
+              "</td>" +
+              '<td style="white-space:nowrap">' +
+              (m.role === "active"
+                ? ""
+                : '<button type="button" class="btn" data-mp-active="' +
+                  escapeLogHtml(id) +
+                  '" style="padding:4px 8px;font-size:0.75rem">Make active</button> ') +
+              '<button type="button" class="btn" data-mp-remove="' +
+              escapeLogHtml(id) +
+              '" style="padding:4px 8px;font-size:0.75rem">Remove</button>' +
+              "</td></tr>"
+            );
+          })
+          .join("");
+      } catch (e) {
+        tbody.innerHTML =
+          '<tr><td colspan="5" style="color:var(--warn)">error: ' +
+          escapeLogHtml(e.message) +
+          "</td></tr>";
       }
     }
 
@@ -21798,6 +22121,171 @@
 
     document.getElementById("btn-save-miner")?.addEventListener("click", () => {
       saveMinerConfig();
+    });
+    document.getElementById("btn-save-project-name")?.addEventListener("click", async () => {
+      const pn = String(document.getElementById("settings-project-name")?.value || "").trim() || "poolheat_WM";
+      try {
+        const res = await fetch("/api/miner/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_name: pn }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "save fail");
+        const brandH = document.querySelector(".brand h1");
+        if (brandH) brandH.textContent = body.config?.project_name || pn;
+        toastSuccess("Project name saved");
+      } catch (e) {
+        toastError(e.message);
+      }
+    });
+    document.getElementById("btn-mp-disc-save")?.addEventListener("click", async () => {
+      try {
+        await saveMinerPollerCfgPartial();
+        toastSuccess("Discovery settings saved");
+        const st = document.getElementById("mp-disc-status");
+        if (st) st.textContent = "saved · " + new Date().toLocaleTimeString();
+      } catch (e) {
+        toastError(e.message);
+      }
+    });
+    document.getElementById("btn-mp-scan")?.addEventListener("click", async () => {
+      const st = document.getElementById("mp-disc-status");
+      try {
+        // save ranges first so poller has them
+        await saveMinerPollerCfgPartial();
+        const cfg = collectMinerPollerCfgFromUI();
+        if (st) st.textContent = "scan queued…";
+        const res = await fetch("/api/miner/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ranges: cfg.discovery.ranges }),
+        });
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "scan fail");
+        toastSuccess("Scan started");
+        // poll status a few times
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          const sres = await fetch("/api/miner/scan", { cache: "no-store" });
+          const sj = await sres.json();
+          const running = sj.status && sj.status.running;
+          if (st) {
+            st.textContent = running
+              ? "scanning…"
+              : "done · found " +
+                (sj.last_result?.found ?? sj.discovered?.found ?? "—");
+          }
+          if (!running && i > 1) break;
+        }
+        await refreshDiscoveredTable();
+      } catch (e) {
+        if (st) st.textContent = "error: " + e.message;
+        toastError(e.message);
+      }
+    });
+    document.getElementById("btn-mp-disc-refresh")?.addEventListener("click", () => {
+      void refreshDiscoveredTable();
+    });
+    document.getElementById("btn-mp-managed-refresh")?.addEventListener("click", () => {
+      void refreshManagedTable();
+    });
+    document.getElementById("btn-mp-add-manual")?.addEventListener("click", async () => {
+      const host = prompt("Miner IP / host:");
+      if (!host || !host.trim()) return;
+      const vendor = prompt("Vendor: whatsminer or antminer", "whatsminer") || "whatsminer";
+      try {
+        const res = await fetch("/api/miner/managed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "add",
+            host: host.trim(),
+            vendor: vendor.trim().toLowerCase(),
+            make_active: true,
+          }),
+        });
+        const body = await res.json();
+        if (!body.ok && body.error) throw new Error(body.error);
+        toastSuccess("Added " + host.trim());
+        await loadMinerConfig();
+        await refreshManagedTable();
+      } catch (e) {
+        toastError(e.message);
+      }
+    });
+    document.getElementById("mp-discovered-body")?.addEventListener("click", async (ev) => {
+      const t = ev.target;
+      if (!t || !t.getAttribute) return;
+      const imp = t.getAttribute("data-mp-import");
+      const ign = t.getAttribute("data-mp-ignore");
+      if (imp) {
+        try {
+          const res = await fetch("/api/miner/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ip: imp, make_active: false }),
+          });
+          const body = await res.json();
+          if (body.error) throw new Error(body.error);
+          toastSuccess("Imported " + imp);
+          await refreshManagedTable();
+          await refreshDiscoveredTable();
+        } catch (e) {
+          toastError(e.message);
+        }
+      }
+      if (ign) {
+        try {
+          const res = await fetch("/api/miner/managed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "ignore", ip: ign, ignored: true }),
+          });
+          const body = await res.json();
+          if (body.error) throw new Error(body.error);
+          await refreshDiscoveredTable();
+        } catch (e) {
+          toastError(e.message);
+        }
+      }
+    });
+    document.getElementById("mp-managed-body")?.addEventListener("click", async (ev) => {
+      const t = ev.target;
+      if (!t || !t.getAttribute) return;
+      const act = t.getAttribute("data-mp-active");
+      const rem = t.getAttribute("data-mp-remove");
+      if (act) {
+        try {
+          const res = await fetch("/api/miner/managed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "active", id: act }),
+          });
+          const body = await res.json();
+          if (body.error) throw new Error(body.error);
+          toastSuccess("Active miner updated");
+          await loadMinerConfig();
+          await refreshManagedTable();
+        } catch (e) {
+          toastError(e.message);
+        }
+      }
+      if (rem) {
+        if (!confirm("Remove miner from system inventory?")) return;
+        try {
+          const res = await fetch("/api/miner/managed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "remove", id: rem }),
+          });
+          const body = await res.json();
+          if (body.error) throw new Error(body.error);
+          await refreshManagedTable();
+        } catch (e) {
+          toastError(e.message);
+        }
+      }
     });
 
     function formatWriteApiStatus(body) {

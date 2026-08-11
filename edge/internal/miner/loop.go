@@ -21,13 +21,18 @@ func Run(s Settings) error {
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
 	defer func() { _ = os.Remove(pidPath) }()
 
+	// Seed managed inventory from single-host config if empty.
+	EnsureManagedFromSettings(s.DataDir, s)
+	ApplyActiveToSettings(s.DataDir, &s)
+
 	hostLabel := fmt.Sprintf("%s:%d", s.Host, s.Port)
 	log.Printf("[miner-poller] go pid=%d data=%s miner=%s interval=%ds",
 		os.Getpid(), s.DataDir, hostLabel, s.PollIntervalSec)
 
-	log.Printf("[miner-poller] live loop start (writes via %s · chipmap → %s)",
+	log.Printf("[miner-poller] live loop start (writes via %s · chipmap → %s · discovery independent)",
 		writeReqFile, chipmapCacheFile)
 	var chipSt ChipmapState
+	var lastAutoDiscover time.Time
 	for {
 		if ctx.Err() != nil {
 			break
@@ -35,7 +40,15 @@ func Run(s Settings) error {
 		t0 := time.Now()
 		// reload host/interval each tick (config may change via UI)
 		s = LoadSettings()
+		ApplyActiveToSettings(s.DataDir, &s)
 		hostLabel = fmt.Sprintf("%s:%d", s.Host, s.Port)
+
+		// Manual network scan (does not block long-term — runs to completion then continues).
+		if ProcessPendingScan(s) {
+			// continue to live after scan
+		}
+		// Scheduled discovery (independent of live poll)
+		MaybeAutoDiscovery(s, &lastAutoDiscover)
 
 		// Firmware first (may take minutes) — do not bury under chipmap/live.
 		if ProcessPendingFirmwareFlash(s) {
@@ -107,6 +120,9 @@ func Run(s Settings) error {
 			}
 			if ProcessPendingWrite(s) || ProcessPendingRead(s) {
 				// write/read mid-wait: refresh live next outer iteration soon
+				break
+			}
+			if ProcessPendingScan(s) {
 				break
 			}
 			if ProcessPendingFirmwareFlash(s) || ProcessPendingExportLog(s) {
