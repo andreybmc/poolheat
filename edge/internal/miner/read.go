@@ -139,6 +139,20 @@ func executeRead(s Settings, req ReadRequest) ReadResult {
 		res.Error = "empty response"
 		return res
 	}
+	// Surface STATUS=E / Code errors so UI does not treat empty payload as success.
+	if st, _ := resp["STATUS"].(string); strings.EqualFold(st, "E") || strings.EqualFold(st, "F") {
+		msg := fmt.Sprint(resp["Msg"])
+		if msg == "" || msg == "<nil>" {
+			msg = fmt.Sprint(resp["Description"])
+		}
+		if msg == "" || msg == "<nil>" {
+			msg = fmt.Sprintf("miner STATUS=%s", st)
+		}
+		res.Error = msg
+		res.Response = resp
+		res.Transport = "v2"
+		return res
+	}
 	res.OK = true
 	res.Response = resp
 	res.Transport = "v2"
