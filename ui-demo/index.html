@@ -8339,7 +8339,7 @@
               <span data-i18n="mp.auto_scan">Auto-scan on interval</span>
             </label>
             <label class="field"><span data-i18n="mp.ranges">Scan ranges (CIDR / start-end / IP, one per line)</span>
-              <textarea id="mp-disc-ranges" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem" placeholder="192.168.10.0/24&#10;192.168.1.1-192.168.1.50"></textarea>
+              <textarea id="mp-disc-ranges" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem" placeholder="192.168.1.0/24&#10;192.168.1.1-192.168.1.50&#10;(empty = auto LAN of active miner)"></textarea>
             </label>
             <div class="row" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:12px">
               <label class="field"><span data-i18n="mp.interval">Interval, sec</span>
@@ -22485,6 +22485,8 @@
     });
     document.getElementById("btn-mp-scan")?.addEventListener("click", async () => {
       const st = document.getElementById("mp-disc-status");
+      const btn = document.getElementById("btn-mp-scan");
+      if (btn) btn.disabled = true;
       try {
         // save ranges first so poller has them
         await saveMinerPollerCfgPartial();
@@ -22496,26 +22498,77 @@
           body: JSON.stringify({ ranges: cfg.discovery.ranges }),
         });
         const body = await res.json();
-        if (!body.ok) throw new Error(body.error || "scan fail");
-        toastSuccess("Scan started");
-        // poll status a few times
-        for (let i = 0; i < 40; i++) {
+        if (!res.ok || body.ok === false)
+          throw new Error(body.error || "scan fail");
+        const scanId = body.id || "";
+        const usedRanges = body.ranges || cfg.discovery.ranges || [];
+        toastSuccess(
+          "Scan started" +
+            (usedRanges.length ? " · " + usedRanges.join(", ") : "")
+        );
+        if (st) {
+          st.textContent =
+            "scanning" +
+            (usedRanges.length ? " · " + usedRanges.join(", ") : "") +
+            "…";
+        }
+        // Wait until THIS scan finishes (match id). /24 can take 10–40s.
+        let lastFound = null;
+        let sawRunning = false;
+        const maxIter = 120; // ~60s
+        for (let i = 0; i < maxIter; i++) {
           await new Promise((r) => setTimeout(r, 500));
           const sres = await fetch("/api/miner/scan", { cache: "no-store" });
           const sj = await sres.json();
-          const running = sj.status && sj.status.running;
+          const status = sj.status || {};
+          const result = sj.last_result || {};
+          const running = !!status.running;
+          if (running) sawRunning = true;
+          const sameId =
+            !scanId ||
+            status.id === scanId ||
+            result.id === scanId;
+          if (result.id === scanId && result.ok != null) {
+            lastFound = result.found;
+          }
           if (st) {
             st.textContent = running
-              ? "scanning…"
-              : "done · found " +
-                (sj.last_result?.found ?? sj.discovered?.found ?? "—");
+              ? "scanning… " +
+                (status.phase || "") +
+                (result.probed != null ? " probed " + result.probed : "")
+              : sameId && result.id === scanId
+                ? "done · found " +
+                  (result.found ?? sj.discovered?.found ?? "—") +
+                  (result.probed != null ? " · probed " + result.probed : "") +
+                  (result.error ? " · " + result.error : "")
+                : sawRunning
+                  ? "finishing…"
+                  : "waiting for poller…";
           }
-          if (!running && i > 1) break;
+          // finished: not running AND we have a result for this id
+          if (!running && result.id === scanId) break;
+          // finished without id match but we saw running flip true→false
+          if (!running && sawRunning && i > 2) break;
         }
         await refreshDiscoveredTable();
+        if (st && lastFound == null) {
+          // one more status read for final line
+          try {
+            const sres = await fetch("/api/miner/scan", { cache: "no-store" });
+            const sj = await sres.json();
+            const result = sj.last_result || {};
+            st.textContent =
+              "done · found " +
+              (result.found ?? sj.discovered?.found ?? "—") +
+              (result.probed != null ? " · probed " + result.probed : "") +
+              (result.error ? " · err: " + result.error : "");
+          } catch (_) { /* ignore */ }
+        }
       } catch (e) {
         if (st) st.textContent = "error: " + e.message;
         toastError(e.message);
+      } finally {
+        if (btn) btn.disabled = false;
       }
     });
     document.getElementById("btn-mp-disc-refresh")?.addEventListener("click", () => {

@@ -64,8 +64,14 @@ func ProcessPendingScan(s Settings) bool {
 	if len(ranges) == 0 {
 		ranges = cfg.Discovery.Ranges
 	}
+	if len(ranges) == 0 {
+		// last resort: LAN of the currently polled miner
+		ranges = defaultRangeFromHost(s.Host)
+	}
 	writeScanStatus(s.DataDir, map[string]any{
-		"running": true, "id": req.ID, "phase": "scanning", "ts": time.Now().Format(time.RFC3339),
+		"running": true, "id": req.ID, "phase": "scanning",
+		"ranges": ranges,
+		"ts":     time.Now().Format(time.RFC3339),
 	})
 	res := runDiscovery(s.DataDir, cfg, ranges, s.Password)
 	res.ID = req.ID
@@ -87,7 +93,14 @@ func ProcessPendingScan(s Settings) bool {
 // MaybeAutoDiscovery runs scheduled discovery when enabled and interval elapsed.
 func MaybeAutoDiscovery(s Settings, last *time.Time) {
 	cfg := LoadPollerConfig(s.DataDir)
-	if !cfg.Discovery.Enabled || len(cfg.Discovery.Ranges) == 0 {
+	if !cfg.Discovery.Enabled {
+		return
+	}
+	ranges := cfg.Discovery.Ranges
+	if len(ranges) == 0 {
+		ranges = defaultRangeFromHost(s.Host)
+	}
+	if len(ranges) == 0 {
 		return
 	}
 	iv := time.Duration(cfg.Discovery.IntervalSec) * time.Second
@@ -97,13 +110,34 @@ func MaybeAutoDiscovery(s Settings, last *time.Time) {
 	if last != nil && !last.IsZero() && time.Since(*last) < iv {
 		return
 	}
-	log.Printf("[miner-poller] auto-discovery start ranges=%v", cfg.Discovery.Ranges)
-	res := runDiscovery(s.DataDir, cfg, cfg.Discovery.Ranges, s.Password)
+	log.Printf("[miner-poller] auto-discovery start ranges=%v", ranges)
+	res := runDiscovery(s.DataDir, cfg, ranges, s.Password)
 	if last != nil {
 		*last = time.Now()
 	}
 	log.Printf("[miner-poller] auto-discovery done probed=%d found=%d ms=%d err=%v",
 		res.Probed, res.Found, res.ScanMS, res.Error)
+}
+
+// defaultRangeFromHost builds x.y.z.0/24 from an IPv4 miner host.
+func defaultRangeFromHost(host string) []string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return nil
+	}
+	// strip :port
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return nil
+	}
+	v4 := ip.To4()
+	if v4 == nil {
+		return nil
+	}
+	return []string{fmt.Sprintf("%d.%d.%d.0/24", v4[0], v4[1], v4[2])}
 }
 
 func writeScanStatus(dataDir string, v map[string]any) {
@@ -168,6 +202,12 @@ func runDiscovery(dataDir string, cfg PollerConfigFile, ranges []string, default
 		wg   sync.WaitGroup
 		sem  = make(chan struct{}, conc)
 	)
+	ports := cfg.Discovery.Ports
+	if len(ports) == 0 {
+		ports = []int{4028, 80, 4433}
+	}
+	log.Printf("[miner-poller] discovery probing hosts=%d conc=%d timeout=%s ports=%v ranges=%v",
+		len(hosts), conc, timeout, ports, ranges)
 	for _, ip := range hosts {
 		ip := ip
 		wg.Add(1)
@@ -175,7 +215,7 @@ func runDiscovery(dataDir string, cfg PollerConfigFile, ranges []string, default
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if m, ok := probeHost(ip, timeout, passwords); ok {
+			if m, ok := probeHost(ip, timeout, passwords, ports); ok {
 				mu.Lock()
 				hits = append(hits, m)
 				mu.Unlock()
@@ -276,17 +316,48 @@ func ipLess(a, b string) bool {
 }
 
 // probeHost tries Whatsminer then Antminer fingerprints.
-func probeHost(ip string, timeout time.Duration, passwords []string) (DiscoveredMiner, bool) {
+// ports — from discovery config (default 4028, 80, 4433).
+func probeHost(ip string, timeout time.Duration, passwords []string, ports []int) (DiscoveredMiner, bool) {
 	t0 := time.Now()
-	// 1) Whatsminer classic API :4028 (wm-lib V2)
-	if m, ok := probeWhatsminer(ip, 4028, timeout, passwords); ok {
-		m.RTTMs = int(time.Since(t0).Milliseconds())
-		return m, true
+	if len(ports) == 0 {
+		ports = []int{4028, 80, 4433}
 	}
-	// 2) Antminer HTTP :80
-	if m, ok := probeAntminerHTTP(ip, 80, timeout); ok {
-		m.RTTMs = int(time.Since(t0).Milliseconds())
-		return m, true
+	seenPort := map[int]bool{}
+	for _, port := range ports {
+		if port < 1 || port > 65535 || seenPort[port] {
+			continue
+		}
+		seenPort[port] = true
+		switch {
+		case port == 4028 || port == 4029:
+			if m, ok := probeWhatsminer(ip, port, timeout, passwords); ok {
+				m.RTTMs = int(time.Since(t0).Milliseconds())
+				return m, true
+			}
+		case port == 4433:
+			if m, ok := probeWhatsminerV3(ip, timeout); ok {
+				m.RTTMs = int(time.Since(t0).Milliseconds())
+				return m, true
+			}
+		case port == 80 || port == 8080 || port == 443:
+			if m, ok := probeAntminerHTTP(ip, port, timeout); ok {
+				m.RTTMs = int(time.Since(t0).Milliseconds())
+				return m, true
+			}
+		default:
+			// unknown port: try Whatsminer V2 first, then HTTP
+			if m, ok := probeWhatsminer(ip, port, timeout, passwords); ok {
+				m.RTTMs = int(time.Since(t0).Milliseconds())
+				return m, true
+			}
+		}
+	}
+	// Always try classic Whatsminer :4028 even if ports list omitted it
+	if !seenPort[4028] {
+		if m, ok := probeWhatsminer(ip, 4028, timeout, passwords); ok {
+			m.RTTMs = int(time.Since(t0).Milliseconds())
+			return m, true
+		}
 	}
 	return DiscoveredMiner{}, false
 }
@@ -300,8 +371,7 @@ func probeWhatsminer(ip string, port int, timeout time.Duration, passwords []str
 	}
 	_ = c0.Close()
 
-	// Use wm-lib V2 (encrypted JSON) — raw {"cmd":...} is ignored on modern FW.
-	// Only meaningful on classic ASIC API port (4028); 4433 is V3 binary framing.
+	// Use wm-lib V2 — classic ASIC API port (4028); 4433 is V3 binary framing.
 	if port != 4028 && port != 4029 {
 		return DiscoveredMiner{}, false
 	}
@@ -312,39 +382,97 @@ func probeWhatsminer(ip string, port int, timeout time.Duration, passwords []str
 	if to > 3*time.Second {
 		to = 3 * time.Second
 	}
-	pw := "admin"
-	if len(passwords) > 0 && strings.TrimSpace(passwords[0]) != "" {
-		pw = passwords[0]
+	pws := passwords
+	if len(pws) == 0 {
+		pws = []string{"admin"}
 	}
-	cl := api.NewV2(ip)
-	cl.Port = port
-	cl.Password = pw
-	cl.Timeout = to
-	resp, err := cl.Read("get_version", nil)
-	if err != nil || resp == nil {
+	// get_version is plaintext read — password only needed for write, but try
+	// a couple of candidates in case FW quirks / future auth on reads.
+	for _, pw := range pws {
+		pw = strings.TrimSpace(pw)
+		if pw == "" {
+			continue
+		}
+		cl := api.NewV2(ip)
+		cl.Port = port
+		cl.Password = pw
+		cl.Timeout = to
+		resp, err := cl.Read("get_version", nil)
+		if err != nil || resp == nil {
+			// fallback: summary is always present on live miners
+			resp, err = cl.Read("summary", nil)
+		}
+		if err != nil || resp == nil {
+			continue
+		}
+		// Any Whatsminer-shaped JSON (STATUS / Msg / Code / When) counts
+		if resp["STATUS"] == nil && resp["Msg"] == nil && resp["Code"] == nil && resp["When"] == nil {
+			continue
+		}
+		m := DiscoveredMiner{
+			IP:     ip,
+			Vendor: "whatsminer",
+			Port:   port,
+			Status: "online",
+		}
+		if msg, ok := resp["Msg"].(map[string]any); ok {
+			m.MinerType = strAny(msg["miner_type"])
+			m.FW = strAny(msg["fw_ver"])
+			m.Platform = strAny(msg["platform"])
+		}
+		// optional MAC
+		if info, err2 := cl.Read("get_miner_info", nil); err2 == nil && info != nil {
+			if msg, ok := info["Msg"].(map[string]any); ok {
+				m.MAC = strAny(msg["mac"])
+			}
+		}
+		return m, true
+	}
+	return DiscoveredMiner{}, false
+}
+
+// probeWhatsminerV3 — API v3 TCP :4433 get.device.info (no auth).
+func probeWhatsminerV3(ip string, timeout time.Duration) (DiscoveredMiner, bool) {
+	addr := net.JoinHostPort(ip, "4433")
+	c0, err := net.DialTimeout("tcp", addr, timeout)
+	if err != nil {
 		return DiscoveredMiner{}, false
 	}
-	// STATUS S/E still means Whatsminer stack answered
-	st, _ := resp["STATUS"].(string)
-	if st == "" && resp["Msg"] == nil && resp["Code"] == nil {
+	_ = c0.Close()
+	to := timeout
+	if to < 800*time.Millisecond {
+		to = 800 * time.Millisecond
+	}
+	if to > 3*time.Second {
+		to = 3 * time.Second
+	}
+	v3 := api.NewV3(ip)
+	v3.Timeout = to
+	msg, err := v3.DeviceInfoMsg("miner")
+	if err != nil || msg == nil {
+		msg, err = v3.DeviceInfoMsg(nil)
+	}
+	if err != nil || msg == nil {
 		return DiscoveredMiner{}, false
 	}
 	m := DiscoveredMiner{
 		IP:     ip,
 		Vendor: "whatsminer",
-		Port:   port,
+		Port:   4433,
 		Status: "online",
 	}
-	if msg, ok := resp["Msg"].(map[string]any); ok {
-		m.MinerType = strAny(msg["miner_type"])
-		m.FW = strAny(msg["fw_ver"])
-		m.Platform = strAny(msg["platform"])
-	}
-	// optional MAC
-	if info, err2 := cl.Read("get_miner_info", nil); err2 == nil && info != nil {
-		if msg, ok := info["Msg"].(map[string]any); ok {
-			m.MAC = strAny(msg["mac"])
+	if miner, ok := msg["miner"].(map[string]any); ok {
+		m.MinerType = strAny(miner["type"])
+		if m.MinerType == "" {
+			m.MinerType = strAny(miner["miner-type"])
 		}
+	}
+	if netw, ok := msg["network"].(map[string]any); ok {
+		m.MAC = strAny(netw["mac"])
+	}
+	if sys, ok := msg["system"].(map[string]any); ok {
+		m.FW = strAny(sys["fwversion"])
+		m.Platform = strAny(sys["platform"])
 	}
 	return m, true
 }

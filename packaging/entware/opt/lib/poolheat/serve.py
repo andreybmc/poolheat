@@ -9509,22 +9509,73 @@ def ignore_discovered(ip: str, ignored: bool = True) -> dict:
     return get_miners_discovered()
 
 
+def _default_discovery_ranges() -> list[str]:
+    """
+    When UI/config has no ranges, probe the LAN of the active miner host
+    (…x.0/24). Avoids empty scan that always fails with “no ranges”.
+    """
+    host = str(HOST_MINER or "").strip()
+    if not host:
+        return []
+    # strip brackets / port if any
+    if host.startswith("["):
+        host = host.split("]", 1)[0].lstrip("[")
+    if ":" in host and host.count(":") == 1:
+        # host:port
+        host = host.split(":", 1)[0]
+    parts = host.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        return [f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"]
+    return []
+
+
 def start_miner_scan(ranges: list[str] | None = None) -> dict:
     if not miner_poller_process_alive():
         raise RuntimeError("miner-poller not running — scan only via poller")
+    rng = [str(x).strip() for x in (ranges or []) if str(x).strip()]
+    if not rng:
+        # fall back to saved discovery ranges, then active-miner /24
+        try:
+            cfg = get_miner_poller_cfg()
+            d = (cfg or {}).get("discovery") or {}
+            saved = d.get("ranges") if isinstance(d.get("ranges"), list) else []
+            rng = [str(x).strip() for x in saved if str(x).strip()]
+        except Exception:
+            rng = []
+    if not rng:
+        rng = _default_discovery_ranges()
+    if not rng:
+        raise ValueError(
+            "no scan ranges — set CIDR/range in Settings → Miner-poller "
+            "(e.g. 192.168.1.0/24) or configure miner_host"
+        )
     req_id = uuid.uuid4().hex
     req = {
         "id": req_id,
         "ts": time.time(),
-        "ranges": list(ranges) if ranges else [],
+        "ranges": rng,
     }
     try:
         if MINER_SCAN_RESULT_FILE.is_file():
             MINER_SCAN_RESULT_FILE.unlink()
     except Exception:
         pass
+    # Mark queued immediately so UI does not treat stale idle status as "done"
+    try:
+        _save_json_atomic(
+            MINER_SCAN_STATUS_FILE,
+            {
+                "running": True,
+                "id": req_id,
+                "phase": "queued",
+                "ranges": rng,
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+    except Exception:
+        pass
     _save_json_atomic(MINER_SCAN_REQ_FILE, req)
-    return {"ok": True, "id": req_id, "queued": True}
+    return {"ok": True, "id": req_id, "queued": True, "ranges": rng}
 
 
 def miner_scan_status() -> dict:
