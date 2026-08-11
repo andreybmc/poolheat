@@ -148,6 +148,9 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		return executeRestartMining(s, req, pw)
 	case "factory_reset", "factory", "restore_factory", "reset_factory":
 		return executeFactoryReset(s, req, pw)
+	case "set_customer_sn", "customer_sn", "set_customersn", "customersn",
+		"set_customer_msg", "customer_msg":
+		return executeSetCustomerSN(s, req, pw, params)
 	}
 
 	// Longer timeout for privileged cmds that may stall the API briefly.
@@ -251,6 +254,115 @@ func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
 		res.Error = msg
 		if res.Error == "" {
 			res.Error = "reboot rejected"
+		}
+	}
+	return res
+}
+
+// executeSetCustomerSN writes CustomerSn on ASIC (EEPROM custom data).
+// Preferred: NetPacket :8889 cmd 30 (WhatsMinerTool path).
+// Fallback: V2 set_customer_msg key=CustomerSn.
+// Empty sn erases CustomerSn (same as WMT erase-sn).
+func executeSetCustomerSN(s Settings, req WriteRequest, password string, params map[string]any) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
+
+	sn := strings.TrimSpace(fmt.Sprint(firstNonEmpty(
+		params["sn"], params["val"], params["value"], params["customer_sn"],
+		params["CustomerSn"], params["customersn"], req.Value,
+	)))
+	// allow empty to clear
+	if sn == "<nil>" {
+		sn = ""
+	}
+	// sanitize length (WMT / EEPROM practical limit)
+	if len(sn) > 64 {
+		sn = sn[:64]
+	}
+
+	var npLastErr error
+	if protocol.ProbePort(s.Host, protocol.DefaultPort, 2*time.Second) {
+		type cred struct{ acc, pw string }
+		tryCreds := []cred{
+			{"super", "super"},
+			{"admin", password},
+			{"super", password},
+			{"admin", "admin"},
+		}
+		seen := map[string]bool{}
+		for _, cr := range tryCreds {
+			cr.acc = strings.TrimSpace(cr.acc)
+			cr.pw = strings.TrimSpace(cr.pw)
+			if cr.acc == "" || cr.pw == "" {
+				continue
+			}
+			key := cr.acc + "\x00" + cr.pw
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			np := protocol.NewClient(s.Host)
+			np.Account = cr.acc
+			np.Password = cr.pw
+			np.Timeout = 15 * time.Second
+			resp, err := np.SetCustomerSN(sn)
+			if err != nil {
+				npLastErr = err
+				if isAuthOrPwdErr(err) {
+					log.Printf("[miner-poller] customer_sn auth %s: %v", cr.acc, err)
+					continue
+				}
+				log.Printf("[miner-poller] customer_sn netpacket %s: %v", cr.acc, err)
+				continue
+			}
+			if resp != nil && resp.OK {
+				msg := "CustomerSn set"
+				if sn == "" {
+					msg = "CustomerSn cleared"
+				}
+				res.OK = true
+				res.Transport = "netpacket"
+				res.Response = map[string]any{
+					"STATUS": "S", "Msg": msg, "transport": "netpacket",
+					"account": cr.acc, "cmd": 30, "customer_sn": sn,
+				}
+				return res
+			}
+			if resp != nil {
+				npLastErr = fmt.Errorf("status=%s", resp.StatusText)
+				log.Printf("[miner-poller] customer_sn netpacket %s status=%s", cr.acc, resp.StatusText)
+			}
+		}
+	}
+
+	// V2 fallback: set_customer_msg key=CustomerSn val=...
+	c := api.NewV2(s.Host)
+	c.Port = s.Port
+	c.Password = password
+	c.Timeout = 15 * time.Second
+	resp, err := c.Write("set_customer_msg", map[string]any{
+		"key": "CustomerSn",
+		"val": sn,
+	})
+	if err != nil {
+		if npLastErr != nil {
+			res.Error = fmt.Sprintf("netpacket: %v; v2: %v", npLastErr, err)
+		} else {
+			res.Error = err.Error()
+		}
+		return res
+	}
+	res.Response = resp
+	res.Transport = "v2"
+	ok, msg := minerWriteOK(resp)
+	res.OK = ok
+	if !ok {
+		if msg != "" {
+			res.Error = msg
+		} else if npLastErr != nil {
+			res.Error = fmt.Sprintf("v2 rejected; netpacket: %v", npLastErr)
+		} else {
+			res.Error = "set CustomerSn rejected"
 		}
 	}
 	return res

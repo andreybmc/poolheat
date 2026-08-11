@@ -132,6 +132,10 @@ func executeRead(s Settings, req ReadRequest) ReadResult {
 	case "get.device.info", "device_info", "v3_device_info", "get_device_info":
 		// API v3 TCP :4433 — PCB SN / detect-hash-rate / liquid identity
 		return executeV3DeviceInfo(s, req)
+	case "get.device.custom_data", "device_custom_data", "get_device_custom_data",
+		"custom_data", "get_customer_sn", "customer_sn", "get_customer_msg":
+		// CustomerSn (EEPROM custom_data) — V3 preferred, V2 get_customer_msg fallback
+		return executeCustomerSNRead(s, req, pw)
 	}
 
 	resp, err := c.Read(cname, params)
@@ -196,4 +200,126 @@ func executeV3DeviceInfo(s Settings, req ReadRequest) ReadResult {
 	}
 	res.Transport = "v3"
 	return res
+}
+
+// executeCustomerSNRead fetches CustomerSn via V3 get.device.custom_data,
+// falling back to V2 get_customer_msg (token may be required on some FW).
+func executeCustomerSNRead(s Settings, req ReadRequest, password string) ReadResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := ReadResult{ID: req.ID, TS: now, Transport: "v3"}
+
+	// Prefer V3 get.device.custom_data (:4433)
+	v3 := api.NewV3(s.Host)
+	v3.Timeout = 10 * time.Second
+	if raw, err := v3.Get("get.device.custom_data"); err == nil && raw != nil {
+		msg := extractCustomDataMsg(raw)
+		if msg != nil {
+			sn := pickCustomerSN(msg)
+			res.OK = true
+			res.Transport = "v3"
+			res.Response = map[string]any{
+				"STATUS":      "S",
+				"Msg":         msg,
+				"Code":        0,
+				"customer_sn": sn,
+				"CustomerSn":  sn,
+			}
+			return res
+		}
+		// some FW return top-level fields without nested msg
+		if sn := pickCustomerSN(raw); sn != "" {
+			res.OK = true
+			res.Transport = "v3"
+			res.Response = map[string]any{
+				"STATUS":      "S",
+				"Msg":         raw,
+				"Code":        0,
+				"customer_sn": sn,
+				"CustomerSn":  sn,
+			}
+			return res
+		}
+	}
+
+	// V2 fallback: get_customer_msg (may need write-token)
+	c := api.NewV2(s.Host)
+	c.Port = s.Port
+	c.Password = password
+	c.Timeout = 10 * time.Second
+	resp, err := c.Write("get_customer_msg", nil)
+	if err != nil {
+		resp, err = c.Read("get_customer_msg", nil)
+	}
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if resp == nil {
+		res.Error = "empty get_customer_msg"
+		return res
+	}
+	if st, _ := resp["STATUS"].(string); strings.EqualFold(st, "E") || strings.EqualFold(st, "F") {
+		msg := fmt.Sprint(resp["Msg"])
+		if msg == "" || msg == "<nil>" {
+			msg = fmt.Sprint(resp["Description"])
+		}
+		if msg == "" || msg == "<nil>" {
+			msg = fmt.Sprintf("miner STATUS=%s", st)
+		}
+		res.Error = msg
+		res.Response = resp
+		res.Transport = "v2"
+		return res
+	}
+	// Msg may be dict with CustomerSn / msg0..msg9
+	var sn string
+	if m, ok := resp["Msg"].(map[string]any); ok {
+		sn = pickCustomerSN(m)
+	} else {
+		sn = pickCustomerSN(resp)
+	}
+	res.OK = true
+	res.Transport = "v2"
+	res.Response = resp
+	if res.Response == nil {
+		res.Response = map[string]any{}
+	}
+	res.Response["customer_sn"] = sn
+	res.Response["CustomerSn"] = sn
+	return res
+}
+
+func extractCustomDataMsg(raw map[string]any) map[string]any {
+	if raw == nil {
+		return nil
+	}
+	if m, ok := raw["msg"].(map[string]any); ok {
+		return m
+	}
+	if m, ok := raw["Msg"].(map[string]any); ok {
+		return m
+	}
+	// sometimes the whole response is the payload
+	if _, ok := raw["CustomerSn"]; ok {
+		return raw
+	}
+	if _, ok := raw["customer_sn"]; ok {
+		return raw
+	}
+	return nil
+}
+
+func pickCustomerSN(m map[string]any) string {
+	if m == nil {
+		return ""
+	}
+	for _, k := range []string{"CustomerSn", "customer_sn", "customersn", "CustomerSN", "sn"} {
+		if v, ok := m[k]; ok && v != nil {
+			s := strings.TrimSpace(fmt.Sprint(v))
+			if s != "" && s != "<nil>" {
+				return s
+			}
+		}
+	}
+	return ""
 }

@@ -10278,25 +10278,39 @@ def live_snapshot(*, max_age_sec: float | None = None, allow_direct: bool = Fals
 
 
 def miner_poller_process_alive() -> bool:
-    """True if miner-poller is live (pidfile or /proc scan)."""
+    """True if miner-poller is live (pidfile, /proc scan, or fresh live_cache)."""
     me = os.getpid()
     try:
         if MINER_POLLER_PIDFILE.is_file():
-            pid = int(MINER_POLLER_PIDFILE.read_text().strip() or "0")
+            raw = MINER_POLLER_PIDFILE.read_text(encoding="utf-8").strip()
+            # tolerate "12345\n" or "12345 extra"
+            pid_s = (raw.split() or ["0"])[0]
+            pid = int(pid_s or "0")
             if pid > 0 and pid != me and _pid_alive(pid):
                 return True
     except Exception:
         pass
     try:
-        return bool(
-            _find_pids_by_name(
-                "poolheat-miner-poller",
-                "serve.py --miner-poller",
-                "serve.py --asic-poller",
-            )
-        )
+        if _find_pids_by_name(
+            "poolheat-miner-poller",
+            "serve.py --miner-poller",
+            "serve.py --asic-poller",
+            "miner-poller",
+        ):
+            return True
     except Exception:
-        return False
+        pass
+    # Soft signal: poller writes live_cache.json every few seconds.
+    # Helps when pidfile is stale/missing but Go poller is still working
+    # (manual start, crash-loop respawn, dual poolheatd).
+    try:
+        if LIVE_CACHE_FILE.is_file():
+            age = time.time() - float(LIVE_CACHE_FILE.stat().st_mtime)
+            if age <= 45.0:
+                return True
+    except Exception:
+        pass
+    return False
 
 _state_lock = threading.Lock()
 _state: dict = {
@@ -15264,15 +15278,51 @@ def _stage_firmware_for_poller(src: Path, req_id: str) -> Path:
     return dest
 
 
+def _ensure_miner_poller_for_export() -> None:
+    """
+    Make sure miner-poller can accept export_log_req.json.
+    If process looks dead, try start once; still raise with diagnostics if no IPC.
+    """
+    if miner_poller_process_alive():
+        return
+    # best-effort respawn (serve may own edge_miner_poller role)
+    try:
+        start_miner_poller_process()
+    except Exception as e:
+        print(f"[export-log] start poller: {e}", flush=True)
+    # wait briefly for pidfile / process
+    deadline = time.time() + 8.0
+    while time.time() < deadline:
+        if miner_poller_process_alive():
+            return
+        time.sleep(0.25)
+    # diagnostics for UI
+    pid_txt = ""
+    try:
+        if MINER_POLLER_PIDFILE.is_file():
+            pid_txt = MINER_POLLER_PIDFILE.read_text(encoding="utf-8").strip()[:40]
+    except Exception:
+        pass
+    live_age = None
+    try:
+        if LIVE_CACHE_FILE.is_file():
+            live_age = round(time.time() - float(LIVE_CACHE_FILE.stat().st_mtime), 1)
+    except Exception:
+        pass
+    raise RuntimeError(
+        "miner-poller not running — export log only via poller"
+        + (f" · pidfile={pid_txt or 'missing'}")
+        + (f" · live_cache_age={live_age}s" if live_age is not None else " · no live_cache")
+        + " · restart miner-poller from Info → Processes"
+    )
+
+
 def export_miner_log(*, password: str | None = None, timeout_sec: float = 90.0) -> dict:
     """
     Ask miner-poller to pull ASIC export-log (NetPacket cmd 20).
     Result file under DATA/export_logs/.
     """
-    if not miner_poller_process_alive():
-        raise RuntimeError(
-            "miner-poller not running — export log only via poller"
-        )
+    _ensure_miner_poller_for_export()
     req_id = uuid.uuid4().hex
     pw = password if password not in (None, "") else DEFAULT_API_PASSWORD
     req = {"id": req_id, "ts": time.time(), "password": str(pw or "")}
@@ -15288,8 +15338,11 @@ def export_miner_log(*, password: str | None = None, timeout_sec: float = 90.0) 
         time.sleep(0.25)
         try:
             if not EXPORT_LOG_RESULT_FILE.is_file():
+                # do not abort immediately — poller may be mid-restart; re-check soft
                 if not miner_poller_process_alive():
-                    raise RuntimeError("miner-poller died during export-log")
+                    # allow brief gap; only fail if still dead near end of wait
+                    if time.time() + 3.0 >= deadline:
+                        raise RuntimeError("miner-poller died during export-log")
                 continue
             raw = json.loads(EXPORT_LOG_RESULT_FILE.read_text(encoding="utf-8"))
             if not isinstance(raw, dict) or str(raw.get("id") or "") != req_id:
@@ -18386,6 +18439,9 @@ def miner_write_cmd(cmd: dict, password: str) -> dict:
             "factory",
             "restore_factory",
             "reset_factory",
+            "set_customer_sn",
+            "customer_sn",
+            "set_customer_msg",
         ):
             to = max(float(MINER_WRITE_TIMEOUT_SEC), 60.0)
         return miner_write_via_poller(cmd, password, timeout_sec=to)
@@ -19299,13 +19355,70 @@ _customer_sn_ts = 0.0
 _CUSTOMER_SN_TTL_SEC = 120.0
 
 
+def _set_customer_sn_cache(sn: str | None) -> None:
+    """Update in-memory CustomerSn cache (after write or successful read)."""
+    global _customer_sn_cache, _customer_sn_ts
+    sn_n = _normalize_sn(sn) if sn not in (None, "") else None
+    _customer_sn_cache = sn_n
+    _customer_sn_ts = time.time()
+
+
 def _fetch_customer_sn(*, force: bool = False) -> str | None:
     """
-    CustomerSn — no longer queried from serve (ASIC I/O is miner-poller only).
-    Returns last cached value if any.
+    CustomerSn via miner-poller IPC (get.device.custom_data / get_customer_msg).
+    Cached briefly; force=True re-reads ASIC after set/clear.
     """
-    if not force and _customer_sn_cache is not None:
+    global _customer_sn_cache, _customer_sn_ts
+    now = time.time()
+    if (
+        not force
+        and (now - float(_customer_sn_ts or 0)) < _CUSTOMER_SN_TTL_SEC
+        and _customer_sn_cache is not None
+    ):
         return _customer_sn_cache
+    if not miner_poller_process_alive():
+        return _customer_sn_cache
+    try:
+        raw = miner_cmd({"cmd": "get.device.custom_data"}, timeout=12)
+        sn = None
+        if isinstance(raw, dict):
+            sn = _normalize_sn(
+                raw.get("customer_sn")
+                or raw.get("CustomerSn")
+            )
+            if not sn:
+                msg = raw.get("Msg") or raw.get("msg")
+                if isinstance(msg, dict):
+                    sn = _normalize_sn(
+                        msg.get("CustomerSn")
+                        or msg.get("customer_sn")
+                        or msg.get("customersn")
+                    )
+                elif isinstance(msg, str) and msg.strip():
+                    # some FW return plain string
+                    sn = _normalize_sn(msg)
+        if sn:
+            _set_customer_sn_cache(sn)
+            return sn
+        # empty but successful read → cache empty (cleared)
+        if isinstance(raw, dict) and (
+            raw.get("STATUS") in ("S", "s", None)
+            or raw.get("ok") is True
+            or "Msg" in raw
+            or "msg" in raw
+        ):
+            # distinguish missing key vs empty SN: if transport answered, store ""
+            if raw.get("customer_sn") is not None or raw.get("CustomerSn") is not None:
+                _set_customer_sn_cache("")
+                return None
+            msg = raw.get("Msg") if isinstance(raw.get("Msg"), dict) else raw.get("msg")
+            if isinstance(msg, dict) and (
+                "CustomerSn" in msg or "customer_sn" in msg or "customersn" in msg
+            ):
+                _set_customer_sn_cache("")
+                return None
+    except Exception as e:
+        print(f"[ident] get.device.custom_data: {e}", flush=True)
     return _customer_sn_cache
 
 
@@ -20884,6 +20997,102 @@ def apply_set(action: str, value, password: str) -> dict:
             out["transport"] = resp.get("transport")
         elif isinstance(out, dict):
             out["transport"] = "go-miner-poller"
+        return out
+
+    # Customer SN (EEPROM custom_data) — NetPacket cmd 30 / V2 set_customer_msg
+    if action in (
+        "customer_sn",
+        "set_customer_sn",
+        "set_customersn",
+        "customersn",
+        "set_customer_msg",
+    ):
+        sn = str(value if value is not None else "").strip()
+        if len(sn) > 64:
+            raise ValueError("CustomerSn max 64 characters")
+        # empty allowed = erase
+        resp = miner_write_cmd(
+            {
+                "cmd": "set_customer_sn",
+                "sn": sn,
+                "key": "CustomerSn",
+                "val": sn,
+            },
+            password,
+        )
+        # stamp cache immediately so UI / identity show new SN without waiting
+        try:
+            _set_customer_sn_cache(sn or None)
+        except Exception:
+            pass
+        # patch identity mem/disk so Miner Info updates even if re-collect is slow
+        try:
+            sn_n = _normalize_sn(sn) if sn else None
+            patch = {
+                "customer_sn": sn_n,
+                "display_sn": sn_n,  # may be overridden if minersn present
+                "sn_source": "customer_sn" if sn_n else None,
+            }
+            mem = _IDENT_CACHE.get("data") if isinstance(_IDENT_CACHE, dict) else None
+            if isinstance(mem, dict):
+                msn = _normalize_sn(mem.get("minersn"))
+                if msn:
+                    patch["display_sn"] = msn
+                    patch["sn_source"] = "minersn"
+                elif sn_n:
+                    patch["display_sn"] = sn_n
+                    patch["sn_source"] = "customer_sn"
+                else:
+                    patch["display_sn"] = None
+                    patch["sn_source"] = None
+                mem = dict(mem)
+                mem.update(patch)
+                _IDENT_CACHE["data"] = mem
+                _IDENT_CACHE["ts"] = time.time()
+                _save_miner_id_disk(mem)
+            else:
+                disk = _load_miner_id_disk() or {}
+                if isinstance(disk, dict):
+                    msn = _normalize_sn(disk.get("minersn"))
+                    if msn:
+                        patch["display_sn"] = msn
+                        patch["sn_source"] = "minersn"
+                    disk = dict(disk)
+                    disk.update(patch)
+                    _IDENT_CACHE["data"] = disk
+                    _IDENT_CACHE["ts"] = time.time()
+                    _save_miner_id_disk(disk)
+        except Exception as e:
+            print(f"[ident] customer_sn patch: {e}", flush=True)
+        # full re-collect in background-ish (best-effort)
+        try:
+            get_miner_identity_cached(force=True)
+        except Exception:
+            pass
+        try:
+            _policy_log(
+                "device" if sn else "info",
+                (
+                    f"CustomerSn set · {sn}"
+                    if sn
+                    else "CustomerSn cleared"
+                ),
+            )
+        except Exception:
+            pass
+        out = _record_write(
+            "customer_sn",
+            sn or "(cleared)",
+            resp if isinstance(resp, dict) else {"result": resp},
+        )
+        if isinstance(resp, dict) and resp.get("transport"):
+            out["transport"] = resp.get("transport")
+        if isinstance(out, dict):
+            out["customer_sn"] = sn or None
+            out["ok"] = True
+            if sn:
+                out["sn_source"] = "customer_sn"
+                out["display_sn"] = sn
         return out
 
     raise ValueError(f"unknown action: {action}")

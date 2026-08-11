@@ -894,6 +894,14 @@
       line-height: 1;
       display: block;
     }
+    .energy-chart-refresh.is-spinning .ico-refresh,
+    .btn.is-spinning .ico-refresh {
+      animation: poolheat-refresh-spin 0.75s linear infinite;
+      display: inline-block;
+    }
+    @keyframes poolheat-refresh-spin {
+      to { transform: rotate(360deg); }
+    }
     .card-h .btn-icon .ico-clear svg,
     .btn-row .btn-icon .ico-clear svg {
       width: 16px;
@@ -6057,7 +6065,18 @@
               <h2>Whatsminer</h2>
               <div class="sub">model · fw · serial · PSU</div>
             </div>
-            <div class="btn-row" style="gap:8px;margin-top:0">
+            <div class="btn-row" style="gap:8px;margin-top:0;align-items:center">
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-miner-info-refresh"
+                title="Refresh miner identity (model, FW, SN, PSU, boards)"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh_miner_info"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
               <button
                 class="btn danger"
                 type="button"
@@ -6091,6 +6110,25 @@
                 <label>ASIC SN</label>
                 <div class="val info-sn-val" id="info-miner-sn">—</div>
                 <div class="hint" id="info-miner-sn-src">minersn · CustomerSn</div>
+                <div class="btn-row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+                  <button
+                    class="btn"
+                    type="button"
+                    id="btn-set-customer-sn"
+                    data-i18n="btn.set_customer_sn"
+                    data-i18n-title="btn.set_customer_sn_title"
+                    title="Write CustomerSn to ASIC EEPROM (when factory minersn is empty)"
+                    style="padding:4px 10px;font-size:0.75rem"
+                  >Set Customer SN</button>
+                  <button
+                    class="btn"
+                    type="button"
+                    id="btn-clear-customer-sn"
+                    data-i18n="btn.clear_customer_sn"
+                    title="Clear CustomerSn on ASIC"
+                    style="padding:4px 10px;font-size:0.75rem"
+                  >Clear</button>
+                </div>
               </div>
               <div class="metric">
                 <label>PSU SN</label>
@@ -6186,11 +6224,34 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2>Hashboards · PCB SN · Tagged</h2>
-              <div class="sub">PCB SN and Tagged Hashrate from EEPROM — available in Suspend too</div>
+              <h2 data-i18n="h2.boards_pcb">Hashboards · PCB SN · Tagged</h2>
+              <div class="sub" data-i18n="sub.boards_pcb">
+                PCB SN + Tagged from EEPROM (v3 get.device.info) · chips from V2 devs · available in Suspend
+              </div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-boards-info-refresh"
+                title="Refresh hashboards / PCB SN / tagged"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh_miner_info"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
             </div>
           </div>
           <div class="card-b" style="padding-top:8px">
+            <p
+              id="info-boards-source-hint"
+              style="font-size:0.72rem;color:var(--dim);margin:0 0 8px;line-height:1.45"
+              data-i18n="hint.boards_sources"
+            >
+              Slot · PCB SN · Tagged Hashrate · Chip Data ← API v3 get.device.info (EEPROM: pcbsnN, detect-hash-rate, chipdataN).
+              t°C · chips ← API v2 devs (Temperature, Effective Chips). In Suspend only v3 fields are filled.
+            </p>
             <div style="overflow:auto">
               <table class="err-table" id="info-boards-table">
                 <thead>
@@ -6200,7 +6261,7 @@
                     <th>Tagged Hashrate</th>
                     <th>Chip Data</th>
                     <th>t°C</th>
-                    <th>chips</th>
+                    <th title="Effective Chips from V2 devs">chips</th>
                   </tr>
                 </thead>
                 <tbody id="info-boards-body">
@@ -9261,6 +9322,17 @@
         "mp.vendor": "Vendor",
         "mp.type": "Type",
         "mp.add_manual": "Add by IP",
+        "btn.set_customer_sn": "Set Customer SN",
+        "btn.set_customer_sn_title": "Write CustomerSn to ASIC EEPROM (when factory minersn is empty)",
+        "btn.clear_customer_sn": "Clear",
+        "btn.refresh_miner_info": "Refresh miner identity (model, FW, SN, PSU, boards)",
+        "toast.miner_info_refreshed": "Miner info updated",
+        "toast.miner_info_refresh_fail": "Miner info refresh failed",
+        "h2.boards_pcb": "Hashboards · PCB SN · Tagged",
+        "sub.boards_pcb": "PCB SN + Tagged from EEPROM (v3 get.device.info) · chips from V2 devs · available in Suspend",
+        "hint.boards_sources": "Slot · PCB SN · Tagged Hashrate · Chip Data ← API v3 get.device.info (EEPROM: pcbsnN, detect-hash-rate, chipdataN). t°C · chips ← API v2 devs (Temperature, Effective Chips). In Suspend only v3 fields are filled.",
+        "prompt.customer_sn": "Customer SN for ASIC (EEPROM).\nShown when factory minersn is empty.\nLeave empty to cancel.",
+        "confirm.clear_customer_sn": "Clear CustomerSn on ASIC?\n\nDisplay SN will be empty if factory minersn is not set.",
         "h2.sensors": "Sensors",
         "h2.devices": "Devices",
         "sub.sensors_card": "Create user sensors (e.g. outdoor, pool_water). Sources are tried by priority — first with data wins. Virtual rules.",
@@ -10105,6 +10177,17 @@
         "mp.vendor": "Вендор",
         "mp.type": "Тип",
         "mp.add_manual": "Добавить IP",
+        "btn.set_customer_sn": "Задать Customer SN",
+        "btn.set_customer_sn_title": "Записать CustomerSn в EEPROM ASIC (если factory minersn пуст)",
+        "btn.clear_customer_sn": "Очистить",
+        "btn.refresh_miner_info": "Обновить данные ASIC (модель, FW, SN, PSU, платы)",
+        "toast.miner_info_refreshed": "Инфо майнера обновлено",
+        "toast.miner_info_refresh_fail": "Не удалось обновить инфо майнера",
+        "h2.boards_pcb": "Hashboards · PCB SN · Tagged",
+        "sub.boards_pcb": "PCB SN + Tagged из EEPROM (v3 get.device.info) · chips из V2 devs · доступно в Suspend",
+        "hint.boards_sources": "Slot · PCB SN · Tagged Hashrate · Chip Data ← API v3 get.device.info (EEPROM: pcbsnN, detect-hash-rate, chipdataN). t°C · chips ← API v2 devs (Temperature, Effective Chips). В Suspend заполняются только поля v3.",
+        "prompt.customer_sn": "Customer SN для ASIC (EEPROM).\nПоказывается, если factory minersn пуст.\nПусто = отмена.",
+        "confirm.clear_customer_sn": "Очистить CustomerSn на ASIC?\n\nSN в UI будет пустым, если factory minersn не задан.",
         "h2.sensors": "Датчики",
         "h2.devices": "Устройства",
         "sub.sensors_card": "Создавайте пользовательские датчики (например outdoor, pool_water). Источники опрашиваются по приоритету — побеждает первый с данными. Виртуальные правила.",
@@ -23088,6 +23171,108 @@
       });
     });
 
+    async function runSetCustomerSn(clear) {
+      const cur =
+        (document.getElementById("info-miner-sn")?.textContent || "").trim();
+      let sn = "";
+      if (!clear) {
+        const promptMsg =
+          typeof t === "function"
+            ? t(
+                "prompt.customer_sn",
+                "Customer SN for ASIC (EEPROM).\nShown when factory minersn is empty.\nLeave empty to cancel."
+              )
+            : "Customer SN for ASIC (EEPROM).\nShown when factory minersn is empty.\nLeave empty to cancel.";
+        const def =
+          cur && cur !== "—" && cur.toLowerCase() !== "not set" ? cur : "";
+        const entered = prompt(promptMsg, def);
+        if (entered === null) {
+          toastWarn("Customer SN cancelled");
+          return;
+        }
+        sn = String(entered).trim();
+        if (!sn) {
+          toastWarn("Customer SN cancelled");
+          return;
+        }
+        if (sn.length > 64) {
+          toastError("Customer SN max 64 characters");
+          return;
+        }
+      } else {
+        if (
+          !confirm(
+            typeof t === "function"
+              ? t(
+                  "confirm.clear_customer_sn",
+                  "Clear CustomerSn on ASIC?\n\nDisplay SN will be empty if factory minersn is not set."
+                )
+              : "Clear CustomerSn on ASIC?\n\nDisplay SN will be empty if factory minersn is not set."
+          )
+        ) {
+          return;
+        }
+        sn = "";
+      }
+      const buttons = [
+        document.getElementById("btn-set-customer-sn"),
+        document.getElementById("btn-clear-customer-sn"),
+      ].filter(Boolean);
+      buttons.forEach((b) => {
+        b.disabled = true;
+      });
+      try {
+        const pwEl = document.getElementById("settings-api-password");
+        const password = pwEl && pwEl.value ? pwEl.value : undefined;
+        const payload = { action: "customer_sn", value: sn };
+        if (password) payload.password = password;
+        const res = await fetch("/api/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        let body = null;
+        try {
+          body = await res.json();
+        } catch (_) {
+          body = null;
+        }
+        if (!res.ok || (body && body.ok === false)) {
+          throw new Error(
+            (body && body.error) || "HTTP " + res.status + " (write failed?)"
+          );
+        }
+        toastSuccess(
+          sn
+            ? "CustomerSn set · " + sn
+            : "CustomerSn cleared on ASIC"
+        );
+        appendActionLog(
+          "ok",
+          sn ? "CustomerSn set · " + sn : "CustomerSn cleared"
+        );
+        if (typeof loadSystemInfo === "function") {
+          setTimeout(() => void loadSystemInfo({ forceLive: true }), 600);
+        }
+      } catch (e) {
+        toastError("Customer SN: " + e.message, 7000);
+        appendActionLog("err", "CustomerSn fail: " + e.message);
+      } finally {
+        buttons.forEach((b) => {
+          b.disabled = false;
+        });
+      }
+    }
+
+    document.getElementById("btn-set-customer-sn")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void runSetCustomerSn(false);
+    });
+    document.getElementById("btn-clear-customer-sn")?.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      void runSetCustomerSn(true);
+    });
+
     document.getElementById("btn-restart-miner")?.addEventListener("click", async () => {
       const btn = document.getElementById("btn-restart-miner");
       if (
@@ -24608,6 +24793,13 @@
     async function loadSystemInfo(opts) {
       opts = opts || {};
       const forceLive = opts.forceLive !== false;
+      const toastOk = opts.toastOk === true;
+      const toastFail = opts.toastFail === true;
+      const spinBtns = Array.isArray(opts.spinBtns) ? opts.spinBtns.filter(Boolean) : [];
+      spinBtns.forEach((b) => {
+        b.disabled = true;
+        b.classList.add("is-spinning");
+      });
 
       // 1) instant paint from localStorage
       const hadLocal = paintInfoFromLocalCache();
@@ -24625,11 +24817,17 @@
         }
       } catch (_) { /* ignore */ }
 
-      if (!forceLive) return;
+      if (!forceLive) {
+        spinBtns.forEach((b) => {
+          b.disabled = false;
+          b.classList.remove("is-spinning");
+        });
+        return;
+      }
 
-      // 3) live refresh → rewrite cache
+      // 3) live refresh → rewrite cache (force=1 clears identity TTL on server)
       try {
-        const res = await fetch("/api/system/info", { cache: "no-store" });
+        const res = await fetch("/api/system/info?force=1", { cache: "no-store" });
         const body = await res.json();
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || ("HTTP " + res.status));
@@ -24637,11 +24835,49 @@
         applySystemInfoToUI(body, { fromCache: false });
         saveFullInfoCache(body);
         headerIdentityLoaded = true;
+        if (toastOk && typeof toastSuccess === "function") {
+          toastSuccess(
+            typeof t === "function"
+              ? t("toast.miner_info_refreshed", "Miner info updated")
+              : "Miner info updated"
+          );
+        }
       } catch (e) {
-        // keep cached paint; toast only if no cache at all
-        if (!hadLocal) toastError("Info: " + e.message);
+        // keep cached paint; toast only if no cache at all or explicit
+        if (toastFail || !hadLocal) {
+          if (typeof toastError === "function") {
+            toastError(
+              (typeof t === "function"
+                ? t("toast.miner_info_refresh_fail", "Miner info refresh failed")
+                : "Miner info refresh failed") +
+                ": " +
+                (e.message || e)
+            );
+          }
+        }
+      } finally {
+        spinBtns.forEach((b) => {
+          b.disabled = false;
+          b.classList.remove("is-spinning");
+        });
       }
     }
+
+    function refreshMinerInfoFromUi(ev) {
+      if (ev) ev.preventDefault();
+      const btns = [
+        document.getElementById("btn-miner-info-refresh"),
+        document.getElementById("btn-boards-info-refresh"),
+      ].filter(Boolean);
+      void loadSystemInfo({ forceLive: true, toastOk: true, toastFail: true, spinBtns: btns });
+    }
+    document
+      .getElementById("btn-miner-info-refresh")
+      ?.addEventListener("click", refreshMinerInfoFromUi);
+    document
+      .getElementById("btn-boards-info-refresh")
+      ?.addEventListener("click", refreshMinerInfoFromUi);
+
     document.getElementById("btn-info-refresh")?.addEventListener("click", () => {
       void loadSystemInfo({ forceLive: true });
       void loadAutoUpdateConfig();
