@@ -162,6 +162,16 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 		np.Account = cr.acc
 		np.Password = cr.pw
 		np.Timeout = 10 * time.Minute
+		// Allow FW upgrade when DisableUpgrade=1 (param 25=1 → allow).
+		// Best-effort; ignore errors (auth will fail next if password wrong).
+		if _, e := np.SetUpgradePolicy(true); e != nil {
+			log.Printf("[miner-poller] firmware upgrade_policy enable %s: %v", cr.acc, e)
+			// reset token so UpdateFirmware does a clean same-socket handshake
+			np = protocol.NewClient(s.Host)
+			np.Account = cr.acc
+			np.Password = cr.pw
+			np.Timeout = 10 * time.Minute
+		}
 		statusLog = nil
 		streamStarted := false
 		out, lastErr = np.UpdateFirmware(img,
