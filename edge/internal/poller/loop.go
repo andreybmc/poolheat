@@ -31,6 +31,7 @@ func Run(dataDir string) error {
 	deadlines, syncTS, _ := state.LoadDeadlines(paths.Deadlines(dataDir))
 	byID, _ := state.Load(paths.DevicesState(dataDir))
 	store := device.NewStore(byID, deadlines, syncTS)
+	store.DataDir = dataDir // policy_events.json (UI Action log) on auto-restore
 
 	log.Printf("[devices-poller] loop start (device_req IPC + hold)")
 	for {

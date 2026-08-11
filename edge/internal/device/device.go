@@ -9,6 +9,7 @@ import (
 
 	"github.com/andreybmc/poolheat/edge/internal/backend"
 	"github.com/andreybmc/poolheat/edge/internal/config"
+	"github.com/andreybmc/poolheat/edge/internal/events"
 	"github.com/andreybmc/poolheat/edge/internal/state"
 )
 
@@ -18,6 +19,8 @@ const enforceCooldownSec = 1.5
 
 // Store holds mutable runtime + deadlines for one process.
 type Store struct {
+	// DataDir is POOLHEAT_DATA — used to write policy_events.json (UI Action log).
+	DataDir   string
 	ByID      map[string]state.Runtime
 	Deadlines map[string]float64
 	SyncTS    map[string]float64
@@ -208,12 +211,18 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 	}
 	s.EnforceTS[did] = now
 	driver := backend.DriverLabel(cfg.Backend)
+	who := displayWho(cfg, driver)
+	wantS := onOff(desired)
+	wasS := onOff(reported)
 	log.Printf("[devices] enforce desired %s/%s: reported=%s → desired=%s",
-		cfg.Label(), driver, onOff(reported), onOff(desired))
+		cfg.Label(), driver, wasS, wantS)
 	// force=true: ignore cached LastOn, re-apply on wire (SmartLife/Tapo external change)
 	err := s.SetLogical(ctx, cfg, desired, "enforce_desired", true)
 	if err != nil {
 		log.Printf("[devices] enforce desired %s FAILED: %v", cfg.Label(), err)
+		s.logEnforceEvent("err",
+			fmt.Sprintf("%s: failed to restore %s: %v", who, wantS, err),
+			cfg, driver, desired, reported)
 		return err
 	}
 	// Re-check runtime after set — refuse false success (skipped/already_in_state lies).
@@ -225,10 +234,56 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 		}
 		err = fmt.Errorf("still reported=%s after set desired=%s", rep, onOff(desired))
 		log.Printf("[devices] enforce desired %s FAILED: %v", cfg.Label(), err)
+		s.logEnforceEvent("err",
+			fmt.Sprintf("%s: failed to restore %s: %v", who, wantS, err),
+			cfg, driver, desired, reported)
 		return err
 	}
-	log.Printf("[devices] enforce desired %s OK restored %s", cfg.Label(), onOff(desired))
+	log.Printf("[devices] enforce desired %s OK restored %s", cfg.Label(), wantS)
+	// UI Action log (policy_events.json) — same shape as Python _devices_event_log
+	s.logEnforceEvent("device",
+		fmt.Sprintf("%s: restored %s (was %s, external change)", who, wantS, wasS),
+		cfg, driver, desired, reported)
 	return nil
+}
+
+// logEnforceEvent writes to system Action log (policy_events.json) for UI Events.
+func (s *Store) logEnforceEvent(kind, msg string, cfg config.DeviceCfg, driver string, desired, reported bool) {
+	if s == nil || s.DataDir == "" {
+		return
+	}
+	d, r := desired, reported
+	extra := events.Event{
+		Source:     "enforce_desired",
+		DeviceID:   cfg.ID,
+		Alias:      cfg.Alias,
+		Backend:    cfg.Backend,
+		Driver:     driver,
+		DesiredOn:  &d,
+		ReportedOn: &r,
+	}
+	events.AppendDevice(s.DataDir, kind, msg, extra)
+}
+
+// displayWho matches serve.py who = "{name} ({driver})" for Action log lines.
+func displayWho(cfg config.DeviceCfg, driver string) string {
+	name := strings.TrimSpace(cfg.NameEN)
+	if name == "" {
+		name = strings.TrimSpace(cfg.Name)
+	}
+	if name == "" {
+		name = strings.TrimSpace(cfg.NameRU)
+	}
+	if name == "" {
+		name = strings.TrimSpace(cfg.Alias)
+	}
+	if name == "" {
+		name = cfg.ID
+	}
+	if driver != "" {
+		return name + " (" + driver + ")"
+	}
+	return name
 }
 
 func (s *Store) AdoptReported(did string, reported bool) {
