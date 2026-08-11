@@ -9864,9 +9864,10 @@ def hydrate_live_from_disk(*, max_age_sec: float | None = None) -> dict | None:
 
 def live_snapshot(*, max_age_sec: float | None = None, allow_direct: bool = False) -> dict:
     """
-    Live data for serve logic: always prefer live_cache.json from miner-poller.
-    Direct fetch_live (ASIC TCP) only if allow_direct and poller is down.
+    Live data for serve logic: only live_cache.json from miner-poller.
+    ``allow_direct`` is ignored (ASIC TCP is poller-only).
     """
+    _ = allow_direct  # deprecated — never open ASIC from serve
     age = float(LIVE_DISK_MAX_AGE_SEC if max_age_sec is None else max_age_sec)
     live = hydrate_live_from_disk(max_age_sec=age)
     if isinstance(live, dict) and live.get("ok"):
@@ -9874,10 +9875,6 @@ def live_snapshot(*, max_age_sec: float | None = None, allow_direct: bool = Fals
     with _cache_lock:
         if isinstance(_cache, dict) and _cache.get("ok"):
             return dict(_cache)
-    if allow_direct and not miner_poller_process_alive():
-        snap = fetch_live()
-        publish_live_snapshot(snap)
-        return snap
     raise RuntimeError("no live snapshot (miner-poller / live_cache)")
 
 
@@ -14055,7 +14052,10 @@ def _recv_json(sock: socket.socket, timeout: float = 5.0) -> dict:
 
 
 def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
-    """Send one JSON cmd to miner API. Caller must hold _miner_io_lock if needed."""
+    """
+    Direct TCP :4028 — ONLY for legacy `python serve.py --miner-poller`
+    (this process IS the poller). HTTP serve must never call this.
+    """
     payload = (json.dumps(cmd, separators=(",", ":")) + "\n").encode()
     with socket.create_connection((HOST_MINER, PORT_MINER), timeout=timeout) as sock:
         sock.sendall(payload)
@@ -14064,17 +14064,17 @@ def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
 
 def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
     """
-    Read-ish miner JSON command (pools, summary, …).
+    On-demand miner JSON read (pools, summary, …).
 
-    Preferred path: file IPC → miner-poller (remote UI cannot reach ASIC).
-    Fallback: direct TCP :4028 only when poller is not running (local debug /
-    all-in-one without Go poller). There is no synthetic "block" when poller
-    is up — we route the job to the poller instead.
+    ASIC TCP is owned exclusively by miner-poller.
+    serve/UI only enqueues miner_read_req.json — no direct :4028 fallback.
     """
-    if miner_poller_process_alive():
-        return miner_read_via_poller(cmd, timeout_sec=max(float(timeout), 8.0))
-    with _miner_io_lock:
-        return _miner_cmd_unlocked(cmd, timeout=timeout)
+    if not miner_poller_process_alive():
+        raise RuntimeError(
+            "miner-poller not running — ASIC I/O only via poller "
+            f"(cmd={cmd.get('cmd')!r}). Start poolheat-miner-poller."
+        )
+    return miner_read_via_poller(cmd, timeout_sec=max(float(timeout), 8.0))
 
 
 def _extract_miner_payload(
@@ -17557,8 +17557,8 @@ def privileged_cmd(
 
 
 # ─── ASIC I/O: Go miner-poller only (no whatsminer / passlib in serve) ───────
-# Live → live_cache.json · writes → miner_write_req.json · chipmap → chipmap_cache.json
-# This process never opens :4028/:4433/:8889 for normal operation.
+# Live → live_cache.json · reads → miner_read_req.json · writes → miner_write_req.json
+# chipmap → chipmap_cache.json. HTTP serve never opens :4028/:4433/:8889.
 
 _WM_IMPORT_ERROR = (
     "whatsminer removed from serve — use poolheat-miner-poller "
@@ -17817,11 +17817,14 @@ def miner_read_via_poller(
     """
     Enqueue on-demand ASIC read for Go miner-poller (file IPC).
 
-    Used by external UI (no route to miner) and local serve when poller owns
-    :4028. Job: miner_read_req.json → poller → miner_read_result.json.
+    serve/UI never opens miner TCP. Job:
+    miner_read_req.json → poller → miner_read_result.json.
     """
     if not miner_poller_process_alive():
-        raise RuntimeError("miner-poller not running — read skipped")
+        raise RuntimeError(
+            "miner-poller not running — ASIC read only via poller "
+            f"(cmd={cmd.get('cmd')!r})"
+        )
     req_id = uuid.uuid4().hex
     timeout = float(
         timeout_sec if timeout_sec is not None else MINER_READ_TIMEOUT_SEC
@@ -17879,10 +17882,12 @@ def miner_write_via_poller(
 ) -> dict:
     """
     Enqueue privileged write for Go miner-poller (file IPC).
-    serve never opens :4028/:4433 for writes when poller is alive.
+    serve never opens ASIC TCP (:4028 / :4433 / :8889).
     """
     if not miner_poller_process_alive():
-        raise RuntimeError("miner-poller not running — write skipped")
+        raise RuntimeError(
+            "miner-poller not running — ASIC write only via poller"
+        )
     req_id = uuid.uuid4().hex
     timeout = float(timeout_sec if timeout_sec is not None else MINER_WRITE_TIMEOUT_SEC)
     req = {
@@ -19533,18 +19538,23 @@ def _fetch_live_direct() -> dict:
 
 def fetch_live() -> dict:
     """
-    Live snapshot. Prefer live_cache from miner-poller.
-    Direct ASIC TCP only when poller is down (legacy python --miner-poller).
+    Live snapshot for HTTP serve: only from miner-poller live_cache.
+    Direct ASIC TCP is used only when this process IS the python miner-poller
+    (``--miner-poller`` / no Go binary) — never from the UI/HTTP process.
     """
-    if miner_poller_process_alive():
-        live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC)
-        if isinstance(live, dict) and live.get("ok"):
-            return live
-        raise RuntimeError(
-            "no live_cache from miner-poller (serve does not poll ASIC)"
-        )
-    # Fallback path for `python serve.py --miner-poller` without Go binary
-    return _fetch_live_direct()
+    # Python poller child: we are the ASIC owner → direct poll.
+    argv = " ".join(sys.argv)
+    if "--miner-poller" in argv or "--asic-poller" in argv:
+        return _fetch_live_direct()
+    live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC)
+    if isinstance(live, dict) and live.get("ok"):
+        return live
+    with _cache_lock:
+        if isinstance(_cache, dict) and _cache.get("ok"):
+            return dict(_cache)
+    raise RuntimeError(
+        "no live_cache from miner-poller (serve does not open ASIC TCP)"
+    )
 
 
 def _measured_work_state(live: dict) -> str:
@@ -19688,8 +19698,7 @@ def fetch_mining_pools(*, force: bool = False) -> dict:
     """
     Mining pool list + share stats from Whatsminer `pools` command.
 
-    Via miner-poller IPC when poller is up (remote UI / edge architecture);
-    direct :4028 only if poller is down. Cached briefly.
+    Always via miner-poller IPC (miner_read_req). Cached briefly.
     """
     global _pools_cache, _pools_cache_ts
     now = time.time()
@@ -28821,47 +28830,22 @@ class Handler(SimpleHTTPRequestHandler):
                         "host": f"{HOST_MINER}:{PORT_MINER}",
                     }
             else:
-                # Single-flight: one worker polls miner; others wait briefly or take stale
-                with _live_fetch_lock:
-                    fut = _live_fetch_future
-                    if fut is None or fut.done():
-
-                        def _do_fetch() -> dict:
-                            snap = fetch_live()
-                            publish_live_snapshot(snap)
-                            return snap
-
-                        fut = _live_executor.submit(_do_fetch)
-                        _live_fetch_future = fut
-                try:
-                    body = fut.result(timeout=LIVE_HTTP_WAIT_SEC)
-                except FuturesTimeout:
-                    # Poll continues in background; prefer last-good for responsiveness
-                    if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
-                        body = dict(stale)
-                        body["stale"] = True
-                        body["error"] = "miner poll slow · last good snapshot"
-                        body["stale_age_sec"] = round(stale_age, 1)
-                    else:
-                        body = {
-                            "ok": False,
-                            "error": "miner poll timeout",
-                            "ts": datetime.now().isoformat(timespec="seconds"),
-                            "host": f"{HOST_MINER}:{PORT_MINER}",
-                        }
-                except Exception as e:
-                    if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
-                        body = dict(stale)
-                        body["stale"] = True
-                        body["error"] = str(e)
-                        body["stale_age_sec"] = round(stale_age, 1)
-                    else:
-                        body = {
-                            "ok": False,
-                            "error": str(e),
-                            "ts": datetime.now().isoformat(timespec="seconds"),
-                            "host": f"{HOST_MINER}:{PORT_MINER}",
-                        }
+                # Poller not running — serve does not open ASIC TCP.
+                if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
+                    body = dict(stale)
+                    body["stale"] = True
+                    body["error"] = "miner-poller not running · last good snapshot"
+                    body["stale_age_sec"] = round(stale_age, 1)
+                else:
+                    body = {
+                        "ok": False,
+                        "error": (
+                            "miner-poller not running — start poolheat-miner-poller "
+                            "(serve does not open ASIC TCP)"
+                        ),
+                        "ts": datetime.now().isoformat(timespec="seconds"),
+                        "host": f"{HOST_MINER}:{PORT_MINER}",
+                    }
 
         if not isinstance(body, dict):
             body = {
@@ -30242,7 +30226,11 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_miner_test(self) -> None:
-        """Probe TCP summary on given host/port (or current settings). Does not persist."""
+        """
+        Probe miner via poller IPC (summary). Does not open ASIC TCP from serve.
+        Optional host/port in body are informational only when poller already
+        uses config; changing host requires saving miner config first.
+        """
         try:
             req = self._read_json_body() if self.headers.get("Content-Length") else {}
         except Exception:
@@ -30252,10 +30240,11 @@ class Handler(SimpleHTTPRequestHandler):
             port = int(req.get("miner_port") or PORT_MINER)
             if not host:
                 raise ValueError("miner_host empty")
-            payload = (json.dumps({"cmd": "summary"}, separators=(",", ":")) + "\n").encode()
-            with socket.create_connection((host, port), timeout=4) as sock:
-                sock.sendall(payload)
-                raw = _recv_json(sock, timeout=4)
+            if not miner_poller_process_alive():
+                raise RuntimeError(
+                    "miner-poller not running — cannot probe ASIC from serve"
+                )
+            raw = miner_cmd({"cmd": "summary"}, timeout=8)
             msg = raw.get("Msg") if isinstance(raw, dict) else None
             mode = None
             power = None
@@ -30269,6 +30258,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "host": f"{host}:{port}",
                     "mode": mode,
                     "power": power,
+                    "transport": raw.get("transport") if isinstance(raw, dict) else "go-miner-poller",
                 },
             )
         except Exception as e:
