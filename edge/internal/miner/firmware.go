@@ -174,16 +174,29 @@ func runFirmwareFlash(s Settings, req map[string]any) {
 		}
 		statusLog = nil
 		streamStarted := false
+		// Mark uploading before stream; no further status I/O until ACK/status polls.
+		writeFlashStatusMerge(s.DataDir, map[string]any{
+			"stage":       "uploading",
+			"pct":         5,
+			"status_text": fmt.Sprintf("streaming %d B as %s (no mid-upload disk I/O)", len(img), cr.acc),
+			"bytes":       len(img),
+		})
+		// CRITICAL: during stage "upload" never write status JSON to disk/USB.
+		// Blocking I/O mid-stream stalls TCP → ASIC RST around ~1 MiB
+		// (broken pipe image_off≈950272 on Keenetic).
 		out, lastErr = np.UpdateFirmware(img,
 			protocol.WithFirmwarePoll(true),
 			protocol.WithFirmwarePollAttempts(45),
+			protocol.WithFirmwareChunkSize(8*1024),
 			protocol.WithFirmwareProgress(func(stage string, pct float64, extra map[string]any) {
 				if stage == "upload" || stage == "cmd7" {
 					streamStarted = true
 				}
-				// Throttle disk writes — blocking JSON on flash/USB caused TCP stalls → RST
+				if stage == "upload" {
+					return // no disk during wire stream
+				}
 				now := time.Now()
-				if stage == "upload" && !lastProgWrite.IsZero() && now.Sub(lastProgWrite) < 500*time.Millisecond {
+				if !lastProgWrite.IsZero() && now.Sub(lastProgWrite) < 300*time.Millisecond {
 					return
 				}
 				lastProgWrite = now
