@@ -824,6 +824,40 @@ def _new_preset_id() -> str:
     return uuid.uuid4().hex[:12]
 
 
+# Map-preset colors (schedule brush) — distinct from mode-profile palette
+# (profiles use indigo/blue/amber; presets lean teal/cyan/purple/rose).
+_ZONE_PRESET_PALETTE = (
+    "#14b8a6",  # teal
+    "#06b6d4",  # cyan
+    "#8b5cf6",  # violet
+    "#f43f5e",  # rose
+    "#eab308",  # yellow
+    "#84cc16",  # lime
+    "#0ea5e9",  # sky
+    "#d946ef",  # fuchsia
+)
+
+
+def _normalize_hex_color(raw, *, fallback: str = "#14b8a6") -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return fallback
+    if not s.startswith("#"):
+        s = "#" + s
+    if len(s) == 4 and all(c in "0123456789abcdefABCDEF" for c in s[1:]):
+        # #rgb → #rrggbb
+        s = "#" + "".join(c * 2 for c in s[1:])
+    if len(s) == 7 and all(c in "0123456789abcdefABCDEF" for c in s[1:]):
+        return s.lower()
+    return fallback
+
+
+def _default_zone_preset_color(pid: str = "", name: str = "") -> str:
+    key = (pid or "") + "\0" + (name or "")
+    h = sum((i + 1) * ord(c) for i, c in enumerate(key)) or 1
+    return _ZONE_PRESET_PALETTE[h % len(_ZONE_PRESET_PALETTE)]
+
+
 def _load_zone_presets() -> None:
     global _zone_presets
     with _zone_presets_lock:
@@ -840,10 +874,14 @@ def _load_zone_presets() -> None:
             if len(name) > 64:
                 name = name[:64]
             cfg = p.get("config") if isinstance(p.get("config"), dict) else {}
+            color = _normalize_hex_color(
+                p.get("color"), fallback=_default_zone_preset_color(pid, name)
+            )
             clean.append(
                 {
                     "id": pid,
                     "name": name,
+                    "color": color,
                     "updated_ts": p.get("updated_ts")
                     or datetime.now().isoformat(timespec="seconds"),
                     "config": cfg,
@@ -851,10 +889,12 @@ def _load_zone_presets() -> None:
             )
         # seed default if empty
         if not clean:
+            pid0 = _new_preset_id()
             clean.append(
                 {
-                    "id": _new_preset_id(),
+                    "id": pid0,
                     "name": "По умолчанию 24/26/28",
+                    "color": _default_zone_preset_color(pid0, "default"),
                     "updated_ts": datetime.now().isoformat(timespec="seconds"),
                     "config": json.loads(json.dumps(DEFAULT_ZONE_CFG)),
                 }
@@ -878,10 +918,16 @@ def list_zone_presets() -> dict:
     with _zone_presets_lock:
         items = []
         for p in _zone_presets.get("presets") or []:
+            pid = p.get("id")
+            name = p.get("name")
             items.append(
                 {
-                    "id": p.get("id"),
-                    "name": p.get("name"),
+                    "id": pid,
+                    "name": name,
+                    "color": _normalize_hex_color(
+                        p.get("color"),
+                        fallback=_default_zone_preset_color(str(pid or ""), str(name or "")),
+                    ),
                     "updated_ts": p.get("updated_ts"),
                     # lightweight: thresholds summary for UI
                     "summary": _preset_summary(p.get("config") or {}),
@@ -919,10 +965,12 @@ def save_zone_preset(
     config: dict | None = None,
     *,
     preset_id: str | None = None,
+    color: str | None = None,
 ) -> dict:
     """
     Create or update a named zone-map preset.
     config=None → snapshot current active zone map.
+    color — schedule brush color (#rrggbb); optional on update keeps previous.
     """
     name = str(name or "").strip()
     if not name:
@@ -943,9 +991,15 @@ def save_zone_preset(
             found = False
             for i, p in enumerate(presets):
                 if p.get("id") == pid:
+                    prev_color = p.get("color")
+                    new_color = _normalize_hex_color(
+                        color if color is not None else prev_color,
+                        fallback=_default_zone_preset_color(pid, name),
+                    )
                     presets[i] = {
                         "id": pid,
                         "name": name,
+                        "color": new_color,
                         "updated_ts": now,
                         "config": cfg,
                     }
@@ -956,10 +1010,15 @@ def save_zone_preset(
             out_id = pid
         else:
             out_id = _new_preset_id()
+            new_color = _normalize_hex_color(
+                color,
+                fallback=_default_zone_preset_color(out_id, name),
+            )
             presets.append(
                 {
                     "id": out_id,
                     "name": name,
+                    "color": new_color,
                     "updated_ts": now,
                     "config": cfg,
                 }
@@ -9236,7 +9295,16 @@ def _save_miners_managed(miners: list) -> dict:
 
 
 def _seed_managed_from_active() -> None:
-    """If inventory empty, seed from current miner_host."""
+    """
+    First-run only: if inventory file missing, seed from miner_host.
+    Never re-seed when file exists (even empty) — otherwise Remove on the
+    last managed miner appears broken (GET re-adds m_default).
+    """
+    try:
+        if MINERS_MANAGED_FILE.is_file():
+            return
+    except Exception:
+        pass
     cur = get_miners_managed()
     if cur.get("miners"):
         return
@@ -9404,20 +9472,27 @@ def set_managed_active(mid: str) -> dict:
 
 def remove_managed(mid: str) -> dict:
     mid = str(mid or "").strip()
-    managed = [
-        m
-        for m in (get_miners_managed().get("miners") or [])
-        if str(m.get("id") or "") != mid
-    ]
+    if not mid:
+        raise ValueError("id required")
+    before = list(get_miners_managed().get("miners") or [])
+    managed = [m for m in before if str(m.get("id") or "") != mid]
+    if len(managed) == len(before):
+        raise ValueError(f"miner not found: {mid}")
     if managed and not any(m.get("role") == "active" for m in managed):
         managed[0]["role"] = "active"
-        apply_miner_settings(
-            host=managed[0]["host"],
-            port=int(managed[0].get("port") or 4028),
-            password=managed[0].get("password"),
-            persist=True,
-        )
-    return _save_miners_managed(managed)
+        try:
+            apply_miner_settings(
+                host=managed[0]["host"],
+                port=int(managed[0].get("port") or 4028),
+                password=managed[0].get("password"),
+                persist=True,
+            )
+        except Exception as e:
+            print(f"[managed] promote after remove: {e}", flush=True)
+    out = _save_miners_managed(managed)
+    out["removed"] = mid
+    out["ok"] = True
+    return out
 
 
 def ignore_discovered(ip: str, ignored: bool = True) -> dict:
@@ -30871,7 +30946,12 @@ class Handler(SimpleHTTPRequestHandler):
             if action in ("save", "create", "add"):
                 name = req.get("name")
                 cfg = req.get("config") if isinstance(req.get("config"), dict) else None
-                out = save_zone_preset(str(name or ""), cfg, preset_id=None)
+                out = save_zone_preset(
+                    str(name or ""),
+                    cfg,
+                    preset_id=None,
+                    color=req.get("color"),
+                )
                 self._json_response(200, out)
                 return
             if action in ("update", "edit", "rename"):
@@ -30892,7 +30972,31 @@ class Handler(SimpleHTTPRequestHandler):
                 # if update_config_from_form: true → use current map
                 if req.get("from_current") or req.get("use_current"):
                     cfg = get_zone_cfg()
-                out = save_zone_preset(str(name), cfg, preset_id=pid)
+                color = req.get("color") if "color" in req else existing.get("color")
+                out = save_zone_preset(
+                    str(name), cfg, preset_id=pid, color=color
+                )
+                self._json_response(200, out)
+                return
+            if action in ("set_color", "color"):
+                pid = str(req.get("id") or "").strip()
+                if not pid:
+                    raise ValueError("id required")
+                existing = get_zone_preset(pid)
+                if not existing:
+                    raise ValueError("preset not found")
+                # keep stored thresholds; only change color
+                cfg = (
+                    existing.get("config")
+                    if isinstance(existing.get("config"), dict)
+                    else {}
+                )
+                out = save_zone_preset(
+                    str(existing.get("name") or "preset"),
+                    cfg,
+                    preset_id=pid,
+                    color=req.get("color"),
+                )
                 self._json_response(200, out)
                 return
             if action in ("delete", "remove", "del"):

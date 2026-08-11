@@ -1759,13 +1759,75 @@
       background: rgba(100,116,139,0.35);
       cursor: pointer;
       user-select: none;
+      box-sizing: border-box;
     }
     .sched-cell:hover { outline: 1px solid rgba(255,255,255,0.35); }
-    .sched-cell.is-inactive { background: rgba(100,116,139,0.28); }
-    .sched-cell.is-profile { background: rgba(99,102,241,0.55); }
-    .sched-cell.is-preset { background: rgba(34,197,94,0.45); }
+    .sched-cell.is-inactive {
+      background-color: rgba(100,116,139,0.28);
+      background-image: none;
+    }
+    /* Mode profile = solid fill (color from profile.color) */
+    .sched-cell.is-profile {
+      background-color: rgba(99,102,241,0.55);
+      background-image: none;
+    }
+    /* Map preset = solid fill + diagonal hatch (color from preset.color)
+       so profile vs preset stay visually distinct even with similar hues */
+    .sched-cell.is-preset {
+      background-color: rgba(20,184,166,0.55);
+      background-image: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 3px,
+        rgba(0, 0, 0, 0.22) 3px,
+        rgba(0, 0, 0, 0.22) 5px
+      );
+    }
     .sched-cell.is-now {
       box-shadow: inset 0 0 0 2px var(--accent, #38bdf8);
+    }
+    .sched-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      align-items: center;
+    }
+    .sched-legend .lg-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.72rem;
+      color: var(--dim);
+    }
+    .sched-legend .lg-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.15);
+      flex-shrink: 0;
+    }
+    .sched-legend .lg-swatch.is-preset {
+      background-image: repeating-linear-gradient(
+        -45deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 0, 0, 0.25) 2px,
+        rgba(0, 0, 0, 0.25) 3px
+      );
+    }
+    .zone-preset-color-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .zone-preset-color-wrap input[type="color"] {
+      width: 36px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
     }
     .sched-ex-list { display: flex; flex-direction: column; gap: 8px; }
     .sched-ex-row {
@@ -5262,8 +5324,8 @@
     <nav class="tabs" role="tablist">
       <button type="button" class="active" data-tab="dash" data-i18n="tab.dash">Overview</button>
       <button type="button" data-tab="miner" data-i18n="tab.miner">Miner</button>
+      <button type="button" data-tab="miners" data-i18n="tab.miners">Miners</button>
       <button type="button" data-tab="map" data-i18n="tab.map">Zone map</button>
-      <button type="button" data-tab="pool" data-i18n="tab.pool">Pool</button>
       <button type="button" data-tab="periph" data-i18n="tab.periph">Peripherals</button>
       <button type="button" data-tab="settings" data-i18n="tab.settings">Settings</button>
       <button type="button" data-tab="info" data-i18n="tab.info">Info</button>
@@ -6657,6 +6719,7 @@
         <button type="button" class="active" data-subtab="heat" data-i18n="sub.map_heat">Heat map</button>
         <button type="button" data-subtab="profiles" data-i18n="sub.map_profiles">Mode profiles</button>
         <button type="button" data-subtab="schedule" data-i18n="sub.map_schedule">Schedule</button>
+        <button type="button" data-subtab="pool" data-i18n="sub.map_pool">Pool</button>
       </nav>
 
       <!-- Heat map -->
@@ -6686,11 +6749,15 @@
                 </div>
               </div>
               <div class="card-b">
-                <div class="row" style="grid-template-columns:1fr auto;gap:10px;align-items:end;margin-bottom:10px">
+                <div class="row" style="grid-template-columns:1fr auto auto;gap:10px;align-items:end;margin-bottom:10px">
                   <label class="field" style="margin:0"><span data-i18n="field.preset">Preset</span>
                     <select id="zone-preset-select">
                       <option value="">— select —</option>
                     </select>
+                  </label>
+                  <label class="field zone-preset-color-wrap" style="margin:0" title="Schedule brush color for this map preset">
+                    <span data-i18n="field.preset_color">Color</span>
+                    <input type="color" id="zone-preset-color" value="#14b8a6" />
                   </label>
                   <button class="btn primary" type="button" id="btn-zone-preset-apply" title="Load preset into active map" data-i18n="btn.apply" data-i18n-title="title.zone_preset_apply">
                     Apply
@@ -7290,10 +7357,9 @@
           </div>
         </div>
       </div><!-- /subview-map-schedule -->
-    </section>
 
-    <!-- ========== POOL ========== -->
-    <section class="view" id="view-pool">
+      <!-- Pool (was top-level tab; now under Zone map) -->
+      <div class="subview" id="subview-map-pool">
       <div class="stack">
         <div class="card">
           <div class="card-h">
@@ -7411,6 +7477,32 @@
               <div class="weather-results" id="wx-results" hidden></div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted)" id="wx-status">—</p>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-map-pool -->
+    </section>
+
+    <!-- ========== MINERS (fleet — placeholder) ========== -->
+    <section class="view" id="view-miners">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.miners">Miners</h2>
+              <div class="sub" data-i18n="sub.miners">fleet · multi-ASIC · coming soon</div>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <p style="margin:0;color:var(--muted);line-height:1.5" data-i18n="miners.placeholder">
+              Multi-miner fleet view will live here (status of all managed ASICs, bulk actions).
+              For now use <strong>Settings → Miner-poller → In system (managed)</strong> to import and switch the active miner.
+            </p>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-miners-goto-managed" data-i18n="miners.goto_managed">
+                Open managed inventory
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -9210,6 +9302,14 @@
         "tab.miner": "Miner",
         "tab.map": "Zone map",
         "tab.pool": "Pool",
+        "tab.miners": "Miners",
+        "sub.map_pool": "Pool",
+        "h2.miners": "Miners",
+        "sub.miners": "fleet · multi-ASIC · coming soon",
+        "miners.placeholder": "Multi-miner fleet view will live here (status of all managed ASICs, bulk actions). For now use Settings → Miner-poller → In system (managed) to import and switch the active miner.",
+        "miners.goto_managed": "Open managed inventory",
+        "field.preset_color": "Color",
+        "sched.legend_html": "grey = inactive · solid = mode profile · hatched = map preset · outline = now",
         "tab.periph": "Peripherals",
         "tab.settings": "Settings",
         "tab.info": "Info",
@@ -10065,6 +10165,14 @@
         "tab.miner": "Майнер",
         "tab.map": "Карта зон",
         "tab.pool": "Бассейн",
+        "tab.miners": "Майнеры",
+        "sub.map_pool": "Бассейн",
+        "h2.miners": "Майнеры",
+        "sub.miners": "флот · multi-ASIC · скоро",
+        "miners.placeholder": "Здесь будет обзор всех ASIC (статус managed, массовые действия). Пока: Настройки → Miner-poller → В системе (managed) — импорт и active.",
+        "miners.goto_managed": "Открыть inventory",
+        "field.preset_color": "Цвет",
+        "sched.legend_html": "серый = inactive · сплошной = профиль режима · штрих = пресет карты · контур = сейчас",
         "tab.periph": "Периферия",
         "tab.settings": "Настройки",
         "tab.info": "Инфо",
@@ -11695,6 +11803,7 @@
     const TAB_IDS = [
       "dash",
       "miner",
+      "miners",
       "chips",
       "pools",
       "energy",
@@ -11732,7 +11841,13 @@
       wm: "minerinfo",
       zones: "map",
       zone: "map",
+      "zone-map": "map",
+      "zone_map": "map",
       weather: "pool",
+      bassein: "pool",
+      "pool-geo": "pool",
+      fleet: "miners",
+      asics: "miners",
       config: "settings",
       "settings-advanced": "advanced",
       "settings-adv": "advanced",
@@ -11813,7 +11928,7 @@
     }
 
     function setMapSubtab(subId) {
-      const allowed = { heat: 1, profiles: 1, schedule: 1 };
+      const allowed = { heat: 1, profiles: 1, schedule: 1, pool: 1 };
       const sub = allowed[subId] ? subId : "heat";
       document.querySelectorAll("#view-map nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
@@ -11826,6 +11941,14 @@
       }
       if (sub === "schedule" && typeof loadSchedule === "function") {
         void loadSchedule();
+      }
+      if (sub === "pool") {
+        if (typeof loadPoolConfig === "function") void loadPoolConfig();
+        if (typeof loadWeatherConfig === "function") {
+          void loadWeatherConfig().then(() => {
+            if (typeof loadWeather === "function") void loadWeather(false);
+          });
+        }
       }
       return sub;
     }
@@ -11940,6 +12063,7 @@
       let minerSub = "miner";
       let settingsSub = "main";
       let periphSub = "sensors";
+      let mapSub = "heat";
       if (tabId === "logs") {
         mainTab = "info";
         infoSub = "logs";
@@ -11979,6 +12103,12 @@
         mainTab = "periph";
         periphSub = "sensors";
         tabId = "sensors";
+      } else if (tabId === "pool") {
+        // Pool is a Zone map subtab (deep-link #pool still works)
+        mainTab = "map";
+        mapSub = "pool";
+      } else if (tabId === "map") {
+        mapSub = "heat";
       } else if (tabId === "info") {
         infoSub = "info";
       } else if (tabId === "miner") {
@@ -12007,6 +12137,7 @@
       if (mainTab === "miner") setMinerSubtab(minerSub);
       if (mainTab === "settings") setSettingsSubtab(settingsSub);
       if (mainTab === "periph") setPeriphSubtab(periphSub);
+      if (mainTab === "map") setMapSubtab(mapSub);
       if (tabId === "dash") {
         try {
           if (typeof loadHistoryCharts === "function") loadHistoryCharts();
@@ -12218,8 +12349,23 @@
     });
     document.querySelectorAll("#view-map nav.subtabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
-        setMapSubtab(btn.dataset.subtab);
+        const s = btn.dataset.subtab;
+        if (s === "pool") {
+          activateTab("pool");
+        } else {
+          // keep URL on #map; switch subview in place
+          if (!document.getElementById("view-map")?.classList.contains("active")) {
+            activateTab("map");
+          }
+          setMapSubtab(s);
+        }
       });
+    });
+    document.getElementById("btn-miners-goto-managed")?.addEventListener("click", () => {
+      activateTab("miner-poller");
+      setTimeout(() => {
+        document.getElementById("mp-managed-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 200);
     });
     window.addEventListener("hashchange", () => {
       const t = tabFromLocation();
@@ -13198,10 +13344,12 @@
       const meta = document.getElementById("zone-preset-meta");
       if (!meta) return;
       const p = selectedZonePresetMeta();
+      const colorEl = document.getElementById("zone-preset-color");
       if (!p) {
         meta.textContent = (zonePresetsCache.presets || []).length
           ? t("zone.preset_select_or_save", "Select a preset or save the current map")
           : t("zone.preset_empty", "Presets empty — “Save as…”");
+        if (colorEl) colorEl.value = "#14b8a6";
         return;
       }
       const act =
@@ -13211,8 +13359,15 @@
       meta.textContent =
         (p.name || p.id) +
         (p.summary ? " · " + p.summary : "") +
+        (p.color ? " · " + p.color : "") +
         (p.updated_ts ? " · " + p.updated_ts : "") +
         act;
+      if (colorEl) colorEl.value = p.color || "#14b8a6";
+    }
+
+    function selectedZonePresetColor() {
+      const el = document.getElementById("zone-preset-color");
+      return (el && el.value) || "#14b8a6";
     }
 
     async function loadZonePresets() {
@@ -13261,6 +13416,7 @@
           action: "save",
           name: n,
           config: cfg,
+          color: selectedZonePresetColor(),
         });
         zonePresetsCache = {
           presets: body.presets || [],
@@ -13272,6 +13428,8 @@
           if (sel) sel.value = body.id;
           updateZonePresetMetaLine();
         }
+        if (typeof refreshSchedBrushOptions === "function") refreshSchedBrushOptions();
+        if (typeof renderScheduleGrid === "function") renderScheduleGrid();
         toastSuccess(tf("zone.preset_saved", { name: n }, "Preset saved: {name}"));
       } catch (e) {
         toastError("Preset: " + e.message);
@@ -13300,6 +13458,7 @@
           action: "update",
           id: p.id,
           name: p.name,
+          color: selectedZonePresetColor(),
           config: cfg,
         });
         zonePresetsCache = {
@@ -13310,6 +13469,8 @@
         const sel = document.getElementById("zone-preset-select");
         if (sel) sel.value = p.id;
         updateZonePresetMetaLine();
+        if (typeof refreshSchedBrushOptions === "function") refreshSchedBrushOptions();
+        if (typeof renderScheduleGrid === "function") renderScheduleGrid();
         toastSuccess(
           tf(
             "zone.preset_updated",
@@ -13319,6 +13480,30 @@
         );
       } catch (e) {
         toastError("Preset: " + e.message);
+      }
+    }
+
+    async function zonePresetSaveColor() {
+      const p = selectedZonePresetMeta();
+      if (!p) return;
+      try {
+        const body = await zonePresetApi({
+          action: "set_color",
+          id: p.id,
+          color: selectedZonePresetColor(),
+        });
+        zonePresetsCache = {
+          presets: body.presets || [],
+          active_id: body.active_id || zonePresetsCache.active_id,
+        };
+        renderZonePresetSelect();
+        const sel = document.getElementById("zone-preset-select");
+        if (sel) sel.value = p.id;
+        updateZonePresetMetaLine();
+        if (typeof refreshSchedBrushOptions === "function") refreshSchedBrushOptions();
+        if (typeof renderScheduleGrid === "function") renderScheduleGrid();
+      } catch (e) {
+        toastError("Preset color: " + e.message);
       }
     }
 
@@ -13430,6 +13615,9 @@
     document
       .getElementById("zone-preset-select")
       ?.addEventListener("change", updateZonePresetMetaLine);
+    document
+      .getElementById("zone-preset-color")
+      ?.addEventListener("change", () => void zonePresetSaveColor());
     document
       .getElementById("btn-zone-preset-apply")
       ?.addEventListener("click", () => void zonePresetApply());
@@ -13719,8 +13907,33 @@
         const p = (modeProfilesCache.profiles || []).find((x) => x.id === cell.id);
         return (p && p.color) || "#6366f1";
       }
-      if (cell.t === "preset") return "#16a34a";
+      if (cell.t === "preset") {
+        const p = (zonePresetsCache.presets || []).find((x) => x.id === cell.id);
+        return (p && p.color) || "#14b8a6";
+      }
       return null;
+    }
+
+    /** Apply brush color + visual distinction (solid profile vs hatched preset). */
+    function applySchedCellStyle(el, cell) {
+      if (!el) return;
+      const kind =
+        cell && (cell.t === "profile" || cell.t === "preset") ? cell.t : "inactive";
+      el.classList.remove("is-inactive", "is-profile", "is-preset");
+      el.classList.add("is-" + kind);
+      const col = cellColor(cell);
+      if (kind === "inactive" || !col) {
+        el.style.backgroundColor = "";
+        el.style.backgroundImage = "";
+        return;
+      }
+      el.style.backgroundColor = col;
+      if (kind === "preset") {
+        el.style.backgroundImage =
+          "repeating-linear-gradient(-45deg, transparent, transparent 3px, rgba(0,0,0,0.22) 3px, rgba(0,0,0,0.22) 5px)";
+      } else {
+        el.style.backgroundImage = "none";
+      }
     }
 
     function cellTitle(cell) {
@@ -13815,24 +14028,18 @@
         for (let h = 0; h < 24; h++) {
           const cell = scheduleCache.weekly[d][h] || { t: "inactive" };
           const el = document.createElement("div");
-          el.className =
-            "sched-cell is-" +
-            (cell.t === "profile" || cell.t === "preset" ? cell.t : "inactive");
+          el.className = "sched-cell";
+          applySchedCellStyle(el, cell);
           if (nowDow === d && nowHour === h) el.classList.add("is-now");
-          const col = cellColor(cell);
-          if (col) el.style.background = col;
           el.title = schedDowLabel(d) + " " + h + ":00 · " + cellTitle(cell);
           el.dataset.dow = d;
           el.dataset.hour = String(h);
           const paint = () => {
             const c = currentBrushCell();
             scheduleCache.weekly[d][h] = c;
-            el.className =
-              "sched-cell is-" +
-              (c.t === "profile" || c.t === "preset" ? c.t : "inactive");
+            el.className = "sched-cell";
+            applySchedCellStyle(el, c);
             if (nowDow === d && nowHour === h) el.classList.add("is-now");
-            const cc = cellColor(c);
-            el.style.background = cc || "";
             el.title = schedDowLabel(d) + " " + h + ":00 · " + cellTitle(c);
           };
           el.addEventListener("mousedown", (ev) => {
@@ -13865,13 +14072,40 @@
     function renderSchedLegend() {
       const el = document.getElementById("sched-legend");
       if (!el) return;
-      el.textContent =
+      const parts = [];
+      parts.push(
+        '<span class="lg-item"><span class="lg-swatch" style="background:rgba(100,116,139,0.45)"></span>inactive</span>'
+      );
+      (modeProfilesCache.profiles || []).slice(0, 8).forEach((p) => {
+        parts.push(
+          '<span class="lg-item"><span class="lg-swatch" style="background:' +
+            escHtml(p.color || "#6366f1") +
+            '"></span>' +
+            escHtml(mpDisplayName(p)) +
+            "</span>"
+        );
+      });
+      (zonePresetsCache.presets || []).slice(0, 8).forEach((p) => {
+        parts.push(
+          '<span class="lg-item"><span class="lg-swatch is-preset" style="background-color:' +
+            escHtml(p.color || "#14b8a6") +
+            '"></span>map · ' +
+            escHtml(p.name || p.id) +
+            "</span>"
+        );
+      });
+      const hint =
         typeof t === "function"
           ? t(
-              "sched.legend",
-              "grey = inactive · color = profile · green = preset · outline = now"
+              "sched.legend_html",
+              "grey = inactive · solid = mode profile · hatched = map preset · outline = now"
             )
-          : "grey = inactive · color = profile · green = preset · outline = now";
+          : "grey = inactive · solid = mode profile · hatched = map preset · outline = now";
+      el.innerHTML =
+        parts.join("") +
+        '<span class="lg-item" style="opacity:0.85">· ' +
+        escHtml(hint) +
+        "</span>";
     }
 
     function updateSchedStatusLine() {
@@ -22074,7 +22308,7 @@
                 : '<button type="button" class="btn" data-mp-active="' +
                   escapeLogHtml(id) +
                   '" style="padding:4px 8px;font-size:0.75rem">Make active</button> ') +
-              '<button type="button" class="btn" data-mp-remove="' +
+              '<button type="button" class="btn danger" data-mp-remove="' +
               escapeLogHtml(id) +
               '" style="padding:4px 8px;font-size:0.75rem">Remove</button>' +
               "</td></tr>"
@@ -22380,10 +22614,15 @@
             body: JSON.stringify({ action: "remove", id: rem }),
           });
           const body = await res.json();
-          if (body.error) throw new Error(body.error);
+          if (!res.ok || body.ok === false || body.error)
+            throw new Error((body && body.error) || "HTTP " + res.status);
+          toastSuccess("Removed from managed");
           await refreshManagedTable();
+          try {
+            if (typeof loadMinerConfig === "function") await loadMinerConfig();
+          } catch (_) { /* ignore */ }
         } catch (e) {
-          toastError(e.message);
+          toastError("Remove: " + e.message);
         }
       }
     });
