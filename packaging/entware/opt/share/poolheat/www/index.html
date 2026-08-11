@@ -1897,6 +1897,31 @@
       font-size: 0.75rem;
       max-width: 100px;
     }
+    .mp-vendor-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      max-width: 140px;
+    }
+    .mp-vendor-logo {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      object-fit: cover;
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.06);
+    }
+    .mp-edit-vendor-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .mp-edit-vendor-row select { flex: 1; }
+    .mp-edit-vendor-row .mp-vendor-logo {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+    }
     .sched-ex-list { display: flex; flex-direction: column; gap: 8px; }
     .sched-ex-row {
       display: grid;
@@ -8507,10 +8532,10 @@
               <input type="text" id="mp-edit-cell" maxlength="64" placeholder="A1 · rack 2" autocomplete="off" />
             </label>
             <label class="field"><span data-i18n="mp.vendor">Vendor</span>
-              <select id="mp-edit-vendor">
-                <option value="whatsminer">whatsminer</option>
-                <option value="antminer">antminer</option>
-              </select>
+              <div class="mp-edit-vendor-row">
+                <img class="mp-vendor-logo" id="mp-edit-vendor-logo" alt="" src="icons/vendors/whatsminer.svg" />
+                <select id="mp-edit-vendor"></select>
+              </div>
             </label>
             <label class="field"><span data-i18n="mp.col.model">Model</span>
               <input type="text" id="mp-edit-model" maxlength="64" placeholder="Whatsminer M63S" autocomplete="off" />
@@ -22300,6 +22325,7 @@
     async function loadMinerPollerPanel() {
       if (typeof loadMinerConfig === "function") await loadMinerConfig();
       await loadMinerPollerCfg();
+      await loadMinerVendors();
       await refreshDiscoveredTable();
       await refreshManagedTable();
     }
@@ -22425,16 +22451,143 @@
     }
 
     let managedMinersCache = [];
+    let minerVendorsCache = { vendors: [] };
 
     function mpCell(v) {
       const s = v == null || v === "" ? "—" : String(v);
       return escapeLogHtml(s);
     }
 
+    function vendorById(id) {
+      const key = String(id || "").toLowerCase();
+      const list = minerVendorsCache.vendors || [];
+      return (
+        list.find((v) => v.id === key) ||
+        list.find(
+          (v) =>
+            Array.isArray(v.alias) &&
+            v.alias.some((a) => String(a).toLowerCase() === key)
+        ) ||
+        null
+      );
+    }
+
+    function vendorDisplayName(idOrName) {
+      const v = vendorById(idOrName);
+      if (v && v.name) return v.name;
+      const s = String(idOrName || "").trim();
+      if (!s) return "—";
+      return s.charAt(0).toUpperCase() + s.slice(1);
+    }
+
+    function vendorLogoSrc(idOrName) {
+      const v = vendorById(idOrName);
+      if (v && v.logo) return v.logo;
+      const id = String((v && v.id) || idOrName || "unknown")
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "");
+      return "icons/vendors/" + (id || "unknown") + ".svg";
+    }
+
+    function vendorCellHtml(m) {
+      const id = m.vendor || "";
+      const name = m.vendor_name || vendorDisplayName(id);
+      const logo = m.vendor_logo || vendorLogoSrc(id);
+      return (
+        '<span class="mp-vendor-cell" title="' +
+        escapeLogHtml(name) +
+        '">' +
+        '<img class="mp-vendor-logo" src="' +
+        escapeLogHtml(logo) +
+        '" alt="" onerror="this.style.visibility=\'hidden\'" />' +
+        "<span>" +
+        escapeLogHtml(name) +
+        "</span></span>"
+      );
+    }
+
+    async function loadMinerVendors() {
+      try {
+        const res = await fetch("/api/miner/vendors", { cache: "no-store" });
+        const body = await res.json();
+        if (body && Array.isArray(body.vendors)) {
+          minerVendorsCache = { vendors: body.vendors };
+        }
+      } catch (e) {
+        console.warn("miner vendors:", e);
+        // fallback catalog if API offline
+        if (!(minerVendorsCache.vendors || []).length) {
+          minerVendorsCache = {
+            vendors: [
+              {
+                id: "whatsminer",
+                name: "Whatsminer",
+                logo: "icons/vendors/whatsminer.svg",
+                default_port: 4028,
+              },
+              {
+                id: "antminer",
+                name: "Antminer",
+                logo: "icons/vendors/antminer.svg",
+                default_port: 80,
+              },
+              {
+                id: "avalon",
+                name: "Avalon",
+                logo: "icons/vendors/avalon.svg",
+                default_port: 4028,
+              },
+              {
+                id: "goldshell",
+                name: "Goldshell",
+                logo: "icons/vendors/goldshell.svg",
+                default_port: 80,
+              },
+            ],
+          };
+        }
+      }
+      fillVendorSelect(document.getElementById("mp-edit-vendor"));
+      return minerVendorsCache;
+    }
+
+    function fillVendorSelect(sel, selectedId) {
+      if (!sel) return;
+      const cur = selectedId || sel.value || "whatsminer";
+      const list = minerVendorsCache.vendors || [];
+      sel.innerHTML = "";
+      list.forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v.id;
+        o.textContent = v.name || v.id;
+        sel.appendChild(o);
+      });
+      // keep unknown previous value
+      if (cur && !list.some((v) => v.id === cur)) {
+        const o = document.createElement("option");
+        o.value = cur;
+        o.textContent = vendorDisplayName(cur);
+        sel.appendChild(o);
+      }
+      if (cur) sel.value = cur;
+      syncVendorLogoPreview();
+    }
+
+    function syncVendorLogoPreview() {
+      const sel = document.getElementById("mp-edit-vendor");
+      const img = document.getElementById("mp-edit-vendor-logo");
+      if (!sel || !img) return;
+      img.src = vendorLogoSrc(sel.value);
+      img.alt = vendorDisplayName(sel.value);
+    }
+
     async function refreshManagedTable() {
       const tbody = document.getElementById("mp-managed-body");
       if (!tbody) return;
       try {
+        if (!(minerVendorsCache.vendors || []).length) {
+          await loadMinerVendors();
+        }
         const res = await fetch("/api/miner/managed", { cache: "no-store" });
         const body = await res.json();
         const miners = body.miners || [];
@@ -22469,7 +22622,7 @@
               mpCell(m.cell) +
               "</td>" +
               "<td>" +
-              mpCell(m.vendor) +
+              vendorCellHtml(m) +
               "</td>" +
               "<td>" +
               mpCell(m.model) +
@@ -22535,7 +22688,10 @@
       set("mp-edit-alias", m.alias || "");
       set("mp-edit-name", m.name || "");
       set("mp-edit-cell", m.cell || "");
-      set("mp-edit-vendor", m.vendor || "whatsminer");
+      fillVendorSelect(
+        document.getElementById("mp-edit-vendor"),
+        m.vendor || "whatsminer"
+      );
       set("mp-edit-model", m.model || "");
       set("mp-edit-model-code", m.model_code || m.miner_type || "");
       set("mp-edit-serial", m.serial || "");
@@ -22547,6 +22703,8 @@
       if (sub) {
         sub.textContent =
           (m.role === "active" ? "★ active · " : "standby · ") +
+          vendorDisplayName(m.vendor) +
+          " · " +
           (m.host || "—") +
           (m.source ? " · " + m.source : "");
       }
@@ -22865,7 +23023,15 @@
     document.getElementById("btn-mp-add-manual")?.addEventListener("click", async () => {
       const host = prompt("Miner IP / host:");
       if (!host || !host.trim()) return;
-      const vendor = prompt("Vendor: whatsminer or antminer", "whatsminer") || "whatsminer";
+      if (!(minerVendorsCache.vendors || []).length) await loadMinerVendors();
+      const names = (minerVendorsCache.vendors || [])
+        .map((v) => v.name + " (" + v.id + ")")
+        .join(", ");
+      const vendor =
+        prompt(
+          "Vendor id — " + (names || "whatsminer, antminer, avalon, goldshell"),
+          "whatsminer"
+        ) || "whatsminer";
       try {
         const res = await fetch("/api/miner/managed", {
           method: "POST",
@@ -22885,6 +23051,21 @@
       } catch (e) {
         toastError(e.message);
       }
+    });
+    document
+      .getElementById("mp-edit-vendor")
+      ?.addEventListener("change", () => {
+        syncVendorLogoPreview();
+        // suggest default port when vendor changes
+        const v = vendorById(document.getElementById("mp-edit-vendor")?.value);
+        const portEl = document.getElementById("mp-edit-port");
+        if (v && v.default_port && portEl && !portEl.dataset.touched) {
+          portEl.value = String(v.default_port);
+        }
+      });
+    document.getElementById("mp-edit-port")?.addEventListener("input", () => {
+      const el = document.getElementById("mp-edit-port");
+      if (el) el.dataset.touched = "1";
     });
     document.getElementById("mp-discovered-body")?.addEventListener("click", async (ev) => {
       const t = ev.target;

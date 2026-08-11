@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Goldshell">
+  <rect width="64" height="64" rx="14" fill="#eab308"/>
+  <path fill="#111827" d="M32 12c-9.4 0-17 7.6-17 17 0 6.2 3.3 11.6 8.2 14.5L20 52h8l3-6h2l3 6h8l-3.2-8.5C46.7 40.6 50 35.2 50 29c0-9.4-7.6-17-18-17zm0 8c5 0 9 4 9 9s-4 9-9 9-9-4-9-9 4-9 9-9z"/>
+</svg>

@@ -9147,6 +9147,167 @@ MINERS_MANAGED_FILE = DATA / "miners_managed.json"
 MINER_SCAN_REQ_FILE = DATA / "miner_scan_req.json"
 MINER_SCAN_RESULT_FILE = DATA / "miner_scan_result.json"
 MINER_SCAN_STATUS_FILE = DATA / "miner_scan_status.json"
+# Vendor catalog (id · alias · name · logo) — static JSON next to serve / www
+MINER_VENDORS_FILE_CANDIDATES = (
+    ROOT / "miner_vendors.json",
+    Path(__file__).resolve().parent / "miner_vendors.json",
+    Path("/opt/lib/poolheat/miner_vendors.json"),
+    Path("/opt/share/poolheat/www/miner_vendors.json"),
+)
+
+_BUILTIN_MINER_VENDORS: list[dict] = [
+    {
+        "id": "whatsminer",
+        "alias": ["whatsminer", "wm", "microbt"],
+        "name": "Whatsminer",
+        "manufacturer": "MicroBT",
+        "logo": "icons/vendors/whatsminer.svg",
+        "default_port": 4028,
+        "color": "#f59e0b",
+        "order": 10,
+    },
+    {
+        "id": "antminer",
+        "alias": ["antminer", "bitmain", "ant"],
+        "name": "Antminer",
+        "manufacturer": "Bitmain",
+        "logo": "icons/vendors/antminer.svg",
+        "default_port": 80,
+        "color": "#ef4444",
+        "order": 20,
+    },
+    {
+        "id": "avalon",
+        "alias": ["avalon", "canaan", "avalonminer"],
+        "name": "Avalon",
+        "manufacturer": "Canaan",
+        "logo": "icons/vendors/avalon.svg",
+        "default_port": 4028,
+        "color": "#3b82f6",
+        "order": 30,
+    },
+    {
+        "id": "goldshell",
+        "alias": ["goldshell", "gs"],
+        "name": "Goldshell",
+        "manufacturer": "Goldshell",
+        "logo": "icons/vendors/goldshell.svg",
+        "default_port": 80,
+        "color": "#eab308",
+        "order": 40,
+    },
+]
+
+_miner_vendors_cache: dict | None = None
+
+
+def _load_miner_vendors_raw() -> dict:
+    global _miner_vendors_cache
+    if isinstance(_miner_vendors_cache, dict):
+        return _miner_vendors_cache
+    for p in MINER_VENDORS_FILE_CANDIDATES:
+        try:
+            if p.is_file():
+                raw = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(raw, dict) and isinstance(raw.get("vendors"), list):
+                    _miner_vendors_cache = raw
+                    return raw
+        except Exception:
+            continue
+    _miner_vendors_cache = {"version": 1, "vendors": list(_BUILTIN_MINER_VENDORS)}
+    return _miner_vendors_cache
+
+
+def get_miner_vendors() -> dict:
+    """
+    Vendor catalog for UI / inventory.
+    Each entry: id, alias[], name (Title Case), logo path, default_port, color.
+    """
+    raw = _load_miner_vendors_raw()
+    items: list[dict] = []
+    for v in raw.get("vendors") or []:
+        if not isinstance(v, dict):
+            continue
+        vid = str(v.get("id") or "").strip().lower()
+        if not vid:
+            continue
+        aliases = v.get("alias") if isinstance(v.get("alias"), list) else []
+        aliases = [str(a).strip().lower() for a in aliases if str(a).strip()]
+        if vid not in aliases:
+            aliases = [vid] + aliases
+        name = str(v.get("name") or vid).strip()
+        if name:
+            # ensure leading capital (Whatsminer / Antminer …)
+            name = name[0].upper() + name[1:]
+        logo = str(v.get("logo") or f"icons/vendors/{vid}.svg").strip()
+        try:
+            port = int(v.get("default_port") or 4028)
+        except (TypeError, ValueError):
+            port = 4028
+        try:
+            order = int(v.get("order") or 100)
+        except (TypeError, ValueError):
+            order = 100
+        items.append(
+            {
+                "id": vid,
+                "alias": aliases,
+                "name": name,
+                "manufacturer": str(v.get("manufacturer") or "").strip() or None,
+                "logo": logo,
+                "default_port": port,
+                "color": str(v.get("color") or "").strip() or None,
+                "order": order,
+            }
+        )
+    items.sort(key=lambda x: (x.get("order") or 100, x.get("name") or ""))
+    return {
+        "ok": True,
+        "version": int(raw.get("version") or 1),
+        "vendors": items,
+    }
+
+
+def resolve_miner_vendor(raw: str | None) -> dict:
+    """
+    Map free-form vendor string → catalog entry.
+    Returns {id, name, logo, default_port, …}; unknown → id lowercased, name Title.
+    """
+    cat = get_miner_vendors()
+    key = str(raw or "").strip().lower().replace(" ", "").replace("-", "")
+    if not key:
+        # default Whatsminer
+        for v in cat.get("vendors") or []:
+            if v.get("id") == "whatsminer":
+                return dict(v)
+        return {
+            "id": "whatsminer",
+            "name": "Whatsminer",
+            "logo": "icons/vendors/whatsminer.svg",
+            "default_port": 4028,
+            "alias": ["whatsminer"],
+        }
+    for v in cat.get("vendors") or []:
+        aliases = [str(a).replace(" ", "").replace("-", "") for a in (v.get("alias") or [])]
+        vid = str(v.get("id") or "").replace(" ", "").replace("-", "")
+        if key == vid or key in aliases:
+            return dict(v)
+        # partial: "bitmain" in alias already; "antminer s19" → antminer
+        if any(key.startswith(a) or a.startswith(key) for a in aliases if len(a) >= 3):
+            return dict(v)
+    # unknown vendor — Title Case display name, keep id slug
+    slug = re.sub(r"[^a-z0-9_]+", "", key) or "unknown"
+    title = str(raw or slug).strip()
+    if title:
+        title = title[0].upper() + title[1:]
+    return {
+        "id": slug,
+        "name": title or slug,
+        "logo": "icons/vendors/unknown.svg",
+        "default_port": 4028,
+        "alias": [slug],
+        "unknown": True,
+    }
 
 _DEFAULT_MINER_POLLER_CFG: dict = {
     "version": 1,
@@ -9273,12 +9434,15 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
     """Ensure inventory fields exist on a managed miner row."""
     m = dict(raw) if isinstance(raw, dict) else {}
     mid = str(m.get("id") or "").strip() or ("m_" + uuid.uuid4().hex[:10])
-    vendor = str(m.get("vendor") or "whatsminer").strip().lower() or "whatsminer"
+    vinfo = resolve_miner_vendor(m.get("vendor") or "whatsminer")
+    vendor = str(vinfo.get("id") or "whatsminer")
+    vendor_name = str(vinfo.get("name") or vendor)
+    vendor_logo = str(vinfo.get("logo") or "")
     host = str(m.get("host") or m.get("ip") or "").strip()
     try:
-        port = int(m.get("port") or (4028 if vendor == "whatsminer" else 80))
+        port = int(m.get("port") or vinfo.get("default_port") or 4028)
     except (TypeError, ValueError):
-        port = 4028
+        port = int(vinfo.get("default_port") or 4028)
     role = str(m.get("role") or "standby").strip().lower()
     if role not in ("active", "standby"):
         role = "standby"
@@ -9305,6 +9469,8 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
     return {
         "id": mid[:48],
         "vendor": vendor,
+        "vendor_name": vendor_name,
+        "vendor_logo": vendor_logo,
         "host": host,
         "port": port,
         "password": m.get("password") if m.get("password") is not None else "",
@@ -9428,8 +9594,9 @@ def import_discovered_miner(
         if str(m.get("host") or "") == ip:
             idx = i
             break
-    vendor = str(found.get("vendor") or "whatsminer")
-    port = int(found.get("port") or (4028 if vendor == "whatsminer" else 80))
+    vinfo = resolve_miner_vendor(found.get("vendor") or "whatsminer")
+    vendor = str(vinfo.get("id") or "whatsminer")
+    port = int(found.get("port") or vinfo.get("default_port") or 4028)
     mtype = str(found.get("miner_type") or "").strip()
     row = {
         "id": managed[idx]["id"] if idx is not None else ("m_" + uuid.uuid4().hex[:10]),
@@ -9498,11 +9665,10 @@ def add_managed_manual(
     host = str(host or "").strip()
     if not host:
         raise ValueError("host required")
-    vendor = str(vendor or "whatsminer").strip().lower()
-    if vendor not in ("whatsminer", "antminer"):
-        vendor = "whatsminer"
+    vinfo = resolve_miner_vendor(vendor or "whatsminer")
+    vendor = str(vinfo.get("id") or "whatsminer")
     if port is None:
-        port = 4028 if vendor == "whatsminer" else 80
+        port = int(vinfo.get("default_port") or 4028)
     port = int(port)
     managed = list(get_miners_managed().get("miners") or [])
     for m in managed:
@@ -9583,6 +9749,12 @@ def update_managed(mid: str, fields: dict | None) -> dict:
             raise ValueError("port invalid") from e
     if "enabled" in fields:
         found["enabled"] = bool(fields["enabled"])
+    # resolve vendor id via catalog (Whatsminer / Antminer / Avalon / Goldshell)
+    if "vendor" in fields and fields.get("vendor") is not None:
+        vinfo = resolve_miner_vendor(str(fields.get("vendor")))
+        found["vendor"] = vinfo.get("id") or found.get("vendor")
+        if not found.get("port") and vinfo.get("default_port"):
+            found["port"] = int(vinfo["default_port"])
     # keep model_code ↔ miner_type in sync when only one set
     if found.get("model_code") and not found.get("miner_type"):
         found["miner_type"] = found["model_code"]
@@ -28820,6 +28992,12 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 _seed_managed_from_active()
                 self._json_response(200, get_miners_managed())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miner/vendors", "/api/miners/vendors"):
+            try:
+                self._json_response(200, get_miner_vendors())
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
