@@ -307,12 +307,15 @@ MINER_POLLER_PIDFILE = DATA / "miner_poller.pid"
 MINER_POLLER_LOG = DATA / "miner_poller.log"
 # Wall-clock when this serve process started (uptime display)
 _SERVE_BOOT_TS = time.time()
-# ASIC write IPC (serve → Go miner-poller → :4028). serve does not open miner TCP for writes.
+# ASIC IPC (UI/serve → Go miner-poller → miner). Remote UI cannot open miner TCP.
 MINER_WRITE_REQ_FILE = DATA / "miner_write_req.json"
 MINER_WRITE_RESULT_FILE = DATA / "miner_write_result.json"
+MINER_READ_REQ_FILE = DATA / "miner_read_req.json"
+MINER_READ_RESULT_FILE = DATA / "miner_read_result.json"
 DEVICE_REQ_FILE = DATA / "device_req.json"
 DEVICE_RESULT_FILE = DATA / "device_result.json"
 MINER_WRITE_TIMEOUT_SEC = float(os.environ.get("POOLHEAT_MINER_WRITE_TIMEOUT", "35") or 35)
+MINER_READ_TIMEOUT_SEC = float(os.environ.get("POOLHEAT_MINER_READ_TIMEOUT", "20") or 20)
 CHIPMAP_CFG_FILE = DATA / "chipmap_config.json"
 CHIPMAP_CACHE_FILE = DATA / "chipmap_cache.json"
 LUCI_PROXY_CFG_FILE = DATA / "luci_proxy_config.json"
@@ -14061,14 +14064,15 @@ def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
 
 def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
     """
-    Direct TCP to ASIC. Forbidden while Go miner-poller is alive
-    (all ASIC I/O must go through the poller).
+    Read-ish miner JSON command (pools, summary, …).
+
+    Preferred path: file IPC → miner-poller (remote UI cannot reach ASIC).
+    Fallback: direct TCP :4028 only when poller is not running (local debug /
+    all-in-one without Go poller). There is no synthetic "block" when poller
+    is up — we route the job to the poller instead.
     """
     if miner_poller_process_alive():
-        raise RuntimeError(
-            "miner_cmd blocked: miner-poller owns ASIC TCP "
-            f"(cmd={cmd.get('cmd')!r}) — use live_cache / miner_write_req"
-        )
+        return miner_read_via_poller(cmd, timeout_sec=max(float(timeout), 8.0))
     with _miner_io_lock:
         return _miner_cmd_unlocked(cmd, timeout=timeout)
 
@@ -17801,6 +17805,68 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 
 
 _miner_write_ipc_lock = threading.Lock()
+_miner_read_ipc_lock = threading.Lock()
+
+
+def miner_read_via_poller(
+    cmd: dict,
+    *,
+    timeout_sec: float | None = None,
+    password: str | None = None,
+) -> dict:
+    """
+    Enqueue on-demand ASIC read for Go miner-poller (file IPC).
+
+    Used by external UI (no route to miner) and local serve when poller owns
+    :4028. Job: miner_read_req.json → poller → miner_read_result.json.
+    """
+    if not miner_poller_process_alive():
+        raise RuntimeError("miner-poller not running — read skipped")
+    req_id = uuid.uuid4().hex
+    timeout = float(
+        timeout_sec if timeout_sec is not None else MINER_READ_TIMEOUT_SEC
+    )
+    req = {
+        "id": req_id,
+        "ts": time.time(),
+        "cmd": dict(cmd or {}),
+        "password": password or DEFAULT_API_PASSWORD,
+    }
+    with _miner_read_ipc_lock:
+        try:
+            if MINER_READ_RESULT_FILE.is_file():
+                MINER_READ_RESULT_FILE.unlink()
+        except Exception:
+            pass
+        _write_json_atomic(MINER_READ_REQ_FILE, req)
+        deadline = time.time() + max(3.0, timeout)
+        last_err = "timeout waiting for miner-poller read result"
+        while time.time() < deadline:
+            time.sleep(0.12)
+            try:
+                if not MINER_READ_RESULT_FILE.is_file():
+                    if not miner_poller_process_alive():
+                        raise RuntimeError("miner-poller died during read")
+                    continue
+                raw = json.loads(MINER_READ_RESULT_FILE.read_text(encoding="utf-8"))
+                if not isinstance(raw, dict) or str(raw.get("id") or "") != req_id:
+                    continue
+                if not raw.get("ok"):
+                    err = str(raw.get("error") or "miner read failed")
+                    raise RuntimeError(err)
+                resp = raw.get("response")
+                if not isinstance(resp, dict):
+                    resp = {"STATUS": "S", "Msg": resp, "transport": "go-miner-poller"}
+                else:
+                    resp = dict(resp)
+                resp.setdefault("transport", raw.get("transport") or "go-miner-poller")
+                return resp
+            except RuntimeError:
+                raise
+            except Exception as e:
+                last_err = str(e)
+                continue
+        raise RuntimeError(last_err)
 
 
 def miner_write_via_poller(
@@ -19621,7 +19687,9 @@ _POOLS_CACHE_TTL = 15.0
 def fetch_mining_pools(*, force: bool = False) -> dict:
     """
     Mining pool list + share stats from Whatsminer `pools` command.
-    Cached briefly to avoid hammering :4028.
+
+    Via miner-poller IPC when poller is up (remote UI / edge architecture);
+    direct :4028 only if poller is down. Cached briefly.
     """
     global _pools_cache, _pools_cache_ts
     now = time.time()
@@ -19636,7 +19704,8 @@ def fetch_mining_pools(*, force: bool = False) -> dict:
             return out
 
     try:
-        raw = miner_cmd({"cmd": "pools"}, timeout=6)
+        # miner_cmd → poller read IPC when poller alive
+        raw = miner_cmd({"cmd": "pools"}, timeout=12)
     except Exception as e:
         return {
             "ok": False,
@@ -19644,6 +19713,9 @@ def fetch_mining_pools(*, force: bool = False) -> dict:
             "pools": [],
             "host": f"{HOST_MINER}:{PORT_MINER}",
             "ts": datetime.now().isoformat(timespec="seconds"),
+            "transport": (
+                "go-miner-poller" if miner_poller_process_alive() else "direct"
+            ),
         }
 
     pools_raw = None

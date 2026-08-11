@@ -48,6 +48,8 @@ func Run(s Settings) error {
 
 		// Privileged writes — serve enqueues miner_write_req.json.
 		handledWrite := ProcessPendingWrite(s)
+		// On-demand reads (pools, summary, …) — external UI → poller IPC.
+		handledRead := ProcessPendingRead(s)
 
 		// Chipmap: full boards always in chipmap_cache.json (serve/UI read-only).
 		ProcessChipmapTick(s, &chipSt)
@@ -77,8 +79,8 @@ func Run(s Settings) error {
 		if interval < 2*time.Second {
 			interval = 2 * time.Second
 		}
-		// After a write, re-poll sooner so UI sees new state; also check writes often.
-		if handledWrite {
+		// After a write/read, re-poll sooner so UI sees new state; also check IPC often.
+		if handledWrite || handledRead {
 			interval = 2 * time.Second
 		}
 		spent := time.Since(t0)
@@ -103,8 +105,8 @@ func Run(s Settings) error {
 			case <-ctx.Done():
 			case <-time.After(slice):
 			}
-			if ProcessPendingWrite(s) {
-				// write mid-wait: refresh live next outer iteration soon
+			if ProcessPendingWrite(s) || ProcessPendingRead(s) {
+				// write/read mid-wait: refresh live next outer iteration soon
 				break
 			}
 			if ProcessPendingFirmwareFlash(s) || ProcessPendingExportLog(s) {
