@@ -147,8 +147,8 @@ Code today is still monolithic (`serve.py` ~25k LOC). New work should:
 
 ## Related files
 
-- Roles implementation: `ui-demo/serve.py` (`DEFAULT_ROLES`, `get_roles()`, `main()` gates)  
-- Config example: `ui-demo/config.example.json`  
-- LuCI proxy: `ui-demo/luci_proxy.py`  
-- Miner stack: `ui-demo/whatsminer/`  
+- Roles implementation: `ui/serve.py` (`DEFAULT_ROLES`, `get_roles()`, `main()` gates)  
+- Config example: `ui/config.example.json`  
+- LuCI proxy: `ui/luci_proxy.py`  
+- Miner stack: `ui/whatsminer/`  
 - Operator install: `KEENETIC.md`, `README.md`  

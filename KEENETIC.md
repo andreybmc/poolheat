@@ -324,8 +324,8 @@ sh packaging/entware/install-from-git.sh
 
 Скрипт:
 
-- `ui-demo/serve.py` → `/opt/lib/poolheat/serve.py`
-- `ui-demo/index.html` → `/opt/share/poolheat/www/index.html`
+- `ui/serve.py` → `/opt/lib/poolheat/serve.py`
+- `ui/index.html` → `/opt/share/poolheat/www/index.html`
 - ставит `VERSION`, launcher `/opt/bin/poolheatd`, init `S99poolheat*`
 - **не** перезаписывает существующий `/opt/etc/poolheat/config.json`
 - ставит Python-зависимости (`pycryptodome`, `passlib`) и перезапускает сервис
@@ -531,7 +531,7 @@ Keenetic (Entware)
          └── TCP 4028 → Whatsminer
 
 /opt/poolheat/                       git clone (для git-обновлений)
-  ui-demo/
+  ui/
   packaging/entware/install-from-git.sh
   VERSION
   KEENETIC.md

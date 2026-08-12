@@ -5,6 +5,13 @@ mkdir -p /opt/var/poolheat /opt/var/run /opt/etc/poolheat
 chmod 755 /opt/bin/poolheatd /opt/lib/poolheat/serve.py 2>/dev/null || true
 chmod 755 /opt/etc/init.d/S99poolheat /opt/etc/init.d/S99poolheat-standalone 2>/dev/null || true
 
+# Layout migration (ui-demo→ui source tree, ports, heat_pools seed)
+if [ -f /opt/lib/poolheat/migrate-layout.sh ]; then
+  sh /opt/lib/poolheat/migrate-layout.sh 2>/dev/null || true
+elif [ -f /opt/share/poolheat/migrate-layout.sh ]; then
+  sh /opt/share/poolheat/migrate-layout.sh 2>/dev/null || true
+fi
+
 # Whatsminer privileged API crypto deps
 if [ -x /opt/bin/pip3 ] || [ -x /opt/bin/pip ]; then
   PIP=/opt/bin/pip3

@@ -1,47 +1,40 @@
-# runtime / local
-ui-demo/history.db
-ui-demo/history.db-*
-ui-demo/history_config.json
-ui-demo/last_commands.json
-ui-demo/.last_commands.json
-ui-demo/poolheat.log
+# runtime / local data (never commit)
+db/*
+!db/.gitkeep
+!db/README.md
+
+# legacy path (if recreated)
+ui-demo/
+
+# python
 **/__pycache__/
 *.pyc
 .DS_Store
 *.swp
 
-# local experiment dumps (may contain network/pool details)
+# local experiment dumps
 power-pct-*.json
 stage0-snapshot*.json
 
 # optional local config with secrets
-ui-demo/config.json
+ui/config.json
 packaging/entware/opt/etc/poolheat/config.local.json
 
-# local packaging artifacts
+# packaging artifacts (build outputs live outside repo or regenerate)
 dist/
+
+# tools dumps (pcap/firmware/logs kept out of tree)
 tools/whatsminer-proxy/pcap/
 tools/whatsminer-proxy/firmware/
 tools/whatsminer-proxy/logs/
 tools/whatsminer-proxy/*.pcap*
+tools/whatsminer-proxy/*.pcapng
+tools/whatsminer-proxy/config.json
 
 # Tuya local secrets
 tools/tuya-local/plg1.env
 tools/tuya-local/devices.json
 tools/tuya-local/tuya-raw.json
-
-# local runtime / secrets (never commit)
-ui-demo/*.db
-ui-demo/*.db-shm
-ui-demo/*.db-wal
-ui-demo/*_config.json
-ui-demo/mode_profiles.json
-ui-demo/pool_presets.json
-ui-demo/schedule_config.json
-ui-demo/telegram_config.json
-ui-demo/energy_config.json
-ui-demo/luci_proxy_config.json
-tools/whatsminer-proxy/config.json
 
 # Go build artifacts
 edge/bin/

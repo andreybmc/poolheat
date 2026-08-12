@@ -69,7 +69,7 @@ python3 -m tinytuya wizard
 ## Fill config and test (LAN only)
 
 ```bash
-cd /Users/macbookpro16/Documents/poolheat/tools/tuya-local
+cd /Users/macbookpro16/projects/poolheat/tools/tuya-local
 cp plg1.env.example plg1.env
 # edit plg1.env → TUYA_LOCAL_KEY=...
 

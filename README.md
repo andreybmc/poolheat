@@ -117,22 +117,29 @@ Config under `/opt/etc/poolheat/` is **not** overwritten.
 ## Dev on Mac / Linux
 
 ```bash
-cd ui-demo
+cd ui
 python3 -m pip install pycryptodome passlib
 python3 serve.py
 ```
 
-Open http://127.0.0.1:8787/
+Open http://127.0.0.1:8787/  
+Local DBs and runtime state go to `db/` (not inside `ui/`).
 
 ## Layout
 
 ```text
-ui-demo/                 # serve.py + index.html (source of truth)
+ui/                      # serve.py + index.html + icons (source of truth)
+db/                      # local history.db, energy.db, runtime JSON
+edge/                    # Go pollers
 packaging/entware/       # OPKG tree + install-from-git.sh + build-ipk.sh
+modules/                 # optional modules (e.g. miner_sniffer)
+assets/                  # design assets (emoji pack dumps, etc.)
+tools/                   # lab helpers (no large pcap/firmware in tree)
 VERSION                  # release version (used by update check)
 KEENETIC.md              # detailed Keenetic install runbook
-dist/                    # optional built .ipk
 ```
+
+Build artifacts and local dumps live outside the repo in `../poolheat-trash/`.
 
 ## License
 

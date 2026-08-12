@@ -248,7 +248,7 @@ crc  = (~zlib.crc32(body)) & 0xffffffff   # no trailing NUL
 - Write **16 B reply with tail `ffff` = SUCCESS** (live: PowerLimitSet 2500→2400→2500).
 - Bad frame reject: mid field `0x02` + `ffff`.
 
-Implemented in `ui-demo/whatsminer_driver.py` → `Remote8889Client`.
+Implemented in `ui/whatsminer_driver.py` → `Remote8889Client`.
 
 ### 5.5b Write commands (historical — pre-key)
 
