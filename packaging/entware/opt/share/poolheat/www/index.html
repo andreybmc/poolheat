@@ -2688,95 +2688,185 @@
     }
     .fleet-pill b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
     .fleet-pill.online b { color: var(--ok, #34d399); }
-    .fleet-toolbar {
+    /* Status filter chips above table */
+    .fleet-status-bar {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
       align-items: center;
-      justify-content: space-between;
+      gap: 4px 10px;
+      padding: 2px 0 4px;
+      border-bottom: 1px solid var(--border);
     }
+    .fleet-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 6px 8px;
+      border-radius: 8px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .fleet-chip:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+    .fleet-chip.active {
+      color: var(--text);
+      border-bottom-color: var(--accent, #6366f1);
+      font-weight: 550;
+    }
+    .fleet-chip-n {
+      display: inline-flex;
+      min-width: 1.4em;
+      justify-content: center;
+      padding: 1px 7px;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.08);
+      font-size: 0.72rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+    .fleet-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .fleet-dot.online { background: #34d399; }
+    .fleet-dot.offline { background: #f87171; }
+    .fleet-dot.warn { background: #fbbf24; }
+    .fleet-dot.error { background: #ef4444; }
+    .fleet-toolbar-end { margin-left: auto; }
     .fleet-search {
-      flex: 1 1 180px;
-      min-width: 160px;
-      max-width: 320px;
-      padding: 7px 12px;
+      min-width: 140px;
+      max-width: 240px;
+      width: 200px;
+      padding: 6px 10px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: rgba(0,0,0,0.2);
       color: var(--text);
-      font-size: 0.85rem;
-    }
-    .fleet-filters { display: flex; flex-wrap: wrap; gap: 4px; }
-    .fleet-fbtn {
-      border: 1px solid transparent;
-      background: transparent;
-      color: var(--muted);
-      font-size: 0.78rem;
-      padding: 5px 10px;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    .fleet-fbtn:hover { color: var(--text); background: rgba(255,255,255,0.04); }
-    .fleet-fbtn.active {
-      color: var(--text);
-      background: rgba(99, 102, 241, 0.15);
-      border-color: rgba(99, 102, 241, 0.35);
+      font-size: 0.82rem;
     }
     .fleet-table-wrap { overflow: auto; margin: 0 -4px; }
-    .fleet-table { min-width: 980px; font-size: 0.8rem; }
+    .fleet-table { min-width: 920px; font-size: 0.8rem; }
     .fleet-table th { text-align: left; padding-left: 8px; padding-right: 8px; }
-    .fleet-table td { padding: 9px 8px; white-space: nowrap; }
-    .fleet-table td.fleet-ip {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.78rem;
-    }
+    .fleet-table td { padding: 10px 8px; white-space: nowrap; vertical-align: middle; }
     .fleet-table tr.fleet-row-active { background: rgba(99, 102, 241, 0.06); }
-    .fleet-table tr.fleet-row-offline td { opacity: 0.72; }
-    .fleet-status {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 0.75rem;
-      font-weight: 550;
-      padding: 3px 8px;
-      border-radius: 999px;
-      border: 1px solid transparent;
+    .fleet-table tr.fleet-row-offline td { opacity: 0.85; }
+    /* First col: left status strip (widget-style) + cell/IP — no text badge */
+    .fleet-table tbody tr {
+      position: relative;
     }
-    .fleet-status::before {
+    .fleet-table td.fleet-id-td {
+      position: relative;
+      padding-left: 14px;
+      min-width: 140px;
+    }
+    .fleet-table td.fleet-id-td::before {
       content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: currentColor;
-      flex-shrink: 0;
+      position: absolute;
+      left: 0;
+      top: 8px;
+      bottom: 8px;
+      width: 4px;
+      border-radius: 0 2px 2px 0;
+      background: var(--dim);
     }
-    .fleet-status.online {
-      color: #34d399;
-      background: rgba(52, 211, 153, 0.12);
-      border-color: rgba(52, 211, 153, 0.28);
+    .fleet-table td.fleet-id-td.st-online::before {
+      background: linear-gradient(180deg, #6ee7b7 0%, #34d399 45%, #059669 100%);
     }
-    .fleet-status.offline {
-      color: #f87171;
-      background: rgba(248, 113, 113, 0.1);
-      border-color: rgba(248, 113, 113, 0.25);
+    .fleet-table td.fleet-id-td.st-offline::before,
+    .fleet-table td.fleet-id-td.st-unknown::before {
+      background: linear-gradient(180deg, #fca5a5 0%, #f87171 45%, #dc2626 100%);
     }
-    .fleet-status.unknown {
+    .fleet-table td.fleet-id-td.st-warn::before {
+      background: linear-gradient(180deg, #fde68a 0%, #fbbf24 45%, #d97706 100%);
+    }
+    .fleet-table td.fleet-id-td.st-error::before {
+      background: linear-gradient(180deg, #fca5a5 0%, #ef4444 50%, #b91c1c 100%);
+    }
+    .fleet-id-cell {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      min-width: 120px;
+    }
+    .fleet-id-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .fleet-id-meta .cell-name {
+      font-weight: 600;
+      font-size: 0.85rem;
+      color: var(--text);
+    }
+    .fleet-id-meta .cell-ip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.75rem;
       color: var(--dim);
-      background: rgba(255,255,255,0.04);
-      border-color: var(--border);
     }
-    .fleet-status.active-role {
+    .fleet-id-meta .cell-role {
+      font-size: 0.68rem;
       color: #a5b4fc;
-      background: rgba(99, 102, 241, 0.12);
-      border-color: rgba(99, 102, 241, 0.3);
     }
-    .fleet-name-cell { display: flex; flex-direction: column; gap: 1px; min-width: 90px; }
+    .fleet-name-cell { display: flex; flex-direction: column; gap: 1px; min-width: 80px; }
     .fleet-name-cell .nm { font-weight: 550; }
     .fleet-name-cell .sub { font-size: 0.72rem; color: var(--dim); }
     .fleet-model-cell { display: flex; flex-direction: column; gap: 1px; }
     .fleet-model-cell .sub { font-size: 0.72rem; color: var(--dim); }
     .fleet-num { font-variant-numeric: tabular-nums; font-weight: 550; }
     .fleet-muted { color: var(--dim); }
+    .fleet-col-menu { width: 36px; }
+    .fleet-menu-btn {
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      font-size: 1.15rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .fleet-menu-btn:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+    .fleet-menu-btn.open { background: rgba(99,102,241,0.15); color: var(--text); }
+    /* Context menu */
+    .fleet-ctx {
+      position: fixed;
+      z-index: 5000;
+      min-width: 180px;
+      padding: 6px;
+      border-radius: 12px;
+      background: var(--card, #1e2430);
+      border: 1px solid var(--border);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .fleet-ctx[hidden] { display: none !important; }
+    .fleet-ctx-item {
+      border: none;
+      background: transparent;
+      text-align: left;
+      color: var(--text);
+      font-size: 0.85rem;
+      padding: 9px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .fleet-ctx-item:hover { background: rgba(255,255,255,0.06); }
+    .fleet-ctx-item.danger { color: #f87171; }
+    .fleet-ctx-item.danger:hover { background: rgba(248,113,113,0.1); }
+    .fleet-ctx-item[disabled] { opacity: 0.4; pointer-events: none; }
+    .fleet-ctx-sep {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 6px;
+    }
     .fleet-actions { display: flex; gap: 4px; justify-content: flex-end; }
     .fleet-actions .btn {
       padding: 3px 8px;
@@ -2790,7 +2880,8 @@
       line-height: 1.4;
     }
     @media (max-width: 720px) {
-      .fleet-search { max-width: none; }
+      .fleet-search { max-width: none; width: 100%; }
+      .fleet-toolbar-end { margin-left: 0; width: 100%; }
     }
 
     .err-table {
@@ -7750,44 +7841,69 @@
       </div><!-- /subview-map-pool -->
     </section>
 
-    <!-- ========== MINERS (fleet table) ========== -->
+    <!-- ========== MINERS (managed / unmanaged) ========== -->
     <section class="view" id="view-miners">
+      <nav class="subtabs" role="tablist" aria-label="Miners">
+        <button type="button" class="active" data-subtab="managed" data-i18n="miners.tab.managed">Managed</button>
+        <button type="button" data-subtab="unmanaged" data-i18n="miners.tab.unmanaged">Unmanaged</button>
+      </nav>
+
+      <!-- Managed = imported inventory + fleet live -->
+      <div class="subview active" id="subview-miners-managed">
       <div class="stack">
         <div class="card fleet-card">
           <div class="card-h">
             <div>
-              <h2 data-i18n="h2.miners">Miners</h2>
-              <div class="sub" data-i18n="sub.miners">fleet · managed inventory · live for active</div>
+              <h2 data-i18n="h2.miners_managed">Managed miners</h2>
+              <div class="sub" data-i18n="sub.miners_managed">imported · fleet · live for active</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" id="btn-fleet-refresh" data-i18n="btn.refresh">Refresh</button>
               <button class="btn" type="button" id="btn-miners-goto-managed" data-i18n="miners.goto_managed">
-                Inventory
+                Inventory settings
               </button>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
             <div class="fleet-summary" id="fleet-summary">
-              <span class="fleet-pill" id="fleet-sum-total"><b>0</b> <span data-i18n="fleet.total">total</span></span>
-              <span class="fleet-pill online" id="fleet-sum-online"><b>0</b> <span data-i18n="fleet.online">online</span></span>
               <span class="fleet-pill" id="fleet-sum-th"><b>—</b> TH/s</span>
               <span class="fleet-pill" id="fleet-sum-w"><b>—</b> W</span>
             </div>
-            <div class="fleet-toolbar">
-              <input type="search" id="fleet-filter" class="fleet-search" placeholder="Search name / IP / model…" data-i18n-placeholder="fleet.search" autocomplete="off" />
-              <div class="fleet-filters" role="group" aria-label="Status filter">
-                <button type="button" class="fleet-fbtn active" data-fleet-f="all" data-i18n="fleet.f_all">All</button>
-                <button type="button" class="fleet-fbtn" data-fleet-f="online" data-i18n="fleet.f_online">Online</button>
-                <button type="button" class="fleet-fbtn" data-fleet-f="offline" data-i18n="fleet.f_offline">Offline</button>
-                <button type="button" class="fleet-fbtn" data-fleet-f="active" data-i18n="fleet.f_active">Active</button>
+            <!-- Status filter chips with counts (above table) -->
+            <div class="fleet-status-bar" id="fleet-status-bar" role="group" aria-label="Status filter">
+              <button type="button" class="fleet-chip active" data-fleet-f="all">
+                <span data-i18n="fleet.f_all">All</span>
+                <span class="fleet-chip-n" id="fleet-n-all">0</span>
+              </button>
+              <button type="button" class="fleet-chip" data-fleet-f="online">
+                <span class="fleet-dot online"></span>
+                <span data-i18n="fleet.f_online">Online</span>
+                <span class="fleet-chip-n" id="fleet-n-online">0</span>
+              </button>
+              <button type="button" class="fleet-chip" data-fleet-f="offline">
+                <span class="fleet-dot offline"></span>
+                <span data-i18n="fleet.f_offline">Offline</span>
+                <span class="fleet-chip-n" id="fleet-n-offline">0</span>
+              </button>
+              <button type="button" class="fleet-chip" data-fleet-f="warn">
+                <span class="fleet-dot warn"></span>
+                <span data-i18n="fleet.f_warn">Warning</span>
+                <span class="fleet-chip-n" id="fleet-n-warn">0</span>
+              </button>
+              <button type="button" class="fleet-chip" data-fleet-f="error">
+                <span class="fleet-dot error"></span>
+                <span data-i18n="fleet.f_error">Error</span>
+                <span class="fleet-chip-n" id="fleet-n-error">0</span>
+              </button>
+              <div class="fleet-toolbar-end">
+                <input type="search" id="fleet-filter" class="fleet-search" placeholder="Search name / IP / model…" data-i18n-placeholder="fleet.search" autocomplete="off" />
               </div>
             </div>
             <div class="fleet-table-wrap">
               <table class="err-table fleet-table" id="fleet-table">
                 <thead>
                   <tr>
-                    <th data-i18n="fleet.col.ip">IP</th>
-                    <th data-i18n="fleet.col.status">Status</th>
+                    <th data-i18n="fleet.col.cell_ip">Cell · IP</th>
                     <th data-i18n="fleet.col.name">Name</th>
                     <th data-i18n="fleet.col.model">Model</th>
                     <th data-i18n="fleet.col.hash">Hashrate</th>
@@ -7799,11 +7915,11 @@
                     <th data-i18n="fleet.col.elapsed">Elapsed</th>
                     <th data-i18n="fleet.col.pool">Pool</th>
                     <th data-i18n="fleet.col.vendor">Vendor</th>
-                    <th></th>
+                    <th class="fleet-col-menu"></th>
                   </tr>
                 </thead>
                 <tbody id="fleet-body">
-                  <tr><td colspan="14" style="color:var(--muted)">—</td></tr>
+                  <tr><td colspan="13" style="color:var(--muted)">—</td></tr>
                 </tbody>
               </table>
             </div>
@@ -7811,8 +7927,64 @@
               Live metrics are shown for the <strong>active</strong> polled miner. Standby rows show inventory until multi-poll is enabled.
             </p>
           </div>
+          <!-- Floating context menu (one instance) -->
+          <div class="fleet-ctx" id="fleet-ctx" hidden>
+            <button type="button" class="fleet-ctx-item" data-ctx="open" data-i18n="fleet.open">Open</button>
+            <button type="button" class="fleet-ctx-item" data-ctx="edit" data-i18n="fleet.edit">Edit</button>
+            <button type="button" class="fleet-ctx-item" data-ctx="active" data-i18n="fleet.make_active">Make active</button>
+            <div class="fleet-ctx-sep"></div>
+            <button type="button" class="fleet-ctx-item danger" data-ctx="remove" data-i18n="fleet.remove">Remove</button>
+          </div>
         </div>
       </div>
+      </div><!-- /subview-miners-managed -->
+
+      <!-- Unmanaged = discovered, not imported -->
+      <div class="subview" id="subview-miners-unmanaged">
+      <div class="stack">
+        <div class="card fleet-card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.miners_unmanaged">Unmanaged miners</h2>
+              <div class="sub" data-i18n="sub.miners_unmanaged">discovered on LAN · not in inventory</div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-unmanaged-refresh" data-i18n="btn.refresh">Refresh</button>
+              <button class="btn primary" type="button" id="btn-unmanaged-scan" data-i18n="miners.scan_now">Scan now</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <div class="fleet-summary" id="unmanaged-summary">
+              <span class="fleet-pill" id="unmanaged-sum-total"><b>0</b> <span data-i18n="fleet.total">total</span></span>
+              <span class="fleet-pill" id="unmanaged-sum-ts" style="font-size:0.72rem">—</span>
+            </div>
+            <div class="fleet-toolbar">
+              <input type="search" id="unmanaged-filter" class="fleet-search" placeholder="Search IP / model / vendor…" data-i18n-placeholder="miners.unmanaged.search" autocomplete="off" />
+            </div>
+            <div class="fleet-table-wrap">
+              <table class="err-table fleet-table" id="unmanaged-table" style="min-width:640px">
+                <thead>
+                  <tr>
+                    <th data-i18n="fleet.col.ip">IP</th>
+                    <th data-i18n="fleet.col.vendor">Vendor</th>
+                    <th data-i18n="fleet.col.model">Model</th>
+                    <th>MAC</th>
+                    <th data-i18n="mp.col.port">Port</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="unmanaged-body">
+                  <tr><td colspan="6" style="color:var(--muted)">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="fleet-hint" data-i18n="miners.unmanaged.hint">
+              ASICs found by discovery but not imported. Import adds them to <strong>Managed</strong>.
+            </p>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-miners-unmanaged -->
     </section>
 
     <!-- ========== PERIPHERALS ========== -->
@@ -9685,9 +9857,22 @@
         "tab.miners": "Miners",
         "sub.map_pool": "Pool",
         "h2.miners": "Miners",
-        "sub.miners": "fleet · managed inventory · live for active",
+        "sub.miners": "fleet · managed / unmanaged",
         "miners.placeholder": "Fleet of managed ASICs with live metrics for the active miner.",
-        "miners.goto_managed": "Inventory",
+        "miners.goto_managed": "Inventory settings",
+        "miners.tab.managed": "Managed",
+        "miners.tab.unmanaged": "Unmanaged",
+        "h2.miners_managed": "Managed miners",
+        "sub.miners_managed": "imported · fleet · live for active",
+        "h2.miners_unmanaged": "Unmanaged miners",
+        "sub.miners_unmanaged": "discovered on LAN · not in inventory",
+        "miners.scan_now": "Scan now",
+        "miners.unmanaged.search": "Search IP / model / vendor…",
+        "miners.unmanaged.hint": "ASICs found by discovery but not imported. Import adds them to Managed.",
+        "miners.unmanaged.empty": "No unmanaged miners · run Scan now",
+        "miners.import": "Import",
+        "miners.ignore": "Ignore",
+        "mp.col.port": "Port",
         "fleet.total": "total",
         "fleet.online": "online",
         "fleet.search": "Search name / IP / model…",
@@ -9695,6 +9880,9 @@
         "fleet.f_online": "Online",
         "fleet.f_offline": "Offline",
         "fleet.f_active": "Active",
+        "fleet.f_warn": "Warning",
+        "fleet.f_error": "Error",
+        "fleet.col.cell_ip": "Cell · IP",
         "fleet.col.ip": "IP",
         "fleet.col.status": "Status",
         "fleet.col.name": "Name",
@@ -9712,9 +9900,13 @@
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
         "fleet.status.standby": "Standby",
+        "fleet.status.warn": "Warning",
+        "fleet.status.error": "Error",
         "fleet.make_active": "Make active",
         "fleet.open": "Open",
         "fleet.edit": "Edit",
+        "fleet.remove": "Remove",
+        "fleet.remove_confirm": "Remove miner from inventory?",
         "fleet.empty": "No miners in inventory — import under Settings → Miner-poller",
         "field.preset_color": "Color",
         "sched.legend_html": "grey = inactive · solid = mode profile · hatched = map preset · outline = now",
@@ -10599,9 +10791,22 @@
         "tab.miners": "Майнеры",
         "sub.map_pool": "Бассейн",
         "h2.miners": "Майнеры",
-        "sub.miners": "флот · inventory · live для active",
+        "sub.miners": "флот · managed / unmanaged",
         "miners.placeholder": "Флот managed ASIC: live-метрики у active, inventory у standby.",
-        "miners.goto_managed": "Inventory",
+        "miners.goto_managed": "Настройки inventory",
+        "miners.tab.managed": "В системе",
+        "miners.tab.unmanaged": "Не в системе",
+        "h2.miners_managed": "В системе (managed)",
+        "sub.miners_managed": "импортированные · флот · live для active",
+        "h2.miners_unmanaged": "Не в системе (unmanaged)",
+        "sub.miners_unmanaged": "найдены в LAN · не импортированы",
+        "miners.scan_now": "Сканировать",
+        "miners.unmanaged.search": "Поиск IP / модель / вендор…",
+        "miners.unmanaged.hint": "ASIC из discovery, которых нет в inventory. Import → вкладка «В системе».",
+        "miners.unmanaged.empty": "Нет unmanaged · нажмите «Сканировать»",
+        "miners.import": "Импорт",
+        "miners.ignore": "Скрыть",
+        "mp.col.port": "Порт",
         "fleet.total": "всего",
         "fleet.online": "online",
         "fleet.search": "Поиск имя / IP / модель…",
@@ -10609,6 +10814,9 @@
         "fleet.f_online": "Online",
         "fleet.f_offline": "Offline",
         "fleet.f_active": "Active",
+        "fleet.f_warn": "Warning",
+        "fleet.f_error": "Error",
+        "fleet.col.cell_ip": "Ячейка · IP",
         "fleet.col.ip": "IP",
         "fleet.col.status": "Статус",
         "fleet.col.name": "Имя",
@@ -10626,9 +10834,13 @@
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
         "fleet.status.standby": "Standby",
-        "fleet.make_active": "Active",
+        "fleet.status.warn": "Warning",
+        "fleet.status.error": "Error",
+        "fleet.make_active": "Сделать active",
         "fleet.open": "Открыть",
-        "fleet.edit": "Edit",
+        "fleet.edit": "Редактировать",
+        "fleet.remove": "Удалить",
+        "fleet.remove_confirm": "Удалить майнер из inventory?",
         "fleet.empty": "Нет майнеров — импорт: Настройки → Miner-poller",
         "field.preset_color": "Цвет",
         "sched.legend_html": "серый = inactive · сплошной = профиль режима · штрих = пресет карты · контур = сейчас",
@@ -11672,6 +11884,14 @@
       if (opts.persist !== false) {
         try { localStorage.setItem(UI_LANG_KEY, lang); } catch (_) {}
       }
+      // Keep path-based route in sync: /en/dashboard · /ru/miners/managed
+      if (opts.syncUrl !== false && typeof setTabUrl === "function") {
+        try {
+          const cur =
+            typeof tabFromLocation === "function" ? tabFromLocation() : "dash";
+          setTabUrl(cur, "replace");
+        } catch (_) { /* ignore */ }
+      }
       const stEl = document.getElementById("ui-lang-status");
       if (stEl) stEl.textContent = lang === "ru" ? t("lang.extension") : t("lang.primary");
       document.dispatchEvent(new CustomEvent("poolheat:lang", { detail: { lang } }));
@@ -11810,7 +12030,8 @@
           document.getElementById("ui-lang-select");
         applyFrom(sel);
       });
-      applyUiLang(_uiLang, { persist: false });
+      // Don't rewrite URL here — initTabRoute owns first navigation
+      applyUiLang(_uiLang, { persist: false, syncUrl: false });
       syncUiPrefsForm();
       const st = document.getElementById("ui-lang-status");
       if (st) {
@@ -12286,6 +12507,8 @@
       "dash",
       "miner",
       "miners",
+      "managed",
+      "unmanaged",
       "chips",
       "pools",
       "energy",
@@ -12330,6 +12553,13 @@
       "pool-geo": "pool",
       fleet: "miners",
       asics: "miners",
+      "miners-managed": "managed",
+      "miners_managed": "managed",
+      imported: "managed",
+      "miners-unmanaged": "unmanaged",
+      "miners_unmanaged": "unmanaged",
+      discovered: "unmanaged",
+      unimported: "unmanaged",
       config: "settings",
       "settings-advanced": "advanced",
       "settings-adv": "advanced",
@@ -12446,6 +12676,23 @@
       return sub;
     }
 
+    function setMinersSubtab(subId) {
+      const sub = subId === "unmanaged" ? "unmanaged" : "managed";
+      document.querySelectorAll("#view-miners nav.subtabs button").forEach((b) => {
+        b.classList.toggle("active", b.dataset.subtab === sub);
+      });
+      document.querySelectorAll("#view-miners .subview").forEach((v) => {
+        v.classList.toggle("active", v.id === "subview-miners-" + sub);
+      });
+      if (sub === "managed" && typeof refreshFleetTable === "function") {
+        void refreshFleetTable();
+      }
+      if (sub === "unmanaged" && typeof refreshUnmanagedTable === "function") {
+        void refreshUnmanagedTable();
+      }
+      return sub;
+    }
+
     function isLogsSubtabActive() {
       return (
         document.getElementById("view-info")?.classList.contains("active") &&
@@ -12469,10 +12716,11 @@
 
     function resolveTabId(raw) {
       let t = String(raw || "").trim().toLowerCase();
-      // #/ · #dashboard · /dashboard · miner
+      // #/ · #dashboard · /dashboard · miner · /ru/miners
       t = t.replace(/^#/, "").replace(/^\/+/, "");
       if (t === "" || t === "/") return "dash";
       t = t.split(/[/?#]/)[0] || "";
+      if (t === "en" || t === "ru") return "dash"; // bare /en · /ru
       if (TAB_ALIASES[t]) return TAB_ALIASES[t];
       if (TAB_IDS.includes(t)) return t;
       return null;
@@ -12491,47 +12739,100 @@
       );
     }
 
-    function tabFromLocation() {
-      // hash first: #/ · #dashboard · #miner
-      if (location.hash) {
-        const hashTab = resolveTabId(location.hash);
-        if (hashTab) return hashTab;
+    /** Path segment for tabId: dash → dashboard */
+    function tabToPathSeg(tabId) {
+      if (!tabId || tabId === "dash") return "dashboard";
+      return String(tabId);
+    }
+
+    /**
+     * Parse /{lang}/{tab} · /{lang}/miners/{managed|unmanaged} · /{tab} · #tab
+     * Returns { lang: 'en'|'ru'|null, tab: tabId }
+     */
+    function parseLocationRoute() {
+      const parts = location.pathname
+        .replace(/\/+$/, "")
+        .split("/")
+        .filter(Boolean);
+      let lang = null;
+      let tabSegs = parts.slice();
+      if (parts.length && (parts[0] === "en" || parts[0] === "ru")) {
+        lang = parts[0];
+        tabSegs = parts.slice(1);
       }
-      // path: / · /dashboard · /miner
-      const parts = location.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-      if (!parts.length) return "dash";
-      const last = parts[parts.length - 1];
-      const pathTab = resolveTabId(last);
-      return pathTab || "dash";
+      let tab = null;
+      // Nested Miners: /miners/managed · /miners/unmanaged · /fleet/managed
+      if (tabSegs.length >= 2) {
+        const a = String(tabSegs[0] || "").toLowerCase();
+        const b = String(tabSegs[1] || "").toLowerCase();
+        if (a === "miners" || a === "fleet" || a === "asics") {
+          if (b === "unmanaged" || b === "discovered") tab = "unmanaged";
+          else if (b === "managed" || b === "inventory" || b === "") tab = "managed";
+          else tab = "managed";
+        }
+      }
+      if (!tab && tabSegs.length) {
+        tab = resolveTabId(tabSegs[0]);
+      }
+      // legacy hash fallback: #miners · #dashboard · #managed
+      if (!tab && location.hash) {
+        tab = resolveTabId(location.hash);
+      }
+      if (!tab) tab = "dash";
+      return { lang, tab };
+    }
+
+    function tabFromLocation() {
+      return parseLocationRoute().tab || "dash";
+    }
+
+    function langFromLocation() {
+      const r = parseLocationRoute();
+      if (r.lang === "en" || r.lang === "ru") return r.lang;
+      return null;
+    }
+
+    /**
+     * Canonical path: /en/dashboard · /ru/miners/managed · /en/miners/unmanaged
+     * Bare "miners" normalizes to managed subtab.
+     */
+    function buildAppPath(tabId, lang) {
+      const L = lang === "ru" ? "ru" : "en";
+      const id = String(tabId || "dash");
+      if (
+        id === "managed" ||
+        id === "miners-managed" ||
+        id === "miners"
+      ) {
+        return "/" + L + "/miners/managed";
+      }
+      if (id === "unmanaged" || id === "miners-unmanaged") {
+        return "/" + L + "/miners/unmanaged";
+      }
+      const seg = tabToPathSeg(id);
+      return "/" + L + "/" + seg;
     }
 
     function setTabUrl(tabId, mode) {
-      // Canonical dash URL: #dashboard (also accept #/ · empty · /)
-      // Other tabs: #miner · #chips · …
-      const hash = tabId === "dash" ? "#dashboard" : "#" + tabId;
+      // Path-based: /en/dashboard · /ru/miners/managed (hash no longer canonical)
+      if (!TAB_IDS.includes(tabId)) tabId = "dash";
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const url = buildAppPath(tabId, lang);
       try {
-        const cur = String(location.hash || "");
-        if (tabId === "dash") {
-          // Must clear leftover #miner etc. — pathname "/" alone is NOT "already dash"
-          if (isDashHash(cur) && (cur === "#dashboard" || cur === "#/")) return;
-          // normalize any dash alias → #dashboard
-          if (mode === "replace") {
-            history.replaceState({ tab: "dash" }, "", hash);
-          } else {
-            history.pushState({ tab: "dash" }, "", hash);
-          }
-          return;
-        }
-        const sameOther = cur === hash || cur === "#" + tabId;
-        if (sameOther) return;
+        const cur =
+          location.pathname.replace(/\/+$/, "") || "/";
+        const want = url.replace(/\/+$/, "") || "/";
+        // clear hash when switching to path routes
+        const full = url + (location.search || "");
+        if (cur === want && !location.hash) return;
         if (mode === "replace") {
-          history.replaceState({ tab: tabId }, "", hash);
+          history.replaceState({ tab: tabId, lang: lang }, "", full);
         } else {
-          history.pushState({ tab: tabId }, "", hash);
+          history.pushState({ tab: tabId, lang: lang }, "", full);
         }
       } catch (_) {
         try {
-          location.hash = tabId === "dash" ? "dashboard" : tabId;
+          location.pathname = url;
         } catch (__) { /* ignore */ }
       }
     }
@@ -12597,6 +12898,13 @@
         minerSub = "miner";
       } else if (tabId === "settings") {
         settingsSub = "main";
+      } else if (
+        tabId === "managed" ||
+        tabId === "unmanaged" ||
+        tabId === "miners-managed" ||
+        tabId === "miners-unmanaged"
+      ) {
+        mainTab = "miners";
       }
       document.querySelectorAll("nav.tabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.tab === mainTab);
@@ -12620,6 +12928,13 @@
       if (mainTab === "settings") setSettingsSubtab(settingsSub);
       if (mainTab === "periph") setPeriphSubtab(periphSub);
       if (mainTab === "map") setMapSubtab(mapSub);
+      if (mainTab === "miners") {
+        const ms =
+          tabId === "unmanaged" || tabId === "miners-unmanaged"
+            ? "unmanaged"
+            : "managed";
+        setMinersSubtab(ms);
+      }
       if (tabId === "dash") {
         try {
           if (typeof loadHistoryCharts === "function") loadHistoryCharts();
@@ -12670,9 +12985,7 @@
       if (mainTab === "settings" && settingsSub === "miner-poller") {
         if (typeof loadMinerPollerPanel === "function") void loadMinerPollerPanel();
       }
-      if (mainTab === "miners") {
-        if (typeof refreshFleetTable === "function") void refreshFleetTable();
-      }
+      // miners subtabs load via setMinersSubtab
       if (mainTab === "periph" && periphSub === "sensors") {
         if (typeof loadSensors === "function") loadSensors();
       }
@@ -12846,6 +13159,12 @@
         }
       });
     });
+    document.querySelectorAll("#view-miners nav.subtabs button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const s = btn.dataset.subtab === "unmanaged" ? "unmanaged" : "managed";
+        activateTab(s);
+      });
+    });
     document.getElementById("btn-miners-goto-managed")?.addEventListener("click", () => {
       activateTab("miner-poller");
       setTimeout(() => {
@@ -12858,38 +13177,78 @@
     document.getElementById("fleet-filter")?.addEventListener("input", () => {
       if (typeof renderFleetTable === "function") renderFleetTable();
     });
-    document.querySelectorAll("[data-fleet-f]").forEach((btn) => {
+    document.querySelectorAll("#fleet-status-bar [data-fleet-f]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        document.querySelectorAll("[data-fleet-f]").forEach((b) => b.classList.remove("active"));
+        document
+          .querySelectorAll("#fleet-status-bar [data-fleet-f]")
+          .forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
         if (typeof renderFleetTable === "function") renderFleetTable();
       });
     });
+    document.getElementById("btn-unmanaged-refresh")?.addEventListener("click", () => {
+      if (typeof refreshUnmanagedTable === "function") void refreshUnmanagedTable({ manual: true });
+    });
+    document.getElementById("btn-unmanaged-scan")?.addEventListener("click", async () => {
+      // Prefer the same handler as Settings → Miner-poller scan
+      const mpScan = document.getElementById("btn-mp-scan");
+      if (mpScan) {
+        mpScan.click();
+        // poll discovered list while scan runs
+        let n = 0;
+        const tick = setInterval(() => {
+          n += 1;
+          if (typeof refreshUnmanagedTable === "function") void refreshUnmanagedTable();
+          if (n >= 30) clearInterval(tick);
+        }, 2000);
+        return;
+      }
+      try {
+        const res = await fetch("/api/miner/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const body = await res.json();
+        if (body.error) throw new Error(body.error);
+        if (typeof toastSuccess === "function") toastSuccess("Scan started");
+      } catch (e) {
+        if (typeof toastError === "function") toastError(e.message || String(e));
+      }
+      setTimeout(() => {
+        if (typeof refreshUnmanagedTable === "function") void refreshUnmanagedTable({ manual: true });
+      }, 3000);
+    });
+    document.getElementById("unmanaged-filter")?.addEventListener("input", () => {
+      if (typeof renderUnmanagedTable === "function") renderUnmanagedTable();
+    });
     window.addEventListener("hashchange", () => {
+      // legacy #miners → /{lang}/miners
       const t = tabFromLocation();
-      activateTab(t, { skipUrl: true });
+      activateTab(t, { skipUrl: false, replaceUrl: true });
     });
     window.addEventListener("popstate", () => {
-      const t = tabFromLocation();
-      activateTab(t, { skipUrl: true });
+      const route = parseLocationRoute();
+      if (route.lang && typeof applyUiLang === "function") {
+        applyUiLang(route.lang, { persist: true, syncUrl: false });
+      }
+      activateTab(route.tab, { skipUrl: true });
     });
-    // initial route (path /miner → #miner, or hash)
+    // initial route: /en/dashboard · /ru/miners/managed (migrate #hash + bare /)
     (function initTabRoute() {
-      const t = tabFromLocation();
-      // normalize path /miner to #miner; dash → #dashboard
-      const path = location.pathname.replace(/\/+$/, "") || "/";
-      const wantHash = t === "dash" ? "#dashboard" : "#" + t;
+      const route = parseLocationRoute();
+      // Language from path wins over localStorage on first paint
+      if (route.lang && typeof applyUiLang === "function") {
+        applyUiLang(route.lang, { persist: true, syncUrl: false });
+      }
+      const t = route.tab || "dash";
+      // Normalize to /{lang}/{tab}[/{sub}] (drop hash; miners → /miners/managed)
       try {
-        if (path !== "/" && path !== "/index.html" && !location.hash) {
-          history.replaceState({ tab: t }, "", wantHash);
-        } else if (t === "dash" && !isDashHash(location.hash)) {
-          // e.g. stuck on #miner while showing dash — force fix
-          history.replaceState({ tab: "dash" }, "", "#dashboard");
-        } else if (t === "dash" && location.hash && location.hash !== "#dashboard" && isDashHash(location.hash)) {
-          // normalize #/ · #dash → #dashboard
-          history.replaceState({ tab: "dash" }, "", "#dashboard");
-        } else if (t !== "dash" && location.hash !== wantHash) {
-          history.replaceState({ tab: t }, "", wantHash);
+        const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+        const want = buildAppPath(t, lang);
+        const cur = (location.pathname.replace(/\/+$/, "") || "/") + (location.hash || "");
+        if (cur !== want) {
+          history.replaceState({ tab: t, lang: lang }, "", want);
         }
       } catch (_) { /* ignore */ }
       activateTab(t, { skipUrl: false, replaceUrl: true });
@@ -22778,10 +23137,191 @@
     let minerModelsCache = { families: [], manufacturers: [] };
     let fleetCache = { miners: [], summary: {} };
     let fleetTimer = null;
+    let unmanagedCache = { miners: [], updated_ts: null };
 
     function fleetT(key, fallback) {
       return typeof t === "function" ? t(key, fallback) : fallback;
     }
+
+    async function refreshUnmanagedTable(opts) {
+      opts = opts || {};
+      const tbody = document.getElementById("unmanaged-body");
+      try {
+        // managed hosts to exclude
+        let managedHosts = new Set();
+        try {
+          const mr = await fetch("/api/miner/managed", { cache: "no-store" });
+          const mb = await mr.json();
+          (mb.miners || []).forEach((m) => {
+            if (m && m.host) managedHosts.add(String(m.host).trim());
+          });
+        } catch (_) { /* ignore */ }
+
+        const res = await fetch("/api/miner/discovered", { cache: "no-store" });
+        const body = await res.json();
+        const all = (body.miners || []).filter((m) => m && !m.ignored);
+        const unmanaged = all.filter((m) => {
+          const ip = String(m.ip || m.host || "").trim();
+          return ip && !managedHosts.has(ip);
+        });
+        unmanagedCache = {
+          miners: unmanaged,
+          updated_ts: body.updated_ts || null,
+          found: body.found,
+        };
+        renderUnmanagedTable();
+        if (opts.manual && typeof toastSuccess === "function") {
+          toastSuccess(
+            fleetT("miners.tab.unmanaged", "Unmanaged") +
+              ": " +
+              unmanaged.length
+          );
+        }
+      } catch (e) {
+        if (tbody) {
+          tbody.innerHTML =
+            '<tr><td colspan="6" style="color:var(--warn)">error: ' +
+            escapeLogHtml(e.message || String(e)) +
+            "</td></tr>";
+        }
+        if (opts.manual && typeof toastError === "function") {
+          toastError(e.message || String(e));
+        }
+      }
+    }
+
+    function renderUnmanagedTable() {
+      const tbody = document.getElementById("unmanaged-body");
+      if (!tbody) return;
+      const miners = unmanagedCache.miners || [];
+      const elTot = document.getElementById("unmanaged-sum-total");
+      if (elTot) {
+        elTot.innerHTML =
+          "<b>" +
+          miners.length +
+          "</b> " +
+          fleetT("fleet.total", "total");
+      }
+      const elTs = document.getElementById("unmanaged-sum-ts");
+      if (elTs) {
+        elTs.textContent = unmanagedCache.updated_ts
+          ? "scan " + unmanagedCache.updated_ts
+          : "—";
+      }
+      const q = (
+        document.getElementById("unmanaged-filter")?.value || ""
+      )
+        .trim()
+        .toLowerCase();
+      let rows = miners.slice();
+      if (q) {
+        rows = rows.filter((m) => {
+          const blob = [m.ip, m.host, m.vendor, m.miner_type, m.mac, m.port]
+            .join(" ")
+            .toLowerCase();
+          return blob.includes(q);
+        });
+      }
+      if (!rows.length) {
+        tbody.innerHTML =
+          '<tr><td colspan="6" style="color:var(--muted)">' +
+          escapeLogHtml(
+            fleetT(
+              "miners.unmanaged.empty",
+              "No unmanaged miners · run Scan now"
+            )
+          ) +
+          "</td></tr>";
+        return;
+      }
+      const impL = fleetT("miners.import", "Import");
+      const ignL = fleetT("miners.ignore", "Ignore");
+      tbody.innerHTML = rows
+        .map((m) => {
+          const ip = m.ip || m.host || "";
+          const vendor =
+            typeof vendorDisplayName === "function"
+              ? vendorDisplayName(m.vendor)
+              : m.vendor || "—";
+          return (
+            "<tr>" +
+            '<td class="fleet-ip">' +
+            escapeLogHtml(ip) +
+            "</td>" +
+            "<td>" +
+            (typeof vendorCellHtml === "function"
+              ? vendorCellHtml({
+                  vendor: m.vendor,
+                  vendor_name: vendor,
+                  vendor_logo: m.vendor_logo,
+                })
+              : escapeLogHtml(vendor)) +
+            "</td>" +
+            "<td>" +
+            escapeLogHtml(m.miner_type || m.model || "—") +
+            "</td>" +
+            '<td style="font-family:ui-monospace,monospace;font-size:0.75rem">' +
+            escapeLogHtml(m.mac || "—") +
+            "</td>" +
+            "<td>" +
+            escapeLogHtml(String(m.port != null ? m.port : "—")) +
+            "</td>" +
+            '<td style="white-space:nowrap">' +
+            '<div class="fleet-actions">' +
+            '<button type="button" class="btn primary" data-um-import="' +
+            escapeLogHtml(ip) +
+            '">' +
+            escapeLogHtml(impL) +
+            "</button> " +
+            '<button type="button" class="btn" data-um-ignore="' +
+            escapeLogHtml(ip) +
+            '">' +
+            escapeLogHtml(ignL) +
+            "</button>" +
+            "</div></td></tr>"
+          );
+        })
+        .join("");
+    }
+
+    document.getElementById("unmanaged-body")?.addEventListener("click", async (ev) => {
+      const el = ev.target;
+      if (!el || !el.getAttribute) return;
+      const imp = el.getAttribute("data-um-import");
+      const ign = el.getAttribute("data-um-ignore");
+      if (imp) {
+        try {
+          const res = await fetch("/api/miner/import", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ip: imp, make_active: false }),
+          });
+          const body = await res.json();
+          if (body.error) throw new Error(body.error);
+          if (typeof toastSuccess === "function") toastSuccess("Import " + imp);
+          await refreshUnmanagedTable();
+          if (typeof refreshFleetTable === "function") void refreshFleetTable();
+          if (typeof refreshManagedTable === "function") void refreshManagedTable();
+        } catch (e) {
+          if (typeof toastError === "function") toastError(e.message);
+        }
+        return;
+      }
+      if (ign) {
+        try {
+          const res = await fetch("/api/miner/managed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "ignore", ip: ign, ignored: true }),
+          });
+          const body = await res.json();
+          if (body.error) throw new Error(body.error);
+          await refreshUnmanagedTable();
+        } catch (e) {
+          if (typeof toastError === "function") toastError(e.message);
+        }
+      }
+    });
 
     function formatElapsedSec(sec) {
       const n = Number(sec);
@@ -22856,7 +23396,7 @@
       } catch (e) {
         if (tbody) {
           tbody.innerHTML =
-            '<tr><td colspan="14" style="color:var(--warn)">error: ' +
+            '<tr><td colspan="13" style="color:var(--warn)">error: ' +
             escapeLogHtml(e.message || String(e)) +
             "</td></tr>";
         }
@@ -22874,6 +23414,63 @@
       }, 8000);
     }
 
+    function fleetStatusOf(m) {
+      // online | offline | warn | error | unknown
+      if (m.online === true) {
+        const live = m.live || {};
+        if (live.pool_ok === false) return "warn";
+        if (live.error) return "error";
+        return "online";
+      }
+      if (m.online === false) return "offline";
+      return "unknown";
+    }
+
+    function fleetStatusLabel(st) {
+      if (st === "online") return fleetT("fleet.status.online", "Online");
+      if (st === "offline") return fleetT("fleet.status.offline", "Offline");
+      if (st === "warn") return fleetT("fleet.status.warn", "Warning");
+      if (st === "error") return fleetT("fleet.status.error", "Error");
+      return fleetT("fleet.status.standby", "Standby");
+    }
+
+    function closeFleetCtx() {
+      const menu = document.getElementById("fleet-ctx");
+      if (menu) {
+        menu.hidden = true;
+        menu.dataset.mid = "";
+      }
+      document.querySelectorAll(".fleet-menu-btn.open").forEach((b) => {
+        b.classList.remove("open");
+      });
+    }
+
+    function openFleetCtx(btn, mid) {
+      const menu = document.getElementById("fleet-ctx");
+      if (!menu || !btn) return;
+      const m = (fleetCache.miners || []).find((x) => x.id === mid);
+      closeFleetCtx();
+      menu.dataset.mid = mid || "";
+      // disable Make active if already active
+      const actBtn = menu.querySelector('[data-ctx="active"]');
+      if (actBtn) {
+        if (m && m.role === "active") actBtn.setAttribute("disabled", "disabled");
+        else actBtn.removeAttribute("disabled");
+      }
+      menu.hidden = false;
+      btn.classList.add("open");
+      const r = btn.getBoundingClientRect();
+      const mw = menu.offsetWidth || 180;
+      const mh = menu.offsetHeight || 160;
+      let left = r.right - mw;
+      let top = r.bottom + 4;
+      if (left < 8) left = 8;
+      if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+      menu.style.left = left + "px";
+      menu.style.top = top + "px";
+    }
+
     function renderFleetTable() {
       const tbody = document.getElementById("fleet-body");
       if (!tbody) return;
@@ -22883,14 +23480,6 @@
         const el = document.getElementById(id);
         if (el) el.innerHTML = html;
       };
-      setSum(
-        "fleet-sum-total",
-        "<b>" + (sum.total != null ? sum.total : miners.length) + "</b> " + fleetT("fleet.total", "total")
-      );
-      setSum(
-        "fleet-sum-online",
-        "<b>" + (sum.online != null ? sum.online : 0) + "</b> " + fleetT("fleet.online", "online")
-      );
       setSum(
         "fleet-sum-th",
         "<b>" +
@@ -22906,18 +23495,47 @@
           "</b> W"
       );
 
+      // counts for status chips
+      let nAll = miners.length;
+      let nOnline = 0,
+        nOffline = 0,
+        nWarn = 0,
+        nError = 0;
+      miners.forEach((m) => {
+        const st = fleetStatusOf(m);
+        if (st === "online") nOnline++;
+        else if (st === "offline") nOffline++;
+        else if (st === "warn") nWarn++;
+        else if (st === "error") nError++;
+        else nOffline++; // unknown counts as offline for filter
+      });
+      const setN = (id, n) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(n);
+      };
+      setN("fleet-n-all", nAll);
+      setN("fleet-n-online", nOnline);
+      setN("fleet-n-offline", nOffline);
+      setN("fleet-n-warn", nWarn);
+      setN("fleet-n-error", nError);
+
       const q = (
         document.getElementById("fleet-filter")?.value || ""
       )
         .trim()
         .toLowerCase();
-      const fbtn = document.querySelector("[data-fleet-f].active");
+      const fbtn = document.querySelector(".fleet-chip.active[data-fleet-f]");
       const filt = (fbtn && fbtn.getAttribute("data-fleet-f")) || "all";
 
       let rows = miners.slice();
-      if (filt === "online") rows = rows.filter((m) => m.online === true);
-      else if (filt === "offline") rows = rows.filter((m) => m.online === false);
-      else if (filt === "active") rows = rows.filter((m) => m.role === "active");
+      if (filt === "online") rows = rows.filter((m) => fleetStatusOf(m) === "online");
+      else if (filt === "offline")
+        rows = rows.filter((m) => {
+          const st = fleetStatusOf(m);
+          return st === "offline" || st === "unknown";
+        });
+      else if (filt === "warn") rows = rows.filter((m) => fleetStatusOf(m) === "warn");
+      else if (filt === "error") rows = rows.filter((m) => fleetStatusOf(m) === "error");
       if (q) {
         rows = rows.filter((m) => {
           const blob = [
@@ -22939,7 +23557,7 @@
 
       if (!rows.length) {
         tbody.innerHTML =
-          '<tr><td colspan="14" style="color:var(--muted)">' +
+          '<tr><td colspan="13" style="color:var(--muted)">' +
           escapeLogHtml(
             miners.length
               ? "—"
@@ -22952,43 +23570,36 @@
         return;
       }
 
-      const openL = fleetT("fleet.open", "Open");
-      const editL = fleetT("fleet.edit", "Edit");
-      const actL = fleetT("fleet.make_active", "Make active");
-
       tbody.innerHTML = rows
         .map((m) => {
           const id = m.id || "";
           const live = m.live || null;
-          const online = m.online;
-          let stClass = "unknown";
-          let stLabel = fleetT("fleet.status.standby", "Standby");
-          if (online === true) {
-            stClass = "online";
-            stLabel = fleetT("fleet.status.online", "Online");
-          } else if (online === false) {
-            stClass = "offline";
-            stLabel = fleetT("fleet.status.offline", "Offline");
-          }
-          if (m.role === "active" && online !== true) {
-            // still highlight active role
-            if (online === false) stClass = "offline";
-          }
-          const roleBadge =
-            m.role === "active"
-              ? ' <span class="fleet-status active-role" style="margin-left:4px">★</span>'
-              : "";
+          const st = fleetStatusOf(m);
+          // Cell title: cell location or alias/name; IP below
+          const cellTitle =
+            (m.cell && String(m.cell).trim()) ||
+            m.alias ||
+            m.name ||
+            m.vendor_name ||
+            "—";
+          const ipLine =
+            (m.host || "—") +
+            (m.port && Number(m.port) !== 4028 ? ":" + m.port : "");
           const name = m.alias || m.name || "—";
-          const cell = m.cell || "";
           const model = m.model || m.model_code || "—";
-          const modelSub = m.model_code && m.model && m.model !== m.model_code ? m.model_code : (m.cooling_name || "");
+          const modelSub =
+            m.model_code && m.model && m.model !== m.model_code
+              ? m.model_code
+              : m.cooling_name || "";
           const hr = live ? formatTh(live.hashrate_th) : "—";
           const pw = live ? formatWatts(live.power) : "—";
           const eff =
             live && live.efficiency_jth != null
               ? Number(live.efficiency_jth).toFixed(1)
               : "—";
-          const temp = live ? formatTemp(live.temp ?? live.liquid ?? live.chip_avg) : "—";
+          const temp = live
+            ? formatTemp(live.temp ?? live.liquid ?? live.chip_avg)
+            : "—";
           const fan = live && live.fan != null ? live.fan : "—";
           const mode = live && live.work ? String(live.work) : "—";
           const elapsed = live ? formatElapsedSec(live.elapsed) : "—";
@@ -23016,55 +23627,35 @@
               : escapeLogHtml(m.vendor_name || m.vendor || "—");
           const trClass =
             (m.role === "active" ? "fleet-row-active " : "") +
-            (online === false ? "fleet-row-offline" : "");
-          const actions =
-            '<div class="fleet-actions">' +
-            (m.role === "active"
-              ? ""
-              : '<button type="button" class="btn" data-fleet-active="' +
-                escapeLogHtml(id) +
-                '">' +
-                escapeLogHtml(actL) +
-                "</button>") +
-            '<button type="button" class="btn" data-fleet-edit="' +
-            escapeLogHtml(id) +
-            '">' +
-            escapeLogHtml(editL) +
-            "</button>" +
-            (m.role === "active"
-              ? '<button type="button" class="btn" data-fleet-open="' +
-                escapeLogHtml(id) +
-                '">' +
-                escapeLogHtml(openL) +
-                "</button>"
-              : "") +
-            "</div>";
+            (st === "offline" || st === "unknown" ? "fleet-row-offline" : "");
+          const roleLine =
+            m.role === "active"
+              ? '<span class="cell-role">★ active</span>'
+              : "";
+          // status only as left color strip (title for a11y)
           return (
             '<tr class="' +
             trClass +
             '" data-fleet-id="' +
             escapeLogHtml(id) +
             '">' +
-            '<td class="fleet-ip">' +
-            escapeLogHtml(m.host || "—") +
-            (m.port && m.port !== 4028
-              ? '<div class="sub fleet-muted">:' + escapeLogHtml(String(m.port)) + "</div>"
-              : "") +
-            "</td>" +
-            "<td><span class=\"fleet-status " +
-            stClass +
-            '">' +
-            escapeLogHtml(stLabel) +
+            '<td class="fleet-id-td st-' +
+            st +
+            '" title="' +
+            escapeLogHtml(fleetStatusLabel(st)) +
+            '"><div class="fleet-id-cell">' +
+            '<div class="fleet-id-meta">' +
+            '<span class="cell-name">' +
+            escapeLogHtml(cellTitle) +
             "</span>" +
-            roleBadge +
-            "</td>" +
+            '<span class="cell-ip">' +
+            escapeLogHtml(ipLine) +
+            "</span>" +
+            roleLine +
+            "</div></div></td>" +
             '<td><div class="fleet-name-cell"><span class="nm">' +
             escapeLogHtml(name) +
-            "</span>" +
-            (cell
-              ? '<span class="sub">' + escapeLogHtml(cell) + "</span>"
-              : "") +
-            "</div></td>" +
+            "</span></div></td>" +
             '<td><div class="fleet-model-cell"><span>' +
             escapeLogHtml(model) +
             "</span>" +
@@ -23099,31 +23690,29 @@
             "<td>" +
             vendorHtml +
             "</td>" +
-            "<td>" +
-            actions +
+            '<td class="fleet-col-menu">' +
+            '<button type="button" class="fleet-menu-btn" data-fleet-menu="' +
+            escapeLogHtml(id) +
+            '" aria-label="Menu" title="Menu">⋮</button>' +
             "</td></tr>"
           );
         })
         .join("");
     }
 
-    document.getElementById("fleet-body")?.addEventListener("click", async (ev) => {
-      const t = ev.target;
-      if (!t || !t.getAttribute) return;
-      const act = t.getAttribute("data-fleet-active");
-      const edit = t.getAttribute("data-fleet-edit");
-      const open = t.getAttribute("data-fleet-open");
-      if (act) {
+    async function fleetDoAction(action, mid) {
+      if (!mid) return;
+      if (action === "active") {
         try {
           const res = await fetch("/api/miner/managed", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "set_active", id: act }),
+            body: JSON.stringify({ action: "set_active", id: mid }),
           });
           const body = await res.json();
           if (!res.ok || body.ok === false || body.error)
             throw new Error((body && body.error) || "HTTP " + res.status);
-          if (typeof toastSuccess === "function") toastSuccess("Active → " + act);
+          if (typeof toastSuccess === "function") toastSuccess("Active → " + mid);
           if (typeof loadMinerConfig === "function") {
             try {
               await loadMinerConfig();
@@ -23136,24 +23725,103 @@
         }
         return;
       }
-      if (edit) {
-        // open managed edit dialog if available
+      if (action === "edit") {
         if (typeof openManagedEditDialog === "function") {
-          if (typeof refreshManagedTable === "function") {
-            try {
-              await refreshManagedTable();
-            } catch (_) { /* ignore */ }
+          // Seed inventory cache from fleet so dialog works outside Settings
+          if (
+            (!(managedMinersCache || []).length ||
+              !(managedMinersCache || []).some((x) => x.id === mid)) &&
+            fleetCache.miners &&
+            fleetCache.miners.length
+          ) {
+            managedMinersCache = fleetCache.miners.map((x) => {
+              const c = Object.assign({}, x);
+              delete c.live;
+              delete c.online;
+              return c;
+            });
           }
-          void openManagedEditDialog(edit);
+          try {
+            await openManagedEditDialog(mid);
+          } catch (e) {
+            if (typeof toastError === "function")
+              toastError(e.message || String(e));
+          }
         } else {
           activateTab("miner-poller");
         }
         return;
       }
-      if (open) {
+      if (action === "open") {
+        // switch active if needed then open miner tab
+        const m = (fleetCache.miners || []).find((x) => x.id === mid);
+        if (m && m.role !== "active") {
+          await fleetDoAction("active", mid);
+        }
         activateTab("miner");
+        return;
+      }
+      if (action === "remove") {
+        if (!confirm(fleetT("fleet.remove_confirm", "Remove miner from inventory?")))
+          return;
+        try {
+          const res = await fetch("/api/miner/managed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "remove", id: mid }),
+          });
+          const body = await res.json();
+          if (!res.ok || body.ok === false || body.error)
+            throw new Error((body && body.error) || "HTTP " + res.status);
+          if (typeof toastSuccess === "function") toastSuccess("Removed");
+          await refreshFleetTable();
+          if (typeof refreshManagedTable === "function") void refreshManagedTable();
+        } catch (e) {
+          if (typeof toastError === "function") toastError(e.message);
+        }
+      }
+    }
+
+    document.getElementById("fleet-body")?.addEventListener("click", (ev) => {
+      const t = ev.target;
+      if (!t || !t.closest) return;
+      const menuBtn = t.closest("[data-fleet-menu]");
+      if (menuBtn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const mid = menuBtn.getAttribute("data-fleet-menu");
+        const menu = document.getElementById("fleet-ctx");
+        if (menu && !menu.hidden && menu.dataset.mid === mid) {
+          closeFleetCtx();
+        } else {
+          openFleetCtx(menuBtn, mid);
+        }
+        return;
       }
     });
+
+    document.getElementById("fleet-ctx")?.addEventListener("click", async (ev) => {
+      const t = ev.target;
+      if (!t || !t.getAttribute) return;
+      const action = t.getAttribute("data-ctx");
+      if (!action) return;
+      const mid = document.getElementById("fleet-ctx")?.dataset.mid || "";
+      closeFleetCtx();
+      await fleetDoAction(action, mid);
+    });
+
+    document.addEventListener("click", (ev) => {
+      const menu = document.getElementById("fleet-ctx");
+      if (!menu || menu.hidden) return;
+      if (ev.target.closest && (ev.target.closest("#fleet-ctx") || ev.target.closest("[data-fleet-menu]")))
+        return;
+      closeFleetCtx();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeFleetCtx();
+    });
+    window.addEventListener("scroll", () => closeFleetCtx(), true);
+    window.addEventListener("resize", () => closeFleetCtx());
 
     const COOLING_LABELS = {
       air: { en: "Air", ru: "Воздух" },
@@ -23524,11 +24192,32 @@
     }
 
     async function openManagedEditDialog(mid) {
-      const m =
-        (managedMinersCache || []).find((x) => x.id === mid) || null;
+      // Prefer inventory cache; fall back to fleet cache (Miners tab)
+      let m =
+        (managedMinersCache || []).find((x) => x.id === mid) ||
+        (typeof fleetCache !== "undefined" && fleetCache.miners
+          ? fleetCache.miners.find((x) => x.id === mid)
+          : null) ||
+        null;
+      if (!m) {
+        // last resort: fetch managed list
+        try {
+          const res = await fetch("/api/miner/managed", { cache: "no-store" });
+          const body = await res.json();
+          const list = body.miners || [];
+          managedMinersCache = list;
+          m = list.find((x) => x.id === mid) || null;
+        } catch (_) { /* ignore */ }
+      }
       if (!m) {
         toastError("Miner not found");
         return;
+      }
+      // strip fleet-only fields so form sees inventory shape
+      if (m.live) {
+        m = Object.assign({}, m);
+        delete m.live;
+        delete m.online;
       }
       if (!(heatPoolsCache.pools || []).length) {
         try {

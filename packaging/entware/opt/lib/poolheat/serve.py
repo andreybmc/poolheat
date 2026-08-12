@@ -29836,9 +29836,12 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
-        # SPA tab routes: / · /dashboard · /miner · # handled client-side
+        # SPA tab routes: / · /dashboard · /miner · /ru/miners/managed · # handled client-side
         spa_tabs = {
             "miner",
+            "miners",
+            "managed",
+            "unmanaged",
             "chips",
             "pools",
             "energy",
@@ -29851,6 +29854,10 @@ class Handler(SimpleHTTPRequestHandler):
             "sensors",
             "devices",
             "settings",
+            "advanced",
+            "firmware",
+            "miner-poller",
+            "minerpoller",
             "info",
             "logs",
             "dash",
@@ -29859,9 +29866,30 @@ class Handler(SimpleHTTPRequestHandler):
             "zones",
             "zone",
             "home",
+            "fleet",
+            "asics",
         }
-        seg = path.strip("/").split("/")[0].lower() if path.strip("/") else ""
-        if path == "/" or path == "/index.html" or seg in spa_tabs:
+        # Nested SPA under known parents: /miners/managed · /miners/unmanaged
+        spa_nested = {
+            "miners": {"managed", "unmanaged", "inventory", "discovered"},
+            "fleet": {"managed", "unmanaged", "inventory", "discovered"},
+            "asics": {"managed", "unmanaged", "inventory", "discovered"},
+        }
+        # Path-based SPA: / · /index.html · /en/dashboard · /ru/miners/managed · /miner
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts and parts[0].lower() in ("en", "ru"):
+            parts = parts[1:]
+        seg = parts[0].lower() if parts else ""
+        sub = parts[1].lower() if len(parts) >= 2 else ""
+        nested_ok = bool(seg and seg in spa_nested and (not sub or sub in spa_nested[seg]))
+        if (
+            path == "/"
+            or path == "/index.html"
+            or not parts
+            or seg in spa_tabs
+            or nested_ok
+            or path.strip("/").lower() in ("en", "ru")
+        ):
             # App plane: static SPA. When app_ui is off (edge-only deploy),
             # keep /api/* but do not serve the dashboard.
             if not role_enabled("app_ui"):
