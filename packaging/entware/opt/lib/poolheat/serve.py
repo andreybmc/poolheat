@@ -9563,6 +9563,163 @@ def get_miners_managed() -> dict:
     }
 
 
+def _live_host_ip(live: dict | None) -> str:
+    if not isinstance(live, dict):
+        return ""
+    h = str(live.get("host") or "").strip()
+    if not h:
+        return ""
+    # host may be "192.168.1.10:4028"
+    return h.split(":")[0].strip()
+
+
+def _fleet_live_slice(live: dict | None) -> dict | None:
+    """Compact live fields for fleet table rows."""
+    if not isinstance(live, dict):
+        return None
+    power = live.get("power")
+    th = live.get("hashrate_th")
+    try:
+        p = float(power) if power is not None else None
+    except (TypeError, ValueError):
+        p = None
+    try:
+        t = float(th) if th is not None else None
+    except (TypeError, ValueError):
+        t = None
+    eff = None
+    if p is not None and t is not None and t > 0:
+        eff = round(p / t, 2)
+    # temps: prefer liquid, else chip_avg / env
+    temp = live.get("liquid")
+    if temp is None:
+        temp = live.get("chip_avg")
+    if temp is None:
+        temp = live.get("env")
+    fans = live.get("fans") or live.get("fan") or live.get("fan_speed")
+    fan_s = None
+    if isinstance(fans, (list, tuple)) and fans:
+        try:
+            fan_s = int(float(fans[0]))
+        except (TypeError, ValueError):
+            fan_s = None
+    elif fans is not None:
+        try:
+            fan_s = int(float(fans))
+        except (TypeError, ValueError):
+            fan_s = None
+    work = live.get("work") or live.get("mining_work") or live.get("mode")
+    if work is None and live.get("mineroff"):
+        work = "sleep"
+    pools = live.get("pools") if isinstance(live.get("pools"), list) else None
+    pool_ok = None
+    pool_url = None
+    if pools:
+        # first active-looking pool
+        for p0 in pools:
+            if not isinstance(p0, dict):
+                continue
+            st = str(p0.get("status") or p0.get("stratum") or "").lower()
+            if "dead" in st or "disc" in st:
+                continue
+            pool_url = str(p0.get("url") or p0.get("pool") or "")[:80] or None
+            pool_ok = True
+            break
+        if pool_ok is None:
+            pool_ok = False
+            p0 = pools[0] if isinstance(pools[0], dict) else {}
+            pool_url = str(p0.get("url") or p0.get("pool") or "")[:80] or None
+    return {
+        "ok": bool(live.get("ok", True)),
+        "power": p,
+        "hashrate_th": t,
+        "efficiency_jth": eff,
+        "temp": temp,
+        "liquid": live.get("liquid"),
+        "chip_avg": live.get("chip_avg"),
+        "chip_max": live.get("chip_max"),
+        "env": live.get("env"),
+        "fan": fan_s,
+        "work": work,
+        "elapsed": live.get("elapsed"),
+        "rejected": live.get("rejected") or live.get("reject_rate") or live.get("hw_errors"),
+        "freq_avg": live.get("freq_avg"),
+        "pool_ok": pool_ok,
+        "pool_url": pool_url,
+        "miner_type": live.get("miner_type"),
+        "error": live.get("error"),
+        "ts": live.get("ts"),
+    }
+
+
+def get_miners_fleet() -> dict:
+    """
+    Managed inventory + live overlay for the active polled host.
+    Standby miners show inventory fields only until multi-poll is enabled.
+    """
+    _seed_managed_from_active()
+    managed = get_miners_managed()
+    miners_in = list(managed.get("miners") or [])
+    live = hydrate_live_from_disk(max_age_sec=120.0)
+    if not isinstance(live, dict):
+        try:
+            with _cache_lock:
+                if isinstance(_cache, dict):
+                    live = dict(_cache)
+        except Exception:
+            live = None
+    live_ip = _live_host_ip(live)
+    live_slice = _fleet_live_slice(live) if isinstance(live, dict) else None
+    rows: list[dict] = []
+    online_n = 0
+    sum_th = 0.0
+    sum_w = 0.0
+    for m in miners_in:
+        if not isinstance(m, dict):
+            continue
+        row = dict(m)
+        host = str(m.get("host") or "").strip()
+        role = str(m.get("role") or "standby")
+        match = bool(live_ip and host and host == live_ip)
+        if match and live_slice and live_slice.get("ok"):
+            row["online"] = True
+            row["live"] = live_slice
+            online_n += 1
+            if live_slice.get("hashrate_th") is not None:
+                sum_th += float(live_slice["hashrate_th"])
+            if live_slice.get("power") is not None:
+                sum_w += float(live_slice["power"])
+            # fill model from live if inventory empty
+            if not row.get("model_code") and live_slice.get("miner_type"):
+                row["model_code"] = live_slice["miner_type"]
+            if not row.get("model") and live_slice.get("miner_type"):
+                row["model"] = live_slice["miner_type"]
+        elif match and live_slice and not live_slice.get("ok"):
+            row["online"] = False
+            row["live"] = live_slice
+            row["last_error"] = live_slice.get("error") or row.get("last_error")
+        elif role == "active":
+            # active but no fresh live
+            row["online"] = False
+            row["live"] = None
+        else:
+            row["online"] = None  # unknown / not polled
+            row["live"] = None
+        rows.append(row)
+    return {
+        "ok": True,
+        "miners": rows,
+        "live_host": live_ip or None,
+        "summary": {
+            "total": len(rows),
+            "online": online_n,
+            "hashrate_th": round(sum_th, 2),
+            "power_w": round(sum_w, 1),
+        },
+        "ts": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def _save_miners_managed(miners: list) -> dict:
     clean = [
         _normalize_managed_miner(m) for m in (miners or []) if isinstance(m, dict)
@@ -29467,6 +29624,12 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 _seed_managed_from_active()
                 self._json_response(200, get_miners_managed())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/miners/fleet", "/api/miner/fleet", "/api/fleet"):
+            try:
+                self._json_response(200, get_miners_fleet())
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
             return
