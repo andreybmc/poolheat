@@ -752,11 +752,318 @@ def list_families(*, manufacturer: str | None = None) -> list[dict[str, Any]]:
     return out
 
 
+# ── Multi-vendor model profiles (display name · power estimate · flags) ─────
+# Editable JSON next to this module / on Entware under /opt/lib/poolheat/
+
+_PROFILE_FILE_CANDIDATES = (
+    _HERE / "miner_model_profiles.json",
+    Path("/opt/lib/poolheat/miner_model_profiles.json"),
+    Path("/opt/share/poolheat/miner_model_profiles.json"),
+)
+
+_profiles_cache: list[dict[str, Any]] | None = None
+
+
+def _norm_key(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(s or "").strip().lower())
+
+
+def load_model_profiles(*, force: bool = False) -> list[dict[str, Any]]:
+    """Load miner_model_profiles.json (list of model dicts)."""
+    global _profiles_cache
+    if _profiles_cache is not None and not force:
+        return _profiles_cache
+    for p in _PROFILE_FILE_CANDIDATES:
+        try:
+            if not p.is_file():
+                continue
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            models = raw.get("models") if isinstance(raw, dict) else raw
+            if isinstance(models, list):
+                _profiles_cache = [m for m in models if isinstance(m, dict)]
+                return _profiles_cache
+        except Exception:
+            continue
+    _profiles_cache = []
+    return _profiles_cache
+
+
+def lookup_model_profile(
+    *,
+    vendor: str | None = None,
+    miner_type: str | None = None,
+    model: str | None = None,
+    model_name: str | None = None,
+    model_code: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    Match free-form ASIC identity strings to a profile.
+
+    Match keys are normalized (lowercase, strip non-alnum). Longest match wins.
+    """
+    candidates = [
+        str(x)
+        for x in (model_name, model, model_code, miner_type)
+        if x is not None and str(x).strip()
+    ]
+    vendor_n = _norm_key(vendor or "")
+    best: dict[str, Any] | None = None
+    best_len = -1
+    for prof in load_model_profiles():
+        if not isinstance(prof, dict):
+            continue
+        p_vendor = _norm_key(str(prof.get("vendor") or ""))
+        if vendor_n and p_vendor and vendor_n != p_vendor:
+            # still allow match if identity string contains vendor brand
+            pass
+        matches = prof.get("match") if isinstance(prof.get("match"), list) else []
+        keys = [_norm_key(str(m)) for m in matches if str(m).strip()]
+        # also match on display names / id
+        for extra in (
+            prof.get("id"),
+            prof.get("display_name"),
+            prof.get("display_name_full"),
+        ):
+            k = _norm_key(str(extra or ""))
+            if k:
+                keys.append(k)
+        keys = sorted(set(k for k in keys if k), key=len, reverse=True)
+        for cand in candidates:
+            cn = _norm_key(cand)
+            if not cn:
+                continue
+            for k in keys:
+                if not k:
+                    continue
+                # exact or substring either way
+                if cn == k or k in cn or cn in k:
+                    # vendor preference: if both have vendor and mismatch, skip weak
+                    if (
+                        vendor_n
+                        and p_vendor
+                        and vendor_n != p_vendor
+                        and k not in cn
+                        and cn not in k
+                    ):
+                        continue
+                    if len(k) > best_len:
+                        best = prof
+                        best_len = len(k)
+    return dict(best) if best else None
+
+
+def estimate_power_from_profile(
+    profile: dict[str, Any] | None,
+    *,
+    hashrate_hs: float | None = None,
+    hashrate_th: float | None = None,
+    hashrate_gh: float | None = None,
+    hashrate_mhs: float | None = None,
+) -> dict[str, Any] | None:
+    """
+    Estimate wall power (W) from hashrate × model efficiency.
+
+    Supports:
+      - efficiency.j_per_th  (BTC-class)  → W = TH/s × J/TH
+      - efficiency.j_per_gh  (CKB etc.)   → W = GH/s × J/GH
+      - efficiency.j_per_mh  (ETC etc.)   → W = MH/s × J/MH
+
+    Returns None when profile forbids estimate or hashrate missing.
+    """
+    if not isinstance(profile, dict):
+        return None
+    pwr = profile.get("power") if isinstance(profile.get("power"), dict) else {}
+    if pwr.get("estimate_from_efficiency") is False:
+        return None
+    # if reported=true and estimate not forced, caller may still skip
+    eff = profile.get("efficiency") if isinstance(profile.get("efficiency"), dict) else {}
+    if not eff:
+        return None
+
+    hs = float(hashrate_hs) if hashrate_hs is not None else None
+    th = float(hashrate_th) if hashrate_th is not None else None
+    gh = float(hashrate_gh) if hashrate_gh is not None else None
+    mh = float(hashrate_mhs) if hashrate_mhs is not None else None
+    if hs is not None and hs > 0:
+        if th is None:
+            th = hs / 1e12
+        if gh is None:
+            gh = hs / 1e9
+        if mh is None:
+            mh = hs / 1e6
+
+    j_th = eff.get("j_per_th")
+    j_gh = eff.get("j_per_gh")
+    j_mh = eff.get("j_per_mh")
+    watts: float | None = None
+    unit = None
+    j_used = None
+    rate_used = None
+
+    if j_gh is not None and gh is not None and gh > 0:
+        j_used = float(j_gh)
+        rate_used = gh
+        unit = "J/GH"
+        watts = gh * j_used
+    elif j_mh is not None and mh is not None and mh > 0:
+        j_used = float(j_mh)
+        rate_used = mh
+        unit = "J/MH"
+        watts = mh * j_used
+    elif j_th is not None and th is not None and th > 0:
+        j_used = float(j_th)
+        rate_used = th
+        unit = "J/TH"
+        watts = th * j_used
+    else:
+        return None
+
+    if watts is None or watts <= 0:
+        return None
+    return {
+        "power_w": round(watts, 1),
+        "efficiency_value": j_used,
+        "efficiency_unit": unit,
+        "hashrate_for_eff": rate_used,
+        "source": "model",
+        "profile_id": profile.get("id"),
+        "display_name": profile.get("display_name") or profile.get("display_name_full"),
+        "power_reported": bool(pwr.get("reported", True)),
+        "note": pwr.get("note") or eff.get("note"),
+    }
+
+
+def apply_model_profile_to_live(
+    live: dict[str, Any],
+    *,
+    vendor: str | None = None,
+) -> dict[str, Any]:
+    """
+    Enrich a live snapshot with profile display name + estimated power.
+
+    Does not overwrite a real metered ``power`` when present and > 0.
+    Sets:
+      model_display, model_display_full, model_profile_id
+      power (if estimated), power_source, power_estimated
+      efficiency_value / efficiency_unit / efficiency_jth (compat when J/TH)
+    """
+    if not isinstance(live, dict):
+        return live
+    vend = vendor or live.get("vendor") or live.get("api_vendor")
+    prof = lookup_model_profile(
+        vendor=str(vend) if vend else None,
+        miner_type=live.get("miner_type"),
+        model=live.get("model") if isinstance(live.get("model"), str) else None,
+        model_name=live.get("model_name"),
+        model_code=live.get("model_code"),
+    )
+    if not prof:
+        return live
+
+    disp = str(prof.get("display_name") or "").strip()
+    disp_full = str(prof.get("display_name_full") or disp).strip()
+    if disp:
+        live["model_display"] = disp
+        live["model_display_full"] = disp_full or disp
+        # Prefer trade name for UI model field when raw is ugly (CKBox, etc.)
+        raw_model = str(live.get("model_name") or live.get("model") or "").strip()
+        if not raw_model or _norm_key(raw_model) != _norm_key(disp):
+            live["model_name"] = disp_full or disp
+        live["model_profile_id"] = prof.get("id")
+
+    pwr_cfg = prof.get("power") if isinstance(prof.get("power"), dict) else {}
+    reported_flag = pwr_cfg.get("reported")
+    live["power_reported"] = (
+        bool(reported_flag) if reported_flag is not None else True
+    )
+
+    # Prefer preferred hashrate unit from profile for UI
+    if prof.get("hashrate_unit") and not live.get("hashrate_unit"):
+        live["hashrate_unit"] = prof.get("hashrate_unit")
+
+    # Estimate power when missing / not reported by ASIC
+    try:
+        cur_p = live.get("power")
+        cur_pf = float(cur_p) if cur_p is not None and cur_p != "" else None
+    except (TypeError, ValueError):
+        cur_pf = None
+
+    need_est = cur_pf is None or cur_pf <= 0
+    # Models that omit wall power on :4028 still get a model estimate — but
+    # never clobber a real meter (Antminer :6060/miner_power, PSU, etc.).
+    metered_src = str(live.get("power_source") or "").lower() in (
+        "antminer_6060",
+        "6060",
+        "meter",
+        "psu",
+        "summary",
+        "api",
+    )
+    if reported_flag is False and not metered_src and (cur_pf is None or cur_pf <= 0):
+        need_est = True
+    if need_est and pwr_cfg.get("estimate_from_efficiency", True):
+        try:
+            hs = float(live["hashrate_hs"]) if live.get("hashrate_hs") is not None else None
+        except (TypeError, ValueError):
+            hs = None
+        try:
+            th = float(live["hashrate_th"]) if live.get("hashrate_th") is not None else None
+        except (TypeError, ValueError):
+            th = None
+        est = estimate_power_from_profile(prof, hashrate_hs=hs, hashrate_th=th)
+        if est:
+            live["power"] = est["power_w"]
+            live["power_source"] = "model"
+            live["power_estimated"] = True
+            live["efficiency_value"] = est["efficiency_value"]
+            live["efficiency_unit"] = est["efficiency_unit"]
+            if est["efficiency_unit"] == "J/TH":
+                live["efficiency_jth"] = est["efficiency_value"]
+            elif est["efficiency_unit"] == "J/GH" and th and th > 0:
+                # also expose J/TH equivalent for charts that only know jth
+                live["efficiency_jth"] = float(est["efficiency_value"]) * 1000.0
+            live["efficiency_note"] = est.get("note")
+    elif cur_pf is not None and cur_pf > 0:
+        live.setdefault("power_source", "meter")
+        live["power_estimated"] = False
+        # fill efficiency from measured power when possible
+        try:
+            th = float(live.get("hashrate_th") or 0)
+            if th > 0 and live.get("efficiency_jth") is None:
+                live["efficiency_jth"] = round(cur_pf / th, 2)
+                live["efficiency_value"] = live["efficiency_jth"]
+                live["efficiency_unit"] = "J/TH"
+        except (TypeError, ValueError):
+            pass
+
+    # Rated stats for UI tooltips
+    rated = prof.get("rated") if isinstance(prof.get("rated"), dict) else None
+    if rated:
+        live["model_rated"] = rated
+    return live
+
+
 def catalog_summary() -> dict[str, Any]:
     skus = _load_chipmap_skus()
+    profiles = load_model_profiles()
     return {
         "ok": True,
         "manufacturers": list_manufacturers(),
         "families": list_families(),
         "chipmap_sku_count": len(skus),
+        "model_profiles": [
+            {
+                "id": p.get("id"),
+                "vendor": p.get("vendor"),
+                "display_name": p.get("display_name"),
+                "display_name_full": p.get("display_name_full"),
+                "match": p.get("match"),
+                "efficiency": p.get("efficiency"),
+                "power": p.get("power"),
+                "rated": p.get("rated"),
+                "hashrate_unit": p.get("hashrate_unit"),
+            }
+            for p in profiles
+        ],
+        "model_profile_count": len(profiles),
     }

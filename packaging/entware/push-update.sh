@@ -53,6 +53,7 @@ $SCP \
   "$ROOT/ui/chipmap_skus.json" \
   "$ROOT/ui/tuya_mobile.py" \
   "$ROOT/ui/xiaomi_miio.py" \
+  "$ROOT/ui/ewelink_lan.py" \
   "$ROOT/VERSION" \
   "$ROOT/packaging/entware/migrate-layout.sh" \
   "$REMOTE:/opt/lib/poolheat/"

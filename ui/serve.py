@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import binascii
 import bisect
+import contextlib
 import hashlib
 import json
 import math
@@ -56,9 +57,11 @@ from urllib.parse import parse_qs, urlparse
 
 try:
     from miner_models import (
+        apply_model_profile_to_live,
         catalog_summary as miner_models_catalog,
         list_families as miner_models_list_families,
         list_manufacturers as miner_models_list_manufacturers,
+        lookup_model_profile,
         resolve_hashboard_layout as _mm_resolve_hashboard_layout,
         resolve_miner_model,
     )
@@ -71,9 +74,11 @@ except ImportError:
         if str(_lib) not in _sys.path:
             _sys.path.insert(0, str(_lib))
         from miner_models import (
+            apply_model_profile_to_live,
             catalog_summary as miner_models_catalog,
             list_families as miner_models_list_families,
             list_manufacturers as miner_models_list_manufacturers,
+            lookup_model_profile,
             resolve_hashboard_layout as _mm_resolve_hashboard_layout,
             resolve_miner_model,
         )
@@ -83,6 +88,8 @@ except ImportError:
         miner_models_list_manufacturers = None  # type: ignore
         _mm_resolve_hashboard_layout = None  # type: ignore
         resolve_miner_model = None  # type: ignore
+        apply_model_profile_to_live = None  # type: ignore
+        lookup_model_profile = None  # type: ignore
 
 
 def _load_app_config() -> dict:
@@ -2243,8 +2250,8 @@ FILTRATION_BACKENDS: list[dict] = [
     },
     {
         "id": "ewelink",
-        "label": "eWeLink / Sonoff DIY",
-        "hint": "LAN DIY mode · IP + deviceid (облако eWeLink — через Webhook)",
+        "label": "eWeLink / Sonoff (LAN)",
+        "hint": "LAN DIY или encrypt (devicekey) · email/password → ключ из облака · IP + deviceid · W/V/A",
     },
     {
         "id": "webhook",
@@ -2314,8 +2321,12 @@ DEFAULT_FILTRATION_CFG: dict = {
     "ip": "",
     "email": "",
     "password": "",
-    "device_id": "",  # eWeLink DIY deviceid
+    "device_id": "",  # eWeLink deviceid
     "ewelink_port": 8081,
+    "ewelink_mode": "auto",  # auto | diy | lan
+    "ewelink_devicekey": "",  # LAN encrypt key (from cloud)
+    "ewelink_country": "+7",
+    "ewelink_region": "eu",  # eu | us | as | cn
     # webhook
     "webhook_on_url": "",
     "webhook_off_url": "",
@@ -3164,6 +3175,31 @@ def _actuator_error_reason(
     low = raw.lower()
     be = str(backend or "").strip().lower()
 
+    if be in ("ewelink", "sonoff", "sonoff_diy") or "ewelink" in low or "diy" in low:
+        if "device_id empty" in low or "deviceid empty" in low:
+            return (
+                "eWeLink deviceid empty (DIY id)"
+                if en
+                else "eWeLink deviceid пуст (DIY id)"
+            )
+        if "closed" in low:
+            return (
+                "eWeLink port closed — DIY mode off / wrong IP"
+                if en
+                else "eWeLink порт закрыт — нет DIY mode / неверный IP"
+            )
+        if "empty reply" in low or "timeout" in low or "reset" in low:
+            return (
+                "eWeLink DIY not responding (enable DIY mode, check deviceid)"
+                if en
+                else "eWeLink DIY не отвечает (включите DIY mode, проверьте deviceid)"
+            )
+        if "404" in low or "not found" in low:
+            return (
+                "eWeLink wrong deviceid"
+                if en
+                else "eWeLink неверный deviceid"
+            )
     if be == "tapo" or "tapo" in low:
         if (
             "email/password empty" in low
@@ -3388,38 +3424,326 @@ def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
     return out
 
 
+def _ewelink_pick_bind_ip(target_ip: str) -> str | None:
+    """
+    Prefer source IP on the same L2/subnet as the plug (mDNS/DIY is picky).
+    e.g. target 172.16.105.105 → bind 172.16.105.1 when available.
+    """
+    try:
+        import ipaddress
+
+        t = ipaddress.ip_address(target_ip)
+    except Exception:
+        return None
+    try:
+        # Linux: parse `ip -o -4 addr`
+        out = subprocess.check_output(
+            ["ip", "-o", "-4", "addr", "show"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode("utf-8", errors="replace")
+    except Exception:
+        try:
+            out = subprocess.check_output(
+                ["busybox", "ip", "-o", "-4", "addr"],
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+            ).decode("utf-8", errors="replace")
+        except Exception:
+            return None
+    best = None
+    for line in out.splitlines():
+        # 2: br2    inet 172.16.105.1/24 brd ...
+        m = re.search(r"\binet\s+(\d+\.\d+\.\d+\.\d+)/(\d+)", line)
+        if not m:
+            continue
+        try:
+            import ipaddress
+
+            net = ipaddress.ip_network(f"{m.group(1)}/{m.group(2)}", strict=False)
+            if t in net:
+                best = m.group(1)
+                break
+        except Exception:
+            continue
+    return best
+
+
+def _ewelink_diy_http(
+    ip: str,
+    port: int,
+    path: str,
+    payload: dict,
+    *,
+    timeout: float = 5.0,
+    retries: int = 3,
+) -> tuple[int, str]:
+    """
+    Raw-socket DIY HTTP POST (more reliable than urllib on some ESP FW).
+    Binds to same-subnet source when possible. Retries on RST/empty.
+    """
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    req = (
+        f"POST {path} HTTP/1.1\r\n"
+        f"Host: {ip}:{int(port)}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        f"Accept: application/json\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    ).encode("ascii") + body
+    bind_ip = _ewelink_pick_bind_ip(ip)
+    last_err: Exception | None = None
+    for attempt in range(max(1, int(retries))):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if bind_ip:
+                try:
+                    s.bind((bind_ip, 0))
+                except Exception:
+                    pass
+            s.settimeout(timeout)
+            s.connect((ip, int(port)))
+            s.sendall(req)
+            chunks: list[bytes] = []
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                try:
+                    s.settimeout(max(0.15, deadline - time.time()))
+                    c = s.recv(4096)
+                    if not c:
+                        break
+                    chunks.append(c)
+                    if len(b"".join(chunks)) > 65536:
+                        break
+                except socket.timeout:
+                    if chunks:
+                        break
+                    continue
+            raw = b"".join(chunks)
+            if not raw:
+                last_err = TimeoutError(
+                    "eWeLink DIY: empty reply (port open but no HTTP — "
+                    "device not in DIY mode or wrong deviceid)"
+                )
+                time.sleep(0.2 + 0.15 * attempt)
+                continue
+            # Parse status line + body
+            try:
+                head, _, rest = raw.partition(b"\r\n\r\n")
+                if not rest:
+                    head, _, rest = raw.partition(b"\n\n")
+                status_line = head.split(b"\r\n", 1)[0].decode("utf-8", "replace")
+                m = re.search(r"HTTP/\d\.\d\s+(\d+)", status_line)
+                code = int(m.group(1)) if m else 200
+                text = rest.decode("utf-8", errors="replace")
+                return code, text
+            except Exception:
+                return 200, raw.decode("utf-8", errors="replace")
+        except ConnectionResetError as e:
+            last_err = ConnectionResetError(
+                "eWeLink DIY: connection reset (not DIY HTTP or busy) — "
+                "enable Sonoff DIY mode / check deviceid"
+            )
+            time.sleep(0.25 + 0.2 * attempt)
+            continue
+        except (TimeoutError, socket.timeout) as e:
+            last_err = TimeoutError(
+                f"eWeLink DIY timeout to {ip}:{port}{path} — "
+                "DIY mode off, wrong IP/deviceid, or plug asleep"
+            )
+            time.sleep(0.2)
+            continue
+        except OSError as e:
+            last_err = e
+            time.sleep(0.15)
+            continue
+        finally:
+            try:
+                s.close()
+            except Exception:
+                pass
+    if last_err:
+        raise last_err
+    raise TimeoutError(f"eWeLink DIY no response from {ip}:{port}")
+
+
+def _ewelink_tcp_open(ip: str, port: int, timeout: float = 1.5) -> bool:
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def probe_ewelink_diy(
+    ip: str,
+    device_id: str = "",
+    port: int = 8081,
+) -> dict:
+    """
+    Structured diagnosis for UI / ops.
+    Returns: port_open, diy_http, error, switch, hints[]
+    """
+    ip = str(ip or "").strip()
+    port = int(port or 8081)
+    device_id = str(device_id or "").strip()
+    out: dict = {
+        "ok": False,
+        "ip": ip,
+        "port": port,
+        "device_id": device_id or None,
+        "port_open": False,
+        "diy_http": False,
+        "switch": None,
+        "error": None,
+        "hints": [],
+    }
+    if not ip:
+        out["error"] = "IP empty"
+        out["hints"].append("Укажите IP розетки в LAN")
+        return out
+    out["port_open"] = _ewelink_tcp_open(ip, port)
+    if not out["port_open"]:
+        out["error"] = f"TCP {ip}:{port} closed"
+        out["hints"].extend(
+            [
+                "Порт 8081 закрыт — это не Sonoff DIY (или розетка offline)",
+                "В eWeLink: устройство → ⋮ → DIY mode / Compatible mode, либо "
+                "длинное удержание кнопки (DIY 2.0)",
+                "Обычный cloud eWeLink без DIY poolheat не управляет (нужен Webhook/HA)",
+            ]
+        )
+        return out
+    if not device_id:
+        out["error"] = "device_id empty"
+        out["hints"].append(
+            "deviceid из mDNS (id=…) / AP ITEAD-XXXXXXXX / приложения eWeLink"
+        )
+        # still try empty id
+        device_id = ""
+    try:
+        code, text = _ewelink_diy_http(
+            ip,
+            port,
+            "/zeroconf/info",
+            {"deviceid": device_id, "data": {}},
+            timeout=5.0,
+            retries=2,
+        )
+        out["http"] = code
+        out["raw"] = (text or "")[:300]
+        j = json.loads(text) if text.strip().startswith("{") else {}
+        err = j.get("error") if isinstance(j, dict) else None
+        if err in (0, "0", None) and isinstance(j, dict):
+            out["diy_http"] = True
+            out["ok"] = True
+            data = j.get("data") if isinstance(j.get("data"), dict) else {}
+            sw = data.get("switch")
+            if sw is not None:
+                out["switch"] = str(sw).lower() in ("on", "1", "true")
+            if data.get("deviceid"):
+                out["device_id_reported"] = data.get("deviceid")
+            if data.get("fwVersion"):
+                out["fw"] = data.get("fwVersion")
+            return out
+        if err in (404, "404"):
+            out["error"] = f"DIY error 404 — неверный deviceid ({device_id!r})"
+            out["hints"].append(
+                "Сверьте deviceid (часто 1000… из mDNS / eWeLink / ITEAD-XXXX)"
+            )
+            out["diy_http"] = True  # HTTP works, id wrong
+            return out
+        if err in (401, "401"):
+            out["error"] = "DIY error 401 — нужна encryption (не pure DIY 1.x)"
+            out["hints"].append(
+                "Прошивка с encrypt: используйте DIY Tools / Webhook / Home Assistant SonoffLAN"
+            )
+            out["diy_http"] = True
+            return out
+        out["error"] = f"DIY error={err}: {(text or '')[:120]}"
+        out["diy_http"] = True
+        return out
+    except Exception as e:
+        out["error"] = str(e)
+        low = str(e).lower()
+        if "empty reply" in low or "timeout" in low or "reset" in low:
+            out["hints"].extend(
+                [
+                    f"Порт {port} открыт, но DIY HTTP не отвечает",
+                    "Розетка, скорее всего, в cloud eWeLink / LAN Control, а не в DIY mode",
+                    "Включите DIY mode (кнопка 5с+5с / Compatible mode) — LED double-blink",
+                    "После DIY: deviceid = цифры после ITEAD- в имени AP, или mDNS id=",
+                    "Альтернатива без DIY: backend Webhook (сцена eWeLink) или Home Assistant",
+                ]
+            )
+        return out
+
+
 def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
-    """Sonoff DIY LAN (eWeLink DIY mode) · port 8081."""
+    """
+    eWeLink / Sonoff LAN:
+      diy  — unencrypted POST /zeroconf/*
+      lan  — AES-128-CBC with devicekey (from cloud)
+      auto — encrypt if devicekey set, else DIY (+ fallback)
+    """
     ip = str(cfg.get("ip") or "").strip()
     device_id = str(cfg.get("device_id") or "").strip()
     port = int(cfg.get("ewelink_port") or 8081)
+    mode = str(cfg.get("ewelink_mode") or "auto").strip().lower()
+    devicekey = str(
+        cfg.get("ewelink_devicekey")
+        or cfg.get("devicekey")
+        or ""
+    ).strip()
+    # user apikey (selfApikey) — not the same as devicekey
+    self_apikey = str(
+        cfg.get("ewelink_apikey")
+        or cfg.get("apikey")
+        or cfg.get("ewelink_user_apikey")
+        or ""
+    ).strip()
+    try:
+        outlet = int(cfg.get("ewelink_outlet") or 0)
+    except (TypeError, ValueError):
+        outlet = 0
     if not ip:
         raise ValueError("eWeLink IP empty")
     if not device_id:
-        raise ValueError("eWeLink device_id empty (DIY deviceid)")
-    base = f"http://{ip}:{port}"
-    if on is None:
-        # info
-        url = f"{base}/zeroconf/info"
-        payload = json.dumps({"deviceid": device_id, "data": {}})
-        code, text = _filtration_http(url, method="POST", body=payload)
-        j = json.loads(text) if text else {}
-        data = j.get("data") if isinstance(j, dict) else {}
-        sw = None
-        if isinstance(data, dict):
-            sw = data.get("switch")
-        on_v = str(sw).lower() in ("on", "1", "true") if sw is not None else None
-        return {"on": on_v, "backend": "ewelink", "ip": ip, "http": code}
-    url = f"{base}/zeroconf/switch"
-    payload = json.dumps(
-        {"deviceid": device_id, "data": {"switch": "on" if on else "off"}}
-    )
-    code, text = _filtration_http(url, method="POST", body=payload)
-    j = json.loads(text) if text.strip().startswith("{") else {}
-    err = j.get("error") if isinstance(j, dict) else None
-    if err not in (0, None, "0"):
-        raise RuntimeError(f"eWeLink DIY error={err}: {text[:120]}")
-    return {"on": bool(on), "backend": "ewelink", "ip": ip, "http": code}
+        raise ValueError("eWeLink device_id empty")
+    if mode == "lan" and not devicekey:
+        raise ValueError(
+            "eWeLink devicekey empty — cloud login (email/password) or paste key"
+        )
+    if not _ewelink_tcp_open(ip, port, timeout=2.0):
+        raise RuntimeError(
+            f"eWeLink TCP {ip}:{port} closed — offline / wrong IP / not on LAN"
+        )
+    try:
+        from ewelink_lan import control as ewelink_control  # type: ignore
+    except ImportError:
+        try:
+            from .ewelink_lan import control as ewelink_control  # type: ignore
+        except ImportError as e:
+            raise RuntimeError("ewelink_lan module missing") from e
+    try:
+        out = ewelink_control(
+            ip,
+            device_id,
+            on=on,
+            devicekey=devicekey or None,
+            port=port,
+            mode=mode if mode in ("auto", "diy", "lan") else "auto",
+            outlet=outlet,
+            timeout=6.0,
+            self_apikey=self_apikey or None,
+        )
+    except Exception as e:
+        raise RuntimeError(str(e)) from e
+    if isinstance(out.get("power"), dict):
+        out["power"] = _normalize_power_metrics(out["power"]) or out.get("power")
+    return out
 
 
 def _filtration_backend_webhook(on: bool | None, cfg: dict) -> dict:
@@ -4273,6 +4597,24 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         "password": str(raw.get("password") or ""),
         "device_id": str(raw.get("device_id") or "").strip()[:64],
         "ewelink_port": 8081,
+        "ewelink_mode": "auto",  # auto | diy | lan
+        "ewelink_devicekey": str(
+            raw.get("ewelink_devicekey")
+            or raw.get("devicekey")
+            or ""
+        ).strip()[:80],
+        # CoolKit user apikey (selfApikey) — separate from per-device devicekey
+        "ewelink_apikey": str(
+            raw.get("ewelink_apikey")
+            or raw.get("apikey")
+            or raw.get("ewelink_user_apikey")
+            or ""
+        ).strip()[:80],
+        "ewelink_country": str(raw.get("ewelink_country") or raw.get("country_code") or "+7").strip()[:8]
+        or "+7",
+        "ewelink_region": str(raw.get("ewelink_region") or "eu").strip().lower()[:8]
+        or "eu",
+        "ewelink_outlet": 0,
         "webhook_on_url": str(raw.get("webhook_on_url") or "").strip()[:500],
         "webhook_off_url": str(raw.get("webhook_off_url") or "").strip()[:500],
         "webhook_method": "POST"
@@ -4326,6 +4668,18 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         out["ewelink_port"] = max(1, min(65535, int(raw.get("ewelink_port") or 8081)))
     except (TypeError, ValueError):
         out["ewelink_port"] = 8081
+    em = str(raw.get("ewelink_mode") or out.get("ewelink_mode") or "auto").strip().lower()
+    out["ewelink_mode"] = em if em in ("auto", "diy", "lan") else "auto"
+    er = str(out.get("ewelink_region") or "eu").strip().lower()
+    out["ewelink_region"] = er if er in ("eu", "us", "as", "cn") else "eu"
+    ec = str(out.get("ewelink_country") or "+7").strip()
+    if ec and not ec.startswith("+"):
+        ec = "+" + ec
+    out["ewelink_country"] = ec or "+7"
+    try:
+        out["ewelink_outlet"] = max(0, min(7, int(raw.get("ewelink_outlet") or 0)))
+    except (TypeError, ValueError):
+        out["ewelink_outlet"] = 0
     try:
         out["shelly_channel"] = max(0, min(3, int(raw.get("shelly_channel") or 0)))
     except (TypeError, ValueError):
@@ -4701,6 +5055,8 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
             d["ha_token_set"] = bool(d.get("ha_token"))
             d["tuya_local_key_set"] = bool(d.get("tuya_local_key"))
             d["xiaomi_token_set"] = bool(d.get("xiaomi_token"))
+            d["ewelink_devicekey_set"] = bool(d.get("ewelink_devicekey"))
+            d["ewelink_apikey_set"] = bool(d.get("ewelink_apikey"))
             if d.get("password"):
                 d["password"] = ""
             if d.get("ha_token"):
@@ -4709,6 +5065,10 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
                 d["tuya_local_key"] = ""
             if d.get("xiaomi_token"):
                 d["xiaomi_token"] = ""
+            if d.get("ewelink_devicekey"):
+                d["ewelink_devicekey"] = ""
+            if d.get("ewelink_apikey"):
+                d["ewelink_apikey"] = ""
     return {
         "version": 1,
         "poller": get_devices_poller_cfg(),
@@ -4826,6 +5186,16 @@ def upsert_device(raw: dict) -> dict:
         xtk = merged.get("xiaomi_token") or merged.get("miio_token") or merged.get("token")
         if xtk is None or str(xtk).strip() in ("", "••••", "****", "***"):
             merged["xiaomi_token"] = existing.get("xiaomi_token") or ""
+        ewk = merged.get("ewelink_devicekey") or merged.get("devicekey")
+        if ewk is None or str(ewk).strip() in ("", "••••", "****", "***"):
+            merged["ewelink_devicekey"] = existing.get("ewelink_devicekey") or ""
+        ewa = (
+            merged.get("ewelink_apikey")
+            or merged.get("apikey")
+            or merged.get("ewelink_user_apikey")
+        )
+        if ewa is None or str(ewa).strip() in ("", "••••", "****", "***"):
+            merged["ewelink_apikey"] = existing.get("ewelink_apikey") or ""
     # runtime from request or previous state
     rt_in = _extract_device_runtime(merged)
     if existing_st:
@@ -5194,9 +5564,14 @@ def _device_ready(cfg: dict) -> bool:
     if be == "tapo":
         return bool(str(cfg.get("ip") or "").strip())
     if be == "ewelink":
-        return bool(
-            str(cfg.get("ip") or "").strip() and str(cfg.get("device_id") or "").strip()
-        )
+        ip_ok = bool(str(cfg.get("ip") or "").strip())
+        id_ok = bool(str(cfg.get("device_id") or "").strip())
+        mode = str(cfg.get("ewelink_mode") or "auto").lower()
+        key_ok = bool(str(cfg.get("ewelink_devicekey") or "").strip())
+        if mode == "lan":
+            return ip_ok and id_ok and key_ok
+        # auto/diy: IP+deviceid enough; key optional for encrypt
+        return ip_ok and id_ok
     if be == "webhook":
         return bool(
             str(cfg.get("webhook_on_url") or "").strip()
@@ -5846,9 +6221,27 @@ def device_poll_status(
 def device_test(did: str) -> dict:
     """
     Probe live device state (status poll + enforce/adopt policy).
-    Alias of device_poll_status for API / UI Test button.
+    For eWeLink also attaches DIY diagnosis (port open / DIY HTTP / hints).
     """
-    return device_poll_status(did, source="test", apply_policy=True)
+    out = device_poll_status(did, source="test", apply_policy=True)
+    try:
+        cfg = _device_cfg_snapshot(did) or {}
+        be = str(cfg.get("backend") or "").lower()
+        if be in ("ewelink", "sonoff", "sonoff_diy"):
+            diag = probe_ewelink_diy(
+                str(cfg.get("ip") or ""),
+                str(cfg.get("device_id") or ""),
+                int(cfg.get("ewelink_port") or 8081),
+            )
+            out["ewelink_diag"] = diag
+            if not out.get("ok") and diag.get("hints"):
+                # surface first 2 hints in error for UI
+                tips = "; ".join(str(h) for h in (diag.get("hints") or [])[:2])
+                if tips and tips not in str(out.get("error") or ""):
+                    out["error"] = f"{out.get('error') or 'eWeLink fail'} · {tips}"
+    except Exception as e:
+        out["ewelink_diag_error"] = str(e)[:160]
+    return out
 
 
 def device_set(
@@ -6613,11 +7006,20 @@ def miner_live_loop() -> None:
     """
     Fast ASIC live poll (control interval). Writes live_cache.json + mining_work
     so UI/policy/devices processes stay off :4028 for reads.
+
+    When managed inventory has multiple enabled miners, polls each host and
+    writes fleet_live.json so the fleet table can show per-row live data
+    (Whatsminer / iPollo / Goldshell / …).
     """
     print("[miner-poller] live loop start", flush=True)
     while not _miner_poller_stop.is_set():
         t0 = time.time()
         try:
+            # Multi-host fleet poll (managed inventory)
+            try:
+                _poll_managed_fleet_live()
+            except Exception as e:
+                print(f"[miner-poller] fleet: {e}", flush=True)
             live = fetch_live()
             publish_live_snapshot(live)
             try:
@@ -6709,6 +7111,13 @@ def miner_poller_main() -> None:
         print("[miner-poller] chipmap on", flush=True)
     else:
         print("[miner-poller] chipmap off", flush=True)
+    # LAN discovery + manual Scan now (Python poller; Go binary has its own)
+    td = threading.Thread(
+        target=miner_discovery_loop, name="miner-discovery", daemon=True
+    )
+    td.start()
+    threads.append(td)
+    print("[miner-poller] discovery on", flush=True)
     try:
         while not _miner_poller_stop.is_set():
             _miner_poller_stop.wait(timeout=2.0)
@@ -9156,7 +9565,8 @@ def get_miner_settings() -> dict:
 # ─── Miner-poller: discovery + managed inventory ────────────────────────────
 MINER_POLLER_CFG_FILE = DATA / "miner_poller_config.json"
 MINERS_DISCOVERED_FILE = DATA / "miners_discovered.json"
-MINERS_MANAGED_FILE = DATA / "miners_managed.json"
+MINERS_MANAGED_FILE = DATA / "miners_managed.json"  # legacy JSON (migrated → miners.db)
+MINERS_DB_FILE = DATA / "miners.db"
 MINER_SCAN_REQ_FILE = DATA / "miner_scan_req.json"
 MINER_SCAN_RESULT_FILE = DATA / "miner_scan_result.json"
 MINER_SCAN_STATUS_FILE = DATA / "miner_scan_status.json"
@@ -9174,7 +9584,7 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "alias": ["antminer", "bitmain", "ant"],
         "name": "Antminer",
         "manufacturer": "Bitmain",
-        "logo": "icons/vendors/antminer-invert.png",
+        "logo": "/icons/vendors/antminer-invert.png",
         "default_port": 80,
         "color": "#ef4444",
         "order": 10,
@@ -9184,27 +9594,37 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "alias": ["avalon", "canaan", "avalonminer"],
         "name": "Avalon",
         "manufacturer": "Canaan",
-        "logo": "icons/vendors/avalon.png",
+        "logo": "/icons/vendors/avalon.png",
         "default_port": 4028,
         "color": "#3b82f6",
         "order": 20,
     },
     {
         "id": "goldshell",
-        "alias": ["goldshell", "gs"],
+        "alias": ["goldshell", "gs", "ckbox", "ckbminer"],
         "name": "Goldshell",
         "manufacturer": "Goldshell",
-        "logo": "icons/vendors/goldshell.png",
-        "default_port": 80,
+        "logo": "/icons/vendors/goldshell.png",
+        "default_port": 4028,
         "color": "#eab308",
         "order": 30,
+    },
+    {
+        "id": "ipollo",
+        "alias": ["ipollo", "ipol", "toomuchpower"],
+        "name": "iPollo",
+        "manufacturer": "iPollo",
+        "logo": "/icons/vendors/ipollo.png",
+        "default_port": 4028,
+        "color": "#3b82f6",
+        "order": 40,
     },
     {
         "id": "whatsminer",
         "alias": ["whatsminer", "wm", "microbt"],
         "name": "Whatsminer",
         "manufacturer": "MicroBT",
-        "logo": "icons/vendors/whatsminer.png",
+        "logo": "/icons/vendors/whatsminer.png",
         "default_port": 4028,
         "color": "#f59e0b",
         "order": 90,
@@ -9252,7 +9672,10 @@ def get_miner_vendors() -> dict:
         if name:
             # ensure leading capital (Whatsminer / Antminer …)
             name = name[0].upper() + name[1:]
-        logo = str(v.get("logo") or f"icons/vendors/{vid}.png").strip()
+        logo = str(v.get("logo") or f"/icons/vendors/{vid}.png").strip()
+        # root-absolute so SPA nested routes (/ru/miners/…) don't break logos
+        if logo and not logo.startswith(("/", "http://", "https://", "data:")):
+            logo = "/" + logo.lstrip("./")
         try:
             port = int(v.get("default_port") or 4028)
         except (TypeError, ValueError):
@@ -9296,7 +9719,7 @@ def resolve_miner_vendor(raw: str | None) -> dict:
         return {
             "id": "whatsminer",
             "name": "Whatsminer",
-            "logo": "icons/vendors/whatsminer.png",
+            "logo": "/icons/vendors/whatsminer.png",
             "default_port": 4028,
             "alias": ["whatsminer"],
         }
@@ -9316,7 +9739,7 @@ def resolve_miner_vendor(raw: str | None) -> dict:
     return {
         "id": slug,
         "name": title or slug,
-        "logo": "icons/vendors/unknown.svg",
+        "logo": "/icons/vendors/unknown.svg",
         "default_port": 4028,
         "alias": [slug],
         "unknown": True,
@@ -9328,9 +9751,10 @@ _DEFAULT_MINER_POLLER_CFG: dict = {
         "enabled": False,
         "ranges": [],
         "interval_sec": 600,
-        "probe_timeout_ms": 500,
-        "concurrency": 48,
-        "ports": [4028, 80, 4433],
+        "probe_timeout_ms": 400,
+        # Keenetic ~256MB RAM: 48 parallel sockets OOMs during /24 scan
+        "concurrency": 16,
+        "ports": [4028, 80, 4433, 6060],
         "passwords": ["admin"],
         "ignore_ips": [],
     },
@@ -9443,14 +9867,81 @@ def get_miners_discovered() -> dict:
     }
 
 
+def _parse_managed_id(raw) -> int | None:
+    """Positive integer inventory id, or None if missing / legacy string."""
+    if raw is None or raw is False:
+        return None
+    s = str(raw).strip()
+    if not s or not s.isdigit():
+        return None
+    try:
+        n = int(s)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _next_managed_id(miners: list) -> int:
+    """Auto-increment: max(existing numeric ids) + 1 (or 1 if empty)."""
+    mx = 0
+    for m in miners or []:
+        if not isinstance(m, dict):
+            continue
+        n = _parse_managed_id(m.get("id"))
+        if n is not None and n > mx:
+            mx = n
+    return mx + 1
+
+
+def _random_miner_name() -> str:
+    """Random display name (same entropy style as the old m_<hex> ids)."""
+    return "n_" + uuid.uuid4().hex[:10]
+
+
+def _assign_managed_ids(miners: list) -> list:
+    """
+    Ensure every miner has a unique positive integer id (auto-increment).
+    Legacy string ids (m_…) are replaced; numeric ids are kept stable.
+    """
+    out: list = []
+    used: set[int] = set()
+    pending: list = []
+    for m in miners or []:
+        if not isinstance(m, dict):
+            continue
+        row = dict(m)
+        n = _parse_managed_id(row.get("id"))
+        if n is not None and n not in used:
+            row["id"] = n
+            used.add(n)
+            out.append(row)
+        else:
+            pending.append(row)
+    nxt = (max(used) if used else 0) + 1
+    for row in pending:
+        while nxt in used:
+            nxt += 1
+        row["id"] = nxt
+        used.add(nxt)
+        nxt += 1
+        out.append(row)
+    # stable order by id
+    out.sort(key=lambda x: int(x.get("id") or 0))
+    return out
+
+
 def _normalize_managed_miner(raw: dict | None) -> dict:
     """Ensure inventory fields exist on a managed miner row."""
     m = dict(raw) if isinstance(raw, dict) else {}
-    mid = str(m.get("id") or "").strip() or ("m_" + uuid.uuid4().hex[:10])
+    mid = _parse_managed_id(m.get("id"))  # None → assigned in _save_miners_managed
     vinfo = resolve_miner_vendor(m.get("vendor") or "whatsminer")
     vendor = str(vinfo.get("id") or "whatsminer")
     vendor_name = str(vinfo.get("name") or vendor)
-    vendor_logo = str(vinfo.get("logo") or "")
+    vendor_logo = str(vinfo.get("logo") or m.get("vendor_logo") or "")
+    if vendor_logo and not vendor_logo.startswith(
+        ("/", "http://", "https://", "data:")
+    ):
+        vendor_logo = "/" + vendor_logo.lstrip("./")
     host = str(m.get("host") or m.get("ip") or "").strip()
     try:
         port = int(m.get("port") or vinfo.get("default_port") or 4028)
@@ -9468,10 +9959,11 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         model = model_code
     alias = str(m.get("alias") or "").strip()
     name = str(m.get("name") or "").strip()
-    if not alias:
-        alias = name or host or mid
+    # display fallbacks (id is numeric — not used as a label)
     if not name:
-        name = alias
+        name = alias or host or (f"miner-{mid}" if mid else _random_miner_name())
+    if not alias:
+        alias = name or host or (f"miner-{mid}" if mid else _random_miner_name())
     serial = str(
         m.get("serial")
         or m.get("minersn")
@@ -9483,8 +9975,11 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         m.get("cooling") or m.get("cooling_type") or m.get("cool")
     )
     pool_id = str(m.get("pool_id") or m.get("heat_pool_id") or "").strip()
+    # reserved for future cloud / multi-site identity (not shown in UI yet)
+    global_id = str(m.get("global_id") or "").strip()
     return {
-        "id": mid[:48],
+        "id": mid if mid is not None else 0,  # 0 → allocate on save
+        "global_id": global_id[:128],
         "vendor": vendor,
         "vendor_name": vendor_name,
         "vendor_logo": vendor_logo,
@@ -9550,16 +10045,146 @@ def list_miner_cooling_types() -> list[dict]:
     return [dict(t) for t in MINER_COOLING_TYPES]
 
 
-def get_miners_managed() -> dict:
+_miners_db_lock = threading.Lock()
+_miners_db_ready = False
+
+
+def _miners_db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(str(MINERS_DB_FILE), check_same_thread=False, timeout=10)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def _ensure_miners_db() -> None:
+    """Create miners.db schema (managed inventory)."""
+    global _miners_db_ready
+    if _miners_db_ready and MINERS_DB_FILE.is_file():
+        return
+    do_migrate = False
+    with _miners_db_lock:
+        if _miners_db_ready and MINERS_DB_FILE.is_file():
+            return
+        MINERS_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
+        conn = _miners_db_connect()
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS managed_miners (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    global_id TEXT NOT NULL DEFAULT '',
+                    vendor TEXT NOT NULL DEFAULT 'whatsminer',
+                    host TEXT NOT NULL DEFAULT '',
+                    port INTEGER NOT NULL DEFAULT 4028,
+                    password TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    role TEXT NOT NULL DEFAULT 'standby',
+                    alias TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL DEFAULT '',
+                    cell TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '',
+                    model_code TEXT NOT NULL DEFAULT '',
+                    serial TEXT NOT NULL DEFAULT '',
+                    inventory TEXT NOT NULL DEFAULT '',
+                    cooling TEXT NOT NULL DEFAULT 'air',
+                    pool_id TEXT NOT NULL DEFAULT '',
+                    miner_type TEXT NOT NULL DEFAULT '',
+                    mac TEXT,
+                    fw_ver TEXT,
+                    source TEXT,
+                    imported_at TEXT,
+                    last_ok_ts TEXT,
+                    last_error TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_managed_host ON managed_miners(host);
+                CREATE INDEX IF NOT EXISTS idx_managed_role ON managed_miners(role);
+                CREATE INDEX IF NOT EXISTS idx_managed_mac ON managed_miners(mac);
+                """
+            )
+            conn.commit()
+            _miners_db_ready = True
+            do_migrate = True
+        finally:
+            conn.close()
+    # migrate outside lock (save takes the same lock)
+    if do_migrate:
+        try:
+            _migrate_managed_json_to_sqlite()
+        except Exception as e:
+            print(f"[miners.db] migrate from JSON: {e}", flush=True)
+
+
+def _managed_row_from_db(row: sqlite3.Row | dict) -> dict:
+    """sqlite row → normalized managed miner dict (with vendor_name/logo)."""
+    if row is None:
+        return _normalize_managed_miner({})
+    d = dict(row) if not isinstance(row, dict) else dict(row)
+    # sqlite stores enabled as 0/1
+    if "enabled" in d:
+        d["enabled"] = bool(d.get("enabled"))
+    return _normalize_managed_miner(d)
+
+
+def _migrate_managed_json_to_sqlite() -> None:
+    """Import miners_managed.json into miners.db if DB empty and JSON present."""
+    _ensure_miners_db()
+    with _miners_db_lock:
+        conn = _miners_db_connect()
+        try:
+            n = conn.execute("SELECT COUNT(*) AS c FROM managed_miners").fetchone()
+            if n and int(n["c"] or 0) > 0:
+                return
+        finally:
+            conn.close()
+    if not MINERS_MANAGED_FILE.is_file():
+        return
     raw = _load_json(MINERS_MANAGED_FILE, {"version": 1, "miners": []})
     if not isinstance(raw, dict):
-        raw = {"version": 1, "miners": []}
+        return
     miners = raw.get("miners") if isinstance(raw.get("miners"), list) else []
+    if not miners:
+        return
+    print(
+        f"[miners.db] migrating {len(miners)} rows from {MINERS_MANAGED_FILE.name}",
+        flush=True,
+    )
+    _save_miners_managed(miners, _from_migrate=True)
+    # keep JSON as backup
+    try:
+        bak = MINERS_MANAGED_FILE.with_suffix(".json.bak")
+        if not bak.is_file():
+            MINERS_MANAGED_FILE.replace(bak)
+            print(f"[miners.db] JSON archived → {bak.name}", flush=True)
+    except Exception as e:
+        print(f"[miners.db] archive JSON: {e}", flush=True)
+    try:
+        (DATA / "miners_inventory_initialized").write_text("1\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def get_miners_managed() -> dict:
+    """Managed inventory from miners.db (auto-migrates legacy JSON once)."""
+    _ensure_miners_db()
+    with _miners_db_lock:
+        conn = _miners_db_connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM managed_miners ORDER BY id ASC"
+            ).fetchall()
+        finally:
+            conn.close()
+    clean = [_managed_row_from_db(r) for r in rows]
+    # fix non-positive / legacy ids if any slipped in
+    if any(not isinstance(m.get("id"), int) or int(m.get("id") or 0) <= 0 for m in clean):
+        return _save_miners_managed(clean)
     return {
         "ok": True,
-        "miners": [
-            _normalize_managed_miner(m) for m in miners if isinstance(m, dict)
-        ],
+        "miners": clean,
+        "next_id": _next_managed_id(clean),
+        "db": str(MINERS_DB_FILE),
     }
 
 
@@ -9577,6 +10202,15 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
     """Compact live fields for fleet table rows."""
     if not isinstance(live, dict):
         return None
+    # Ensure model profile (display name + estimated power) even if snapshot
+    # was written before profiles existed / match keys were extended.
+    try:
+        if apply_model_profile_to_live is not None:
+            live = apply_model_profile_to_live(
+                dict(live), vendor=live.get("vendor") or live.get("api_vendor")
+            )
+    except Exception:
+        pass
     power = live.get("power")
     th = live.get("hashrate_th")
     try:
@@ -9596,19 +10230,68 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         temp = live.get("chip_avg")
     if temp is None:
         temp = live.get("env")
-    fans = live.get("fans") or live.get("fan") or live.get("fan_speed")
+    fans_raw = live.get("fans") or live.get("fan") or live.get("fan_speed") or live.get(
+        "fan_speeds"
+    )
     fan_s = None
-    if isinstance(fans, (list, tuple)) and fans:
+    fans_list: list = []
+    if isinstance(fans_raw, (list, tuple)) and fans_raw:
+        for x in fans_raw:
+            try:
+                fans_list.append(int(float(x)))
+            except (TypeError, ValueError):
+                continue
+        if fans_list:
+            fan_s = fans_list[0]
+    elif fans_raw is not None:
         try:
-            fan_s = int(float(fans[0]))
+            fan_s = int(float(fans_raw))
+            fans_list = [fan_s]
         except (TypeError, ValueError):
             fan_s = None
-    elif fans is not None:
-        try:
-            fan_s = int(float(fans))
-        except (TypeError, ValueError):
-            fan_s = None
-    work = live.get("work") or live.get("mining_work") or live.get("mode")
+    # PSU fan as fallback when chassis fans missing
+    psu_fan = live.get("psu_fan")
+    try:
+        psu_fan_i = int(float(psu_fan)) if psu_fan is not None else None
+    except (TypeError, ValueError):
+        psu_fan_i = None
+    if not fans_list and psu_fan_i is not None:
+        fans_list = [psu_fan_i]
+        fan_s = psu_fan_i
+    # Per-board hashrate (TH/s). live["boards"] may be list of floats or dicts.
+    board_ths: list = []
+    boards_raw = live.get("boards")
+    if isinstance(boards_raw, (list, tuple)):
+        for b in boards_raw:
+            if isinstance(b, (int, float)):
+                try:
+                    board_ths.append(round(float(b), 2))
+                except (TypeError, ValueError):
+                    pass
+            elif isinstance(b, dict):
+                for key in (
+                    "hashrate_th",
+                    "th",
+                    "hashrate",
+                    "mhs",
+                    "hash_rate",
+                ):
+                    if b.get(key) is not None:
+                        try:
+                            val = float(b[key])
+                            # mhs → th
+                            if key == "mhs" and val > 1000:
+                                val = val / 1e6
+                            board_ths.append(round(val, 2))
+                        except (TypeError, ValueError):
+                            pass
+                        break
+    work = (
+        live.get("work")
+        or live.get("mining_work")
+        or live.get("work_measured")
+        or live.get("mode")
+    )
     if work is None and live.get("mineroff"):
         work = "sleep"
     pools = live.get("pools") if isinstance(live.get("pools"), list) else None
@@ -9640,6 +10323,9 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         "chip_max": live.get("chip_max"),
         "env": live.get("env"),
         "fan": fan_s,
+        "fans": fans_list[:8],
+        "psu_fan": psu_fan_i,
+        "boards_th": board_ths[:8],
         "work": work,
         "elapsed": live.get("elapsed"),
         "rejected": live.get("rejected") or live.get("reject_rate") or live.get("hw_errors"),
@@ -9647,19 +10333,138 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         "pool_ok": pool_ok,
         "pool_url": pool_url,
         "miner_type": live.get("miner_type"),
+        "vendor": live.get("vendor") or live.get("api_vendor"),
+        "hashrate_hs": live.get("hashrate_hs"),
+        "hashrate_unit": live.get("hashrate_unit"),
+        "model_display": live.get("model_display"),
+        "model_display_full": live.get("model_display_full"),
+        "power_source": live.get("power_source"),
+        "power_estimated": live.get("power_estimated"),
+        "efficiency_value": live.get("efficiency_value"),
+        "efficiency_unit": live.get("efficiency_unit"),
         "error": live.get("error"),
         "ts": live.get("ts"),
     }
 
 
+def _load_fleet_live_map(*, max_age_sec: float = 120.0) -> dict[str, dict]:
+    """host → live dict from fleet_live.json (multi-miner poller)."""
+    out: dict[str, dict] = {}
+    try:
+        if not FLEET_LIVE_FILE.is_file():
+            return out
+        raw = json.loads(FLEET_LIVE_FILE.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return out
+        miners = raw.get("miners") if isinstance(raw.get("miners"), dict) else raw
+        if not isinstance(miners, dict):
+            return out
+        now = time.time()
+        for host, entry in miners.items():
+            if not isinstance(entry, dict):
+                continue
+            ts = float(entry.get("ts") or raw.get("ts") or 0)
+            if ts > 0 and (now - ts) > float(max_age_sec):
+                continue
+            live = entry.get("live") if isinstance(entry.get("live"), dict) else entry
+            if isinstance(live, dict) and live.get("ok") is not False:
+                # allow ok:false offline stamps too
+                out[str(host).strip()] = live
+    except Exception:
+        pass
+    return out
+
+
+def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
+    try:
+        payload = {
+            "ts": time.time(),
+            "miners": {
+                h: {
+                    "ts": time.time(),
+                    "live": live,
+                    "host": h,
+                }
+                for h, live in (by_host or {}).items()
+                if isinstance(live, dict)
+            },
+        }
+        FLEET_LIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = FLEET_LIVE_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(FLEET_LIVE_FILE)
+    except Exception as e:
+        print(f"[fleet-live] write: {e}", flush=True)
+
+
+def _poll_managed_fleet_live() -> None:
+    """
+    Poll every enabled managed miner (Whatsminer / iPollo / Goldshell / …)
+    and write fleet_live.json. Active host also refreshes via normal path.
+    """
+    if not _is_this_python_miner_poller():
+        return
+    try:
+        managed = get_miners_managed()
+    except Exception:
+        return
+    miners = [
+        m
+        for m in (managed.get("miners") or [])
+        if isinstance(m, dict) and m.get("enabled", True)
+    ]
+    if not miners:
+        return
+    by_host: dict[str, dict] = {}
+    for m in miners:
+        host = str(m.get("host") or "").strip()
+        if not host:
+            continue
+        try:
+            port = int(m.get("port") or 4028)
+        except (TypeError, ValueError):
+            port = 4028
+        try:
+            with _asic_target_override(host, port):
+                live = _fetch_live_direct()
+            if isinstance(live, dict):
+                live.setdefault("host", f"{host}:{port}")
+                by_host[host] = live
+        except Exception as e:
+            # Goldshell (and any cloud-box): fall back to HTTP /mcb/* when :4028 refused
+            live_http = None
+            try:
+                live_http = _fetch_live_goldshell_http(host, port)
+            except Exception:
+                live_http = None
+            if isinstance(live_http, dict) and live_http.get("ok"):
+                by_host[host] = live_http
+                print(
+                    f"[fleet-live] {host}: cgminer failed ({e}); using goldshell HTTP",
+                    flush=True,
+                )
+            else:
+                by_host[host] = {
+                    "ok": False,
+                    "host": f"{host}:{port}",
+                    "error": str(e)[:200],
+                    "vendor": m.get("vendor"),
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                }
+                print(f"[fleet-live] {host}:{port}: {e}", flush=True)
+    if by_host:
+        _publish_fleet_live_map(by_host)
+
+
 def get_miners_fleet() -> dict:
     """
-    Managed inventory + live overlay for the active polled host.
-    Standby miners show inventory fields only until multi-poll is enabled.
+    Managed inventory + live overlay.
+    Prefers multi-host fleet_live.json; falls back to single active live_cache.
     """
     _seed_managed_from_active()
     managed = get_miners_managed()
     miners_in = list(managed.get("miners") or [])
+    fleet_map = _load_fleet_live_map(max_age_sec=120.0)
     live = hydrate_live_from_disk(max_age_sec=120.0)
     if not isinstance(live, dict):
         try:
@@ -9680,6 +10485,64 @@ def get_miners_fleet() -> dict:
         row = dict(m)
         host = str(m.get("host") or "").strip()
         role = str(m.get("role") or "standby")
+        # Prefer per-host fleet live, then active live_cache match
+        host_live = fleet_map.get(host) if host else None
+        if isinstance(host_live, dict):
+            sl = _fleet_live_slice(host_live)
+            if sl and host_live.get("ok", True) and not host_live.get("error"):
+                row["online"] = True
+                row["live"] = sl
+                online_n += 1
+                if sl.get("hashrate_th") is not None:
+                    try:
+                        sum_th += float(sl["hashrate_th"])
+                    except (TypeError, ValueError):
+                        pass
+                if sl.get("power") is not None:
+                    try:
+                        sum_w += float(sl["power"])
+                    except (TypeError, ValueError):
+                        pass
+                # Trade name from model profile wins for UI (CK-BOX not CKBox)
+                disp = (
+                    (sl or {}).get("model_display")
+                    or host_live.get("model_display")
+                    or (sl or {}).get("model_display_full")
+                    or host_live.get("model_display_full")
+                )
+                if disp:
+                    row["model"] = disp
+                    row["model_display"] = disp
+                    row["model_display_full"] = (
+                        (sl or {}).get("model_display_full")
+                        or host_live.get("model_display_full")
+                        or disp
+                    )
+                if not row.get("model_code") and (sl or {}).get("miner_type"):
+                    row["model_code"] = (sl or {}).get("miner_type")
+                if not row.get("model") and (
+                    host_live.get("model_name")
+                    or (sl or {}).get("miner_type")
+                ):
+                    row["model"] = host_live.get("model_name") or (sl or {}).get(
+                        "miner_type"
+                    )
+                if not row.get("vendor") and host_live.get("vendor"):
+                    row["vendor"] = host_live.get("vendor")
+                if host_live.get("fw_ver") and not row.get("fw_ver"):
+                    row["fw_ver"] = host_live.get("fw_ver")
+                if host_live.get("serial") and not row.get("serial"):
+                    row["serial"] = host_live.get("serial")
+                if host_live.get("mac") and not row.get("mac"):
+                    row["mac"] = host_live.get("mac")
+            else:
+                row["online"] = False
+                row["live"] = sl
+                row["last_error"] = (
+                    (host_live or {}).get("error") or (sl or {}).get("error")
+                )
+            rows.append(row)
+            continue
         match = bool(live_ip and host and host == live_ip)
         if match and live_slice and live_slice.get("ok"):
             row["online"] = True
@@ -9710,20 +10573,27 @@ def get_miners_fleet() -> dict:
         "ok": True,
         "miners": rows,
         "live_host": live_ip or None,
+        "fleet_hosts": list(fleet_map.keys()),
         "summary": {
             "total": len(rows),
             "online": online_n,
-            "hashrate_th": round(sum_th, 2),
+            "hashrate_th": round(sum_th, 6) if sum_th < 1 else round(sum_th, 2),
             "power_w": round(sum_w, 1),
         },
         "ts": datetime.now().isoformat(timespec="seconds"),
     }
 
 
-def _save_miners_managed(miners: list) -> dict:
+def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
+    """
+    Replace managed inventory in miners.db.
+    ids: positive integers kept; 0 / legacy strings reassigned (auto-increment).
+    """
+    _ensure_miners_db()
     clean = [
         _normalize_managed_miner(m) for m in (miners or []) if isinstance(m, dict)
     ]
+    clean = _assign_managed_ids(clean)
     # exactly one active
     actives = [i for i, m in enumerate(clean) if m.get("role") == "active"]
     if not actives and clean:
@@ -9732,40 +10602,148 @@ def _save_miners_managed(miners: list) -> dict:
         for i, m in enumerate(clean):
             if m.get("role") == "active" and i != actives[0]:
                 m["role"] = "standby"
-    payload = {"version": 1, "miners": clean}
-    _save_json_atomic(MINERS_MANAGED_FILE, payload)
-    return get_miners_managed()
+
+    cols = (
+        "id",
+        "global_id",
+        "vendor",
+        "host",
+        "port",
+        "password",
+        "enabled",
+        "role",
+        "alias",
+        "name",
+        "cell",
+        "model",
+        "model_code",
+        "serial",
+        "inventory",
+        "cooling",
+        "pool_id",
+        "miner_type",
+        "mac",
+        "fw_ver",
+        "source",
+        "imported_at",
+        "last_ok_ts",
+        "last_error",
+    )
+    with _miners_db_lock:
+        conn = _miners_db_connect()
+        try:
+            conn.execute("DELETE FROM managed_miners")
+            for m in clean:
+                conn.execute(
+                    f"""
+                    INSERT INTO managed_miners ({", ".join(cols)})
+                    VALUES ({", ".join("?" for _ in cols)})
+                    """,
+                    (
+                        int(m["id"]),
+                        str(m.get("global_id") or ""),
+                        str(m.get("vendor") or "whatsminer"),
+                        str(m.get("host") or ""),
+                        int(m.get("port") or 4028),
+                        str(m.get("password") if m.get("password") is not None else ""),
+                        1 if m.get("enabled", True) else 0,
+                        str(m.get("role") or "standby"),
+                        str(m.get("alias") or "")[:64],
+                        str(m.get("name") or "")[:64],
+                        str(m.get("cell") or "")[:64],
+                        str(m.get("model") or "")[:64],
+                        str(m.get("model_code") or "")[:64],
+                        str(m.get("serial") or "")[:96],
+                        str(m.get("inventory") or "")[:64],
+                        str(m.get("cooling") or "air"),
+                        str(m.get("pool_id") or "")[:48],
+                        str(m.get("miner_type") or "")[:64],
+                        m.get("mac"),
+                        m.get("fw_ver"),
+                        m.get("source"),
+                        m.get("imported_at"),
+                        m.get("last_ok_ts"),
+                        m.get("last_error"),
+                    ),
+                )
+            # keep AUTOINCREMENT sequence ahead of max id
+            mx = max((int(m["id"]) for m in clean), default=0)
+            try:
+                conn.execute(
+                    "DELETE FROM sqlite_sequence WHERE name='managed_miners'"
+                )
+                if mx > 0:
+                    conn.execute(
+                        "INSERT INTO sqlite_sequence(name, seq) VALUES ('managed_miners', ?)",
+                        (mx,),
+                    )
+            except sqlite3.Error:
+                # sqlite_sequence may be missing before first AUTOINCREMENT insert
+                pass
+            conn.commit()
+        finally:
+            conn.close()
+
+    # mirror next_id into optional JSON backup only during migrate (debug)
+    if _from_migrate:
+        try:
+            _save_json_atomic(
+                MINERS_MANAGED_FILE.with_suffix(".json.migrated"),
+                {"version": 1, "miners": clean, "next_id": _next_managed_id(clean)},
+            )
+        except Exception:
+            pass
+
+    # return without re-enter migration loops
+    out_clean = [_normalize_managed_miner(m) for m in clean]
+    return {
+        "ok": True,
+        "miners": out_clean,
+        "next_id": _next_managed_id(out_clean),
+        "db": str(MINERS_DB_FILE),
+    }
 
 
 def _seed_managed_from_active() -> None:
     """
-    First-run only: if inventory file missing, seed from miner_host.
-    Never re-seed when file exists (even empty) — otherwise Remove on the
-    last managed miner appears broken (GET re-adds m_default).
+    First-run only: if inventory empty (no DB rows, no legacy JSON), seed from miner_host.
+    Never re-seed when inventory already exists (even empty after user Remove-all).
     """
+    _ensure_miners_db()
+    # legacy JSON still present → migrate path owns it
     try:
         if MINERS_MANAGED_FILE.is_file():
             return
     except Exception:
         pass
+    # Marker: once inventory has been initialized, never auto-seed again
+    marker = DATA / "miners_inventory_initialized"
+    if marker.is_file():
+        return
     cur = get_miners_managed()
     if cur.get("miners"):
+        try:
+            marker.write_text("1\n", encoding="utf-8")
+        except Exception:
+            pass
         return
     host = str(HOST_MINER or "").strip()
     if not host:
         return
+    seed_name = _random_miner_name()
     _save_miners_managed(
         [
             {
-                "id": "m_default",
+                "id": 1,
+                "global_id": "",
                 "vendor": "whatsminer",
                 "host": host,
                 "port": int(PORT_MINER or 4028),
                 "password": DEFAULT_API_PASSWORD or "admin",
                 "enabled": True,
                 "role": "active",
-                "alias": "primary",
-                "name": "primary",
+                "alias": seed_name,
+                "name": seed_name,
                 "cell": "",
                 "model": "",
                 "model_code": "",
@@ -9776,6 +10754,10 @@ def _seed_managed_from_active() -> None:
             }
         ]
     )
+    try:
+        marker.write_text("1\n", encoding="utf-8")
+    except Exception:
+        pass
 
 
 def import_discovered_miner(
@@ -9810,16 +10792,21 @@ def import_discovered_miner(
     vendor = str(vinfo.get("id") or "whatsminer")
     port = int(found.get("port") or vinfo.get("default_port") or 4028)
     mtype = str(found.get("miner_type") or "").strip()
+    # Fresh import: auto-inc id (0→allocate) + random name (like old m_<hex>)
+    rand_name = _random_miner_name()
+    display = (str(alias).strip() if alias else "") or rand_name
+    prev = managed[idx] if idx is not None else None
     row = {
-        "id": managed[idx]["id"] if idx is not None else ("m_" + uuid.uuid4().hex[:10]),
+        "id": prev.get("id") if prev else 0,
+        "global_id": (prev.get("global_id") if prev else "") or "",
         "vendor": vendor,
         "host": ip,
         "port": port,
         "password": DEFAULT_API_PASSWORD or "admin",
         "enabled": True,
         "role": "standby",
-        "alias": (alias or mtype or ip)[:64],
-        "name": (alias or mtype or ip)[:64],
+        "alias": display[:64],
+        "name": display[:64],
         "cell": "",
         "model": mtype,
         "model_code": mtype,
@@ -9831,9 +10818,8 @@ def import_discovered_miner(
         "source": "discovery",
         "imported_at": datetime.now().isoformat(timespec="seconds"),
     }
-    if idx is not None:
+    if prev is not None:
         # keep role/password/inventory labels if already managed
-        prev = managed[idx]
         row["role"] = prev.get("role") or "standby"
         if prev.get("password"):
             row["password"] = prev["password"]
@@ -9845,6 +10831,7 @@ def import_discovered_miner(
             "model_code",
             "serial",
             "inventory",
+            "global_id",
         ):
             if prev.get(k) not in (None, ""):
                 row[k] = prev[k]
@@ -9886,16 +10873,19 @@ def add_managed_manual(
     for m in managed:
         if str(m.get("host") or "") == host:
             raise ValueError(f"host {host} already managed")
+    rand_name = _random_miner_name()
+    display = (str(alias).strip() if alias else "") or rand_name
     row = {
-        "id": "m_" + uuid.uuid4().hex[:10],
+        "id": 0,  # allocate on save
+        "global_id": "",
         "vendor": vendor,
         "host": host,
         "port": port,
         "password": password or DEFAULT_API_PASSWORD or "admin",
         "enabled": True,
         "role": "standby",
-        "alias": (alias or host)[:64],
-        "name": (alias or host)[:64],
+        "alias": display[:64],
+        "name": display[:64],
         "cell": "",
         "model": "",
         "model_code": "",
@@ -10059,24 +11049,625 @@ def ignore_discovered(ip: str, ignored: bool = True) -> dict:
     return get_miners_discovered()
 
 
-def _default_discovery_ranges() -> list[str]:
-    """
-    When UI/config has no ranges, probe the LAN of the active miner host
-    (…x.0/24). Avoids empty scan that always fails with “no ranges”.
-    """
-    host = str(HOST_MINER or "").strip()
+def _host_to_slash24(host: str) -> str | None:
+    host = str(host or "").strip()
     if not host:
-        return []
-    # strip brackets / port if any
+        return None
     if host.startswith("["):
         host = host.split("]", 1)[0].lstrip("[")
     if ":" in host and host.count(":") == 1:
-        # host:port
         host = host.split(":", 1)[0]
     parts = host.split(".")
     if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
-        return [f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"]
-    return []
+        return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+    return None
+
+
+def _default_discovery_ranges() -> list[str]:
+    """
+    When UI/config has no ranges: /24 of every managed miner + active host.
+    Covers multi-subnet fleets (e.g. 172.16.100 + 192.168.13).
+
+    Does NOT scan every router interface (VPN / WAN / guest) — that balloons
+    to thousands of hosts and stalls the poller on Keenetic.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _add(host: str) -> None:
+        cidr = _host_to_slash24(host)
+        if cidr and cidr not in seen:
+            seen.add(cidr)
+            out.append(cidr)
+
+    try:
+        managed = get_miners_managed()
+        for m in managed.get("miners") or []:
+            if isinstance(m, dict):
+                _add(str(m.get("host") or ""))
+    except Exception:
+        pass
+    _add(str(HOST_MINER or ""))
+    return out
+
+
+def _expand_scan_ranges(ranges: list[str]) -> list[str]:
+    """CIDR / start-end / single IP → host list (cap 4096)."""
+    import ipaddress
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for r in ranges or []:
+        s = str(r or "").strip()
+        if not s:
+            continue
+        try:
+            if "/" in s:
+                net = ipaddress.ip_network(s, strict=False)
+                hosts = list(net.hosts()) if net.num_addresses > 2 else list(net)
+                for ip in hosts:
+                    ip_s = str(ip)
+                    if ip_s not in seen:
+                        seen.add(ip_s)
+                        out.append(ip_s)
+            elif "-" in s:
+                a, b = [x.strip() for x in s.split("-", 1)]
+                # Support "192.168.1.10-20" (last-octet range) and full IPs
+                if re.fullmatch(r"\d{1,3}", b) and a.count(".") == 3:
+                    prefix = a.rsplit(".", 1)[0]
+                    start_o = int(a.rsplit(".", 1)[1])
+                    end_o = int(b)
+                    if end_o < start_o:
+                        start_o, end_o = end_o, start_o
+                    if end_o > 255 or start_o < 0:
+                        raise ValueError(f"invalid octet range: {s}")
+                    for o in range(start_o, end_o + 1):
+                        ip_s = f"{prefix}.{o}"
+                        if ip_s not in seen:
+                            seen.add(ip_s)
+                            out.append(ip_s)
+                else:
+                    ia = int(ipaddress.IPv4Address(a))
+                    ib = int(ipaddress.IPv4Address(b))
+                    if ib < ia:
+                        ia, ib = ib, ia
+                    if ib - ia > 4096:
+                        raise ValueError(f"range too large: {s}")
+                    for n in range(ia, ib + 1):
+                        ip_s = str(ipaddress.IPv4Address(n))
+                        if ip_s not in seen:
+                            seen.add(ip_s)
+                            out.append(ip_s)
+            else:
+                ip_s = str(ipaddress.IPv4Address(s))
+                if ip_s not in seen:
+                    seen.add(ip_s)
+                    out.append(ip_s)
+        except Exception as e:
+            raise ValueError(f"range {s!r}: {e}") from e
+        if len(out) > 4096:
+            raise ValueError(f"too many hosts ({len(out)} > 4096) — shrink ranges")
+    return out
+
+
+def _tcp_open_fast(ip: str, port: int, timeout: float) -> bool:
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _recv_until_json(sock: socket.socket, timeout: float = 1.5) -> dict | None:
+    sock.settimeout(timeout)
+    chunks: list[bytes] = []
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            b = sock.recv(4096)
+        except socket.timeout:
+            break
+        except Exception:
+            break
+        if not b:
+            break
+        chunks.append(b)
+        raw = b"".join(chunks)
+        # null-terminated or complete JSON
+        if b"\x00" in raw:
+            raw = raw.split(b"\x00", 1)[0]
+        text = raw.decode("utf-8", errors="replace").strip()
+        if not text:
+            continue
+        try:
+            obj = json.loads(text)
+            return obj if isinstance(obj, dict) else None
+        except Exception:
+            # keep reading
+            if len(raw) > 65536:
+                break
+    text = b"".join(chunks).split(b"\x00", 1)[0].decode("utf-8", errors="replace").strip()
+    if not text:
+        return None
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _probe_tcp_json(ip: str, port: int, payload: dict, timeout: float) -> dict | None:
+    try:
+        with socket.create_connection((ip, int(port)), timeout=timeout) as sock:
+            data = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+            sock.sendall(data)
+            return _recv_until_json(sock, timeout=timeout)
+    except Exception:
+        return None
+
+
+def _probe_http_text(
+    ip: str, port: int, path: str = "/", timeout: float = 1.0
+) -> tuple[int | None, str]:
+    try:
+        url = f"http://{ip}:{int(port)}{path}" if int(port) != 80 else f"http://{ip}{path}"
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "poolheat-discovery/1.0", "Accept": "*/*"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            code = int(getattr(resp, "status", 200) or 200)
+            body = resp.read(65536).decode("utf-8", errors="replace")
+            return code, body
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read(65536).decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return int(e.code), body
+    except Exception:
+        return None, ""
+
+
+def _probe_host_discovery(
+    ip: str,
+    *,
+    timeout: float,
+    ports: list[int],
+    passwords: list[str],
+) -> dict | None:
+    """
+    Fingerprint one host. Returns discovered miner dict or None.
+    Covers Whatsminer :4028/:4433, CGMiner/BMMiner/iPollo/Goldshell :4028,
+    Antminer web :80, Antminer SearchFreq :6060.
+    """
+    t0 = time.time()
+    ports = [int(p) for p in (ports or [4028, 80, 4433, 6060]) if 1 <= int(p) <= 65535]
+    # always try classic ASIC ports
+    for must in (4028, 80, 6060):
+        if must not in ports:
+            ports.append(must)
+
+    def _hit(
+        vendor: str,
+        port: int,
+        *,
+        miner_type: str | None = None,
+        fw: str | None = None,
+        mac: str | None = None,
+        platform: str | None = None,
+    ) -> dict:
+        return {
+            "ip": ip,
+            "host": ip,
+            "vendor": vendor,
+            "port": int(port),
+            "miner_type": miner_type or "",
+            "fw": fw or "",
+            "fw_ver": fw or "",
+            "mac": mac or "",
+            "platform": platform or "",
+            "status": "online",
+            "rtt_ms": int((time.time() - t0) * 1000),
+        }
+
+    # ── TCP :4028 (Whatsminer cmd / CGMiner command) ─────────────────────
+    if 4028 in ports and _tcp_open_fast(ip, 4028, timeout):
+        # Whatsminer get_version
+        for pw in passwords or ["admin"]:
+            raw = _probe_tcp_json(
+                ip, 4028, {"cmd": "get_version", "token": str(pw)}, timeout
+            )
+            if not raw:
+                raw = _probe_tcp_json(ip, 4028, {"cmd": "get_version"}, timeout)
+            if isinstance(raw, dict) and (
+                raw.get("STATUS") is not None
+                or isinstance(raw.get("Msg"), dict)
+                or raw.get("Code") is not None
+            ):
+                msg = raw.get("Msg") if isinstance(raw.get("Msg"), dict) else {}
+                # CGMiner error "Missing JSON" → not Whatsminer
+                st = raw.get("STATUS")
+                err_msg = ""
+                if isinstance(st, list) and st and isinstance(st[0], dict):
+                    err_msg = str(st[0].get("Msg") or "")
+                if "Missing JSON" in err_msg or "command" in err_msg.lower():
+                    break
+                mt = str(msg.get("miner_type") or msg.get("Type") or "").strip()
+                fw = str(msg.get("fw_ver") or msg.get("api_ver") or "").strip()
+                plat = str(msg.get("platform") or "").strip()
+                if mt or fw or plat or msg:
+                    return _hit(
+                        "whatsminer",
+                        4028,
+                        miner_type=mt or "Whatsminer",
+                        fw=fw,
+                        platform=plat,
+                    )
+            break  # one attempt enough for plaintext version
+
+        # CGMiner / BMMiner / iPollo / Goldshell
+        raw = _probe_tcp_json(ip, 4028, {"command": "version"}, timeout)
+        if not isinstance(raw, dict):
+            raw = _probe_tcp_json(ip, 4028, {"command": "summary"}, timeout)
+        if isinstance(raw, dict):
+            ver = None
+            for key in ("VERSION", "version", "SUMMARY", "summary"):
+                sec = raw.get(key)
+                if isinstance(sec, list) and sec and isinstance(sec[0], dict):
+                    ver = sec[0]
+                    break
+                if isinstance(sec, dict):
+                    ver = sec
+                    break
+            desc = ""
+            st = raw.get("STATUS")
+            if isinstance(st, list) and st and isinstance(st[0], dict):
+                desc = str(st[0].get("Description") or "")
+            mtype = ""
+            fw = ""
+            vendor = "cgminer"
+            if isinstance(ver, dict):
+                mtype = str(
+                    ver.get("Type") or ver.get("type") or ver.get("Model") or ""
+                ).strip()
+                fw = str(
+                    ver.get("Miner")
+                    or ver.get("BMMiner")
+                    or ver.get("CompileTime")
+                    or ""
+                ).strip()
+                if ver.get("BMMiner") or "antminer" in mtype.lower():
+                    vendor = "antminer"
+            desc_l = desc.lower()
+            mt_l = mtype.lower()
+            if "ipollo" in desc_l or "ipollo" in mt_l:
+                vendor = "ipollo"
+            elif "goldshell" in desc_l or "ckb" in desc_l or "ckbox" in mt_l:
+                vendor = "goldshell"
+            elif "antminer" in mt_l or "bitmain" in desc_l or "jansson" in desc_l:
+                vendor = "antminer"
+            if mtype or fw or desc or raw.get("STATUS") is not None:
+                return _hit(
+                    vendor,
+                    4028,
+                    miner_type=mtype or (desc[:40] if desc else vendor.title()),
+                    fw=fw,
+                )
+
+    # ── Antminer SearchFreqServer :6060 ─────────────────────────────────
+    if 6060 in ports and _tcp_open_fast(ip, 6060, min(timeout, 0.8)):
+        code, body = _probe_http_text(ip, 6060, "/productName", timeout=timeout)
+        name = (body or "").strip()
+        if code == 200 and name and (
+            "antminer" in name.lower() or name.lower().startswith("ant")
+        ):
+            return _hit("antminer", 6060, miner_type=name)
+        code2, body2 = _probe_http_text(ip, 6060, "/miner_power", timeout=timeout)
+        if code2 == 200 and "power" in (body2 or "").lower():
+            return _hit("antminer", 6060, miner_type="Antminer")
+
+    # ── HTTP :80 / :8080 ────────────────────────────────────────────────
+    for http_port in (80, 8080, 443):
+        if http_port not in ports:
+            continue
+        if not _tcp_open_fast(ip, http_port, min(timeout, 0.6)):
+            continue
+        code, body = _probe_http_text(ip, http_port, "/", timeout=timeout)
+        low = (body or "").lower()
+        title = ""
+        m_title = re.search(
+            r"<title[^>]*>(.*?)</title>", body or "", flags=re.I | re.S
+        )
+        if m_title:
+            title = re.sub(r"\s+", " ", m_title.group(1)).strip()
+        if (
+            "antminer" in low
+            or "bitmain" in low
+            or "antminer" in title.lower()
+        ):
+            return _hit(
+                "antminer",
+                http_port,
+                miner_type=title or "Antminer",
+            )
+        # Goldshell cloud box
+        if "goldshell" in low or "/mcb/" in low:
+            return _hit("goldshell", http_port, miner_type=title or "Goldshell")
+        # iPollo LuCI
+        if "ipollo" in low or ("luci" in low and "miner" in low):
+            return _hit("ipollo", http_port, miner_type=title or "iPollo")
+
+    # ── Whatsminer V3 port open (no full binary probe without wm-lib) ───
+    if 4433 in ports and _tcp_open_fast(ip, 4433, min(timeout, 0.5)):
+        # weak signal — only if nothing else matched
+        return _hit("whatsminer", 4433, miner_type="Whatsminer (v3 port)")
+
+    return None
+
+
+def run_miner_discovery(
+    ranges: list[str] | None = None,
+    *,
+    cfg: dict | None = None,
+) -> dict:
+    """
+    Scan LAN ranges, write miners_discovered.json + scan result.
+    Used by Python miner-poller (Go binary has its own implementation).
+    """
+    t0 = time.time()
+    cfg = cfg or get_miner_poller_cfg()
+    disc = (cfg or {}).get("discovery") if isinstance(cfg, dict) else {}
+    disc = disc if isinstance(disc, dict) else {}
+    rng = [str(x).strip() for x in (ranges or []) if str(x).strip()]
+    if not rng:
+        rng = [str(x).strip() for x in (disc.get("ranges") or []) if str(x).strip()]
+    if not rng:
+        rng = _default_discovery_ranges()
+    if not rng:
+        return {
+            "ok": False,
+            "error": "no scan ranges configured",
+            "probed": 0,
+            "found": 0,
+            "scan_ms": int((time.time() - t0) * 1000),
+            "updated_ts": datetime.now().isoformat(timespec="seconds"),
+        }
+    try:
+        hosts = _expand_scan_ranges(rng)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e),
+            "probed": 0,
+            "found": 0,
+            "scan_ms": int((time.time() - t0) * 1000),
+            "updated_ts": datetime.now().isoformat(timespec="seconds"),
+        }
+    ignore = {
+        str(x).strip()
+        for x in (disc.get("ignore_ips") or [])
+        if str(x).strip()
+    }
+    hosts = [h for h in hosts if h not in ignore]
+    timeout_ms = int(disc.get("probe_timeout_ms") or 500)
+    timeout = max(0.15, min(5.0, timeout_ms / 1000.0))
+    # Cap hard: ThreadPool of 48 × open sockets blows ~256MB Keenetic
+    conc = max(4, min(24, int(disc.get("concurrency") or 16)))
+    ports = disc.get("ports") if isinstance(disc.get("ports"), list) else []
+    ports = [int(p) for p in ports if str(p).isdigit()] or [4028, 80, 4433, 6060]
+    passwords = disc.get("passwords") if isinstance(disc.get("passwords"), list) else []
+    passwords = [str(p) for p in passwords if str(p).strip()] or ["admin"]
+    if DEFAULT_API_PASSWORD and str(DEFAULT_API_PASSWORD) not in passwords:
+        passwords = [str(DEFAULT_API_PASSWORD)] + passwords
+
+    print(
+        f"[miner-poller] discovery hosts={len(hosts)} conc={conc} "
+        f"timeout={timeout}s ports={ports} ranges={rng}",
+        flush=True,
+    )
+
+    hits: list[dict] = []
+    lock = threading.Lock()
+
+    def _one(ip: str) -> None:
+        try:
+            m = _probe_host_discovery(
+                ip, timeout=timeout, ports=ports, passwords=passwords
+            )
+        except Exception:
+            m = None
+        if m:
+            with lock:
+                hits.append(m)
+
+    # Thread pool (stdlib concurrent.futures already imported)
+    with ThreadPoolExecutor(max_workers=conc) as ex:
+        list(ex.map(_one, hosts))
+
+    # merge with previous discovered (preserve first_seen / ignored)
+    prev_raw = _load_json(
+        MINERS_DISCOVERED_FILE, {"version": 1, "miners": [], "updated_ts": None}
+    )
+    prev_list = (
+        prev_raw.get("miners") if isinstance(prev_raw.get("miners"), list) else []
+    )
+    prev_by: dict[str, dict] = {}
+    for p in prev_list:
+        if isinstance(p, dict) and p.get("ip"):
+            prev_by[str(p["ip"])] = p
+    now = datetime.now().isoformat(timespec="seconds")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for h in hits:
+        ip = str(h.get("ip") or "")
+        if not ip:
+            continue
+        old = prev_by.get(ip) or {}
+        if old.get("ignored"):
+            h["ignored"] = True
+        h["first_seen"] = old.get("first_seen") or now
+        h["last_seen"] = now
+        out.append(h)
+        seen.add(ip)
+    for p in prev_list:
+        if not isinstance(p, dict):
+            continue
+        ip = str(p.get("ip") or "")
+        if ip and ip not in seen and p.get("ignored"):
+            out.append(p)
+    # sort by IP
+    def _ip_key(m: dict) -> tuple:
+        parts = str(m.get("ip") or "").split(".")
+        try:
+            return tuple(int(x) for x in parts)
+        except Exception:
+            return (999, 999, 999, 999)
+
+    out.sort(key=_ip_key)
+    scan_ms = int((time.time() - t0) * 1000)
+    payload = {
+        "version": 1,
+        "updated_ts": now,
+        "probed": len(hosts),
+        "found": len(hits),
+        "scan_ms": scan_ms,
+        "ranges": rng,
+        "miners": out,
+    }
+    try:
+        _save_json_atomic(MINERS_DISCOVERED_FILE, payload)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"save discovered: {e}",
+            "probed": len(hosts),
+            "found": len(hits),
+            "scan_ms": scan_ms,
+            "updated_ts": now,
+        }
+    return {
+        "ok": True,
+        "probed": len(hosts),
+        "found": len(hits),
+        "scan_ms": scan_ms,
+        "updated_ts": now,
+        "ranges": rng,
+    }
+
+
+def process_pending_miner_scan() -> bool:
+    """
+    If miner_scan_req.json exists, run discovery (Python poller path).
+    Mirrors Go ProcessPendingScan.
+    """
+    if not MINER_SCAN_REQ_FILE.is_file():
+        return False
+    try:
+        req = _load_json(MINER_SCAN_REQ_FILE, {})
+    except Exception as e:
+        print(f"[miner-poller] scan-req read: {e}", flush=True)
+        try:
+            MINER_SCAN_REQ_FILE.unlink()
+        except Exception:
+            pass
+        return True
+    try:
+        MINER_SCAN_REQ_FILE.unlink()
+    except Exception:
+        pass
+    if not isinstance(req, dict):
+        return True
+    req_id = str(req.get("id") or uuid.uuid4().hex)
+    ranges = req.get("ranges") if isinstance(req.get("ranges"), list) else []
+    ranges = [str(x).strip() for x in ranges if str(x).strip()]
+    cfg = get_miner_poller_cfg()
+    if not ranges:
+        ranges = [
+            str(x).strip()
+            for x in ((cfg.get("discovery") or {}).get("ranges") or [])
+            if str(x).strip()
+        ]
+    if not ranges:
+        ranges = _default_discovery_ranges()
+    try:
+        _save_json_atomic(
+            MINER_SCAN_STATUS_FILE,
+            {
+                "running": True,
+                "id": req_id,
+                "phase": "scanning",
+                "ranges": ranges,
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+    except Exception:
+        pass
+    print(f"[miner-poller] scan start id={req_id} ranges={ranges}", flush=True)
+    res = run_miner_discovery(ranges, cfg=cfg)
+    res["id"] = req_id
+    res["ts"] = time.time()
+    try:
+        _save_json_atomic(MINER_SCAN_RESULT_FILE, res)
+    except Exception as e:
+        print(f"[miner-poller] scan result write: {e}", flush=True)
+    try:
+        _save_json_atomic(
+            MINER_SCAN_STATUS_FILE,
+            {
+                "running": False,
+                "id": req_id,
+                "phase": "idle",
+                "last_ok": bool(res.get("ok")),
+                "found": res.get("found"),
+                "probed": res.get("probed"),
+                "error": res.get("error"),
+                "ts": datetime.now().isoformat(timespec="seconds"),
+            },
+        )
+    except Exception:
+        pass
+    print(
+        f"[miner-poller] scan done id={req_id} ok={res.get('ok')} "
+        f"probed={res.get('probed')} found={res.get('found')} "
+        f"ms={res.get('scan_ms')} err={res.get('error')}",
+        flush=True,
+    )
+    return True
+
+
+def miner_discovery_loop() -> None:
+    """Manual scan requests + optional periodic auto-discovery."""
+    print("[miner-poller] discovery loop start", flush=True)
+    last_auto = 0.0
+    while not _miner_poller_stop.is_set():
+        try:
+            process_pending_miner_scan()
+        except Exception as e:
+            print(f"[miner-poller] scan: {e}", flush=True)
+        try:
+            cfg = get_miner_poller_cfg()
+            disc = (cfg or {}).get("discovery") or {}
+            if disc.get("enabled"):
+                iv = max(60, int(disc.get("interval_sec") or 600))
+                if time.time() - last_auto >= iv:
+                    ranges = [
+                        str(x).strip()
+                        for x in (disc.get("ranges") or [])
+                        if str(x).strip()
+                    ] or _default_discovery_ranges()
+                    if ranges:
+                        print(
+                            f"[miner-poller] auto-discovery ranges={ranges}",
+                            flush=True,
+                        )
+                        run_miner_discovery(ranges, cfg=cfg)
+                    last_auto = time.time()
+        except Exception as e:
+            print(f"[miner-poller] auto-discovery: {e}", flush=True)
+        _miner_poller_stop.wait(timeout=1.0)
+    print("[miner-poller] discovery loop stop", flush=True)
 
 
 def start_miner_scan(ranges: list[str] | None = None) -> dict:
@@ -10084,7 +11675,7 @@ def start_miner_scan(ranges: list[str] | None = None) -> dict:
         raise RuntimeError("miner-poller not running — scan only via poller")
     rng = [str(x).strip() for x in (ranges or []) if str(x).strip()]
     if not rng:
-        # fall back to saved discovery ranges, then active-miner /24
+        # fall back to saved discovery ranges, then managed/active /24s
         try:
             cfg = get_miner_poller_cfg()
             d = (cfg or {}).get("discovery") or {}
@@ -10097,7 +11688,7 @@ def start_miner_scan(ranges: list[str] | None = None) -> dict:
     if not rng:
         raise ValueError(
             "no scan ranges — set CIDR/range in Settings → Miner-poller "
-            "(e.g. 192.168.1.0/24) or configure miner_host"
+            "(e.g. 192.168.1.0/24) or add managed miners / miner_host"
         )
     req_id = uuid.uuid4().hex
     req = {
@@ -15484,24 +17075,285 @@ def _recv_json(sock: socket.socket, timeout: float = 5.0) -> dict:
         raise
 
 
-def _miner_cmd_unlocked(cmd: dict, timeout: float = 5.0) -> dict:
+# Per-host ASIC protocol cache: "whatsminer" | "cgminer" | "unknown"
+_ASIC_PROTO_CACHE: dict[str, str] = {}
+_ASIC_PROTO_LOCK = threading.Lock()
+# Optional host/port override for multi-miner fleet poll (thread-local)
+_tls_asic = threading.local()
+# fleet_live.json — map host → live slice for multi-vendor inventory
+FLEET_LIVE_FILE = DATA / "fleet_live.json"
+
+
+def _is_this_python_miner_poller() -> bool:
+    """True when this process is the Python ASIC poller (owns direct :4028)."""
+    try:
+        argv = " ".join(sys.argv)
+        if "--miner-poller" in argv or "--asic-poller" in argv:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _parse_hashrate_to_hs(value) -> float | None:
+    """
+    Normalize hashrate field to H/s.
+
+    Whatsminer: large numeric MHS (e.g. 148500000.0 ≈ 148.5 TH/s).
+    CGMiner/iPollo: string with unit suffix ("240.2572M", "4.67G") or plain float.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not (v > 0) or v != v:  # NaN
+            return None
+        return v
+    s = str(value).strip().replace(",", "")
+    if not s:
+        return None
+    # "18.58 GH/s", "240.2572M", "15.86G" — allow optional space before unit
+    m = re.match(
+        r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*([kKmMgGtTpP]?)(?:\s*H(?:/s)?)?$",
+        s,
+        re.I,
+    )
+    if not m:
+        # bare number
+        try:
+            v = float(s)
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+    try:
+        num = float(m.group(1))
+    except (TypeError, ValueError):
+        return None
+    if not (num > 0):
+        return None
+    suf = (m.group(2) or "").upper()
+    mult = {
+        "": 1.0,
+        "K": 1e3,
+        "M": 1e6,
+        "G": 1e9,
+        "T": 1e12,
+        "P": 1e15,
+    }.get(suf, 1.0)
+    # If suffix present → value is already in that unit (240.2572M → MH/s).
+    # If no suffix and huge number → Whatsminer-style raw MHS count (H/s-ish).
+    return num * mult
+
+
+def _hs_to_th(hs: float | None) -> float | None:
+    if hs is None or hs <= 0:
+        return None
+    return hs / 1e12
+
+
+def _asic_status_is_error(raw: dict | None) -> bool:
+    if not isinstance(raw, dict):
+        return True
+    st = raw.get("STATUS")
+    if isinstance(st, list) and st:
+        row = st[0] if isinstance(st[0], dict) else {}
+        code = str(row.get("STATUS") or row.get("Status") or "").upper()
+        if code in ("E", "F"):
+            return True
+        msg = str(row.get("Msg") or "")
+        if "Missing JSON" in msg or "Invalid command" in msg or "Access denied" in msg:
+            return True
+    elif isinstance(st, str) and st.upper() in ("E", "F"):
+        return True
+    return False
+
+
+def _cgminer_payload(cmd: dict) -> dict:
+    """Map Whatsminer-style {cmd, …} → classic CGMiner {command, parameter}."""
+    name = str(cmd.get("command") or cmd.get("cmd") or "").strip()
+    out: dict = {"command": name}
+    param = cmd.get("parameter")
+    if param is None:
+        param = cmd.get("param")
+    if param is None and cmd.get("token") is not None:
+        # not used by cgminer; skip
+        param = None
+    if param is not None and str(param) != "":
+        out["parameter"] = param
+    return out
+
+
+def _detect_asic_protocol(host: str, port: int, timeout: float = 2.5) -> str:
+    """
+    Probe host:port — Whatsminer answers {"cmd":"get_version"} with Msg dict;
+    CGMiner/iPollo needs {"command":"version|summary"} and returns STATUS list.
+    """
+    host = str(host or "").strip()
+    if not host:
+        return "unknown"
+    with _ASIC_PROTO_LOCK:
+        cached = _ASIC_PROTO_CACHE.get(host)
+    if cached in ("whatsminer", "cgminer"):
+        return cached
+
+    def _try(payload: dict) -> dict | None:
+        try:
+            data = (json.dumps(payload, separators=(",", ":")) + "\n").encode()
+            with socket.create_connection((host, int(port)), timeout=timeout) as sock:
+                sock.sendall(data)
+                return _recv_json(sock, timeout=timeout)
+        except Exception:
+            return None
+
+    # Whatsminer first (Peak fleet default)
+    wm = _try({"cmd": "get_version"})
+    if isinstance(wm, dict) and not _asic_status_is_error(wm):
+        msg = wm.get("Msg")
+        if isinstance(msg, dict) and (
+            msg.get("api_ver") or msg.get("fw_ver") or msg.get("miner_type")
+        ):
+            with _ASIC_PROTO_LOCK:
+                _ASIC_PROTO_CACHE[host] = "whatsminer"
+            return "whatsminer"
+
+    # Classic CGMiner / iPollo / Avalon-style
+    for payload in (
+        {"command": "version"},
+        {"command": "summary"},
+        {"command": "config"},
+    ):
+        cg = _try(payload)
+        if not isinstance(cg, dict) or _asic_status_is_error(cg):
+            continue
+        # Description: "cgminer 4.11.1" / Device Code IPL / SUMMARY section
+        desc = ""
+        st = cg.get("STATUS")
+        if isinstance(st, list) and st and isinstance(st[0], dict):
+            desc = str(st[0].get("Description") or "")
+        desc_l = desc.lower()
+        if (
+            "SUMMARY" in cg
+            or "VERSION" in cg
+            or "CONFIG" in cg
+            or "STATS" in cg
+            or "DEVS" in cg
+            or "cgminer" in desc_l
+            or "bmminer" in desc_l
+            or "bfgminer" in desc_l
+            or "ckbminer" in desc_l  # Goldshell CKBox
+            or "goldshell" in desc_l
+        ):
+            with _ASIC_PROTO_LOCK:
+                _ASIC_PROTO_CACHE[host] = "cgminer"
+            return "cgminer"
+        # Device Code IPL (iPollo) / INCS (Goldshell CK) in config
+        cfg = cg.get("CONFIG")
+        if isinstance(cfg, list) and cfg and isinstance(cfg[0], dict):
+            dc = str(cfg[0].get("Device Code") or "").upper()
+            if any(x in dc for x in ("IPL", "VX", "INCS", "SGW", "SSM")):
+                with _ASIC_PROTO_LOCK:
+                    _ASIC_PROTO_CACHE[host] = "cgminer"
+                return "cgminer"
+
+    with _ASIC_PROTO_LOCK:
+        _ASIC_PROTO_CACHE[host] = "unknown"
+    return "unknown"
+
+
+def _asic_target() -> tuple[str, int]:
+    """Active ASIC host:port (thread-local override or global config)."""
+    h = getattr(_tls_asic, "host", None)
+    p = getattr(_tls_asic, "port", None)
+    host = str(h if h else HOST_MINER or "").strip()
+    try:
+        port = int(p if p is not None else PORT_MINER or 4028)
+    except (TypeError, ValueError):
+        port = 4028
+    return host, port
+
+
+@contextlib.contextmanager
+def _asic_target_override(host: str, port: int = 4028):
+    """Temporarily point direct ASIC I/O at another miner (fleet multi-poll)."""
+    prev_h = getattr(_tls_asic, "host", None)
+    prev_p = getattr(_tls_asic, "port", None)
+    _tls_asic.host = str(host or "").strip()
+    try:
+        _tls_asic.port = int(port or 4028)
+    except (TypeError, ValueError):
+        _tls_asic.port = 4028
+    try:
+        yield
+    finally:
+        _tls_asic.host = prev_h
+        _tls_asic.port = prev_p
+
+
+def _miner_cmd_unlocked(
+    cmd: dict,
+    timeout: float = 5.0,
+    *,
+    host: str | None = None,
+    port: int | None = None,
+) -> dict:
     """
     Direct TCP :4028 — ONLY for legacy `python serve.py --miner-poller`
     (this process IS the poller). HTTP serve must never call this.
+
+    Auto-adapts Whatsminer ``cmd`` vs CGMiner ``command`` (iPollo, Goldshell, …).
+    Optional host/port override for multi-miner fleet poll.
     """
-    payload = (json.dumps(cmd, separators=(",", ":")) + "\n").encode()
-    with socket.create_connection((HOST_MINER, PORT_MINER), timeout=timeout) as sock:
+    if host is None and port is None:
+        host, port = _asic_target()
+    else:
+        host = str(host if host is not None else HOST_MINER or "").strip()
+        port = int(port if port is not None else PORT_MINER or 4028)
+    proto = _detect_asic_protocol(host, port, timeout=min(2.5, float(timeout)))
+    if proto == "cgminer":
+        payload_obj = _cgminer_payload(cmd)
+    else:
+        # Whatsminer / unknown: keep original (cmd key)
+        payload_obj = dict(cmd or {})
+        if "cmd" not in payload_obj and "command" in payload_obj:
+            payload_obj["cmd"] = payload_obj.pop("command")
+    payload = (json.dumps(payload_obj, separators=(",", ":")) + "\n").encode()
+    with socket.create_connection((host, port), timeout=timeout) as sock:
         sock.sendall(payload)
-        return _recv_json(sock, timeout=timeout)
+        raw = _recv_json(sock, timeout=timeout)
+    # If Whatsminer-style failed with missing command, retry as CGMiner once
+    if (
+        proto != "cgminer"
+        and isinstance(raw, dict)
+        and _asic_status_is_error(raw)
+    ):
+        st = raw.get("STATUS")
+        msg = ""
+        if isinstance(st, list) and st and isinstance(st[0], dict):
+            msg = str(st[0].get("Msg") or "")
+        if "Missing JSON" in msg or "command" in msg.lower():
+            payload_obj = _cgminer_payload(cmd)
+            payload = (json.dumps(payload_obj, separators=(",", ":")) + "\n").encode()
+            with socket.create_connection((host, port), timeout=timeout) as sock:
+                sock.sendall(payload)
+                raw = _recv_json(sock, timeout=timeout)
+            if isinstance(raw, dict) and not _asic_status_is_error(raw):
+                with _ASIC_PROTO_LOCK:
+                    _ASIC_PROTO_CACHE[host] = "cgminer"
+    return raw
 
 
 def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
     """
     On-demand miner JSON read (pools, summary, …).
 
-    ASIC TCP is owned exclusively by miner-poller.
-    serve/UI only enqueues miner_read_req.json — no direct :4028 fallback.
+    - Python miner-poller process: direct TCP (owns :4028).
+    - HTTP serve / other roles: file IPC → miner-poller only.
     """
+    if _is_this_python_miner_poller():
+        return _miner_cmd_unlocked(cmd, timeout=timeout)
     if not miner_poller_process_alive():
         raise RuntimeError(
             "miner-poller not running — ASIC I/O only via poller "
@@ -16478,6 +18330,174 @@ def _poolheat_usb_info() -> dict | None:
     return ent
 
 
+def _host_swap_devices() -> list[dict]:
+    """
+    Parse /proc/swaps → per-device usage (zram, USB partition, file).
+    Size/Used columns are in kB (Linux).
+    """
+    out: list[dict] = []
+    try:
+        with open("/proc/swaps", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except Exception:
+        return out
+    for line in lines[1:]:  # skip header
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        fname, typ, size_kb, used_kb, prio = (
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[3],
+            parts[4],
+        )
+        try:
+            size_b = int(size_kb) * 1024
+            used_b = int(used_kb) * 1024
+            priority = int(prio)
+        except (TypeError, ValueError):
+            continue
+        kind = "other"
+        label = fname
+        low = fname.lower()
+        if "zram" in low:
+            kind = "zram"
+            label = "zram (compressed RAM)"
+        elif typ == "partition" and (
+            "/dev/sd" in low
+            or "/dev/mmc" in low
+            or "/dev/usb" in low
+            or "/dev/nvme" in low
+        ):
+            kind = "usb" if "/dev/sd" in low or "usb" in low else "disk"
+            # resolve USB mount label when possible
+            label = f"USB swap · {fname}" if kind == "usb" else f"disk · {fname}"
+        elif typ == "file":
+            kind = "file"
+            if "/opt" in low or "/tmp/mnt" in low or "/mnt" in low:
+                kind = "usb"
+                label = f"USB swapfile · {fname}"
+            else:
+                label = f"swapfile · {fname}"
+        out.append(
+            {
+                "path": fname,
+                "type": typ,
+                "kind": kind,
+                "label": label,
+                "size_b": size_b,
+                "used_b": used_b,
+                "free_b": max(0, size_b - used_b),
+                "used_pct": round(100.0 * used_b / size_b, 1) if size_b else 0.0,
+                "priority": priority,
+            }
+        )
+    # highest priority first
+    out.sort(key=lambda x: (-int(x.get("priority") or 0), str(x.get("path") or "")))
+    return out
+
+
+def ensure_usb_swap_priority(*, prefer_usb: bool = True) -> dict:
+    """
+    Keenetic often activates zram (prio 0) and USB swap partition (prio -1).
+    Kernel then almost never pages to USB. Raise USB swap priority so the
+    stick is actually used under RAM pressure (poolheat on 256MB routers).
+    """
+    result: dict = {"ok": False, "changed": False, "devices": [], "actions": []}
+    devices = _host_swap_devices()
+    result["devices"] = devices
+    if not prefer_usb or not devices:
+        result["ok"] = True
+        result["note"] = "no swap devices" if not devices else "prefer_usb=false"
+        return result
+    usb = [d for d in devices if d.get("kind") == "usb"]
+    zram = [d for d in devices if d.get("kind") == "zram"]
+    if not usb:
+        result["ok"] = True
+        result["note"] = "no USB swap active"
+        return result
+    try:
+        max_other = max(
+            (int(d.get("priority") or 0) for d in devices if d.get("kind") != "usb"),
+            default=-1,
+        )
+    except Exception:
+        max_other = 0
+    target_prio = max(5, max_other + 5)
+    for d in usb:
+        path = str(d.get("path") or "")
+        cur = int(d.get("priority") or 0)
+        if not path or cur >= target_prio:
+            continue
+        # swapoff + swapon -p N (Keenetic: busybox applets, not /sbin/swapon)
+        def _run_swap(args: list[str]) -> subprocess.CompletedProcess:
+            last: subprocess.CompletedProcess | None = None
+            for prefix in (
+                [],
+                ["busybox"],
+                ["/bin/busybox"],
+                ["/sbin/busybox"],
+            ):
+                cmd = prefix + args
+                try:
+                    last = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        check=False,
+                    )
+                    if last.returncode == 0 or "busybox" in cmd[0]:
+                        # busybox returns 0/1; accept first successful path
+                        if last.returncode == 0:
+                            return last
+                except FileNotFoundError:
+                    continue
+                except Exception as e:
+                    last = subprocess.CompletedProcess(
+                        cmd, 1, "", str(e)
+                    )
+            return last or subprocess.CompletedProcess(args, 1, "", "swap tools missing")
+
+        try:
+            _run_swap(["swapoff", path])
+            proc = _run_swap(["swapon", "-p", str(target_prio), path])
+            ok = proc.returncode == 0
+            if not ok:
+                # some builds ignore -p; try plain swapon
+                proc = _run_swap(["swapon", path])
+                ok = proc.returncode == 0
+            result["actions"].append(
+                {
+                    "path": path,
+                    "from_priority": cur,
+                    "to_priority": target_prio if ok else cur,
+                    "ok": ok,
+                    "stderr": (proc.stderr or "")[:160],
+                }
+            )
+            if ok:
+                result["changed"] = True
+        except Exception as e:
+            result["actions"].append(
+                {"path": path, "ok": False, "error": str(e)[:160]}
+            )
+    result["devices"] = _host_swap_devices()
+    result["ok"] = True
+    if result["changed"]:
+        print(
+            f"[swap] USB priority raised → {target_prio}: "
+            + ", ".join(
+                f"{a.get('path')} prio {a.get('from_priority')}→{a.get('to_priority')}"
+                for a in result["actions"]
+                if a.get("ok")
+            ),
+            flush=True,
+        )
+    return result
+
+
 def _host_memory() -> dict | None:
     try:
         info: dict[str, int] = {}
@@ -16498,14 +18518,29 @@ def _host_memory() -> dict | None:
         if total is None:
             return None
         used = total - (available if available is not None else (free or 0))
+        swap_total = info.get("SwapTotal") or 0
+        swap_free = info.get("SwapFree") or 0
+        swap_used = max(0, swap_total - swap_free) if swap_total else 0
+        devices = _host_swap_devices()
+        usb_swap = next((d for d in devices if d.get("kind") == "usb"), None)
         return {
             "total_b": total,
             "available_b": available,
             "free_b": free,
             "used_b": used,
             "used_pct": round(100.0 * used / total, 1) if total else None,
-            "swap_total_b": info.get("SwapTotal"),
-            "swap_free_b": info.get("SwapFree"),
+            "swap_total_b": swap_total or None,
+            "swap_free_b": swap_free if swap_total else None,
+            "swap_used_b": swap_used if swap_total else None,
+            "swap_used_pct": (
+                round(100.0 * swap_used / swap_total, 1) if swap_total else None
+            ),
+            "swap_devices": devices,
+            "swap_usb": bool(usb_swap),
+            "swap_usb_path": (usb_swap or {}).get("path"),
+            "swap_usb_priority": (usb_swap or {}).get("priority"),
+            "swap_usb_used_b": (usb_swap or {}).get("used_b"),
+            "swap_usb_size_b": (usb_swap or {}).get("size_b"),
         }
     except Exception:
         return None
@@ -16958,12 +18993,16 @@ def _collect_router_info() -> dict:
         "model": None,
         "model_code": None,
         "title": None,
+        "description": None,
+        "device": None,
         "hw_version": None,
+        "hw_id": None,
         "os_title": None,
         "os_release": None,
         "arch": None,
         "hostname": None,
         "device_tree_model": None,
+        "kernel": None,
         "source": None,
     }
     dt = _read_text_file("/proc/device-tree/model")
@@ -16979,9 +19018,26 @@ def _collect_router_info() -> dict:
         router["ok"] = True
         router["source"] = "device-tree"
 
+    # Prefer absolute path: Entware PATH is /opt/bin first; ndmc is Keenetic /bin
     ndmc_bin = None
     for cand in ("/bin/ndmc", "/usr/bin/ndmc", "ndmc"):
-        if cand == "ndmc" or Path(cand).is_file():
+        if cand == "ndmc":
+            # only if found on PATH
+            try:
+                which = subprocess.run(
+                    ["which", "ndmc"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                w = (which.stdout or "").strip().splitlines()
+                if w and Path(w[0]).is_file():
+                    ndmc_bin = w[0]
+            except Exception:
+                ndmc_bin = "ndmc"
+            break
+        if Path(cand).is_file():
             ndmc_bin = cand
             break
     if ndmc_bin:
@@ -16990,33 +19046,71 @@ def _collect_router_info() -> dict:
                 [ndmc_bin, "-c", "show version"],
                 capture_output=True,
                 text=True,
-                timeout=4,
+                timeout=6,
                 check=False,
+                env={
+                    **os.environ,
+                    "PATH": "/bin:/usr/bin:/sbin:/usr/sbin:"
+                    + str(os.environ.get("PATH") or ""),
+                },
             )
             text = (proc.stdout or "") + "\n" + (proc.stderr or "")
             kv = _parse_ndmc_kv(text)
             if kv:
                 router["ok"] = True
                 router["source"] = "ndmc"
-                router["vendor"] = kv.get("vendor") or kv.get("manufacturer") or router.get("vendor")
-                router["model"] = kv.get("model") or router.get("model")
-                router["hw_version"] = kv.get("hw_version")
-                router["os_title"] = kv.get("title")
-                router["os_release"] = kv.get("release")
-                router["arch"] = kv.get("arch")
-                # model often "Peak (KN-2710)"
-                if router.get("model"):
-                    m = re.search(r"(KN-\d+)", str(router["model"]), re.I)
-                    if m:
-                        router["model_code"] = m.group(1).upper()
+                router["vendor"] = (
+                    kv.get("vendor")
+                    or kv.get("manufacturer")
+                    or router.get("vendor")
+                )
+                # "Giant (KN-2610)" or bare device name
+                router["model"] = (
+                    kv.get("model")
+                    or kv.get("description")
+                    or kv.get("device")
+                    or router.get("model")
+                )
+                router["device"] = kv.get("device") or router.get("device")
+                router["description"] = kv.get("description") or router.get(
+                    "description"
+                )
+                router["hw_version"] = kv.get("hw_version") or router.get("hw_version")
+                router["hw_id"] = kv.get("hw_id") or router.get("hw_id")
+                # KeeneticOS marketing title (e.g. 5.1.3) + full release
+                router["os_title"] = (
+                    kv.get("title") or kv.get("os") or router.get("os_title")
+                )
+                router["os_release"] = kv.get("release") or router.get("os_release")
+                router["arch"] = kv.get("arch") or router.get("arch")
+                # model often "Peak (KN-2710)" / hw_id KN-2610
+                code_src = (
+                    str(router.get("model") or "")
+                    + " "
+                    + str(kv.get("hw_id") or "")
+                    + " "
+                    + str(kv.get("description") or "")
+                )
+                m = re.search(r"(KN-\d+)", code_src, re.I)
+                if m:
+                    router["model_code"] = m.group(1).upper()
+            elif proc.returncode != 0:
+                router["ndmc_error"] = (
+                    f"ndmc exit {proc.returncode}: {(proc.stderr or proc.stdout or '')[:120]}"
+                )
             # hostname from show system (optional)
             try:
                 proc2 = subprocess.run(
                     [ndmc_bin, "-c", "show system"],
                     capture_output=True,
                     text=True,
-                    timeout=3,
+                    timeout=4,
                     check=False,
+                    env={
+                        **os.environ,
+                        "PATH": "/bin:/usr/bin:/sbin:/usr/sbin:"
+                        + str(os.environ.get("PATH") or ""),
+                    },
                 )
                 kv2 = _parse_ndmc_kv((proc2.stdout or "") + "\n" + (proc2.stderr or ""))
                 if kv2.get("hostname"):
@@ -17030,6 +19124,27 @@ def _collect_router_info() -> dict:
         except Exception as e:
             router["ndmc_error"] = str(e)
 
+    # Fallbacks when ndmc missing / failed (still show something useful)
+    try:
+        u = os.uname()
+        router["kernel"] = f"{u.sysname} {u.release}".strip()
+        if not router.get("arch"):
+            router["arch"] = u.machine
+        # Keenetic kernel string: "4.9-ndm-5" + version comment has keenetic.com
+        ver = _read_text_file("/proc/version") or ""
+        if not router.get("vendor") and (
+            "keenetic" in ver.lower() or "ndm" in (u.release or "").lower()
+        ):
+            router["vendor"] = "Keenetic"
+            router["ok"] = True
+            router["source"] = router.get("source") or "uname"
+        if not router.get("os_title") and "ndm" in (u.release or "").lower():
+            # no marketing title without ndmc — show kernel as OS hint
+            router["os_title"] = router.get("os_title") or f"KeeneticOS · {u.release}"
+            router["os_release"] = router.get("os_release") or u.version[:60]
+    except Exception:
+        pass
+
     if not router.get("hostname"):
         try:
             router["hostname"] = socket.gethostname()
@@ -17040,6 +19155,12 @@ def _collect_router_info() -> dict:
             router["arch"] = os.uname().machine
         except Exception:
             pass
+    # Prefer friendly description when model is short device name only
+    if router.get("description") and (
+        not router.get("model")
+        or str(router.get("model")).strip() == str(router.get("device") or "").strip()
+    ):
+        router["model"] = router["description"]
     return router
 
 
@@ -17506,8 +19627,11 @@ def _collect_miner_identity() -> dict:
     return out
 
 
-def collect_system_info() -> dict:
-    """Router + miner identity + host resources for Info tab."""
+def collect_system_info(*, force_miner: bool = False) -> dict:
+    """Router + miner identity + host resources for Info tab.
+
+    force_miner=True refreshes ASIC identity (slow); router/ndmc always live.
+    """
     disks: list[dict] = []
     seen: set[str] = set()
 
@@ -17557,8 +19681,12 @@ def collect_system_info() -> dict:
     except Exception:
         data_real_s = str(DATA)
 
-    miner = get_miner_identity_cached(force=True)
+    # Router first (fast ndmc) so Info tab never waits on ASIC for model/OS
     router = _collect_router_info()
+    try:
+        miner = get_miner_identity_cached(force=bool(force_miner))
+    except Exception as e:
+        miner = {"ok": False, "error": str(e)[:160]}
     result = {
         "ok": True,
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -18511,6 +20639,10 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                 (
                     src_root / "ui" / "xiaomi_miio.py",
                     lib_dir / "xiaomi_miio.py",
+                ),
+                (
+                    src_root / "ui" / "ewelink_lan.py",
+                    lib_dir / "ewelink_lan.py",
                 ),
                 (
                     src_root / "ui" / "chipmap_skus.json",
@@ -20807,16 +22939,711 @@ def _build_temp_sensors_catalog(
     return out
 
 
+def _ipollo_luci_login(
+    host: str,
+    password: str = "root",
+    user: str = "root",
+    timeout: float = 4.0,
+) -> str | None:
+    """
+    iPollo LuCI session cookie (sysauth). Default credentials root/root.
+    Returns cookie header value or None.
+    """
+    try:
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+
+        base = f"http://{host}"
+        # login form
+        data = urllib.parse.urlencode(
+            {"luci_username": user, "luci_password": password}
+        ).encode()
+        req = urllib.request.Request(
+            f"{base}/cgi-bin/luci/",
+            data=data,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        # Don't follow redirects fully — capture Set-Cookie
+        class _NoRedir(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):
+                return None
+
+        opener = urllib.request.build_opener(_NoRedir)
+        try:
+            resp = opener.open(req, timeout=timeout)
+            headers = resp.headers
+        except urllib.error.HTTPError as e:
+            headers = e.headers
+        except Exception:
+            return None
+        # urllib may store cookies differently — parse Set-Cookie
+        sc = headers.get("Set-Cookie") or headers.get("set-cookie") or ""
+        m = re.search(r"(sysauth=[^;]+)", sc)
+        if m:
+            return m.group(1)
+        # fallback: CookieJar style
+        return None
+    except Exception:
+        return None
+
+
+def _ipollo_luci_get_json(
+    host: str,
+    path: str,
+    cookie: str,
+    timeout: float = 4.0,
+) -> dict | None:
+    try:
+        import urllib.request
+
+        url = f"http://{host}{path}"
+        req = urllib.request.Request(
+            url,
+            headers={"Cookie": cookie, "Accept": "application/json,text/plain,*/*"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(65536).decode("utf-8", errors="replace").strip()
+        if not raw:
+            return None
+        obj = json.loads(raw)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def _antminer_6060_get(host: str, path: str, timeout: float = 2.5) -> str | None:
+    """
+    GET plain text from Bitmain SearchFreqServer (:6060).
+    Returns body text or None. Some paths (e.g. /nonce) close without reply
+    on certain models/FW — treated as unsupported.
+    """
+    host = str(host or "").strip().split(":")[0]
+    if not host:
+        return None
+    path = path if str(path).startswith("/") else ("/" + str(path))
+    try:
+        req = urllib.request.Request(
+            f"http://{host}:6060{path}",
+            headers={
+                "User-Agent": "poolheat/1.0",
+                "Accept": "text/plain,*/*",
+                "Connection": "close",
+            },
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read(262144).decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+
+def _parse_antminer_miner_power(text: str | None) -> float | None:
+    """
+    Parse SearchFreq `/miner_power` body.
+    Examples: ``miner power:3605`` · ``3605`` · ``power=3605W``
+    """
+    if not text:
+        return None
+    s = str(text).strip()
+    # primary: "miner power:3605"
+    m = re.search(r"miner\s*power\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", s, re.I)
+    if m:
+        try:
+            v = float(m.group(1))
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*W\b", s, re.I)
+    if m:
+        try:
+            v = float(m.group(1))
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+    # bare integer as only content
+    m = re.fullmatch(r"\s*([0-9]{2,5}(?:\.[0-9]+)?)\s*", s)
+    if m:
+        try:
+            v = float(m.group(1))
+            # wall watts for ASIC usually 200–15000
+            return v if 50 <= v <= 20000 else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _parse_antminer_nonce_text(text: str | None) -> dict | None:
+    """
+    Best-effort parse of `/nonce` chip table.
+    Formats vary by FW — keep raw + extract numeric nonce counts when possible.
+    """
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    chips: list[dict] = []
+    # patterns: "chain0 asic12 nonce:12345" / "0-12:12345" / "nonce[0][12]=123"
+    for m in re.finditer(
+        r"(?:chain|board|ch)[^\d]*(\d+).*?(?:asic|chip|ic)[^\d]*(\d+).*?"
+        r"(?:nonce|n)[^\d]*([0-9]+)",
+        raw,
+        flags=re.I | re.S,
+    ):
+        chips.append(
+            {
+                "chain": int(m.group(1)),
+                "asic": int(m.group(2)),
+                "nonce": int(m.group(3)),
+            }
+        )
+    if not chips:
+        # looser: pairs "12:3456" lines
+        for m in re.finditer(
+            r"(?:^|[\s,;])(\d{1,3})[:\-](\d{1,3})[=:\s]+(\d{2,})", raw
+        ):
+            chips.append(
+                {
+                    "chain": int(m.group(1)),
+                    "asic": int(m.group(2)),
+                    "nonce": int(m.group(3)),
+                }
+            )
+    out: dict = {"raw": raw[:8000], "source": "6060/nonce"}
+    if chips:
+        out["chips"] = chips[:2048]
+        out["nonce_total"] = sum(int(c.get("nonce") or 0) for c in chips)
+        out["chip_count"] = len(chips)
+    return out
+
+
+def _enrich_live_antminer_6060(host: str, body: dict) -> dict:
+    """
+    Bitmain SearchFreqServer on :6060 (stock FW; availability depends on
+    model / PSU / firmware):
+
+      GET /miner_power  → wall power watts  (e.g. ``miner power:3605``)
+      GET /nonce        → per-chip nonce table (some FW only)
+      GET /productName  → model string
+      GET /get_sn       → serial
+
+    Non-fatal — leaves body unchanged when port closed or path unsupported.
+    """
+    if not host or not isinstance(body, dict):
+        return body
+    host = str(host).split(":")[0].strip()
+    # power — prefer 6060 over estimate when present
+    ptxt = _antminer_6060_get(host, "/miner_power", timeout=2.0)
+    pw = _parse_antminer_miner_power(ptxt)
+    if pw is not None:
+        body["power"] = round(pw, 1)
+        body["power_w"] = round(pw, 1)
+        body["power_source"] = "antminer_6060"
+        body["power_estimated"] = False
+        # efficiency if hashrate known
+        try:
+            th = float(body.get("hashrate_th") or 0)
+            if th > 0:
+                body["efficiency_jth"] = round(pw / th, 2)
+                body["efficiency_value"] = body["efficiency_jth"]
+                body["efficiency_unit"] = "J/TH"
+        except (TypeError, ValueError):
+            pass
+    # product / serial (fill gaps)
+    if not body.get("miner_type") or not str(body.get("miner_type")).strip():
+        name = _antminer_6060_get(host, "/productName", timeout=1.5)
+        if name and name.strip() and "not found" not in name.lower():
+            body["miner_type"] = name.strip()
+            body.setdefault("model_name", name.strip())
+    if not body.get("serial"):
+        sn = _antminer_6060_get(host, "/get_sn", timeout=1.5)
+        if sn and sn.strip() and "not found" not in sn.lower() and len(sn.strip()) < 64:
+            body["serial"] = sn.strip()
+    # chip nonces — optional (many FW close the socket; keep short timeout)
+    ntxt = _antminer_6060_get(host, "/nonce", timeout=1.2)
+    nparsed = _parse_antminer_nonce_text(ntxt)
+    if nparsed:
+        body["antminer_nonce"] = nparsed
+        if nparsed.get("nonce_total") is not None:
+            body["nonce_total"] = nparsed.get("nonce_total")
+        if nparsed.get("chips") and not body.get("chipmap_hint"):
+            body["chipmap_hint"] = {
+                "source": "6060/nonce",
+                "chip_count": nparsed.get("chip_count"),
+            }
+    body["antminer_6060"] = True
+    return body
+
+
+def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> dict:
+    """
+    Fill model / fans / temps / serial from iPollo LuCI JSON endpoints.
+    Non-fatal — returns body unchanged on failure.
+    """
+    if not host:
+        return body
+    pw = str(password if password is not None else DEFAULT_API_PASSWORD or "root")
+    # try configured password then root/root
+    cookie = None
+    for user, p in (("root", pw), ("root", "root"), ("admin", pw), ("admin", "admin")):
+        cookie = _ipollo_luci_login(host, password=p, user=user)
+        if cookie:
+            break
+    if not cookie:
+        return body
+    sysinfo = _ipollo_luci_get_json(
+        host, "/cgi-bin/luci/admin/ipollo_main/ipollo_sysinfo", cookie
+    )
+    realtime = _ipollo_luci_get_json(
+        host, "/cgi-bin/luci/admin/ipollo_main/ipollo_realtime", cookie
+    )
+    if isinstance(sysinfo, dict):
+        model = str(sysinfo.get("model") or "").strip()
+        if model:
+            body["miner_type"] = body.get("miner_type") or model
+            body["model_name"] = model
+        sn = str(sysinfo.get("sn") or sysinfo.get("sn0") or "").strip()
+        if sn and sn.upper() != "NULL":
+            body["serial"] = sn
+        fw = str(sysinfo.get("fw") or "").strip()
+        if fw:
+            body["fw_ver"] = fw
+        try:
+            el = int(float(sysinfo.get("elapsed") or 0))
+            if el > 0:
+                body["elapsed"] = el
+        except (TypeError, ValueError):
+            pass
+        body["vendor"] = "ipollo"
+        body["api_vendor"] = "ipollo"
+    if isinstance(realtime, dict):
+        # hashrate string e.g. 240.2572M
+        hr = _parse_hashrate_to_hs(
+            realtime.get("hashratecur") or realtime.get("hashrate")
+        )
+        if hr is not None and hr > 0:
+            body["hashrate_hs"] = hr
+            body["hashrate_th"] = _hs_to_th(hr)
+            body["hashrate_unit"] = (
+                "MH/s" if hr < 1e12 else ("GH/s" if hr < 1e15 else "TH/s")
+            )
+            if hr >= 1e6 and hr < 1e9:
+                body["hashrate_unit"] = "MH/s"
+            elif hr >= 1e9 and hr < 1e12:
+                body["hashrate_unit"] = "GH/s"
+            elif hr >= 1e12:
+                body["hashrate_unit"] = "TH/s"
+        # temps — ignore absolute zero placeholders (-273)
+        temps = []
+        for k in ("tempasc", "temp0", "temp1", "temp2", "temp3"):
+            try:
+                t = float(realtime.get(k))
+            except (TypeError, ValueError):
+                continue
+            if t > -100:
+                temps.append(t)
+        if temps:
+            body["chip_avg"] = round(sum(temps) / len(temps), 1)
+            body["chip_max"] = round(max(temps), 1)
+            body["chip_min"] = round(min(temps), 1)
+            if body.get("boards") in (None, [], [None], [0], [0.0]):
+                body["boards"] = temps[:4]
+        fans = []
+        for k in ("fanspeed0", "fanspeed1", "fanspeed2", "fanspeed3"):
+            try:
+                f = int(float(realtime.get(k) or 0))
+            except (TypeError, ValueError):
+                continue
+            if f > 0:
+                fans.append(f)
+        if fans:
+            body["fans"] = fans
+            body["fan"] = fans[0]
+            body["psu_fan"] = fans[0]
+        try:
+            rej = float(realtime.get("rejected") or 0)
+            body["rejected"] = rej
+        except (TypeError, ValueError):
+            pass
+    return body
+
+
+def _cgminer_identity(summary_raw: dict | None, summary: dict | None) -> dict:
+    """Extract vendor/model hints from classic CGMiner / BFGMiner / BMMiner / ckbminer."""
+    out: dict = {"api_vendor": "cgminer", "vendor": None, "miner_type": None}
+    desc = ""
+    if isinstance(summary_raw, dict):
+        st = summary_raw.get("STATUS")
+        if isinstance(st, list) and st and isinstance(st[0], dict):
+            desc = str(st[0].get("Description") or "")
+    desc_l = desc.lower()
+    # Bitmain BMMiner: version.Type = "Antminer L9"
+    try:
+        ver_raw = miner_cmd({"cmd": "version"}, timeout=3)
+        ver = _extract_miner_payload(ver_raw, "VERSION", "version")
+        if isinstance(ver, dict):
+            mtype = str(ver.get("Type") or ver.get("type") or "").strip()
+            if mtype:
+                out["miner_type"] = mtype
+                out["model_name"] = mtype
+            if "antminer" in mtype.lower() or ver.get("BMMiner"):
+                out["vendor"] = "antminer"
+                out["api_vendor"] = "antminer"
+                out["fw_ver"] = str(ver.get("Miner") or ver.get("BMMiner") or "") or None
+            if ver.get("BMMiner"):
+                out["bmminer"] = str(ver.get("BMMiner"))
+    except Exception:
+        pass
+    # Device name from DEVS later; Device Code from config
+    try:
+        cfg_raw = miner_cmd({"cmd": "config"}, timeout=3)
+        cfg = _extract_miner_payload(cfg_raw, "CONFIG", "config")
+        if isinstance(cfg, dict):
+            dc = str(cfg.get("Device Code") or "").strip().upper()
+            if "IPL" in dc:
+                out["vendor"] = "ipollo"
+                out["api_vendor"] = "ipollo"
+            elif any(x in dc for x in ("INCS", "SGW", "SSM")):
+                out["vendor"] = "goldshell"
+                out["api_vendor"] = "goldshell"
+            out["device_code"] = dc or None
+            out["os"] = cfg.get("OS")
+    except Exception:
+        pass
+    if "ipollo" in desc_l:
+        out["vendor"] = "ipollo"
+        out["api_vendor"] = "ipollo"
+    elif "ckbminer" in desc_l or "goldshell" in desc_l:
+        out["vendor"] = "goldshell"
+        out["api_vendor"] = "goldshell"
+    elif "jansson" in desc_l and not out.get("vendor"):
+        # Bitmain stock often uses Description "jansson x.y"
+        out["vendor"] = out.get("vendor") or "antminer"
+        out["api_vendor"] = out.get("api_vendor") or "antminer"
+    elif ("cgminer" in desc_l or "bfgminer" in desc_l) and not out.get("vendor"):
+        out["vendor"] = "cgminer"
+    return out
+
+
+def _http_json_get(url: str, timeout: float = 4.0) -> dict | list | None:
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            url, headers={"Accept": "application/json,text/plain,*/*"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read(262144).decode("utf-8", errors="replace").strip()
+        if not raw:
+            return None
+        obj = json.loads(raw)
+        return obj if isinstance(obj, (dict, list)) else None
+    except Exception:
+        return None
+
+
+def _fetch_live_goldshell_http(host: str, port: int = 80) -> dict | None:
+    """
+    Build a live snapshot purely from Goldshell cloud-box HTTP API
+    when CGMiner :4028 is down / refused.
+    """
+    if not host:
+        return None
+    base = f"http://{host}"
+    status = _http_json_get(f"{base}/mcb/status", timeout=5.0)
+    if not isinstance(status, dict) or not status.get("model"):
+        # not a goldshell cloud-box
+        return None
+    body: dict = {
+        "ok": True,
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "host": f"{host}:{port or 4028}",
+        "vendor": "goldshell",
+        "api_vendor": "goldshell",
+        "miner_type": str(status.get("model") or "Goldshell"),
+        "model_name": str(status.get("model") or ""),
+        "fw_ver": str(status.get("firmware") or "") or None,
+        "hardware": str(status.get("hardware") or status.get("mcbversion") or "")
+        or None,
+        "hashrate_th": 0.0,
+        "hashrate_hs": 0.0,
+        "hashrate_unit": "MH/s",
+        "work_measured": "resume",
+        "source": "goldshell-http",
+    }
+    short = body["model_name"].replace("Goldshell-", "").replace("Goldshell", "").strip()
+    if short:
+        body["model"] = short
+    body = _enrich_live_goldshell(host, body)
+    # If pools present and any Alive/active — keep resume; else still online device
+    pools = body.get("pools") if isinstance(body.get("pools"), list) else []
+    if pools:
+        any_up = any(
+            str(p.get("status") or "").lower() in ("alive", "true", "1")
+            or p.get("active")
+            for p in pools
+            if isinstance(p, dict)
+        )
+        # Device online even if pool dead (initialising)
+        body["pool_ok"] = bool(any_up)
+    try:
+        if apply_model_profile_to_live is not None:
+            body = apply_model_profile_to_live(body, vendor="goldshell")
+    except Exception:
+        pass
+    try:
+        body["work_measured"] = (
+            "suspend" if _measured_work_state(body) == "sleep" else "resume"
+        )
+    except Exception:
+        pass
+    return body
+
+
+def _enrich_live_goldshell(host: str, body: dict) -> dict:
+    """
+    Goldshell cloud-box HTTP API (CKBox / Mini-DOGE / …):
+      GET /mcb/status  → model, firmware, hardware
+      GET /mcb/setting → MAC name, power plan, temp targets
+      GET /mcb/pools   → pool list
+    Plus CGMiner stats fans already in body when available.
+    """
+    if not host:
+        return body
+    base = f"http://{host}"
+    status = _http_json_get(f"{base}/mcb/status", timeout=4.0)
+    setting = _http_json_get(f"{base}/mcb/setting", timeout=4.0)
+    pools_http = _http_json_get(f"{base}/mcb/pools", timeout=4.0)
+    if isinstance(status, dict):
+        model = str(status.get("model") or "").strip()
+        if model:
+            body["miner_type"] = body.get("miner_type") or model
+            body["model_name"] = model
+            # Goldshell-CKBox → CKBox (raw); profile renames to CK-BOX for UI
+            short = model.replace("Goldshell-", "").replace("Goldshell", "").strip()
+            if short and not body.get("model"):
+                body["model"] = short
+        fw = str(status.get("firmware") or "").strip()
+        if fw:
+            body["fw_ver"] = fw
+        hw = str(status.get("hardware") or status.get("mcbversion") or "").strip()
+        if hw:
+            body["hardware"] = hw
+        body["vendor"] = "goldshell"
+        body["api_vendor"] = "goldshell"
+    if isinstance(setting, dict):
+        mac = str(setting.get("name") or "").strip()
+        if mac and ":" in mac:
+            body["mac"] = mac.lower()
+        # power plan string e.g. "800 MHz 0.42 V 50 RPM 50 RPM"
+        plan = str(setting.get("manualPowerplan") or "").strip()
+        if not plan:
+            pps = setting.get("powerplans")
+            if isinstance(pps, list) and pps and isinstance(pps[0], dict):
+                plan = str(pps[0].get("info") or "").strip()
+        if plan:
+            body["power_plan"] = plan
+            # try extract frequency
+            m = re.search(r"(\d+(?:\.\d+)?)\s*MHz", plan, re.I)
+            if m and body.get("freq_avg") in (None, "", 0):
+                try:
+                    body["freq_avg"] = float(m.group(1))
+                except (TypeError, ValueError):
+                    pass
+        tt = setting.get("temp_target") or (
+            (setting.get("temp_targets") or [None])[0]
+            if isinstance(setting.get("temp_targets"), list)
+            else None
+        )
+        try:
+            if tt is not None:
+                body["temp_target"] = float(tt)
+        except (TypeError, ValueError):
+            pass
+    if isinstance(pools_http, list) and pools_http:
+        pools_out = []
+        for p0 in pools_http:
+            if not isinstance(p0, dict):
+                continue
+            pools_out.append(
+                {
+                    "url": p0.get("url") or p0.get("URL"),
+                    "user": p0.get("user") or p0.get("User"),
+                    "status": (
+                        "Alive"
+                        if p0.get("active") or p0.get("legal")
+                        else str(p0.get("status") or "Dead")
+                    ),
+                    "priority": p0.get("pool-priority") or p0.get("priority") or 0,
+                    "pass": p0.get("pass"),
+                }
+            )
+        if pools_out and not body.get("pools"):
+            body["pools"] = pools_out
+        elif pools_out:
+            # fill missing urls
+            body["pools"] = pools_out
+    return body
+
+
+def _cgminer_apply_stats(body: dict) -> dict:
+    """Pull fans / frequency / temps / chain rates from CGMiner/BMMiner ``stats``."""
+    try:
+        stats_raw = miner_cmd({"cmd": "stats"}, timeout=4)
+    except Exception as e:
+        print(f"[live] stats: {e}")
+        return body
+    if not isinstance(stats_raw, dict) or _asic_status_is_error(stats_raw):
+        return body
+    rows = stats_raw.get("STATS") or stats_raw.get("stats") or []
+    if not isinstance(rows, list):
+        return body
+    fans: list[int] = []
+    temps: list[float] = []
+    board_ths: list[float] = []
+    freq = None
+    ant_type = None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        # Bitmain identity row (no STATS id)
+        t = str(row.get("Type") or "").strip()
+        if t and "antminer" in t.lower():
+            ant_type = t
+            body["vendor"] = "antminer"
+            body["api_vendor"] = "antminer"
+            body["miner_type"] = body.get("miner_type") or t
+            body["model_name"] = body.get("model_name") or t
+            if row.get("Miner"):
+                body["fw_ver"] = str(row.get("Miner"))
+        # fan0..fanN (Whatsminer/iPollo) and fan1.. (Bitmain)
+        for i in range(0, 12):
+            for key in (f"fan{i}", f"Fan{i}", f"fan_speed{i}"):
+                if key in row and row.get(key) not in (None, "", 0, "0"):
+                    try:
+                        fv = int(float(row[key]))
+                        if fv > 0:
+                            fans.append(fv)
+                    except (TypeError, ValueError):
+                        pass
+        # temps: temp1, temp2_1, temp_max, temp_out_chip_*
+        for key, val in row.items():
+            kl = str(key).lower()
+            if not any(
+                kl.startswith(p)
+                for p in (
+                    "temp",
+                    "temp_in",
+                    "temp_out",
+                    "chip_temp",
+                )
+            ):
+                continue
+            if kl in ("temp_num",):
+                continue
+            try:
+                if isinstance(val, str) and not re.match(
+                    r"^[+-]?\d+(\.\d+)?$", val.strip()
+                ):
+                    continue
+                tv = float(val)
+                if -50 < tv < 200:
+                    temps.append(tv)
+            except (TypeError, ValueError):
+                pass
+        # Bitmain per-chain rate (GH/s scale, e.g. 5.27)
+        for i in range(1, 9):
+            for key in (f"chain_rate{i}", f"chain_rateideal{i}"):
+                if row.get(key) not in (None, ""):
+                    try:
+                        gh = float(row[key])
+                        if gh > 0:
+                            # store as TH for fleet boards_th column
+                            board_ths.append(round(gh / 1000.0, 4))
+                    except (TypeError, ValueError):
+                        pass
+                    break
+        if freq is None:
+            for key in ("frequency", "Frequency", "freq", "freq1", "GHS 30m"):
+                if row.get(key) not in (None, ""):
+                    try:
+                        freq = float(row[key])
+                        # freq1=1300 is MHz, not GHS
+                        if key.startswith("freq") and freq > 100:
+                            body["freq_avg"] = freq
+                            freq = freq  # MHz
+                        break
+                    except (TypeError, ValueError):
+                        pass
+        # power if present (some stock FW)
+        for key in ("power", "Power", "power_realtime", "chain_power"):
+            if row.get(key) not in (None, "") and body.get("power") in (None, "", 0):
+                try:
+                    pw = float(row[key])
+                    if pw > 10:
+                        body["power"] = pw
+                        body["power_source"] = "meter"
+                        body["power_estimated"] = False
+                except (TypeError, ValueError):
+                    pass
+    if fans and not body.get("fans"):
+        # unique preserve order
+        seen = set()
+        uniq = []
+        for f in fans:
+            if f not in seen:
+                seen.add(f)
+                uniq.append(f)
+        body["fans"] = uniq[:8]
+        body["fan"] = uniq[0]
+        body["psu_fan"] = uniq[0]
+    if temps:
+        if body.get("chip_avg") in (None, ""):
+            body["chip_avg"] = round(sum(temps) / len(temps), 1)
+        if body.get("chip_max") in (None, ""):
+            body["chip_max"] = round(max(temps), 1)
+        if body.get("chip_min") in (None, ""):
+            body["chip_min"] = round(min(temps), 1)
+    if board_ths and not body.get("boards_th"):
+        body["boards_th"] = board_ths
+        # also set boards temp-like slots for count
+        if not body.get("boards") or body.get("boards") == [None] * len(
+            body.get("boards") or []
+        ):
+            body["boards"] = board_ths
+            body["board_count"] = len(board_ths)
+    if freq is not None and body.get("freq_avg") in (None, "", 0):
+        body["freq_avg"] = freq
+    if ant_type and not body.get("model_display"):
+        body["model_name"] = ant_type
+    return body
+
+
 def _fetch_live_direct() -> dict:
     # summary/status: support both Msg-dict and classic SUMMARY/STATUS sections
     try:
         summary_raw = miner_cmd({"cmd": "summary"})
     except Exception as e:
+        # Goldshell cloud-box often exposes live only via HTTP /mcb/*
+        host_only = str(_asic_target()[0] or HOST_MINER or "").split(":")[0]
+        gs = _fetch_live_goldshell_http(host_only, _asic_target()[1])
+        if isinstance(gs, dict) and gs.get("ok"):
+            print(f"[live] cgminer summary failed ({e}); goldshell HTTP ok", flush=True)
+            _mark_miner_live_ok()
+            return gs
         raise RuntimeError(f"summary: {e}") from e
+    # CGMiner error payload → raise clearly
+    if _asic_status_is_error(summary_raw):
+        st = summary_raw.get("STATUS") if isinstance(summary_raw, dict) else None
+        msg = ""
+        if isinstance(st, list) and st and isinstance(st[0], dict):
+            msg = str(st[0].get("Msg") or st[0].get("Description") or "")
+        raise RuntimeError(f"summary: {msg or 'ASIC error'}")
     summary = _extract_miner_payload(summary_raw, "SUMMARY", "summary")
     if not summary and isinstance(summary_raw, dict):
         # still nothing usable
         summary = {}
+    cg_ident = _cgminer_identity(summary_raw, summary)
 
     try:
         status_raw = miner_cmd({"cmd": "status"})
@@ -20858,6 +23685,29 @@ def _fetch_live_direct() -> dict:
                         devs = d2
     except Exception as e:
         print(f"[live] devs: {e}")
+    # Classic CGMiner pools (iPollo / Avalon / …)
+    pools_live: list = []
+    try:
+        pools_raw = miner_cmd({"cmd": "pools"}, timeout=4)
+        if isinstance(pools_raw, dict):
+            pr = pools_raw.get("POOLS") or pools_raw.get("pools")
+            if isinstance(pr, list):
+                for p0 in pr:
+                    if not isinstance(p0, dict):
+                        continue
+                    pools_live.append(
+                        {
+                            "url": p0.get("URL") or p0.get("Stratum URL") or p0.get("url"),
+                            "user": p0.get("User") or p0.get("user"),
+                            "status": p0.get("Status") or p0.get("status"),
+                            "accepted": p0.get("Accepted"),
+                            "rejected": p0.get("Rejected"),
+                            "stratum": p0.get("Stratum Active"),
+                            "priority": p0.get("Priority"),
+                        }
+                    )
+    except Exception as e:
+        print(f"[live] pools: {e}")
     raw_errors = _fetch_miner_errors_raw()
 
     # PSU: temp0 (°C), fan_speed (rpm), Vin/Iin/Pin — never fail whole live poll
@@ -20931,6 +23781,25 @@ def _fetch_live_direct() -> dict:
                 pass
     except Exception:
         pass
+    # CGMiner / iPollo / Antminer: identity from Type / Device Code
+    if isinstance(cg_ident, dict):
+        if not miner_type_s and cg_ident.get("miner_type"):
+            miner_type_s = str(cg_ident.get("miner_type")).strip() or None
+        if not miner_type_s and cg_ident.get("vendor") == "ipollo":
+            miner_type_s = "iPollo"
+        elif not miner_type_s and cg_ident.get("device_code"):
+            miner_type_s = str(cg_ident.get("device_code")).strip() or None
+    if isinstance(devs, list) and devs and isinstance(devs[0], dict):
+        dname = str(devs[0].get("Name") or "").strip()
+        if dname and (
+            not miner_type_s
+            or miner_type_s in ("iPollo", "cgminer")
+        ):
+            # e.g. Name=VX → iPollo VX family
+            if (cg_ident or {}).get("vendor") == "ipollo":
+                miner_type_s = f"iPollo {dname}".strip()
+            elif not miner_type_s:
+                miner_type_s = dname
     n_devs_live = len(devs) if isinstance(devs, list) else 0
     hb_layout = resolve_hashboard_layout(
         miner_type_s,
@@ -21006,14 +23875,58 @@ def _fetch_live_direct() -> dict:
     hs = summary.get("Hash Stable")
     hs_int = 1 if str(hs).lower() in ("true", "1") else 0
 
-    # Whatsminer reports MHS* as large numbers; TH/s ≈ MHS / 1e6
-    mhs = summary.get("HS RT") or summary.get("MHS 1m") or summary.get("MHS av")
+    # Hashrate sources (priority):
+    #  1) Bitmain "RT HASHRATE": "18.58 GH/s" / "AV HASHRATE"
+    #  2) GHS 5s / GHS av  (Bitmain bare GH/s number)
+    #  3) Whatsminer HS RT / MHS* (large raw MHS count or "240.2572M")
+    rate_field = None
+    mhs_raw = None
+    for key in (
+        "RT HASHRATE",
+        "AV HASHRATE",
+        "THEORY HASHRATE",
+        "HS RT",
+        "GHS 5s",
+        "GHS 30m",
+        "GHS av",
+        "MHS 5s",
+        "MHS 1m",
+        "MHS 5m",
+        "MHS av",
+    ):
+        if summary.get(key) not in (None, ""):
+            rate_field = key
+            mhs_raw = summary.get(key)
+            break
+    hashrate_hs = _parse_hashrate_to_hs(mhs_raw)
     hashrate_th = None
-    try:
-        if mhs is not None:
-            hashrate_th = float(mhs) / 1_000_000.0
-    except (TypeError, ValueError):
-        hashrate_th = None
+    is_bare = isinstance(mhs_raw, (int, float)) or (
+        isinstance(mhs_raw, str)
+        and re.match(r"^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$", str(mhs_raw).strip())
+    )
+    # Bitmain GHS* keys: bare number is GH/s (e.g. 18.57)
+    is_ghs_field = bool(rate_field and str(rate_field).upper().startswith("GHS"))
+    is_ant = str((cg_ident or {}).get("vendor") or "").lower() in (
+        "antminer",
+        "bitmain",
+    )
+    if hashrate_hs is not None:
+        if is_bare and (is_ghs_field or (is_ant and hashrate_hs < 1e5)):
+            # bare GH/s → H/s
+            hashrate_hs = float(mhs_raw) * 1e9
+            hashrate_th = hashrate_hs / 1e12
+        elif is_bare:
+            # Whatsminer-style MHS count → TH/s = n / 1e6
+            if hashrate_hs >= 1e5:
+                hashrate_th = hashrate_hs / 1e6
+                hashrate_hs = hashrate_th * 1e12
+            else:
+                hashrate_th = (
+                    hashrate_hs / 1e6 if hashrate_hs > 100 else _hs_to_th(hashrate_hs)
+                )
+        else:
+            # unit suffix path ("18.58 GH/s", "240.2572M")
+            hashrate_th = _hs_to_th(hashrate_hs)
 
     power_limit = _f(summary.get("Power Limit"))
     factory_ghs = None
@@ -21127,9 +24040,28 @@ def _fetch_live_direct() -> dict:
         "last_write": last_write,
         "freq_avg": summary.get("freq_avg"),
         "hashrate_th": hashrate_th,
-        "mhs_rt": summary.get("HS RT"),
+        "hashrate_hs": hashrate_hs,
+        "hashrate_unit": (
+            "TH/s"
+            if hashrate_th is not None and hashrate_th >= 0.1
+            else (
+                "GH/s"
+                if hashrate_hs is not None and 1e8 <= hashrate_hs < 1e12
+                else (
+                    "MH/s"
+                    if hashrate_hs is not None and hashrate_hs >= 1e5
+                    else "H/s"
+                )
+            )
+        ),
+        "mhs_rt": (
+            summary.get("RT HASHRATE")
+            or summary.get("HS RT")
+            or summary.get("MHS 5s")
+            or summary.get("GHS 5s")
+        ),
         "mhs_1m": summary.get("MHS 1m"),
-        "mhs_av": summary.get("MHS av"),
+        "mhs_av": summary.get("MHS av") or summary.get("GHS av"),
         "hash_stable": summary.get("Hash Stable"),
         "hash_stable_i": hs_int,
         "elapsed": summary.get("Elapsed"),
@@ -21155,6 +24087,7 @@ def _fetch_live_direct() -> dict:
         "psu_model": psu_model,
         "miner_errors": miner_errors,
         "miner_events": miner_events,
+        "pools": pools_live or None,
         "dry_run": bool(DRY_RUN),
         "policy": get_policy_status(),
     }
@@ -21166,6 +24099,98 @@ def _fetch_live_direct() -> dict:
         body["run_status_en"] = rs.get("label_en")
     except Exception:
         body["run_status"] = None
+    # Vendor / API dialect
+    if isinstance(cg_ident, dict):
+        if cg_ident.get("vendor"):
+            body["vendor"] = cg_ident.get("vendor")
+        if cg_ident.get("api_vendor"):
+            body["api_vendor"] = cg_ident.get("api_vendor")
+        if cg_ident.get("device_code"):
+            body["device_code"] = cg_ident.get("device_code")
+    host_only = str(_asic_target()[0] or HOST_MINER or "").split(":")[0].strip()
+    # stamp actual polled host on body (multi-fleet)
+    try:
+        th, tp = _asic_target()
+        body["host"] = f"{th}:{tp}"
+    except Exception:
+        pass
+    vendor_l = str(body.get("vendor") or body.get("api_vendor") or "").lower()
+    type_l = str(miner_type_s or body.get("miner_type") or "").lower()
+    # CGMiner stats → fans / freq (Goldshell, Avalon, …)
+    try:
+        if vendor_l in (
+            "goldshell",
+            "ipollo",
+            "cgminer",
+            "avalon",
+            "antminer",
+            "bitmain",
+        ) or (
+            isinstance(cg_ident, dict)
+            and cg_ident.get("api_vendor")
+            in ("cgminer", "goldshell", "ipollo", "antminer")
+        ):
+            body = _cgminer_apply_stats(body)
+        # stamp antminer model from identity if stats didn't
+        if isinstance(cg_ident, dict) and cg_ident.get("vendor") == "antminer":
+            body["vendor"] = "antminer"
+            body["api_vendor"] = "antminer"
+            if cg_ident.get("miner_type"):
+                body["miner_type"] = cg_ident.get("miner_type")
+                body["model_name"] = cg_ident.get("model_name") or cg_ident.get(
+                    "miner_type"
+                )
+            if cg_ident.get("fw_ver") and not body.get("fw_ver"):
+                body["fw_ver"] = cg_ident.get("fw_ver")
+    except Exception as e:
+        print(f"[live] cgminer stats: {e}")
+    # iPollo LuCI enrichment (model V1 mini, fans, precise temps)
+    try:
+        if vendor_l in ("ipollo",) or type_l.startswith("ipollo"):
+            body = _enrich_live_ipollo(
+                host_only,
+                body,
+                password=DEFAULT_API_PASSWORD,
+            )
+    except Exception as e:
+        print(f"[live] ipollo enrich: {e}")
+    # Goldshell cloud-box HTTP (/mcb/status|setting|pools)
+    try:
+        if (
+            vendor_l in ("goldshell", "cgminer")
+            or "goldshell" in type_l
+            or "ckbox" in type_l
+            or "ckb" in type_l
+        ):
+            body = _enrich_live_goldshell(host_only, body)
+    except Exception as e:
+        print(f"[live] goldshell enrich: {e}")
+    # Model profile: trade name + power estimate when ASIC omits wall power
+    try:
+        if apply_model_profile_to_live is not None:
+            body = apply_model_profile_to_live(
+                body, vendor=body.get("vendor") or body.get("api_vendor")
+            )
+    except Exception as e:
+        print(f"[live] model profile: {e}")
+    # Antminer SearchFreqServer :6060 — real wall power / nonces (after profile
+    # so measured power wins over J/TH estimate)
+    try:
+        if (
+            vendor_l in ("antminer", "bitmain")
+            or "antminer" in type_l
+            or body.get("bmminer")
+        ):
+            body = _enrich_live_antminer_6060(host_only, body)
+    except Exception as e:
+        print(f"[live] antminer 6060: {e}")
+    # refresh work_measured after enrichments
+    try:
+        body["work_measured"] = (
+            "suspend" if _measured_work_state(body) == "sleep" else "resume"
+        )
+    except Exception:
+        pass
     _mark_miner_live_ok()
     return body
 
@@ -21209,7 +24234,11 @@ def _measured_work_state(live: dict) -> str:
     mo_s = str(mo).strip().lower() if mo is not None else ""
     p = _f(live.get("power"))
     h = _f(live.get("hashrate_th"))
-    hashing = h is not None and h >= 1.0  # TH/s
+    hs = _f(live.get("hashrate_hs"))
+    # BTC ASICs: ≥1 TH/s. ETH/ETC (iPollo V1 mini …): ≥10 MH/s in H/s.
+    hashing = (h is not None and h >= 1.0) or (
+        hs is not None and hs >= 1e7
+    )  # 10 MH/s
 
     # API says miner off → Suspend, unless it is actually hashing
     if mo_s in ("true", "1", "yes"):
@@ -29688,6 +32717,11 @@ class Handler(SimpleHTTPRequestHandler):
                 "true",
                 "yes",
             )
+            force_miner = str((qs.get("force") or ["0"])[0]).lower() in (
+                "1",
+                "true",
+                "yes",
+            )
             if cached_only:
                 c = load_info_cache()
                 if c:
@@ -29698,7 +32732,9 @@ class Handler(SimpleHTTPRequestHandler):
                     )
                 return
             try:
-                self._json_response(200, collect_system_info())
+                self._json_response(
+                    200, collect_system_info(force_miner=force_miner)
+                )
             except Exception as e:
                 # fallback to cache on live failure
                 c = load_info_cache()
@@ -29989,6 +33025,14 @@ class Handler(SimpleHTTPRequestHandler):
             "/api/tuya/login",
         ):
             self._api_tuya_devices_login()
+            return
+        if path in (
+            "/api/devices/ewelink/login",
+            "/api/devices/ewelink/devices",
+            "/api/ewelink/login",
+            "/api/ewelink/devices",
+        ):
+            self._api_ewelink_devices_login()
             return
         if path == "/api/weather/config":
             self._api_weather_config_post()
@@ -31352,6 +34396,90 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_ewelink_devices_login(self) -> None:
+        """
+        POST {email, password, country_code?, region?, device_id?}
+        → eWeLink cloud device list with devicekey for LAN encrypt.
+        Optionally binds key onto poolheat device store id.
+        """
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected object")
+            email = str(req.get("email") or "").strip()
+            password = str(req.get("password") or "")
+            store_id = str(req.get("device_id") or req.get("id") or "").strip()
+            if (not password or password in ("••••", "****")) and store_id:
+                cfg = _device_cfg_snapshot(store_id)
+                if cfg and cfg.get("password"):
+                    password = str(cfg.get("password"))
+                if cfg and not email:
+                    email = str(cfg.get("email") or "")
+            if not email or not password:
+                raise ValueError("email and password required")
+            cc = str(req.get("country_code") or req.get("ewelink_country") or "+7")
+            region = str(req.get("region") or req.get("ewelink_region") or "") or None
+            want_did = str(req.get("ewelink_deviceid") or req.get("target_deviceid") or "").strip()
+            want_ip = str(req.get("ip") or "").strip()
+            try:
+                from ewelink_lan import login_and_find_device  # type: ignore
+            except ImportError:
+                from .ewelink_lan import login_and_find_device  # type: ignore
+            out = login_and_find_device(
+                email,
+                password,
+                deviceid=want_did or None,
+                ip=want_ip or None,
+                country_code=cc,
+                region=region,
+            )
+            # strip access token from response
+            out.pop("at", None)
+            # cache key on store device if matched
+            match = out.get("match") if isinstance(out.get("match"), dict) else None
+            if store_id and match and match.get("devicekey"):
+                key = str(match.get("devicekey"))
+                did_cloud = str(match.get("deviceid") or "")
+                user_apikey = str(out.get("apikey") or "").strip()
+
+                def _mut(d):
+                    d["ewelink_devicekey"] = key
+                    d["ewelink_mode"] = d.get("ewelink_mode") or "lan"
+                    if did_cloud:
+                        d["device_id"] = did_cloud  # cloud id is authoritative
+                    if user_apikey:
+                        d["ewelink_apikey"] = user_apikey
+                    if email:
+                        d["email"] = email
+                    if password:
+                        d["password"] = password
+                    if match.get("productModel") and not d.get("xiaomi_model"):
+                        pass
+                    d["ewelink_region"] = out.get("region") or d.get("ewelink_region")
+                    d["ewelink_country"] = cc
+                    # optional: adopt cloud-reported LAN IP when form empty
+                    if match.get("ip") and not str(d.get("ip") or "").strip():
+                        d["ip"] = str(match.get("ip"))
+
+                # mutate config (not just runtime)
+                with _devices_cfg_lock:
+                    devices = list(_devices_cfg.get("devices") or [])
+                    for i, d in enumerate(devices):
+                        if str(d.get("id") or "") == store_id:
+                            nd = dict(d)
+                            _mut(nd)
+                            devices[i] = _strip_device_runtime(_normalize_device(nd) or nd)
+                            _devices_cfg["devices"] = devices
+                            _save_devices_cfg()
+                            break
+                out["bound_device_id"] = store_id
+                out["bound_devicekey"] = True
+            # never return full keys for all devices in UI by default? User needs them.
+            # Return devicekey so UI can fill the field.
+            self._json_response(200, out)
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_tuya_devices_login(self) -> None:
         """
         POST {email, password, country?, region?, ecosystem?, device_id?}
@@ -32323,6 +35451,34 @@ def main() -> None:
         )
     except Exception as e:
         print(f"tmp cleanup:       {e}")
+    # Prefer USB swap partition over zram (Keenetic defaults USB to prio -1)
+    try:
+        sw = ensure_usb_swap_priority(prefer_usb=True)
+        if sw.get("changed"):
+            print(
+                "usb swap:          priority raised · "
+                + ", ".join(
+                    f"{a.get('path')}→p{a.get('to_priority')}"
+                    for a in (sw.get("actions") or [])
+                    if a.get("ok")
+                )
+            )
+        else:
+            devs = sw.get("devices") or []
+            usb = [d for d in devs if d.get("kind") == "usb"]
+            if usb:
+                print(
+                    "usb swap:          "
+                    + ", ".join(
+                        f"{d.get('path')} prio={d.get('priority')} "
+                        f"{round((d.get('size_b') or 0)/1024/1024)}MiB"
+                        for d in usb
+                    )
+                )
+            else:
+                print(f"usb swap:          {sw.get('note') or 'none'}")
+    except Exception as e:
+        print(f"usb swap:          {e}")
     if role_enabled("edge_history") or role_enabled("edge_miner_poller"):
         init_db()
     # backfill error journal miner/component columns from current ASIC Info

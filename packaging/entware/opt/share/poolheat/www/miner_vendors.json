@@ -6,8 +6,8 @@
       "alias": ["antminer", "bitmain", "ant"],
       "name": "Antminer",
       "manufacturer": "Bitmain",
-      "logo": "icons/vendors/antminer-invert.png",
-      "logo_dark": "icons/vendors/antminer.png",
+      "logo": "/icons/vendors/antminer-invert.png",
+      "logo_dark": "/icons/vendors/antminer.png",
       "default_port": 80,
       "color": "#ef4444",
       "order": 10
@@ -17,27 +17,41 @@
       "alias": ["avalon", "canaan", "avalonminer"],
       "name": "Avalon",
       "manufacturer": "Canaan",
-      "logo": "icons/vendors/avalon.png",
+      "logo": "/icons/vendors/avalon.png",
       "default_port": 4028,
       "color": "#3b82f6",
       "order": 20
     },
     {
       "id": "goldshell",
-      "alias": ["goldshell", "gs"],
+      "alias": ["goldshell", "gs", "ckbox", "ckbminer"],
       "name": "Goldshell",
       "manufacturer": "Goldshell",
-      "logo": "icons/vendors/goldshell.png",
-      "default_port": 80,
+      "logo": "/icons/vendors/goldshell.png",
+      "default_port": 4028,
       "color": "#eab308",
-      "order": 30
+      "order": 30,
+      "api": "cgminer",
+      "note": "CGMiner/ckbminer on :4028 (command=); HTTP /mcb/status|setting|pools on :80"
+    },
+    {
+      "id": "ipollo",
+      "alias": ["ipollo", "ipol", "toomuchpower"],
+      "name": "iPollo",
+      "manufacturer": "iPollo",
+      "logo": "/icons/vendors/ipollo.png",
+      "default_port": 4028,
+      "color": "#3b82f6",
+      "order": 40,
+      "api": "cgminer",
+      "note": "CGMiner API on :4028 (command=); LuCI theme ipolloeth on :80"
     },
     {
       "id": "whatsminer",
       "alias": ["whatsminer", "wm", "microbt", "micro-bt"],
       "name": "Whatsminer",
       "manufacturer": "MicroBT",
-      "logo": "icons/vendors/whatsminer.png",
+      "logo": "/icons/vendors/whatsminer.png",
       "default_port": 4028,
       "color": "#f59e0b",
       "order": 90

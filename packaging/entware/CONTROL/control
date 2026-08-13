@@ -1,10 +1,10 @@
 Package: poolheat
-Version: 0.6.59-1
+Version: 0.6.60-1
 Depends: python3, python3-pip
 Section: net
 Architecture: aarch64-3.10
 Maintainer: poolheat
 Source: https://github.com/andreybmc/poolheat
-Description: Whatsminer M63 thermal controller UI for Keenetic Peak (Entware).
+Description: Poolheat edge UI for Keenetic Entware (Peak aarch64 · Giant mipsel).
  Web UI + history collector on TCP 8787. Needs LAN access to miner API :4028.
  Homepage: https://github.com/andreybmc/poolheat

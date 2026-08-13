@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "comment": "Per-model ASIC profiles: display names, sensors, efficiency for power estimate when ASIC does not report wall power.",
+  "models": [
+    {
+      "id": "goldshell.ck_box",
+      "vendor": "goldshell",
+      "match": [
+        "ckbox",
+        "ck-box",
+        "ck_box",
+        "ck box",
+        "goldshell-ckbox",
+        "goldshell ckbox",
+        "goldshell-ck-box",
+        "goldshell ck-box",
+        "goldshell ck box",
+        "incs",
+        "ckbminer",
+        "sgw ssm cpu incs",
+        "40.40.ha"
+      ],
+      "display_name": "CK-BOX",
+      "display_name_full": "Goldshell CK-BOX",
+      "manufacturer": "Goldshell",
+      "algo": "eaglesong",
+      "coin": "CKB",
+      "cooling": "air",
+      "hashrate_unit": "TH/s",
+      "rated": {
+        "hashrate_th": 6.3,
+        "hashrate_gh": 6300,
+        "power_w": 1290
+      },
+      "efficiency": {
+        "j_per_gh": 0.205,
+        "j_per_gh_low": 0.20,
+        "j_per_gh_high": 0.22,
+        "note": "Official Goldshell CK-BOX ~0.205 J/GH"
+      },
+      "power": {
+        "reported": false,
+        "estimate_from_efficiency": true,
+        "note": "CGMiner/HTTP does not expose wall power on CK-BOX"
+      },
+      "sensors": {
+        "power": false,
+        "fans": true,
+        "chip_temp": true,
+        "env_temp": false
+      }
+    },
+    {
+      "id": "antminer.l9",
+      "vendor": "antminer",
+      "match": [
+        "l9",
+        "antminer l9",
+        "antminerl9",
+        "bitmain l9"
+      ],
+      "display_name": "L9",
+      "display_name_full": "Antminer L9",
+      "manufacturer": "Bitmain",
+      "algo": "scrypt",
+      "coin": "LTC",
+      "cooling": "air",
+      "hashrate_unit": "GH/s",
+      "rated": {
+        "hashrate_gh": 17.0,
+        "power_w": 3360
+      },
+      "efficiency": {
+        "j_per_gh": 197.6,
+        "note": "Approx from rated ~3360 W / 17 GH/s scrypt — refine when metered"
+      },
+      "power": {
+        "reported": false,
+        "estimate_from_efficiency": true,
+        "note": "Stock BMMiner often omits wall power on :4028"
+      },
+      "sensors": {
+        "power": false,
+        "fans": true,
+        "chip_temp": true
+      }
+    },
+    {
+      "id": "ipollo.v1_mini",
+      "vendor": "ipollo",
+      "match": [
+        "v1 mini",
+        "v1mini",
+        "v1 mini wifi",
+        "ipollo v1",
+        "ipollo vx",
+        "vx"
+      ],
+      "display_name": "V1 mini",
+      "display_name_full": "iPollo V1 mini",
+      "manufacturer": "iPollo",
+      "algo": "etchash",
+      "coin": "ETC",
+      "cooling": "air",
+      "hashrate_unit": "MH/s",
+      "rated": {
+        "hashrate_mhs": 280,
+        "power_w": 240
+      },
+      "efficiency": {
+        "j_per_mh": 0.86,
+        "note": "Approx from rated 240 W / 280 MH/s — refine when metered"
+      },
+      "power": {
+        "reported": false,
+        "estimate_from_efficiency": true,
+        "note": "LuCI/cgminer rarely expose wall power"
+      },
+      "sensors": {
+        "power": false,
+        "fans": true,
+        "chip_temp": true
+      }
+    }
+  ]
+}

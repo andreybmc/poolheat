@@ -34,6 +34,9 @@ fi
 if [ -f "$ROOT/ui/xiaomi_miio.py" ]; then
   cp -f "$ROOT/ui/xiaomi_miio.py" /opt/lib/poolheat/xiaomi_miio.py
 fi
+if [ -f "$ROOT/ui/ewelink_lan.py" ]; then
+  cp -f "$ROOT/ui/ewelink_lan.py" /opt/lib/poolheat/ewelink_lan.py
+fi
 # whatsminer-lib (vendored package)
 if [ -d "$ROOT/ui/whatsminer" ]; then
   rm -rf /opt/lib/poolheat/whatsminer
@@ -49,6 +52,12 @@ fi
 if [ -f "$ROOT/ui/miner_vendors.json" ]; then
   cp -f "$ROOT/ui/miner_vendors.json" /opt/lib/poolheat/miner_vendors.json
   cp -f "$ROOT/ui/miner_vendors.json" /opt/share/poolheat/www/miner_vendors.json
+fi
+if [ -f "$ROOT/ui/miner_model_profiles.json" ]; then
+  cp -f "$ROOT/ui/miner_model_profiles.json" /opt/lib/poolheat/miner_model_profiles.json
+fi
+if [ -f "$ROOT/ui/miner_models.py" ]; then
+  cp -f "$ROOT/ui/miner_models.py" /opt/lib/poolheat/miner_models.py
 fi
 if [ -f "$ROOT/VERSION" ]; then
   cp -f "$ROOT/VERSION" /opt/lib/poolheat/VERSION

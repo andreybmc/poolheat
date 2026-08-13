@@ -2752,28 +2752,55 @@
     }
     .fleet-table-wrap { overflow: auto; margin: 0 -4px; }
     .fleet-table { min-width: 920px; font-size: 0.8rem; }
+    /* Row cards: separate rows so border-radius on first/last cell works */
+    .fleet-table {
+      border-collapse: separate;
+      border-spacing: 0 4px;
+    }
     .fleet-table th { text-align: left; padding-left: 8px; padding-right: 8px; }
-    .fleet-table td { padding: 10px 8px; white-space: nowrap; vertical-align: middle; }
-    .fleet-table tr.fleet-row-active { background: rgba(99, 102, 241, 0.06); }
+    .fleet-table td {
+      padding: 10px 8px;
+      white-space: nowrap;
+      vertical-align: middle;
+      background: rgba(255, 255, 255, 0.025);
+    }
+    .fleet-table thead th {
+      background: transparent;
+      padding-bottom: 6px;
+    }
+    /* Same radius as left status strip (badge) on the outer row corners */
+    .fleet-table tbody tr td:first-child {
+      border-radius: 2px 0 0 2px;
+    }
+    .fleet-table tbody tr td:last-child {
+      border-radius: 0 2px 2px 0;
+    }
+    .fleet-table tr.fleet-row-active td {
+      background: rgba(99, 102, 241, 0.08);
+    }
     .fleet-table tr.fleet-row-offline td { opacity: 0.85; }
-    /* First col: left status strip (widget-style) + cell/IP — no text badge */
+    /* First col: left status strip + cell/IP — no text badge */
     .fleet-table tbody tr {
       position: relative;
     }
     .fleet-table td.fleet-id-td {
       position: relative;
-      padding-left: 14px;
-      min-width: 140px;
+      /* strip (3px) + ~2× gap so text sits clear of the badge */
+      padding-left: 36px;
+      min-width: 156px;
+      overflow: visible;
     }
     .fleet-table td.fleet-id-td::before {
       content: "";
       position: absolute;
       left: 0;
-      top: 8px;
-      bottom: 8px;
-      width: 4px;
-      border-radius: 0 2px 2px 0;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      /* outer (left) corners — matches row card radius */
+      border-radius: 2px 0 0 2px;
       background: var(--dim);
+      pointer-events: none;
     }
     .fleet-table td.fleet-id-td.st-online::before {
       background: linear-gradient(180deg, #6ee7b7 0%, #34d399 45%, #059669 100%);
@@ -2794,7 +2821,133 @@
       gap: 0;
       min-width: 120px;
     }
-    .fleet-id-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .fleet-id-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      padding-left: 12px; /* 2× previous gap between strip and A-00 / IP */
+    }
+    /* stacked metric cells (power+eff, boards+fans) */
+    .fleet-stack-cell {
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 72px;
+      line-height: 1.25;
+    }
+    .fleet-stack-cell .fleet-main {
+      font-variant-numeric: tabular-nums;
+      font-weight: 550;
+      color: var(--text);
+      font-size: 0.85rem;
+    }
+    .fleet-stack-cell .fleet-sub {
+      font-variant-numeric: tabular-nums;
+      font-size: 0.72rem;
+      color: var(--dim);
+    }
+    .fleet-stack-cell .fleet-boards {
+      font-variant-numeric: tabular-nums;
+      font-size: 0.78rem;
+      font-weight: 550;
+      color: var(--text);
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* Pagination bar (managed fleet) */
+    .fleet-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 4px 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .fleet-pager-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
+      flex: 0 0 auto;
+    }
+    .fleet-pager-left label {
+      color: var(--muted);
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    /* Custom select shell: native select + chevron (▼) */
+    .fleet-pager-select-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      flex: 0 0 auto;
+    }
+    .fleet-pager-left select {
+      width: auto;
+      min-width: 3.5rem;
+      max-width: 5rem;
+      flex: 0 0 auto;
+      padding: 4px 22px 4px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      background: var(--card, rgba(0,0,0,0.2));
+      color: var(--text);
+      font-size: 0.8rem;
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      cursor: pointer;
+    }
+    .fleet-pager-left select::-ms-expand { display: none; }
+    .fleet-pager-select-wrap::after {
+      content: "";
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      width: 0;
+      height: 0;
+      pointer-events: none;
+      border-left: 4px solid transparent;
+      border-right: 4px solid transparent;
+      border-top: 5px solid var(--muted, #94a3b8);
+      transform: translateY(-35%);
+    }
+    .fleet-pager-range { color: var(--dim); white-space: nowrap; }
+    .fleet-pager-pages {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-left: auto;
+    }
+    .fleet-pager-pages button {
+      min-width: 28px;
+      height: 28px;
+      padding: 0 8px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 550;
+    }
+    .fleet-pager-pages button:hover:not(:disabled) {
+      background: rgba(255,255,255,0.06);
+      color: var(--text);
+    }
+    .fleet-pager-pages button.active {
+      background: rgba(99, 102, 241, 0.2);
+      color: #a5b4fc;
+    }
+    .fleet-pager-pages button:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
     .fleet-id-meta .cell-name {
       font-weight: 600;
       font-size: 0.85rem;
@@ -7907,10 +8060,9 @@
                     <th data-i18n="fleet.col.name">Name</th>
                     <th data-i18n="fleet.col.model">Model</th>
                     <th data-i18n="fleet.col.hash">Hashrate</th>
-                    <th data-i18n="fleet.col.power">Power</th>
-                    <th data-i18n="fleet.col.eff">J/TH</th>
+                    <th data-i18n="fleet.col.power_eff">Power · J/TH</th>
                     <th data-i18n="fleet.col.temp">Temp</th>
-                    <th data-i18n="fleet.col.fan">Fan</th>
+                    <th data-i18n="fleet.col.boards_fans">Boards · Fans</th>
                     <th data-i18n="fleet.col.mode">Mode</th>
                     <th data-i18n="fleet.col.elapsed">Elapsed</th>
                     <th data-i18n="fleet.col.pool">Pool</th>
@@ -7919,9 +8071,24 @@
                   </tr>
                 </thead>
                 <tbody id="fleet-body">
-                  <tr><td colspan="13" style="color:var(--muted)">—</td></tr>
+                  <tr><td colspan="12" style="color:var(--muted)">—</td></tr>
                 </tbody>
               </table>
+            </div>
+            <div class="fleet-pager" id="fleet-pager" hidden>
+              <div class="fleet-pager-left">
+                <label for="fleet-page-size" data-i18n="fleet.pager.rows">Rows per page</label>
+                <span class="fleet-pager-select-wrap">
+                  <select id="fleet-page-size" aria-label="Rows per page">
+                    <option value="5">5</option>
+                    <option value="10" selected>10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                  </select>
+                </span>
+                <span class="fleet-pager-range" id="fleet-pager-range">—</span>
+              </div>
+              <div class="fleet-pager-pages" id="fleet-pager-pages" role="navigation" aria-label="Pages"></div>
             </div>
             <p class="fleet-hint" data-i18n="fleet.hint">
               Live metrics are shown for the <strong>active</strong> polled miner. Standby rows show inventory until multi-poll is enabled.
@@ -8202,7 +8369,7 @@
                   <option value="tapo">Tapo P100 / P110</option>
                   <option value="tuya">Tuya / Smart Life (LAN)</option>
                   <option value="xiaomi">Xiaomi / Mi Home (LAN)</option>
-                  <option value="ewelink">eWeLink / Sonoff DIY (LAN)</option>
+                  <option value="ewelink">eWeLink / Sonoff (LAN + DIY)</option>
                   <option value="webhook">Webhook (HTTP)</option>
                   <option value="shelly">Shelly</option>
                   <option value="homeassistant">Home Assistant</option>
@@ -8357,19 +8524,64 @@
                 </p>
               </div>
 
-              <!-- eWeLink DIY -->
+              <!-- eWeLink LAN / DIY -->
               <div class="dev-be" data-be="ewelink" style="display:none">
                 <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
                   <label class="field"><span data-i18n="filt.device_ip">Device IP</span>
                     <input type="text" id="dev-ewelink-ip" placeholder="192.168.1.60" autocomplete="off" />
                   </label>
-                  <label class="field"><span data-i18n="filt.device_id">deviceid (DIY)</span>
+                  <label class="field"><span data-i18n="filt.device_id">deviceid</span>
                     <input type="text" id="dev-device-id" placeholder="1000xxxxxx" autocomplete="off" />
                   </label>
-                  <label class="field"><span data-i18n="filt.port_diy">Port DIY</span>
+                  <label class="field"><span data-i18n="filt.port_diy">Port</span>
                     <input type="number" id="dev-ewelink-port" value="8081" min="1" max="65535" />
                   </label>
                 </div>
+                <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:10px">
+                  <label class="field"><span data-i18n="dev.ewelink_mode">Mode</span>
+                    <select id="dev-ewelink-mode">
+                      <option value="auto">auto (DIY → LAN encrypt)</option>
+                      <option value="lan">LAN encrypt (devicekey)</option>
+                      <option value="diy">DIY only</option>
+                    </select>
+                  </label>
+                  <label class="field"><span data-i18n="dev.ewelink_devicekey">devicekey (LAN)</span>
+                    <span class="pw-wrap">
+                      <input type="password" id="dev-ewelink-devicekey" placeholder="uuid from cloud" autocomplete="off" />
+                      <button type="button" class="pw-eye" data-pw-for="dev-ewelink-devicekey" title="Show" aria-label="Show">👁</button>
+                    </span>
+                  </label>
+                  <label class="field"><span data-i18n="dev.ewelink_outlet">Outlet #</span>
+                    <input type="number" id="dev-ewelink-outlet" value="0" min="0" max="7" />
+                  </label>
+                </div>
+                <div class="row" style="grid-template-columns:1fr 1fr 120px 1fr;gap:12px;margin-top:10px">
+                  <label class="field"><span data-i18n="dev.ewelink_email">eWeLink email</span>
+                    <input type="text" id="dev-ewelink-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                  </label>
+                  <label class="field"><span data-i18n="dev.ewelink_password">eWeLink password</span>
+                    <span class="pw-wrap">
+                      <input type="password" id="dev-ewelink-password" placeholder="••••" autocomplete="off" />
+                      <button type="button" class="pw-eye" data-pw-for="dev-ewelink-password" title="Show" aria-label="Show">👁</button>
+                    </span>
+                  </label>
+                  <label class="field"><span data-i18n="dev.ewelink_country">Country</span>
+                    <input type="text" id="dev-ewelink-country" value="+7" placeholder="+7" />
+                  </label>
+                  <label class="field" style="justify-content:flex-end">
+                    <span>&nbsp;</span>
+                    <button type="button" class="btn ghost" id="dev-ewelink-cloud-btn" style="width:100%"
+                            data-i18n="dev.ewelink_cloud">
+                      Cloud → devicekey
+                    </button>
+                  </label>
+                </div>
+                <select id="dev-ewelink-pick" style="display:none;width:100%;margin-top:8px" size="4"></select>
+                <p id="dev-ewelink-status" style="font-size:0.75rem;color:var(--dim);margin:8px 0 0"
+                   data-i18n="filt.ewelink_note">
+                  LAN encrypt needs devicekey (from eWeLink cloud). DIY mode works without key.
+                  Power meters (S60/POW): current · voltage · W via LAN.
+                </p>
               </div>
 
               <!-- Webhook -->
@@ -8832,69 +9044,9 @@
               </label>
             </div>
             <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="mp-disc-status">—</p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="mp.discovered_title">Discovered</h2>
-              <div class="sub" data-i18n="mp.discovered_sub">Found on LAN · not yet in system</div>
-            </div>
-            <button class="btn" type="button" id="btn-mp-disc-refresh" data-i18n="btn.refresh">Refresh</button>
-          </div>
-          <div class="card-b" style="padding-top:8px;overflow:auto">
-            <table class="err-table" id="mp-discovered-table">
-              <thead>
-                <tr>
-                  <th>IP</th>
-                  <th data-i18n="mp.vendor">Vendor</th>
-                  <th data-i18n="mp.type">Type</th>
-                  <th>MAC</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="mp-discovered-body">
-                <tr><td colspan="5" style="color:var(--muted)">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="mp.managed_title">In system (managed)</h2>
-              <div class="sub" data-i18n="mp.managed_sub">Imported · polling candidates · one active</div>
-            </div>
-            <div class="btn-row" style="gap:8px">
-              <button class="btn" type="button" id="btn-mp-add-manual" data-i18n="mp.add_manual">Add by IP</button>
-              <button class="btn" type="button" id="btn-mp-managed-refresh" data-i18n="btn.refresh">Refresh</button>
-            </div>
-          </div>
-          <div class="card-b" style="padding-top:8px;overflow:auto">
-            <table class="err-table" id="mp-managed-table">
-              <thead>
-                <tr>
-                  <th data-i18n="mp.col.id">ID</th>
-                  <th>IP</th>
-                  <th data-i18n="mp.col.alias">Alias</th>
-                  <th data-i18n="mp.col.name">Name</th>
-                  <th data-i18n="mp.col.cell">Cell</th>
-                  <th data-i18n="mp.vendor">Vendor</th>
-                  <th data-i18n="mp.col.model">Model</th>
-                  <th data-i18n="mp.col.model_code">Code</th>
-                  <th data-i18n="mp.col.cooling">Cooling</th>
-                  <th data-i18n="mp.col.serial">Serial</th>
-                  <th data-i18n="mp.col.inventory">Inv #</th>
-                  <th>Role</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="mp-managed-body">
-                <tr><td colspan="13" style="color:var(--muted)">—</td></tr>
-              </tbody>
-            </table>
+            <p style="font-size:0.75rem;color:var(--muted);margin:10px 0 0;line-height:1.45" data-i18n="mp.lists_moved">
+              Discovered / managed lists live under <strong>Miners</strong> (Managed · Unmanaged).
+            </p>
           </div>
         </div>
       </div>
@@ -8923,7 +9075,7 @@
             </label>
             <label class="field"><span data-i18n="mp.vendor">Vendor</span>
               <div class="mp-edit-vendor-row">
-                <img class="mp-vendor-logo" id="mp-edit-vendor-logo" alt="" src="icons/vendors/whatsminer.png" />
+                <img class="mp-vendor-logo" id="mp-edit-vendor-logo" alt="" src="/icons/vendors/whatsminer.png" />
                 <select id="mp-edit-vendor"></select>
               </div>
             </label>
@@ -9512,10 +9664,17 @@
                 <div class="hint" id="info-ram-hint">available —</div>
               </div>
               <div class="metric">
+                <label>Swap</label>
+                <div class="val" style="font-size:1.05rem" id="info-swap">—</div>
+                <div class="hint" id="info-swap-hint">USB / zram —</div>
+              </div>
+              <div class="metric">
                 <label>Host uptime</label>
                 <div class="val" style="font-size:1.05rem" id="info-uptime">—</div>
                 <div class="hint">router / OS</div>
               </div>
+            </div>
+            <div class="grid-3" style="margin-top:10px">
               <div class="metric">
                 <label>history.db</label>
                 <div class="val" style="font-size:1.05rem" id="info-db-size">—</div>
@@ -9890,8 +10049,10 @@
         "fleet.col.hash": "Hashrate",
         "fleet.col.power": "Power",
         "fleet.col.eff": "J/TH",
+        "fleet.col.power_eff": "Power · J/TH",
         "fleet.col.temp": "Temp",
         "fleet.col.fan": "Fan",
+        "fleet.col.boards_fans": "Boards · Fans",
         "fleet.col.mode": "Mode",
         "fleet.col.elapsed": "Elapsed",
         "fleet.col.pool": "Pool",
@@ -9908,6 +10069,12 @@
         "fleet.remove": "Remove",
         "fleet.remove_confirm": "Remove miner from inventory?",
         "fleet.empty": "No miners in inventory — import under Settings → Miner-poller",
+        "fleet.pager.rows": "Rows per page",
+        "fleet.pager.range": "{from}–{to} of {total}",
+        "fleet.tip.hash_title": "Hashrate by board",
+        "fleet.tip.hash_board": "Board {n}",
+        "fleet.tip.hash_total": "Total",
+        "fleet.tip.hash_none": "No per-board hashrate (standby / not polled)",
         "field.preset_color": "Color",
         "sched.legend_html": "grey = inactive · solid = mode profile · hatched = map preset · outline = now",
         "tab.periph": "Peripherals",
@@ -10019,6 +10186,7 @@
         "mp.discovered_sub": "Found on LAN · not yet in system",
         "mp.managed_title": "In system (managed)",
         "mp.managed_sub": "Imported · polling candidates · one active",
+        "mp.lists_moved": "Discovered / managed lists live under Miners (Managed · Unmanaged).",
         "mp.col.id": "ID",
         "mp.col.alias": "Alias",
         "mp.col.name": "Name",
@@ -10675,7 +10843,16 @@
         "filt.device_ip": "Device IP",
         "filt.device_id": "deviceid (DIY)",
         "filt.port_diy": "Port DIY",
-        "filt.ewelink_note": "Sonoff in <strong>DIY mode</strong> (LAN) required. eWeLink cloud without DIY — use Webhook / HA.",
+        "filt.ewelink_note": "LAN encrypt (devicekey from cloud) or DIY mode. Power meters: W · V · A over LAN.",
+        "dev.ewelink_mode": "Mode",
+        "dev.ewelink_devicekey": "devicekey (LAN)",
+        "dev.ewelink_outlet": "Outlet #",
+        "dev.ewelink_email": "eWeLink email",
+        "dev.ewelink_password": "eWeLink password",
+        "dev.ewelink_country": "Country",
+        "dev.ewelink_cloud": "Cloud → devicekey",
+        "dev.ewelink_ready": "devicekey: saved · LAN encrypt ready",
+        "dev.ewelink_need_key": "devicekey optional for DIY · Cloud → key for LAN encrypt / power meters",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
         "filt.method": "Method",
@@ -10698,7 +10875,7 @@
         "filt.btn_off": "Turn pump OFF",
         "filt.off_hint": "Without “Allow OFF while mining” — Off is blocked during Resume. With option + Auto ON — policy may turn the pump back on.",
         "filt.hint_tapo": "LAN · Tapo account email/password · P100/P110 IP",
-        "filt.hint_ewelink": "LAN DIY mode · IP + deviceid (eWeLink cloud — Webhook/HA)",
+        "filt.hint_ewelink": "LAN DIY or encrypt · IP + deviceid · cloud → devicekey · power W/V/A",
         "filt.hint_webhook": "URL on/off · IFTTT, n8n, Node-RED, eWeLink scene, …",
         "filt.hint_shelly": "LAN HTTP · Gen1 /relay or Gen2 /rpc",
         "filt.hint_ha": "REST · long-lived token · switch.entity",
@@ -10824,8 +11001,10 @@
         "fleet.col.hash": "Хешрейт",
         "fleet.col.power": "Мощность",
         "fleet.col.eff": "J/TH",
+        "fleet.col.power_eff": "Вт · J/TH",
         "fleet.col.temp": "Темп.",
         "fleet.col.fan": "Вент.",
+        "fleet.col.boards_fans": "Платы · Вент.",
         "fleet.col.mode": "Режим",
         "fleet.col.elapsed": "Uptime",
         "fleet.col.pool": "Пул",
@@ -10842,6 +11021,12 @@
         "fleet.remove": "Удалить",
         "fleet.remove_confirm": "Удалить майнер из inventory?",
         "fleet.empty": "Нет майнеров — импорт: Настройки → Miner-poller",
+        "fleet.pager.rows": "Строк на странице",
+        "fleet.pager.range": "{from}–{to} из {total}",
+        "fleet.tip.hash_title": "Хешрейт по платам",
+        "fleet.tip.hash_board": "Плата {n}",
+        "fleet.tip.hash_total": "Итого",
+        "fleet.tip.hash_none": "Нет хешрейта по платам (standby / не опрашивается)",
         "field.preset_color": "Цвет",
         "sched.legend_html": "серый = inactive · сплошной = профиль режима · штрих = пресет карты · контур = сейчас",
         "tab.periph": "Периферия",
@@ -10953,6 +11138,7 @@
         "mp.discovered_sub": "В LAN · ещё не в системе",
         "mp.managed_title": "В системе (managed)",
         "mp.managed_sub": "Импортированные · кандидаты на опрос · один active",
+        "mp.lists_moved": "Списки «Найденные» / «В системе» — во вкладке Miners (В системе · Не в системе).",
         "mp.col.id": "ID",
         "mp.col.alias": "Alias",
         "mp.col.name": "Имя",
@@ -11609,7 +11795,16 @@
         "filt.device_ip": "IP устройства",
         "filt.device_id": "deviceid (DIY)",
         "filt.port_diy": "Порт DIY",
-        "filt.ewelink_note": "Нужен Sonoff в <strong>DIY mode</strong> (LAN). eWeLink cloud без DIY — Webhook / HA.",
+        "filt.ewelink_note": "LAN encrypt (devicekey из облака) или DIY mode. Измерения: Вт · В · А по LAN.",
+        "dev.ewelink_mode": "Режим",
+        "dev.ewelink_devicekey": "devicekey (LAN)",
+        "dev.ewelink_outlet": "Канал #",
+        "dev.ewelink_email": "eWeLink email",
+        "dev.ewelink_password": "eWeLink пароль",
+        "dev.ewelink_country": "Страна",
+        "dev.ewelink_cloud": "Облако → devicekey",
+        "dev.ewelink_ready": "devicekey: сохранён · LAN encrypt готов",
+        "dev.ewelink_need_key": "devicekey не обязателен для DIY · Облако → ключ для LAN encrypt / мощности",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
         "filt.method": "Метод",
@@ -11632,7 +11827,7 @@
         "filt.btn_off": "Выключить насос",
         "filt.off_hint": "Без «Разрешить OFF при майнинге» — Off при Resume заблокирован. С опцией + Auto ON policy может снова включить насос.",
         "filt.hint_tapo": "LAN · email/пароль аккаунта Tapo · IP P100/P110",
-        "filt.hint_ewelink": "LAN DIY · IP + deviceid (облако eWeLink — Webhook/HA)",
+        "filt.hint_ewelink": "LAN DIY или encrypt · IP + deviceid · облако → devicekey · мощность Вт/В/А",
         "filt.hint_webhook": "URL on/off · IFTTT, n8n, Node-RED, сцена eWeLink, …",
         "filt.hint_shelly": "LAN HTTP · Gen1 /relay или Gen2 /rpc",
         "filt.hint_ha": "REST · long-lived token · switch.entity",
@@ -12314,13 +12509,30 @@
       }
 
       function show(el) {
+        // Static catalog: data-tip-key → TIPS[key]
+        // Dynamic: data-tip-title / data-tip-body (e.g. fleet hashrate by board)
         const key = el.getAttribute("data-tip-key");
-        const tip = TIPS[key];
-        if (!tip) return;
+        const dynTitle = el.getAttribute("data-tip-title");
+        const dynBody = el.getAttribute("data-tip-body");
+        let title = "";
+        let body = "";
+        if (dynTitle != null || dynBody != null) {
+          const tip = key && TIPS[key] ? TIPS[key] : null;
+          title = (dynTitle != null && dynTitle !== "" ? dynTitle : null) ||
+            (tip && tip.title) ||
+            "";
+          body = dynBody != null ? dynBody : (tip && tip.body) || "";
+          if (!title && !body) return;
+        } else {
+          const tip = key ? TIPS[key] : null;
+          if (!tip) return;
+          title = tip.title;
+          body = tip.body;
+        }
         clearTimeout(hideT);
         active = el;
-        titleEl.textContent = tip.title;
-        bodyEl.textContent = tip.body;
+        titleEl.textContent = title;
+        bodyEl.textContent = body;
         bubble.hidden = false;
         // layout then place
         requestAnimationFrame(() => {
@@ -12339,23 +12551,30 @@
         active = null;
       }
 
+      function tipTarget(from) {
+        if (!from || !from.closest) return null;
+        return (
+          from.closest("[data-tip-body]") ||
+          from.closest("[data-tip-key]")
+        );
+      }
       document.addEventListener("mouseover", (e) => {
-        const el = e.target.closest("[data-tip-key]");
+        const el = tipTarget(e.target);
         if (el) show(el);
       });
       document.addEventListener("mouseout", (e) => {
-        const el = e.target.closest("[data-tip-key]");
+        const el = tipTarget(e.target);
         if (!el) return;
         const to = e.relatedTarget;
         if (to && (el.contains(to) || bubble.contains(to))) return;
         hide();
       });
       document.addEventListener("focusin", (e) => {
-        const el = e.target.closest("[data-tip-key]");
+        const el = tipTarget(e.target);
         if (el) show(el);
       });
       document.addEventListener("focusout", (e) => {
-        const el = e.target.closest("[data-tip-key]");
+        const el = tipTarget(e.target);
         if (el) hide();
       });
       window.addEventListener("scroll", () => { if (active) place(active); }, true);
@@ -12499,6 +12718,20 @@
         }
       });
     }
+
+    /* —— fleet / inventory caches (must be before initTabRoute) ——
+       initTabRoute → activateTab(miners) → refreshFleetTable reads these;
+       if declared later, TDZ: "can't access lexical declaration before initialization". */
+    let managedMinersCache = [];
+    let minerVendorsCache = { vendors: [] };
+    let heatPoolsCache = { pools: [], active_id: null };
+    let selectedHeatPoolId = null;
+    let minerModelsCache = { families: [], manufacturers: [] };
+    let fleetCache = { miners: [], summary: {} };
+    let fleetTimer = null;
+    let fleetPage = 1;
+    let fleetPageSize = 10;
+    let unmanagedCache = { miners: [], updated_ts: null };
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
     /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings,
@@ -13166,15 +13399,14 @@
       });
     });
     document.getElementById("btn-miners-goto-managed")?.addEventListener("click", () => {
+      // Inventory lists live under Miners (not Settings → Miner-poller)
       activateTab("miner-poller");
-      setTimeout(() => {
-        document.getElementById("mp-managed-table")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 200);
     });
     document.getElementById("btn-fleet-refresh")?.addEventListener("click", () => {
       if (typeof refreshFleetTable === "function") void refreshFleetTable({ manual: true });
     });
     document.getElementById("fleet-filter")?.addEventListener("input", () => {
+      fleetPage = 1;
       if (typeof renderFleetTable === "function") renderFleetTable();
     });
     document.querySelectorAll("#fleet-status-bar [data-fleet-f]").forEach((btn) => {
@@ -13183,41 +13415,102 @@
           .querySelectorAll("#fleet-status-bar [data-fleet-f]")
           .forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
+        fleetPage = 1;
         if (typeof renderFleetTable === "function") renderFleetTable();
       });
+    });
+    document.getElementById("fleet-page-size")?.addEventListener("change", (ev) => {
+      const n = parseInt(ev.target.value, 10);
+      fleetPageSize = Number.isFinite(n) && n > 0 ? n : 10;
+      fleetPage = 1;
+      if (typeof renderFleetTable === "function") renderFleetTable();
+    });
+    document.getElementById("fleet-pager-pages")?.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-fleet-page]");
+      if (!btn || btn.disabled) return;
+      const raw = btn.getAttribute("data-fleet-page");
+      const total = (fleetCache.miners || []).length; // will recompute in render
+      if (raw === "prev") fleetPage = Math.max(1, fleetPage - 1);
+      else if (raw === "next") fleetPage = fleetPage + 1;
+      else {
+        const p = parseInt(raw, 10);
+        if (Number.isFinite(p)) fleetPage = p;
+      }
+      if (typeof renderFleetTable === "function") renderFleetTable();
     });
     document.getElementById("btn-unmanaged-refresh")?.addEventListener("click", () => {
       if (typeof refreshUnmanagedTable === "function") void refreshUnmanagedTable({ manual: true });
     });
     document.getElementById("btn-unmanaged-scan")?.addEventListener("click", async () => {
-      // Prefer the same handler as Settings → Miner-poller scan
-      const mpScan = document.getElementById("btn-mp-scan");
-      if (mpScan) {
-        mpScan.click();
-        // poll discovered list while scan runs
-        let n = 0;
-        const tick = setInterval(() => {
-          n += 1;
-          if (typeof refreshUnmanagedTable === "function") void refreshUnmanagedTable();
-          if (n >= 30) clearInterval(tick);
-        }, 2000);
-        return;
-      }
+      const btn = document.getElementById("btn-unmanaged-scan");
+      const sumTs = document.getElementById("unmanaged-sum-ts");
+      if (btn) btn.disabled = true;
       try {
+        // Do NOT save Settings form here — empty ranges textarea would wipe config.
+        // Empty body → server uses saved ranges, then managed/active /24s.
+        if (sumTs) sumTs.textContent = "scan…";
         const res = await fetch("/api/miner/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
         });
         const body = await res.json();
-        if (body.error) throw new Error(body.error);
-        if (typeof toastSuccess === "function") toastSuccess("Scan started");
+        if (!res.ok || body.ok === false) throw new Error(body.error || "scan fail");
+        const scanId = body.id || "";
+        const usedRanges = body.ranges || [];
+        if (typeof toastSuccess === "function") {
+          toastSuccess(
+            "Scan started" +
+              (usedRanges.length ? " · " + usedRanges.join(", ") : "")
+          );
+        }
+        if (sumTs) {
+          sumTs.textContent =
+            "scanning" +
+            (usedRanges.length ? " · " + usedRanges.join(", ") : "") +
+            "…";
+        }
+        let sawRunning = false;
+        const maxIter = 180; // /24 × multi-subnet can take a while
+        for (let i = 0; i < maxIter; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          let status = {};
+          let result = {};
+          try {
+            const sres = await fetch("/api/miner/scan", { cache: "no-store" });
+            const sj = await sres.json();
+            status = sj.status || {};
+            result = sj.last_result || {};
+          } catch (_) { /* ignore */ }
+          const running = !!status.running;
+          if (running) sawRunning = true;
+          if (sumTs) {
+            sumTs.textContent = running
+              ? "scanning… " +
+                (status.phase || "") +
+                (status.found != null ? " found " + status.found : "")
+              : result.id === scanId
+                ? "done · found " + (result.found ?? "—") +
+                  (result.probed != null ? " · probed " + result.probed : "")
+                : sawRunning
+                  ? "finishing…"
+                  : "waiting for poller…";
+          }
+          if (i % 4 === 0 && typeof refreshUnmanagedTable === "function") {
+            void refreshUnmanagedTable();
+          }
+          if (!running && result.id === scanId) break;
+          if (!running && sawRunning && i > 2) break;
+        }
+        if (typeof refreshUnmanagedTable === "function") {
+          await refreshUnmanagedTable({ manual: true });
+        }
       } catch (e) {
+        if (sumTs) sumTs.textContent = "error";
         if (typeof toastError === "function") toastError(e.message || String(e));
+      } finally {
+        if (btn) btn.disabled = false;
       }
-      setTimeout(() => {
-        if (typeof refreshUnmanagedTable === "function") void refreshUnmanagedTable({ manual: true });
-      }, 3000);
     });
     document.getElementById("unmanaged-filter")?.addEventListener("input", () => {
       if (typeof renderUnmanagedTable === "function") renderUnmanagedTable();
@@ -23056,7 +23349,7 @@
           interval_sec: Number(document.getElementById("mp-disc-interval")?.value) || 600,
           probe_timeout_ms: Number(document.getElementById("mp-disc-timeout")?.value) || 500,
           concurrency: Number(document.getElementById("mp-disc-conc")?.value) || 48,
-          ports: [4028, 80, 4433],
+          ports: [4028, 80, 4433, 6060],
           passwords: ["admin"],
           ignore_ips: [],
         },
@@ -23070,6 +23363,19 @@
 
     async function saveMinerPollerCfgPartial() {
       const cfg = collectMinerPollerCfgFromUI();
+      // Preserve server-side ranges when the textarea is empty (placeholder =
+      // "auto LAN of managed miners") so Scan / Save from another tab does
+      // not wipe configured CIDRs.
+      if (!cfg.discovery.ranges.length) {
+        try {
+          const cur = await fetch("/api/miner/poller", { cache: "no-store" });
+          const cj = await cur.json();
+          const prev = (cj.config || cj || {}).discovery || {};
+          if (Array.isArray(prev.ranges) && prev.ranges.length) {
+            cfg.discovery.ranges = prev.ranges.slice();
+          }
+        } catch (_) { /* ignore */ }
+      }
       const res = await fetch("/api/miner/poller", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -23130,14 +23436,7 @@
       }
     }
 
-    let managedMinersCache = [];
-    let minerVendorsCache = { vendors: [] };
-    let heatPoolsCache = { pools: [], active_id: null };
-    let selectedHeatPoolId = null;
-    let minerModelsCache = { families: [], manufacturers: [] };
-    let fleetCache = { miners: [], summary: {} };
-    let fleetTimer = null;
-    let unmanagedCache = { miners: [], updated_ts: null };
+    // managedMinersCache / minerVendorsCache / fleetCache / … declared above tabs
 
     function fleetT(key, fallback) {
       return typeof t === "function" ? t(key, fallback) : fallback;
@@ -23334,9 +23633,21 @@
       return m + "m";
     }
 
-    function formatTh(v) {
+    function formatTh(v, unitHint) {
+      /* Accept TH/s number, or auto-scale tiny values (ETH MH/s as 1e-6 TH). */
       const n = Number(v);
       if (!Number.isFinite(n)) return "—";
+      const hint = String(unitHint || "").toUpperCase();
+      if (hint.indexOf("MH") >= 0 || (n > 0 && n < 0.01)) {
+        const mhs = n < 0.01 ? n * 1e6 : n; /* TH→MH when tiny */
+        if (mhs >= 100) return mhs.toFixed(1) + " MH/s";
+        if (mhs >= 10) return mhs.toFixed(2) + " MH/s";
+        return mhs.toFixed(2) + " MH/s";
+      }
+      if (hint.indexOf("GH") >= 0 || (n >= 0.01 && n < 1)) {
+        const ghs = n < 1 ? n * 1e3 : n;
+        return ghs.toFixed(2) + " GH/s";
+      }
       if (n >= 100) return n.toFixed(1) + " TH/s";
       if (n >= 10) return n.toFixed(2) + " TH/s";
       return n.toFixed(3) + " TH/s";
@@ -23396,7 +23707,7 @@
       } catch (e) {
         if (tbody) {
           tbody.innerHTML =
-            '<tr><td colspan="13" style="color:var(--warn)">error: ' +
+            '<tr><td colspan="12" style="color:var(--warn)">error: ' +
             escapeLogHtml(e.message || String(e)) +
             "</td></tr>";
         }
@@ -23471,6 +23782,72 @@
       menu.style.top = top + "px";
     }
 
+    function updateFleetPager(total) {
+      const bar = document.getElementById("fleet-pager");
+      const rangeEl = document.getElementById("fleet-pager-range");
+      const pagesEl = document.getElementById("fleet-pager-pages");
+      const sizeSel = document.getElementById("fleet-page-size");
+      if (!bar || !rangeEl || !pagesEl) return;
+      const size = Math.max(1, Number(fleetPageSize) || 10);
+      fleetPageSize = size;
+      if (sizeSel && String(sizeSel.value) !== String(size)) sizeSel.value = String(size);
+      const pages = Math.max(1, Math.ceil(total / size) || 1);
+      if (fleetPage > pages) fleetPage = pages;
+      if (fleetPage < 1) fleetPage = 1;
+      if (total <= 0) {
+        bar.hidden = true;
+        rangeEl.textContent = "—";
+        pagesEl.innerHTML = "";
+        return;
+      }
+      bar.hidden = false;
+      const from = (fleetPage - 1) * size + 1;
+      const to = Math.min(total, fleetPage * size);
+      const tpl = fleetT("fleet.pager.range", "{from}–{to} of {total}");
+      rangeEl.textContent = tpl
+        .replace("{from}", String(from))
+        .replace("{to}", String(to))
+        .replace("{total}", String(total));
+      // page buttons: prev + window + next
+      const btns = [];
+      btns.push(
+        '<button type="button" data-fleet-page="prev" aria-label="Previous"' +
+          (fleetPage <= 1 ? " disabled" : "") +
+          ">‹</button>"
+      );
+      const windowSize = 5;
+      let start = Math.max(1, fleetPage - Math.floor(windowSize / 2));
+      let end = Math.min(pages, start + windowSize - 1);
+      start = Math.max(1, end - windowSize + 1);
+      if (start > 1) {
+        btns.push('<button type="button" data-fleet-page="1">1</button>');
+        if (start > 2) btns.push('<span class="fleet-pager-range">…</span>');
+      }
+      for (let p = start; p <= end; p++) {
+        btns.push(
+          '<button type="button" data-fleet-page="' +
+            p +
+            '"' +
+            (p === fleetPage ? ' class="active"' : "") +
+            ">" +
+            p +
+            "</button>"
+        );
+      }
+      if (end < pages) {
+        if (end < pages - 1) btns.push('<span class="fleet-pager-range">…</span>');
+        btns.push(
+          '<button type="button" data-fleet-page="' + pages + '">' + pages + "</button>"
+        );
+      }
+      btns.push(
+        '<button type="button" data-fleet-page="next" aria-label="Next"' +
+          (fleetPage >= pages ? " disabled" : "") +
+          ">›</button>"
+      );
+      pagesEl.innerHTML = btns.join("");
+    }
+
     function renderFleetTable() {
       const tbody = document.getElementById("fleet-body");
       if (!tbody) return;
@@ -23484,9 +23861,9 @@
         "fleet-sum-th",
         "<b>" +
           (sum.hashrate_th != null && sum.hashrate_th > 0
-            ? Number(sum.hashrate_th).toFixed(1)
+            ? formatTh(sum.hashrate_th)
             : "—") +
-          "</b> TH/s"
+          "</b>"
       );
       setSum(
         "fleet-sum-w",
@@ -23555,9 +23932,18 @@
         });
       }
 
+      // pagination over filtered rows
+      const totalFiltered = rows.length;
+      const size = Math.max(1, Number(fleetPageSize) || 10);
+      fleetPageSize = size;
+      const pages = Math.max(1, Math.ceil(totalFiltered / size) || 1);
+      if (fleetPage > pages) fleetPage = pages;
+      if (fleetPage < 1) fleetPage = 1;
+      updateFleetPager(totalFiltered);
+
       if (!rows.length) {
         tbody.innerHTML =
-          '<tr><td colspan="13" style="color:var(--muted)">' +
+          '<tr><td colspan="12" style="color:var(--muted)">' +
           escapeLogHtml(
             miners.length
               ? "—"
@@ -23570,134 +23956,288 @@
         return;
       }
 
-      tbody.innerHTML = rows
-        .map((m) => {
-          const id = m.id || "";
-          const live = m.live || null;
-          const st = fleetStatusOf(m);
-          // Cell title: cell location or alias/name; IP below
-          const cellTitle =
-            (m.cell && String(m.cell).trim()) ||
-            m.alias ||
-            m.name ||
-            m.vendor_name ||
-            "—";
-          const ipLine =
-            (m.host || "—") +
-            (m.port && Number(m.port) !== 4028 ? ":" + m.port : "");
-          const name = m.alias || m.name || "—";
-          const model = m.model || m.model_code || "—";
-          const modelSub =
-            m.model_code && m.model && m.model !== m.model_code
-              ? m.model_code
-              : m.cooling_name || "";
-          const hr = live ? formatTh(live.hashrate_th) : "—";
-          const pw = live ? formatWatts(live.power) : "—";
-          const eff =
-            live && live.efficiency_jth != null
-              ? Number(live.efficiency_jth).toFixed(1)
-              : "—";
-          const temp = live
-            ? formatTemp(live.temp ?? live.liquid ?? live.chip_avg)
-            : "—";
-          const fan = live && live.fan != null ? live.fan : "—";
-          const mode = live && live.work ? String(live.work) : "—";
-          const elapsed = live ? formatElapsedSec(live.elapsed) : "—";
-          let poolHtml = '<span class="fleet-muted">—</span>';
-          if (live && live.pool_url) {
-            const ok = live.pool_ok;
-            const dot =
-              ok === true
-                ? "#34d399"
-                : ok === false
-                  ? "#f87171"
-                  : "var(--dim)";
-            poolHtml =
-              '<span title="' +
-              escapeLogHtml(live.pool_url) +
-              '"><span style="color:' +
-              dot +
-              '">●</span> ' +
-              escapeLogHtml(shortPoolUrl(live.pool_url)) +
-              "</span>";
+      rows = rows.slice((fleetPage - 1) * size, fleetPage * size);
+
+      // In-place row patch: keep <img> nodes so vendor logos don't blink on poll
+      const byId = new Map();
+      tbody.querySelectorAll("tr[data-fleet-id]").forEach((tr) => {
+        byId.set(tr.getAttribute("data-fleet-id"), tr);
+      });
+      const keep = new Set();
+      const frag = document.createDocumentFragment();
+
+      rows.forEach((m) => {
+        const id = m.id || "";
+        const live = m.live || null;
+        const st = fleetStatusOf(m);
+        const cellTitle =
+          (m.cell && String(m.cell).trim()) ||
+          m.alias ||
+          m.name ||
+          m.vendor_name ||
+          "—";
+        const ipLine =
+          (m.host || "—") +
+          (m.port && Number(m.port) !== 4028 ? ":" + m.port : "");
+        const name = m.alias || m.name || "—";
+        // Prefer trade/display name from model profile (CK-BOX, V1 mini, …)
+        const model =
+          m.model_display ||
+          (live && live.model_display) ||
+          m.model ||
+          m.model_code ||
+          "—";
+        const modelSub = (() => {
+          const full =
+            m.model_display_full ||
+            (live && live.model_display_full) ||
+            "";
+          if (full && full !== model) return full;
+          if (m.model_code && m.model && m.model !== m.model_code)
+            return m.model_code;
+          return m.cooling_name || "";
+        })();
+        const hr = live
+          ? formatTh(live.hashrate_th, live.hashrate_unit)
+          : "—";
+        let pw = live ? formatWatts(live.power) : "—";
+        if (live && live.power_estimated && live.power != null) {
+          pw = formatWatts(live.power) + "≈";
+        }
+        const eff = (() => {
+          if (!live) return "—";
+          if (live.efficiency_value != null && live.efficiency_unit) {
+            const n = Number(live.efficiency_value);
+            if (!Number.isFinite(n)) return "—";
+            const u = String(live.efficiency_unit);
+            // J/GH often 0.205 — more decimals; J/TH one decimal
+            const dig = u.indexOf("GH") >= 0 || u.indexOf("MH") >= 0 ? 3 : 1;
+            return n.toFixed(dig) + " " + u;
           }
-          const vendorHtml =
-            typeof vendorCellHtml === "function"
-              ? vendorCellHtml(m)
-              : escapeLogHtml(m.vendor_name || m.vendor || "—");
-          const trClass =
-            (m.role === "active" ? "fleet-row-active " : "") +
-            (st === "offline" || st === "unknown" ? "fleet-row-offline" : "");
-          const roleLine =
-            m.role === "active"
-              ? '<span class="cell-role">★ active</span>'
-              : "";
-          // status only as left color strip (title for a11y)
-          return (
-            '<tr class="' +
-            trClass +
-            '" data-fleet-id="' +
-            escapeLogHtml(id) +
-            '">' +
-            '<td class="fleet-id-td st-' +
-            st +
-            '" title="' +
-            escapeLogHtml(fleetStatusLabel(st)) +
-            '"><div class="fleet-id-cell">' +
-            '<div class="fleet-id-meta">' +
-            '<span class="cell-name">' +
-            escapeLogHtml(cellTitle) +
-            "</span>" +
-            '<span class="cell-ip">' +
-            escapeLogHtml(ipLine) +
-            "</span>" +
-            roleLine +
-            "</div></div></td>" +
-            '<td><div class="fleet-name-cell"><span class="nm">' +
-            escapeLogHtml(name) +
-            "</span></div></td>" +
-            '<td><div class="fleet-model-cell"><span>' +
-            escapeLogHtml(model) +
-            "</span>" +
-            (modelSub
-              ? '<span class="sub">' + escapeLogHtml(modelSub) + "</span>"
-              : "") +
-            "</div></td>" +
-            '<td class="fleet-num">' +
-            escapeLogHtml(hr) +
-            "</td>" +
-            '<td class="fleet-num">' +
-            escapeLogHtml(pw) +
-            "</td>" +
-            '<td class="fleet-num">' +
-            escapeLogHtml(eff) +
-            "</td>" +
-            '<td class="fleet-num">' +
-            escapeLogHtml(temp) +
-            "</td>" +
-            '<td class="fleet-num">' +
-            escapeLogHtml(String(fan)) +
-            "</td>" +
-            "<td>" +
-            escapeLogHtml(mode) +
-            "</td>" +
-            '<td class="fleet-num">' +
-            escapeLogHtml(elapsed) +
-            "</td>" +
-            "<td>" +
-            poolHtml +
-            "</td>" +
-            "<td>" +
-            vendorHtml +
-            "</td>" +
+          if (live.efficiency_jth != null) {
+            return Number(live.efficiency_jth).toFixed(1) + " J/TH";
+          }
+          return "—";
+        })();
+        const temp = live
+          ? formatTemp(live.temp ?? live.liquid ?? live.chip_avg)
+          : "—";
+        // board hashrates (TH) · fan speeds (rpm)
+        let boardsLine = "—";
+        if (live && Array.isArray(live.boards_th) && live.boards_th.length) {
+          boardsLine = live.boards_th
+            .map((x) => {
+              const n = Number(x);
+              if (!Number.isFinite(n)) return "—";
+              return n >= 10 ? n.toFixed(1) : n.toFixed(2);
+            })
+            .join(" · ");
+        }
+        let fansLine = "—";
+        if (live) {
+          const fl =
+            Array.isArray(live.fans) && live.fans.length
+              ? live.fans
+              : live.fan != null
+                ? [live.fan]
+                : live.psu_fan != null
+                  ? [live.psu_fan]
+                  : [];
+          if (fl.length) {
+            fansLine = fl.map((x) => String(Math.round(Number(x) || 0))).join(" · ");
+            if (fl.length === 1 && live.psu_fan != null && !(live.fans || []).length) {
+              fansLine = fansLine + " rpm";
+            }
+          }
+        }
+        const mode = live && live.work ? String(live.work) : "—";
+        const elapsed = live ? formatElapsedSec(live.elapsed) : "—";
+        let poolTitle = "";
+        let poolText = "—";
+        let poolDot = "var(--dim)";
+        if (live && live.pool_url) {
+          poolTitle = live.pool_url;
+          poolText = shortPoolUrl(live.pool_url);
+          poolDot =
+            live.pool_ok === true
+              ? "#34d399"
+              : live.pool_ok === false
+                ? "#f87171"
+                : "var(--dim)";
+        }
+        const vendorName =
+          m.vendor_name ||
+          (typeof vendorDisplayName === "function"
+            ? vendorDisplayName(m.vendor || "")
+            : m.vendor || "—");
+        const logo =
+          typeof absAssetUrl === "function"
+            ? absAssetUrl(
+                m.vendor_logo ||
+                  (typeof vendorLogoSrc === "function"
+                    ? vendorLogoSrc(m.vendor || "")
+                    : "")
+              )
+            : m.vendor_logo || "";
+        const trClass =
+          (m.role === "active" ? "fleet-row-active " : "") +
+          (st === "offline" || st === "unknown" ? "fleet-row-offline" : "");
+        const roleHtml =
+          m.role === "active" ? '<span class="cell-role">★ active</span>' : "";
+
+        let tr = byId.get(id);
+        // rebuild if missing or old column layout (pre power·eff / boards·fans)
+        if (!tr || !tr.querySelector(".fleet-pw-eff") || !tr.querySelector(".fleet-boards-fans")) {
+          tr = document.createElement("tr");
+          tr.setAttribute("data-fleet-id", id);
+          tr.innerHTML =
+            '<td class="fleet-id-td"><div class="fleet-id-cell"><div class="fleet-id-meta">' +
+            '<span class="cell-name"></span><span class="cell-ip"></span>' +
+            '<span class="cell-role-slot"></span></div></div></td>' +
+            '<td><div class="fleet-name-cell"><span class="nm"></span></div></td>' +
+            '<td><div class="fleet-model-cell"><span class="md"></span><span class="sub" hidden></span></div></td>' +
+            '<td class="fleet-num fleet-hr"></td>' +
+            '<td><div class="fleet-stack-cell fleet-pw-eff">' +
+            '<span class="fleet-main fleet-pw"></span>' +
+            '<span class="fleet-sub fleet-eff"></span></div></td>' +
+            '<td class="fleet-num fleet-temp"></td>' +
+            '<td><div class="fleet-stack-cell fleet-boards-fans">' +
+            '<span class="fleet-boards"></span>' +
+            '<span class="fleet-sub fleet-fans"></span></div></td>' +
+            '<td class="fleet-mode"></td>' +
+            '<td class="fleet-num fleet-elapsed"></td>' +
+            '<td class="fleet-pool"><span class="fleet-muted">—</span></td>' +
+            '<td class="fleet-vendor"></td>' +
             '<td class="fleet-col-menu">' +
             '<button type="button" class="fleet-menu-btn" data-fleet-menu="' +
             escapeLogHtml(id) +
-            '" aria-label="Menu" title="Menu">⋮</button>' +
-            "</td></tr>"
-          );
-        })
-        .join("");
+            '" aria-label="Menu" title="Menu">⋮</button></td>';
+          const vtd = tr.querySelector(".fleet-vendor");
+          if (vtd && typeof vendorCellHtml === "function") {
+            vtd.innerHTML = vendorCellHtml(m);
+          }
+        }
+
+        tr.className = trClass.trim();
+        const idTd = tr.querySelector("td.fleet-id-td");
+        if (idTd) {
+          idTd.className = "fleet-id-td st-" + st;
+          idTd.title = fleetStatusLabel(st);
+        }
+        const setTxt = (sel, val) => {
+          const el = tr.querySelector(sel);
+          if (el && el.textContent !== String(val)) el.textContent = val;
+        };
+        setTxt(".cell-name", cellTitle);
+        setTxt(".cell-ip", ipLine);
+        const roleSlot = tr.querySelector(".cell-role-slot");
+        if (roleSlot && roleSlot.innerHTML !== roleHtml) roleSlot.innerHTML = roleHtml;
+        setTxt(".fleet-name-cell .nm", name);
+        setTxt(".fleet-model-cell .md", model);
+        const subEl = tr.querySelector(".fleet-model-cell .sub");
+        if (subEl) {
+          if (modelSub) {
+            subEl.hidden = false;
+            if (subEl.textContent !== modelSub) subEl.textContent = modelSub;
+          } else {
+            subEl.hidden = true;
+            subEl.textContent = "";
+          }
+        }
+        setTxt(".fleet-hr", hr);
+        // Standard tip-bubble: total hashrate → per-board breakdown
+        const hrEl = tr.querySelector(".fleet-hr");
+        if (hrEl) {
+          const tipTitle = fleetT("fleet.tip.hash_title", "Hashrate by board");
+          let tipBody = "";
+          if (live && Array.isArray(live.boards_th) && live.boards_th.length) {
+            const boardLbl = fleetT("fleet.tip.hash_board", "Board {n}");
+            const totalLbl = fleetT("fleet.tip.hash_total", "Total");
+            tipBody = live.boards_th
+              .map((x, i) => {
+                const n = Number(x);
+                const v = Number.isFinite(n)
+                  ? (n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " TH/s"
+                  : "—";
+                return boardLbl.replace("{n}", String(i)) + ": " + v;
+              })
+              .join("\n");
+            if (live.hashrate_th != null && Number.isFinite(Number(live.hashrate_th))) {
+              tipBody +=
+                "\n" +
+                totalLbl +
+                ": " +
+                Number(live.hashrate_th).toFixed(2) +
+                " TH/s";
+            }
+          } else {
+            tipBody = fleetT(
+              "fleet.tip.hash_none",
+              "No per-board hashrate (standby / not polled)"
+            );
+          }
+          hrEl.classList.add("tip");
+          hrEl.setAttribute("data-tip-key", "hashrate");
+          hrEl.setAttribute("data-tip-title", tipTitle);
+          hrEl.setAttribute("data-tip-body", tipBody);
+          hrEl.setAttribute("tabindex", "0");
+        }
+        setTxt(".fleet-pw", pw);
+        setTxt(".fleet-eff", eff);
+        setTxt(".fleet-temp", temp);
+        setTxt(".fleet-boards", boardsLine);
+        setTxt(".fleet-fans", fansLine);
+        setTxt(".fleet-mode", mode);
+        setTxt(".fleet-elapsed", elapsed);
+
+        const poolTd = tr.querySelector(".fleet-pool");
+        if (poolTd) {
+          if (poolTitle) {
+            const want =
+              '<span title="' +
+              escapeLogHtml(poolTitle) +
+              '"><span style="color:' +
+              poolDot +
+              '">●</span> ' +
+              escapeLogHtml(poolText) +
+              "</span>";
+            if (poolTd.innerHTML !== want) poolTd.innerHTML = want;
+          } else if (!poolTd.querySelector(".fleet-muted")) {
+            poolTd.innerHTML = '<span class="fleet-muted">—</span>';
+          }
+        }
+
+        const img = tr.querySelector(".mp-vendor-logo");
+        const nameSpan = tr.querySelector(".mp-vendor-cell > span:last-child");
+        const vcell = tr.querySelector(".mp-vendor-cell");
+        if (img) {
+          if (img.getAttribute("src") !== logo) {
+            img.style.visibility = "";
+            img.setAttribute("src", logo);
+          }
+        } else {
+          const vtd = tr.querySelector(".fleet-vendor");
+          if (vtd && typeof vendorCellHtml === "function") {
+            vtd.innerHTML = vendorCellHtml(m);
+          }
+        }
+        if (nameSpan && nameSpan.textContent !== vendorName) {
+          nameSpan.textContent = vendorName;
+        }
+        if (vcell) vcell.title = vendorName;
+
+        const menuBtn = tr.querySelector(".fleet-menu-btn");
+        if (menuBtn) menuBtn.setAttribute("data-fleet-menu", id);
+
+        keep.add(id);
+        frag.appendChild(tr);
+      });
+
+      byId.forEach((tr, id) => {
+        if (!keep.has(id)) tr.remove();
+      });
+      // reorder without destroying preserved nodes
+      tbody.replaceChildren(frag);
     }
 
     async function fleetDoAction(action, mid) {
@@ -23878,26 +24418,44 @@
       return s.charAt(0).toUpperCase() + s.slice(1);
     }
 
+    /**
+     * Root-absolute asset URL so logos work under nested SPA paths
+     * (/ru/miners/managed → relative icons/… would 404 / serve HTML).
+     */
+    function absAssetUrl(src) {
+      let s = String(src || "").trim();
+      if (!s) return s;
+      if (/^(https?:|data:|blob:)/i.test(s)) return s;
+      // strip leading ./ and ensure single leading /
+      s = s.replace(/^\.\//, "");
+      if (s.startsWith("/")) return s;
+      return "/" + s;
+    }
+
     function vendorLogoSrc(idOrName) {
       const v = vendorById(idOrName);
-      if (v && v.logo) return v.logo;
+      if (v && v.logo) return absAssetUrl(v.logo);
       const id = String((v && v.id) || idOrName || "unknown")
         .toLowerCase()
         .replace(/[^a-z0-9_]/g, "");
-      return "icons/vendors/" + (id || "unknown") + (id && id !== "unknown" ? ".png" : ".svg");
+      return absAssetUrl(
+        "icons/vendors/" +
+          (id || "unknown") +
+          (id && id !== "unknown" ? ".png" : ".svg")
+      );
     }
 
     function vendorCellHtml(m) {
       const id = m.vendor || "";
       const name = m.vendor_name || vendorDisplayName(id);
-      const logo = m.vendor_logo || vendorLogoSrc(id);
+      const logo = absAssetUrl(m.vendor_logo || vendorLogoSrc(id));
       return (
         '<span class="mp-vendor-cell" title="' +
         escapeLogHtml(name) +
         '">' +
         '<img class="mp-vendor-logo" src="' +
         escapeLogHtml(logo) +
-        '" alt="" onerror="this.style.visibility=\'hidden\'" />' +
+        '" alt="" decoding="async" loading="lazy" onerror="this.style.visibility=\'hidden\'" />' +
         "<span>" +
         escapeLogHtml(name) +
         "</span></span>"
@@ -23939,28 +24497,35 @@
               {
                 id: "antminer",
                 name: "Antminer",
-                logo: "icons/vendors/antminer.png",
+                logo: "/icons/vendors/antminer-invert.png",
                 default_port: 80,
                 order: 10,
               },
               {
                 id: "avalon",
                 name: "Avalon",
-                logo: "icons/vendors/avalon.png",
+                logo: "/icons/vendors/avalon.png",
                 default_port: 4028,
                 order: 20,
               },
               {
                 id: "goldshell",
                 name: "Goldshell",
-                logo: "icons/vendors/goldshell.png",
+                logo: "/icons/vendors/goldshell.png",
                 default_port: 80,
                 order: 30,
               },
               {
+                id: "ipollo",
+                name: "iPollo",
+                logo: "/icons/vendors/ipollo.png",
+                default_port: 80,
+                order: 40,
+              },
+              {
                 id: "whatsminer",
                 name: "Whatsminer",
-                logo: "icons/vendors/whatsminer.png",
+                logo: "/icons/vendors/whatsminer.png",
                 default_port: 4028,
                 order: 90,
               },
@@ -24092,7 +24657,8 @@
       const sel = document.getElementById("mp-edit-vendor");
       const img = document.getElementById("mp-edit-vendor-logo");
       if (!sel || !img) return;
-      img.src = vendorLogoSrc(sel.value);
+      const next = vendorLogoSrc(sel.value);
+      if (img.getAttribute("src") !== next) img.src = next;
       img.alt = vendorDisplayName(sel.value);
     }
 
@@ -24180,10 +24746,23 @@
           .join("");
       } catch (e) {
         tbody.innerHTML =
-          '<tr><td colspan="13" style="color:var(--warn)">error: ' +
+          '<tr><td colspan="12" style="color:var(--warn)">error: ' +
           escapeLogHtml(e.message) +
           "</td></tr>";
       }
+    }
+
+    /**
+     * Edit dialog lives in #view-settings markup; when Miners tab is active that
+     * section is display:none so a fixed overlay never appears. Reparent to body.
+     */
+    function ensureManagedEditPortal() {
+      const bd = document.getElementById("mp-edit-backdrop");
+      if (!bd) return null;
+      if (bd.parentElement !== document.body) {
+        document.body.appendChild(bd);
+      }
+      return bd;
     }
 
     function closeManagedEditDialog() {
@@ -24210,14 +24789,36 @@
         } catch (_) { /* ignore */ }
       }
       if (!m) {
+        // try fleet API if still missing
+        try {
+          const res = await fetch("/api/miners/fleet", { cache: "no-store" });
+          const body = await res.json();
+          const list = body.miners || [];
+          m = list.find((x) => x.id === mid) || null;
+          if (m && list.length) {
+            managedMinersCache = list.map((x) => {
+              const c = Object.assign({}, x);
+              delete c.live;
+              delete c.online;
+              return c;
+            });
+          }
+        } catch (_) { /* ignore */ }
+      }
+      if (!m) {
         toastError("Miner not found");
         return;
       }
       // strip fleet-only fields so form sees inventory shape
-      if (m.live) {
+      if (m.live || m.online !== undefined) {
         m = Object.assign({}, m);
         delete m.live;
         delete m.online;
+      }
+      if (!(minerVendorsCache.vendors || []).length) {
+        try {
+          await loadMinerVendors();
+        } catch (_) { /* ignore */ }
       }
       if (!(heatPoolsCache.pools || []).length) {
         try {
@@ -24266,7 +24867,7 @@
           (m.host || "—") +
           (m.source ? " · " + m.source : "");
       }
-      const bd = document.getElementById("mp-edit-backdrop");
+      const bd = ensureManagedEditPortal();
       if (bd) bd.hidden = false;
       document.getElementById("mp-edit-alias")?.focus();
     }
@@ -24311,7 +24912,16 @@
         toastSuccess(
           typeof t === "function" ? t("mp.edit_saved", "Miner saved") : "Miner saved"
         );
-        await refreshManagedTable();
+        if (typeof refreshManagedTable === "function") {
+          try {
+            await refreshManagedTable();
+          } catch (_) { /* ignore */ }
+        }
+        if (typeof refreshFleetTable === "function") {
+          try {
+            await refreshFleetTable();
+          } catch (_) { /* ignore */ }
+        }
         if (typeof loadMinerConfig === "function") {
           try {
             await loadMinerConfig();
@@ -24491,14 +25101,20 @@
       const btn = document.getElementById("btn-mp-scan");
       if (btn) btn.disabled = true;
       try {
-        // save ranges first so poller has them
-        await saveMinerPollerCfgPartial();
+        // Save only when ranges were typed; empty → server auto ranges
         const cfg = collectMinerPollerCfgFromUI();
+        if (cfg.discovery.ranges.length) {
+          await saveMinerPollerCfgPartial();
+        }
         if (st) st.textContent = "scan queued…";
         const res = await fetch("/api/miner/scan", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ranges: cfg.discovery.ranges }),
+          body: JSON.stringify(
+            cfg.discovery.ranges.length
+              ? { ranges: cfg.discovery.ranges }
+              : {}
+          ),
         });
         const body = await res.json();
         if (!res.ok || body.ok === false)
@@ -24720,6 +25336,10 @@
         }
       }
     });
+    // Portal edit dialog out of #view-settings early (so Miners tab can open it)
+    try {
+      ensureManagedEditPortal();
+    } catch (_) { /* ignore */ }
     document
       .getElementById("mp-edit-cancel")
       ?.addEventListener("click", () => closeManagedEditDialog());
@@ -26122,16 +26742,26 @@
       updateBrandDevices(r, m, ph.version);
       renderUpdateCheck(lastUpdateCheck, ph);
 
-      setTxt("info-router-model", r.model || r.device_tree_model || "—");
+      setTxt(
+        "info-router-model",
+        r.model || r.description || r.device || r.device_tree_model || "—"
+      );
       setTxt(
         "info-router-code",
-        (r.model_code ? r.model_code : "KN-—") +
+        (r.model_code ? r.model_code : r.hw_id ? r.hw_id : "KN-—") +
           (r.vendor ? " · " + r.vendor : "")
       );
-      setTxt("info-router-os", r.os_title || "—");
+      setTxt(
+        "info-router-os",
+        r.os_title || (r.kernel ? r.kernel : "—")
+      );
       setTxt(
         "info-router-release",
-        r.os_release ? "release " + r.os_release : "release —"
+        r.os_release
+          ? "release " + r.os_release
+          : r.kernel
+            ? r.kernel
+            : "release —"
       );
       setTxt(
         "info-router-host",
@@ -26139,7 +26769,11 @@
       );
       setTxt(
         "info-router-hw",
-        r.hw_version ? "hw " + r.hw_version : r.device_tree_model || "hw —"
+        r.hw_version
+          ? "hw " + r.hw_version
+          : r.hw_id
+            ? "id " + r.hw_id
+            : r.device_tree_model || "hw —"
       );
 
       // Model + Tagged: "M63_VK2A / 370.47 TH/s"
@@ -26408,6 +27042,47 @@
       } else if (!fromCache) {
         setTxt("info-ram", "—");
         setTxt("info-ram-hint", "available —");
+      }
+      // Swap: total + USB vs zram breakdown (Keenetic often has both)
+      if (mem.swap_total_b) {
+        setTxt(
+          "info-swap",
+          fmtBytes(mem.swap_used_b || 0) +
+            " / " +
+            fmtBytes(mem.swap_total_b) +
+            (mem.swap_used_pct != null ? " · " + mem.swap_used_pct + "%" : "")
+        );
+        const devs = Array.isArray(mem.swap_devices) ? mem.swap_devices : [];
+        if (devs.length) {
+          const bits = devs.map((d) => {
+            const kind =
+              d.kind === "usb"
+                ? "USB"
+                : d.kind === "zram"
+                  ? "zram"
+                  : d.kind || "swap";
+            const sz = fmtBytes(d.size_b);
+            const used = fmtBytes(d.used_b || 0);
+            const prio =
+              d.priority != null ? " p" + d.priority : "";
+            return kind + " " + used + "/" + sz + prio;
+          });
+          setTxt("info-swap-hint", bits.join(" · "));
+        } else if (mem.swap_usb) {
+          setTxt(
+            "info-swap-hint",
+            "USB " +
+              (mem.swap_usb_path || "") +
+              (mem.swap_usb_priority != null
+                ? " prio " + mem.swap_usb_priority
+                : "")
+          );
+        } else {
+          setTxt("info-swap-hint", "active");
+        }
+      } else if (!fromCache) {
+        setTxt("info-swap", "—");
+        setTxt("info-swap-hint", "no swap");
       }
       // Process RSS: serve / miner-poller / devices-poller
       (function paintProcesses() {
@@ -33543,6 +34218,44 @@
       document.getElementById("dev-ewelink-ip").value = d.backend === "ewelink" ? ip : ip;
       document.getElementById("dev-device-id").value = d.device_id || "";
       document.getElementById("dev-ewelink-port").value = d.ewelink_port != null ? d.ewelink_port : 8081;
+      const ewMode = document.getElementById("dev-ewelink-mode");
+      if (ewMode) {
+        const m = String(d.ewelink_mode || "auto").toLowerCase();
+        ewMode.value = m === "lan" || m === "diy" ? m : "auto";
+      }
+      const ewKey = document.getElementById("dev-ewelink-devicekey");
+      if (ewKey) {
+        ewKey.value = "";
+        ewKey.placeholder = d.ewelink_devicekey_set
+          ? "•••• (saved)"
+          : "uuid from cloud";
+      }
+      const ewOut = document.getElementById("dev-ewelink-outlet");
+      if (ewOut) ewOut.value = d.ewelink_outlet != null ? d.ewelink_outlet : 0;
+      const ewEmail = document.getElementById("dev-ewelink-email");
+      if (ewEmail) ewEmail.value = d.backend === "ewelink" ? d.email || "" : d.email || "";
+      const ewPw = document.getElementById("dev-ewelink-password");
+      if (ewPw) {
+        ewPw.value = "";
+        ewPw.placeholder =
+          d.backend === "ewelink" && d.password_set ? "•••• (saved)" : "••••";
+      }
+      const ewCc = document.getElementById("dev-ewelink-country");
+      if (ewCc) ewCc.value = d.ewelink_country || "+7";
+      const ewPick = document.getElementById("dev-ewelink-pick");
+      if (ewPick) {
+        ewPick.style.display = "none";
+        ewPick.innerHTML = "";
+      }
+      const ewStat = document.getElementById("dev-ewelink-status");
+      if (ewStat && d.backend === "ewelink") {
+        ewStat.textContent = d.ewelink_devicekey_set
+          ? t("dev.ewelink_ready", "devicekey: saved · LAN encrypt ready")
+          : t(
+              "dev.ewelink_need_key",
+              "devicekey optional for DIY · Cloud → key for LAN encrypt / power meters"
+            );
+      }
       document.getElementById("dev-wh-on").value = d.webhook_on_url || "";
       document.getElementById("dev-wh-off").value = d.webhook_off_url || "";
       document.getElementById("dev-wh-method").value = d.webhook_method === "POST" ? "POST" : "GET";
@@ -33751,6 +34464,10 @@
         email = (document.getElementById("dev-tuya-email")?.value || "").trim();
         password = document.getElementById("dev-tuya-password")?.value || "";
         device_id = (document.getElementById("dev-tuya-device-id")?.value || "").trim();
+      } else if (be === "ewelink") {
+        email = (document.getElementById("dev-ewelink-email")?.value || "").trim();
+        password = document.getElementById("dev-ewelink-password")?.value || "";
+        device_id = (document.getElementById("dev-device-id")?.value || "").trim();
       }
       const payload = {
         id: document.getElementById("device-id")?.value || undefined,
@@ -33771,6 +34488,10 @@
         password: password,
         device_id: device_id,
         ewelink_port: Number(document.getElementById("dev-ewelink-port")?.value) || 8081,
+        ewelink_mode: (document.getElementById("dev-ewelink-mode")?.value || "auto").trim(),
+        ewelink_devicekey: (document.getElementById("dev-ewelink-devicekey")?.value || "").trim(),
+        ewelink_outlet: Number(document.getElementById("dev-ewelink-outlet")?.value) || 0,
+        ewelink_country: (document.getElementById("dev-ewelink-country")?.value || "+7").trim(),
         webhook_on_url: (document.getElementById("dev-wh-on")?.value || "").trim(),
         webhook_off_url: (document.getElementById("dev-wh-off")?.value || "").trim(),
         webhook_method: document.getElementById("dev-wh-method")?.value || "GET",
@@ -33817,6 +34538,7 @@
       if (!payload.ha_token) delete payload.ha_token;
       if (!payload.tuya_local_key) delete payload.tuya_local_key;
       if (!payload.xiaomi_token) delete payload.xiaomi_token;
+      if (!payload.ewelink_devicekey) delete payload.ewelink_devicekey;
       return payload;
     }
 
@@ -34254,6 +34976,113 @@
     document
       .getElementById("btn-tuya-fetch-keys")
       ?.addEventListener("click", () => void tuyaFetchKeysFromEditor());
+
+    async function ewelinkFetchKeysFromEditor() {
+      const st = document.getElementById("dev-ewelink-status");
+      const email = (document.getElementById("dev-ewelink-email")?.value || "").trim();
+      let password = document.getElementById("dev-ewelink-password")?.value || "";
+      const country = (document.getElementById("dev-ewelink-country")?.value || "+7").trim();
+      const storeId = (document.getElementById("device-id")?.value || "").trim();
+      const wantDid = (document.getElementById("dev-device-id")?.value || "").trim();
+      const wantIp = (document.getElementById("dev-ewelink-ip")?.value || "").trim();
+      if (!email) {
+        toastWarn("eWeLink: email required");
+        return;
+      }
+      if (st) st.textContent = "logging in…";
+      try {
+        const res = await fetch("/api/devices/ewelink/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password: password || undefined,
+            country_code: country,
+            ewelink_country: country,
+            device_id: storeId || undefined,
+            ewelink_deviceid: wantDid || undefined,
+            target_deviceid: wantDid || undefined,
+            ip: wantIp || undefined,
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false) throw new Error(body.error || "HTTP " + res.status);
+        const list = body.devices || [];
+        if (st) {
+          st.textContent =
+            "OK · " +
+            list.length +
+            " devices" +
+            (body.region ? " · " + body.region : "") +
+            (body.bound_devicekey ? " · key saved" : "");
+        }
+        const pick = document.getElementById("dev-ewelink-pick");
+        if (pick) {
+          pick.innerHTML = "";
+          list.forEach((d) => {
+            const o = document.createElement("option");
+            o.value = d.deviceid || "";
+            o.textContent =
+              (d.name || d.deviceid || "?") +
+              (d.devicekey ? " · key✓" : " · no key") +
+              (d.productModel ? " · " + d.productModel : "") +
+              (d.ip ? " · " + d.ip : "") +
+              (d.online ? " · online" : "");
+            o.dataset.key = d.devicekey || "";
+            o.dataset.ip = d.ip || "";
+            pick.appendChild(o);
+          });
+          pick.style.display = list.length ? "block" : "none";
+          pick.onchange = () => {
+            const opt = pick.selectedOptions[0];
+            if (!opt) return;
+            const idEl = document.getElementById("dev-device-id");
+            const keyEl = document.getElementById("dev-ewelink-devicekey");
+            const ipEl = document.getElementById("dev-ewelink-ip");
+            if (idEl) idEl.value = opt.value;
+            if (keyEl && opt.dataset.key) keyEl.value = opt.dataset.key;
+            if (ipEl && opt.dataset.ip && !ipEl.value.trim()) ipEl.value = opt.dataset.ip;
+            const modeEl = document.getElementById("dev-ewelink-mode");
+            if (modeEl && opt.dataset.key) modeEl.value = "auto";
+            if (st) st.textContent = "selected · " + (opt.textContent || opt.value);
+          };
+        }
+        // prefer server match (by deviceid or IP), else single device, else current id
+        let auto = body.match || null;
+        if (!auto && list.length === 1) auto = list[0];
+        if (!auto && wantDid) auto = list.find((x) => x.deviceid === wantDid) || null;
+        if (auto) {
+          if (document.getElementById("dev-device-id") && auto.deviceid)
+            document.getElementById("dev-device-id").value = auto.deviceid;
+          if (auto.devicekey && document.getElementById("dev-ewelink-devicekey"))
+            document.getElementById("dev-ewelink-devicekey").value = auto.devicekey;
+          if (auto.ip && document.getElementById("dev-ewelink-ip")) {
+            const ipEl = document.getElementById("dev-ewelink-ip");
+            if (ipEl && !ipEl.value.trim()) ipEl.value = auto.ip;
+          }
+          if (pick && auto.deviceid) pick.value = auto.deviceid;
+          if (st)
+            st.textContent =
+              "OK · key loaded · " +
+              (auto.name || auto.deviceid || "") +
+              (auto.productModel ? " · " + auto.productModel : "");
+        }
+        toastSuccess(
+          "eWeLink: " +
+            list.length +
+            " devices" +
+            (auto && auto.devicekey ? " · key ready" : "")
+        );
+        if (typeof loadDevices === "function") void loadDevices();
+      } catch (e) {
+        if (st) st.textContent = "error: " + e.message;
+        toastError("eWeLink login: " + e.message);
+      }
+    }
+    document
+      .getElementById("dev-ewelink-cloud-btn")
+      ?.addEventListener("click", () => void ewelinkFetchKeysFromEditor());
+
     document.getElementById("btn-toggle-dev-mining")?.addEventListener("click", () => {
       const btn = document.getElementById("btn-toggle-dev-mining");
       const open = btn?.getAttribute("aria-expanded") === "true";
