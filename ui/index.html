@@ -3339,6 +3339,10 @@
       border-bottom: 1px dashed color-mix(in srgb, var(--muted) 70%, transparent);
       text-decoration: none;
     }
+    .fleet-table .fleet-hr.tip {
+      cursor: default;
+      border-bottom: none;
+    }
     .tip:hover, .tip:focus {
       color: var(--accent);
       border-bottom-color: var(--accent);
@@ -6727,6 +6731,28 @@
               </div>
             </div>
             <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
+            <div class="grid-3" id="info-antminer-6060" hidden>
+              <div class="metric">
+                <label>SearchFreq :6060</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-status">—</div>
+                <div class="hint" id="info-6060-board">board —</div>
+              </div>
+              <div class="metric">
+                <label>Rate · ideal · max</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-rate">—</div>
+                <div class="hint" id="info-6060-ideal">ideal —</div>
+              </div>
+              <div class="metric">
+                <label>Voltage · PSU</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-volt">—</div>
+                <div class="hint" id="info-6060-psu">psu —</div>
+              </div>
+              <div class="metric">
+                <label>ASIC crosses · nonce</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-cross">—</div>
+                <div class="hint" id="info-6060-chips">chips —</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -10736,6 +10762,7 @@
         "dash.psu": "PSU",
         "dash.heat_balance": "Heat / cool-down",
         "dash.power_measured": "Power measured",
+        "dash.power_estimated": "Power estimated",
         "dash.hashboards": "Hashboards",
         "dash.chips": "Chips",
         "dash.edit": "Edit layout",
@@ -11702,6 +11729,7 @@
         "dash.psu": "БП",
         "dash.heat_balance": "Нагрев / остывание",
         "dash.power_measured": "Мощность",
+        "dash.power_estimated": "Мощность ≈",
         "dash.hashboards": "Хешплаты",
         "dash.chips": "Чипы",
         "dash.edit": "Редактировать",
@@ -17532,7 +17560,28 @@
       return (ru ? "Хешплаты · " : "Hashboards · ") + nWant;
     }
 
-    function formatBoardCellId(i) {
+    function hashboardStyleOf(r) {
+      const src = r || (typeof live !== "undefined" ? live : null) || {};
+      if (src.hashboard_style && src.hashboard_style.prefix)
+        return src.hashboard_style;
+      const vid = String(src.vendor || src.api_vendor || "").toLowerCase();
+      const vs =
+        (typeof minerVendorsCache !== "undefined" && minerVendorsCache.vendors) ||
+        [];
+      const hit = vs.find((v) => v && v.id === vid);
+      return (hit && hit.hashboard) || null;
+    }
+
+    function formatBoardCellId(i, r) {
+      const src = r || (typeof live !== "undefined" ? live : null) || {};
+      const labels = src.board_labels;
+      if (Array.isArray(labels) && labels[i]) return String(labels[i]);
+      const st = hashboardStyleOf(src);
+      if (st && st.prefix) {
+        const base = Number(st.index_base);
+        const n = (Number.isFinite(base) ? base : 0) + Number(i || 0);
+        return String(st.prefix) + n;
+      }
       if (typeof tf === "function") {
         return tf("boards.cell", { n: i }, "SM{n}");
       }
@@ -17551,7 +17600,7 @@
       if (cur === nWant) {
         // refresh labels on language change without rebuild
         grid.querySelectorAll(".bc-cell .bc-id").forEach((el, i) => {
-          el.textContent = formatBoardCellId(i);
+          el.textContent = formatBoardCellId(i, typeof live !== "undefined" ? live : null);
         });
         const titleKeep = document.getElementById("boards-pcb-title");
         if (titleKeep) titleKeep.textContent = formatBoardsTitle(nWant);
@@ -17561,7 +17610,7 @@
       for (let i = 0; i < nWant; i++) {
         html +=
           '<div class="bc-cell"><div class="bc-id">' +
-          formatBoardCellId(i) +
+          formatBoardCellId(i, typeof live !== "undefined" ? live : null) +
           '</div><div class="bc-t"><span id="b' +
           i +
           '">—</span> <small>°C</small></div><div class="tc-extra" id="b' +
@@ -17811,7 +17860,35 @@
       // T_ctrl = selected sensor, T_safe = chip max
       setText("[data-bind=tctrl]", fmt(resolveTctrl(r)));
       setText("[data-bind=tsafe]", fmt(r.chip_max));
-      setText("[data-bind=pw]", Number.isFinite(r.power) ? Math.round(r.power) : "—");
+      {
+        const est =
+          isPowerEstimated(r) ||
+          isPowerEstimated(typeof live !== "undefined" ? live : null);
+        setText(
+          "[data-bind=pw]",
+          Number.isFinite(r.power) ? formatPowerW(r.power, est) : "—"
+        );
+        const pwEl = document.querySelector("[data-bind=pw]");
+        const unitEl = pwEl && pwEl.nextElementSibling;
+        if (unitEl && unitEl.tagName === "SMALL") {
+          unitEl.hidden = Number.isFinite(r.power);
+        }
+      }
+      try {
+        const card = document.getElementById("card-power-meas");
+        if (card)
+          card.classList.toggle(
+            "is-estimated",
+            !!(isPowerEstimated(r) || isPowerEstimated(typeof live !== "undefined" ? live : null))
+          );
+        const lab = card && card.querySelector("[data-i18n='dash.power_measured']");
+        if (lab && typeof t === "function") {
+          const est = isPowerEstimated(r) || isPowerEstimated(typeof live !== "undefined" ? live : null);
+          lab.textContent = est
+            ? t("dash.power_estimated", "Power estimated")
+            : t("dash.power_measured", "Power measured");
+        }
+      } catch (_) { /* ignore */ }
       setText("[data-bind=pwMode]", r.mode || "—");
       setText("[data-bind=freq]", fmt(r.freq, 0));
       setText("[data-bind=hr]", fmt(r.hashrate_th, 1));
@@ -18571,7 +18648,12 @@
       if (liveEl) {
         const w = body && body.live_power_w;
         liveEl.textContent =
-          w != null && Number.isFinite(Number(w)) ? Math.round(Number(w)).toString() : "—";
+          w != null && Number.isFinite(Number(w))
+            ? formatPowerW(w, !!(body && body.live_power_estimated))
+            : "—";
+        const u = liveEl.nextElementSibling;
+        if (u && u.tagName === "SMALL")
+          u.hidden = w != null && Number.isFinite(Number(w));
       }
       const tn = document.getElementById("energy-tariff-now");
       if (tn) tn.textContent = tariffNowLabel(cfg);
@@ -20011,7 +20093,13 @@
       setText("[data-bind=prevPct]", prevPct);
       setText("[data-bind=prevReason]", reason);
       if (r.source === "live" && Number.isFinite(r.power)) {
-        setText("[data-bind=pw]", Math.round(r.power));
+        setText(
+          "[data-bind=pw]",
+          formatPowerW(
+            r.power,
+            isPowerEstimated(r) || isPowerEstimated(typeof live !== "undefined" ? live : null)
+          )
+        );
       }
 
       // Header zone pill removed (zone stays on T_ctrl card).
@@ -23825,6 +23913,20 @@
       return n.toFixed(0) + " W";
     }
 
+    function isPowerEstimated(src) {
+      if (!src || typeof src !== "object") return false;
+      if (src.power_estimated === true) return true;
+      const s = String(src.power_source || "").toLowerCase();
+      return s === "model" || s === "estimate" || s === "estimated" || s === "profile";
+    }
+
+    /** Watts for UI: 1290 W≈ when model-estimated, 1290 W when ASIC-metered. */
+    function formatPowerW(v, estimated) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return "—";
+      return Math.round(n) + (estimated ? " W≈" : " W");
+    }
+
     function formatTemp(v) {
       const n = Number(v);
       if (!Number.isFinite(n)) return "—";
@@ -24176,9 +24278,9 @@
         const hr = live
           ? formatTh(live.hashrate_th, live.hashrate_unit || m.hashrate_unit)
           : "—";
-        let pw = live ? formatWatts(live.power) : "—";
-        if (live && live.power_estimated && live.power != null) {
-          pw = formatWatts(live.power) + "≈";
+        let pw = "—";
+        if (live && live.power != null && Number(live.power) > 0) {
+          pw = formatPowerW(live.power, isPowerEstimated(live));
         }
         const eff = (() => {
           if (!live) return "—";
@@ -24203,14 +24305,47 @@
           : "—";
         // board hashrates (TH) · fan speeds (rpm)
         let boardsLine = "—";
-        if (live && Array.isArray(live.boards_th) && live.boards_th.length) {
-          boardsLine = live.boards_th
-            .map((x) => {
-              const n = Number(x);
-              if (!Number.isFinite(n)) return "—";
-              return n >= 10 ? n.toFixed(1) : n.toFixed(2);
+        const det =
+          live && Array.isArray(live.boards_detail) ? live.boards_detail : null;
+        const blabels = (live && live.board_labels) || [];
+        if (det && det.length) {
+          boardsLine = det
+            .map((b, i) => {
+              const id = (b && (b.id || b.name)) || blabels[i] || formatBoardCellId(i, live);
+              const t1 = b && b.temp_c;
+              const t2 = b && b.temp2_c;
+              if (t1 != null && Number.isFinite(Number(t1)) && t2 != null && Number.isFinite(Number(t2)))
+                return id + " " + Number(t1).toFixed(0) + "°/" + Number(t2).toFixed(0) + "°";
+              if (t1 != null && Number.isFinite(Number(t1)))
+                return id + " " + Number(t1).toFixed(0) + "°";
+              if (b && b.hashrate_th != null)
+                return (
+                  id +
+                  " " +
+                  formatTh(b.hashrate_th, live.hashrate_unit || m.hashrate_unit)
+                );
+              return id;
             })
             .join(" · ");
+        } else if (live && Array.isArray(live.boards_th) && live.boards_th.length) {
+          boardsLine = live.boards_th
+            .map((x, i) => {
+              const n = Number(x);
+              if (!Number.isFinite(n)) return "—";
+              const hr = n >= 10 ? n.toFixed(1) : n.toFixed(2);
+              const id = blabels[i] || formatBoardCellId(i, Object.assign({}, m, live));
+              return id + " " + hr;
+            })
+            .join(" · ");
+        } else if (live && Array.isArray(live.board_temps) && live.board_temps.some((x) => x != null)) {
+          boardsLine = live.board_temps
+            .map((x, i) => {
+              if (x == null || !Number.isFinite(Number(x))) return null;
+              const id = blabels[i] || formatBoardCellId(i, Object.assign({}, m, live));
+              return id + " " + Number(x).toFixed(0) + "°";
+            })
+            .filter(Boolean)
+            .join(" · ") || "—";
         }
         let fansLine = "—";
         if (live) {
@@ -24324,42 +24459,47 @@
           }
         }
         setTxt(".fleet-hr", hr);
-        // Standard tip-bubble: total hashrate → per-board breakdown
+        // Per-board hashrate tip only when 2+ real boards report hashrate
         const hrEl = tr.querySelector(".fleet-hr");
         if (hrEl) {
-          const tipTitle = fleetT("fleet.tip.hash_title", "Hashrate by board");
-          let tipBody = "";
-          if (live && Array.isArray(live.boards_th) && live.boards_th.length) {
-            const boardLbl = fleetT("fleet.tip.hash_board", "Board {n}");
+          const unit = (live && (live.hashrate_unit || m.hashrate_unit)) || "TH/s";
+          const labels = (live && live.board_labels) || [];
+          const rawTh = live && Array.isArray(live.boards_th) ? live.boards_th : [];
+          const pairs = [];
+          rawTh.forEach((x, i) => {
+            const n = Number(x);
+            if (!Number.isFinite(n) || n <= 0) return;
+            pairs.push({
+              i,
+              n,
+              id:
+                labels[i] ||
+                formatBoardCellId(i, Object.assign({}, m, live || {})),
+            });
+          });
+          if (pairs.length >= 2) {
+            const tipTitle = fleetT("fleet.tip.hash_title", "Hashrate by board");
             const totalLbl = fleetT("fleet.tip.hash_total", "Total");
-            tipBody = live.boards_th
-              .map((x, i) => {
-                const n = Number(x);
-                const v = Number.isFinite(n)
-                  ? (n >= 10 ? n.toFixed(1) : n.toFixed(2)) + " TH/s"
-                  : "—";
-                return boardLbl.replace("{n}", String(i)) + ": " + v;
-              })
+            let tipBody = pairs
+              .map((p) => p.id + ": " + formatTh(p.n, unit))
               .join("\n");
-            if (live.hashrate_th != null && Number.isFinite(Number(live.hashrate_th))) {
-              tipBody +=
-                "\n" +
-                totalLbl +
-                ": " +
-                Number(live.hashrate_th).toFixed(2) +
-                " TH/s";
-            }
+            const totalTh =
+              live.hashrate_th != null && Number.isFinite(Number(live.hashrate_th))
+                ? Number(live.hashrate_th)
+                : pairs.reduce((s, p) => s + p.n, 0);
+            tipBody += "\n" + totalLbl + ": " + formatTh(totalTh, unit);
+            hrEl.classList.add("tip");
+            hrEl.setAttribute("data-tip-key", "hashrate");
+            hrEl.setAttribute("data-tip-title", tipTitle);
+            hrEl.setAttribute("data-tip-body", tipBody);
+            hrEl.setAttribute("tabindex", "0");
           } else {
-            tipBody = fleetT(
-              "fleet.tip.hash_none",
-              "No per-board hashrate (standby / not polled)"
-            );
+            hrEl.classList.remove("tip");
+            hrEl.removeAttribute("data-tip-key");
+            hrEl.removeAttribute("data-tip-title");
+            hrEl.removeAttribute("data-tip-body");
+            hrEl.removeAttribute("tabindex");
           }
-          hrEl.classList.add("tip");
-          hrEl.setAttribute("data-tip-key", "hashrate");
-          hrEl.setAttribute("data-tip-title", tipTitle);
-          hrEl.setAttribute("data-tip-body", tipBody);
-          hrEl.setAttribute("tabindex", "0");
         }
         setTxt(".fleet-pw", pw);
         setTxt(".fleet-eff", eff);
@@ -27186,6 +27326,85 @@
           errEl.textContent = "";
         }
       }
+      (function paintAntminer6060() {
+        const box = document.getElementById("info-antminer-6060");
+        if (!box) return;
+        const L = typeof live !== "undefined" && live ? live : {};
+        const hw = L.antminer_hw || {};
+        const on = !!(
+          L.antminer_6060 ||
+          L.rate_th ||
+          L.miner_status_6060 ||
+          hw.readvol ||
+          (m.vendor || "").toLowerCase() === "antminer"
+        );
+        const hasData = !!(
+          L.antminer_6060 ||
+          L.rate_th ||
+          L.ideal_rate_th ||
+          L.hashboard_voltage_mv ||
+          L.asic_cross != null ||
+          L.miner_status_6060 ||
+          L.nonce_total != null
+        );
+        box.hidden = !hasData;
+        if (!hasData && !on) return;
+        const unit = L.hashrate_unit || "TH/s";
+        const fmtR = (th) =>
+          th != null && Number.isFinite(Number(th))
+            ? formatTh(Number(th), unit)
+            : "—";
+        const metered =
+          L.power_source === "antminer_6060" &&
+          L.power != null &&
+          Number.isFinite(Number(L.power));
+        setTxt(
+          "info-6060-status",
+          L.miner_status_6060 || (hasData ? "ok" : "—")
+        );
+        setTxt(
+          "info-6060-board",
+          (L.board_type ? "board " + L.board_type : "board —") +
+            (metered ? " · " + Math.round(Number(L.power)) + " W" : "")
+        );
+        setTxt("info-6060-rate", fmtR(L.rate_th != null ? L.rate_th : L.hashrate_th));
+        const idl = fmtR(L.ideal_rate_th);
+        const mx = fmtR(L.max_rate_th);
+        setTxt(
+          "info-6060-ideal",
+          "ideal " + idl + (mx !== "—" ? " · max " + mx : "")
+        );
+        const mv = L.hashboard_voltage_mv;
+        const volt =
+          mv != null && Number.isFinite(Number(mv))
+            ? (Number(mv) >= 80 ? Math.round(Number(mv)) + " mV" : Number(mv).toFixed(2) + " V")
+            : "—";
+        setTxt("info-6060-volt", volt);
+        const fb = L.psu_feedback_v;
+        const pst = L.psu_status;
+        setTxt(
+          "info-6060-psu",
+          (fb != null ? "fb " + Number(fb).toFixed(2) + " V" : "psu —") +
+            (pst != null ? " · st " + pst : "")
+        );
+        const x = L.asic_cross;
+        const ntot = L.nonce_total;
+        const nonceTxt =
+          ntot != null && Number.isFinite(Number(ntot))
+            ? Number(ntot) >= 1e6
+              ? (Number(ntot) / 1e6).toFixed(2) + "M nonce"
+              : Number(ntot) >= 1000
+                ? (Number(ntot) / 1000).toFixed(1) + "k nonce"
+                : String(Math.round(Number(ntot))) + " nonce"
+            : "";
+        setTxt(
+          "info-6060-cross",
+          x != null ? String(x) + (nonceTxt ? " · " + nonceTxt : "") : nonceTxt || "—"
+        );
+        const ch = L.chipmap_hint || (hw.chip_stat || {});
+        const nch = ch.chip_count || (hw.chip_stat && hw.chip_stat.chip_count);
+        setTxt("info-6060-chips", nch != null ? "chips " + nch : "chips —");
+      })();
 
       const tbody = document.getElementById("info-boards-body");
       if (tbody) {
@@ -28841,7 +29060,10 @@
       }
       if (!Number.isFinite(P_W)) {
         const el = document.querySelector("[data-bind=pw]");
-        if (el) P_W = parseFloat(String(el.textContent).replace(/\s/g, "").replace(",", "."));
+        if (el)
+          P_W = parseFloat(
+            String(el.textContent).replace(/[≈~∼\s]/g, "").replace(",", ".")
+          );
       }
 
       return { S, V, massKg, flowM3h, Tliq, Tw, Ta, P_W };

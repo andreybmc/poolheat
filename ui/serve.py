@@ -10111,6 +10111,13 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "default_port": 80,
         "color": "#ef4444",
         "order": 10,
+        "hashboard": {
+            "prefix": "CH",
+            "index_base": 1,
+            "api_prefix": "chain",
+            "api_index_base": 0,
+            "display": "{prefix}{n}",
+        },
     },
     {
         "id": "avalon",
@@ -10121,6 +10128,13 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "default_port": 4028,
         "color": "#3b82f6",
         "order": 20,
+        "hashboard": {
+            "prefix": "MM",
+            "index_base": 0,
+            "api_prefix": "MM",
+            "api_index_base": 0,
+            "display": "{prefix}{n}",
+        },
     },
     {
         "id": "goldshell",
@@ -10131,6 +10145,13 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "default_port": 4028,
         "color": "#eab308",
         "order": 30,
+        "hashboard": {
+            "prefix": "CPB",
+            "index_base": 0,
+            "api_prefix": "CPB",
+            "api_index_base": 0,
+            "display": "{prefix}{n}",
+        },
     },
     {
         "id": "ipollo",
@@ -10141,6 +10162,13 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "default_port": 4028,
         "color": "#3b82f6",
         "order": 40,
+        "hashboard": {
+            "prefix": "HB",
+            "index_base": 1,
+            "api_prefix": "HB",
+            "api_index_base": 1,
+            "display": "{prefix}{n}",
+        },
     },
     {
         "id": "whatsminer",
@@ -10151,10 +10179,182 @@ _BUILTIN_MINER_VENDORS: list[dict] = [
         "default_port": 4028,
         "color": "#f59e0b",
         "order": 90,
+        "hashboard": {
+            "prefix": "SM",
+            "index_base": 0,
+            "api_prefix": "SM",
+            "api_index_base": 0,
+            "display": "{prefix}{n}",
+        },
     },
 ]
 
 _miner_vendors_cache: dict | None = None
+
+# Fallback board names when vendor JSON has no hashboard block.
+_HASHBOARD_STYLE_DEFAULTS: dict[str, dict] = {
+    "antminer": {
+        "prefix": "CH",
+        "index_base": 1,
+        "api_prefix": "chain",
+        "api_index_base": 0,
+    },
+    "bitmain": {
+        "prefix": "CH",
+        "index_base": 1,
+        "api_prefix": "chain",
+        "api_index_base": 0,
+    },
+    "goldshell": {
+        "prefix": "CPB",
+        "index_base": 0,
+        "api_prefix": "CPB",
+        "api_index_base": 0,
+    },
+    "whatsminer": {
+        "prefix": "SM",
+        "index_base": 0,
+        "api_prefix": "SM",
+        "api_index_base": 0,
+    },
+    "microbt": {
+        "prefix": "SM",
+        "index_base": 0,
+        "api_prefix": "SM",
+        "api_index_base": 0,
+    },
+    "ipollo": {
+        "prefix": "HB",
+        "index_base": 1,
+        "api_prefix": "HB",
+        "api_index_base": 1,
+    },
+    "avalon": {
+        "prefix": "MM",
+        "index_base": 0,
+        "api_prefix": "MM",
+        "api_index_base": 0,
+    },
+}
+
+
+def _normalize_hashboard_style(raw, vendor_id: str | None = None) -> dict:
+    """Canonical per-vendor hashboard naming (CH1 / CPB0 / SM0 / HB1)."""
+    base = {}
+    vid = str(vendor_id or "").strip().lower()
+    if vid in _HASHBOARD_STYLE_DEFAULTS:
+        base = dict(_HASHBOARD_STYLE_DEFAULTS[vid])
+    elif vid:
+        base = {"prefix": "SM", "index_base": 0, "api_prefix": "SM", "api_index_base": 0}
+    else:
+        base = {"prefix": "SM", "index_base": 0, "api_prefix": "SM", "api_index_base": 0}
+    if isinstance(raw, dict):
+        for k in (
+            "prefix",
+            "index_base",
+            "api_prefix",
+            "api_index_base",
+            "display",
+            "note",
+        ):
+            if raw.get(k) is not None and raw.get(k) != "":
+                base[k] = raw[k]
+    try:
+        base["index_base"] = int(base.get("index_base") or 0)
+    except (TypeError, ValueError):
+        base["index_base"] = 0
+    try:
+        base["api_index_base"] = int(
+            base.get("api_index_base")
+            if base.get("api_index_base") is not None
+            else base["index_base"]
+        )
+    except (TypeError, ValueError):
+        base["api_index_base"] = base["index_base"]
+    prefix = str(base.get("prefix") or "SM")
+    base["prefix"] = prefix
+    base["api_prefix"] = str(base.get("api_prefix") or prefix)
+    tmpl = str(base.get("display") or "{prefix}{n}")
+    base["display"] = tmpl
+    return base
+
+
+def vendor_hashboard_style(vendor: str | None) -> dict:
+    v = resolve_miner_vendor(vendor)
+    st = v.get("hashboard") if isinstance(v, dict) else None
+    return _normalize_hashboard_style(st, v.get("id") if isinstance(v, dict) else vendor)
+
+
+def _vendor_id_for_hashboard(raw: str | None) -> str:
+    """Vendor catalog id from vendor slug or miner_type (M63 → whatsminer)."""
+    s = str(raw or "").strip()
+    if not s:
+        return "whatsminer"
+    v = resolve_miner_vendor(s)
+    if not v.get("unknown"):
+        return str(v.get("id") or "whatsminer")
+    sl = s.lower()
+    if "goldshell" in sl or "ckbox" in sl or "ckb" in sl:
+        return "goldshell"
+    if "ipollo" in sl:
+        return "ipollo"
+    if "antminer" in sl or sl.startswith("s1") or sl.startswith("l9"):
+        return "antminer"
+    if resolve_miner_model is not None:
+        try:
+            mp = resolve_miner_model(s)
+            mfr = mp.get("manufacturer") if isinstance(mp, dict) else None
+            mid = mfr.get("id") if isinstance(mfr, dict) else None
+            if mid:
+                return str(resolve_miner_vendor(mid).get("id") or mid)
+        except Exception:
+            pass
+    return str(v.get("id") or "whatsminer")
+
+
+def format_hashboard_id(
+    index: int,
+    vendor: str | None = None,
+    *,
+    raw_name: str | None = None,
+    style: dict | None = None,
+) -> str:
+    """Human board id: SM0 / CH1 / CPB0 / HB1. Prefer ASIC Name when it matches."""
+    name = str(raw_name or "").strip()
+    if name and re.search(r"[A-Za-z]+\s*\d+", name):
+        return re.sub(r"\s+", "", name)
+    st = style or vendor_hashboard_style(_vendor_id_for_hashboard(vendor))
+    try:
+        i = int(index)
+    except (TypeError, ValueError):
+        i = 0
+    n = int(st.get("index_base") or 0) + i
+    tmpl = str(st.get("display") or "{prefix}{n}")
+    try:
+        return tmpl.format(prefix=str(st.get("prefix") or "SM"), n=n, index=i)
+    except Exception:
+        return f"{st.get('prefix') or 'SM'}{n}"
+
+
+def parse_hashboard_index(name: str | None, style: dict | None = None) -> int | None:
+    """CPB0 / CH1 / chain2 / SM3 / HB1 → 0-based slot index."""
+    s = str(name or "").strip()
+    if not s:
+        return None
+    m = re.search(r"(\d+)\s*$", s)
+    if not m:
+        return None
+    n = int(m.group(1))
+    st = style or {}
+    # CH/HB are 1-based in the name; chain0 / SM0 / CPB0 are 0-based
+    prefix = re.sub(r"\d+$", "", s).strip().upper()
+    base = int(st.get("index_base") or 0)
+    api_base = int(st.get("api_index_base") if st.get("api_index_base") is not None else base)
+    if prefix in ("CH", "HB"):
+        return max(0, n - (1 if base == 1 else base))
+    if prefix.lower() in ("chain", "asc"):
+        return max(0, n - api_base)
+    return max(0, n - base)
 
 
 def _load_miner_vendors_raw() -> dict:
@@ -10217,6 +10417,7 @@ def get_miner_vendors() -> dict:
                 "default_port": port,
                 "color": str(v.get("color") or "").strip() or None,
                 "order": order,
+                "hashboard": _normalize_hashboard_style(v.get("hashboard"), vid),
             }
         )
     items.sort(key=lambda x: (x.get("order") or 100, x.get("name") or ""))
@@ -10828,34 +11029,25 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
     if not fans_list and psu_fan_i is not None:
         fans_list = [psu_fan_i]
         fan_s = psu_fan_i
-    # Per-board hashrate (TH/s). live["boards"] may be list of floats or dicts.
+    # Per-board hashrate (TH/s). live["boards"] is PCB temps — never treat as TH.
     board_ths: list = []
-    boards_raw = live.get("boards")
-    if isinstance(boards_raw, (list, tuple)):
-        for b in boards_raw:
-            if isinstance(b, (int, float)):
-                try:
-                    board_ths.append(round(float(b), 2))
-                except (TypeError, ValueError):
-                    pass
-            elif isinstance(b, dict):
-                for key in (
-                    "hashrate_th",
-                    "th",
-                    "hashrate",
-                    "mhs",
-                    "hash_rate",
-                ):
-                    if b.get(key) is not None:
-                        try:
-                            val = float(b[key])
-                            # mhs → th
-                            if key == "mhs" and val > 1000:
-                                val = val / 1e6
-                            board_ths.append(round(val, 2))
-                        except (TypeError, ValueError):
-                            pass
-                        break
+    raw_th = live.get("boards_th")
+    if isinstance(raw_th, (list, tuple)) and raw_th:
+        for x in raw_th:
+            try:
+                if x is None or x == "":
+                    continue
+                board_ths.append(float(x))
+            except (TypeError, ValueError):
+                continue
+    if not board_ths and isinstance(live.get("boards_detail"), list):
+        for b in live["boards_detail"]:
+            if not isinstance(b, dict) or b.get("hashrate_th") is None:
+                continue
+            try:
+                board_ths.append(float(b["hashrate_th"]))
+            except (TypeError, ValueError):
+                continue
     work = (
         live.get("work")
         or live.get("mining_work")
@@ -10911,6 +11103,25 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         "algo": live.get("algo"),
         "algo_display": live.get("algo_display"),
         "coin": live.get("coin"),
+        "asic_cross": live.get("asic_cross"),
+        "hashboard_voltage_mv": live.get("hashboard_voltage_mv"),
+        "psu_feedback_v": live.get("psu_feedback_v"),
+        "psu_status": live.get("psu_status"),
+        "antminer_6060": live.get("antminer_6060"),
+        "rate_th": live.get("rate_th"),
+        "ideal_rate_th": live.get("ideal_rate_th"),
+        "max_rate_th": live.get("max_rate_th"),
+        "miner_status_6060": live.get("miner_status_6060"),
+        "board_type": live.get("board_type"),
+        "nonce_total": live.get("nonce_total"),
+        "board_labels": live.get("board_labels"),
+        "boards_detail": live.get("boards_detail"),
+        "hashboard_style": live.get("hashboard_style"),
+        "board_temps": [
+            (round(float(x), 1) if isinstance(x, (int, float)) else None)
+            for x in (live.get("boards") or [])[:8]
+            if True
+        ],
         "power_source": live.get("power_source"),
         "power_estimated": live.get("power_estimated"),
         "efficiency_value": live.get("efficiency_value"),
@@ -17547,6 +17758,21 @@ def energy_summary() -> dict:
     meters = list_energy_meters()
     virtual = next((m for m in meters if m.get("id") == VIRTUAL_METER_ID), None)
     live_w = virtual.get("last_power_w") if virtual else None
+    live_est = False
+    try:
+        snap = hydrate_live_from_disk(max_age_sec=180.0)
+        if isinstance(snap, dict):
+            src = str(snap.get("power_source") or "").lower()
+            live_est = bool(snap.get("power_estimated")) or src in (
+                "model",
+                "estimate",
+                "estimated",
+                "profile",
+            )
+            if live_w is None and snap.get("power") not in (None, ""):
+                live_w = snap.get("power")
+    except Exception:
+        live_est = False
     sample_count = 0
     with _energy_db_lock:
         conn = _energy_db_connect()
@@ -17564,6 +17790,7 @@ def energy_summary() -> dict:
         "ok": True,
         "config": cfg,
         "live_power_w": live_w,
+        "live_power_estimated": live_est,
         "periods": periods,
         "meters": meters,
         "virtual_meter": virtual,
@@ -24273,12 +24500,13 @@ def _build_temp_sensors_catalog(
         cmin = board_chip_min[i] if i < len(board_chip_min) else None
         cmax = board_chip_max[i] if i < len(board_chip_max) else None
         cavg = board_chip_avg[i] if i < len(board_chip_avg) else None
+        bid = format_hashboard_id(i, miner_type)
         if model_sens.get("pcb_temp", True) is not False:
             _add(
                 f"sm{i}_pcb",
                 "board",
-                f"SM{i} PCB",
-                f"SM{i} PCB",
+                f"{bid} PCB",
+                f"{bid} PCB",
                 pcb,
                 "devs",
                 expect=True,
@@ -24289,8 +24517,8 @@ def _build_temp_sensors_catalog(
             _add(
                 f"sm{i}_chip_min",
                 "board_chip",
-                f"SM{i} Chip Min",
-                f"SM{i} чип min",
+                f"{bid} Chip Min",
+                f"{bid} чип min",
                 cmin,
                 "devs",
                 expect=False,
@@ -24298,8 +24526,8 @@ def _build_temp_sensors_catalog(
             _add(
                 f"sm{i}_chip_avg",
                 "board_chip",
-                f"SM{i} Chip Avg",
-                f"SM{i} чип avg",
+                f"{bid} Chip Avg",
+                f"{bid} чип avg",
                 cavg,
                 "devs",
                 expect=False,
@@ -24307,8 +24535,8 @@ def _build_temp_sensors_catalog(
             _add(
                 f"sm{i}_chip_max",
                 "board_chip",
-                f"SM{i} Chip Max",
-                f"SM{i} чип max",
+                f"{bid} Chip Max",
+                f"{bid} чип max",
                 cmax,
                 "devs",
                 expect=False,
@@ -24415,19 +24643,62 @@ def _ipollo_luci_get_json(
         return None
 
 
+# SearchFreq :6060 — READ paths we poll. Write/diag paths are never called.
+_ANTMINER_6060_POLL_EVERY = (
+    "/miner_power",
+    "/rate",
+    "/readvol",
+    "/warning",
+    "/miner_status",
+)
+_ANTMINER_6060_POLL_SLOW = (
+    "/ideal_rate",
+    "/max_rate",
+    "/board_type",
+    "/summary",
+    "/ee_info",
+    "/chip_stat",
+    "/asic_stat",
+    "/adc",
+    "/power-0",
+    "/power-1",
+    "/power-2",
+    "/power-3",
+    "/productName",
+    "/get_sn",
+    "/nonce",
+)
+_ANTMINER_6060_NEVER = (
+    "/fan-<1-99>",
+    "/uart-<0-5>",
+    "/readreg-<chain>-<asic>-<reg>",
+    "/readcorereg-<chain>-<asic>-<reg>",
+    "/resetcore-<chain>-<asic>",
+    "/clear_find_asic_fail_record",
+    "/min_boot_reset",
+    "/flush",
+    "/set_sn",
+)
+_ANTMINER_6060_DOWN: dict[str, float] = {}
+_ANTMINER_6060_DOWN_TTL = 45.0
+
+
 def _antminer_6060_get(host: str, path: str, timeout: float = 2.5) -> str | None:
     """
     GET plain text from Bitmain SearchFreqServer (:6060).
-    Returns body text or None. Some paths (e.g. /nonce) close without reply
-    on certain models/FW — treated as unsupported.
+
+    Returns body text on HTTP 200 *and* on HTTP 404/500 (so callers can
+    skip an unsupported path). Returns None only when the port is closed
+    or the request times out — never follow write/diag paths from here.
     """
     host = str(host or "").strip().split(":")[0]
     if not host:
         return None
     path = path if str(path).startswith("/") else ("/" + str(path))
+    url = f"http://{host}:6060{path}"
     try:
         req = urllib.request.Request(
-            f"http://{host}:6060{path}",
+            url,
             headers={
                 "User-Agent": "poolheat/1.0",
                 "Accept": "text/plain,*/*",
@@ -24437,6 +24708,12 @@ def _antminer_6060_get(host: str, path: str, timeout: float = 2.5) -> str | None
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read(262144).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        try:
+            raw = e.read(8192).decode("utf-8", errors="replace")
+        except Exception:
+            raw = ""
+        return raw if raw else f"{e.code} {e.reason}"
     except Exception:
         return None
 
@@ -24476,6 +24753,492 @@ def _parse_antminer_miner_power(text: str | None) -> float | None:
     return None
 
 
+def _parse_antminer_rate_text(
+    text: str | None, unit_hint: str | None = None
+) -> float | None:
+    """
+    /rate · /ideal_rate · /max_rate → always TH/s.
+
+    Accepts ``141.2`` (TH), ``17.2G``, ``rate:150.2 TH/s``.
+    Bare numbers follow *unit_hint*: GH/s (L9/Scrypt) → divide by 1000,
+    MH/s → /1e6, otherwise TH (S19/S21). Values ≥ 800 without a suffix
+    are treated as GH even on SHA miners.
+    """
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    if isinstance(obj, (int, float)):
+        raw = str(obj)
+    elif isinstance(obj, dict):
+        for k in ("rate", "hashrate", "value", "ideal", "max", "ghs", "ths"):
+            if obj.get(k) not in (None, ""):
+                raw = str(obj.get(k))
+                break
+    m = re.search(
+        r"([0-9]+(?:\.[0-9]+)?)\s*([tTgGmM])(?:\s*H(?:/s)?)?", raw
+    )
+    if m:
+        v = float(m.group(1))
+        u = m.group(2).upper()
+        if u == "T":
+            return v if v > 0 else None
+        if u == "G":
+            return v / 1000.0 if v > 0 else None
+        if u == "M":
+            return v / 1e6 if v > 0 else None
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)", raw)
+    if not m:
+        return None
+    v = float(m.group(1))
+    if v <= 0:
+        return None
+    hint = str(unit_hint or "").upper()
+    if "MH" in hint or hint in ("M", "J/M", "J/MH"):
+        return v / 1e6
+    if "GH" in hint or hint in ("G", "J/G", "J/GH"):
+        return v / 1000.0
+    # Heuristic: 800–80000 without unit → GH/s (mis-scaled SHA or raw L9)
+    if v >= 800:
+        return v / 1000.0
+    return v
+
+
+def _parse_antminer_miner_status(text: str | None) -> str | None:
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    if isinstance(obj, dict):
+        for k in ("status", "state", "miner_status", "msg"):
+            if obj.get(k) not in (None, ""):
+                return str(obj.get(k)).strip()[:80]
+    line = raw.splitlines()[0].strip()
+    line = re.sub(r"^(miner[_\s-]*status|status)\s*[:=]\s*", "", line, flags=re.I)
+    return line[:80] if line else None
+
+
+def _parse_antminer_board_type(text: str | None) -> str | None:
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    if isinstance(obj, dict):
+        for k in ("board_type", "type", "hb", "hash_board"):
+            if obj.get(k):
+                return str(obj.get(k)).strip()[:64]
+    line = raw.splitlines()[0].strip()
+    line = re.sub(r"^(board[_\s-]*type|type)\s*[:=]\s*", "", line, flags=re.I)
+    if line and len(line) < 80:
+        return line
+    return None
+
+
+def _parse_antminer_adc(text: str | None) -> dict | None:
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    chains: list[dict] = []
+    if isinstance(obj, dict):
+        rows = obj.get("chain") or obj.get("chains") or obj.get("adc") or obj.get("data")
+        if isinstance(rows, list):
+            for i, row in enumerate(rows):
+                if isinstance(row, dict):
+                    chains.append({"chain": row.get("chain", i), **{
+                        k: row[k] for k in list(row)[:8] if k != "chain"
+                    }})
+                elif isinstance(row, (int, float)):
+                    chains.append({"chain": i, "adc": float(row)})
+    if not chains:
+        for m in re.finditer(
+            r"(?:chain|ch|adc)\s*(\d+)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", raw, re.I
+        ):
+            chains.append({"chain": int(m.group(1)), "adc": float(m.group(2))})
+    if not chains and not obj:
+        return {"raw": raw[:1500], "source": "6060/adc"}
+    return {"source": "6060/adc", "chains": chains[:8], "raw": raw[:1500]}
+
+
+def _try_parse_json_blob(text: str | None):
+    """Parse JSON object/array, including trailing-junk SearchFreq bodies."""
+    if not text:
+        return None
+    s = str(text).strip()
+    if not s or s[0] not in "{[":
+        return None
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(s)
+        return obj
+    except Exception:
+        return None
+
+
+def _parse_antminer_warning(text: str | None) -> list[dict]:
+    """
+    /warning — JSON log of critical alerts (overtemp, fan, voltage, hashrate).
+    Accepts list / {warning|error|data|msg: [...] } / plain lines.
+    """
+    if not text or not str(text).strip():
+        return []
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return []
+    obj = _try_parse_json_blob(raw)
+    items: list = []
+    if isinstance(obj, list):
+        items = obj
+    elif isinstance(obj, dict):
+        for k in (
+            "warning",
+            "warnings",
+            "error",
+            "errors",
+            "data",
+            "msg",
+            "message",
+            "log",
+            "logs",
+            "list",
+        ):
+            v = obj.get(k)
+            if isinstance(v, list):
+                items = v
+                break
+            if isinstance(v, str) and v.strip():
+                items = [v]
+                break
+        if not items and any(
+            obj.get(k) for k in ("code", "msg", "message", "cause", "desc")
+        ):
+            items = [obj]
+    else:
+        items = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+
+    out: list[dict] = []
+    for it in items[:40]:
+        if it in (None, "", [], {}):
+            continue
+        if isinstance(it, str):
+            msg = it.strip()
+            if not msg or msg.lower() in ("ok", "none", "null", "[]"):
+                continue
+            out.append(
+                {
+                    "code": "6060",
+                    "cause": msg[:240],
+                    "message": msg[:240],
+                    "source": "6060/warning",
+                    "hint": "SearchFreq /warning",
+                }
+            )
+            continue
+        if not isinstance(it, dict):
+            continue
+        msg = str(
+            it.get("cause")
+            or it.get("msg")
+            or it.get("message")
+            or it.get("desc")
+            or it.get("info")
+            or it.get("warning")
+            or ""
+        ).strip()
+        code = str(
+            it.get("code") or it.get("id") or it.get("type") or it.get("err") or "6060"
+        ).strip() or "6060"
+        if not msg:
+            msg = json.dumps(it, ensure_ascii=False)[:240]
+        level = str(it.get("level") or it.get("severity") or "").strip()
+        rec = {
+            "code": code[:32],
+            "cause": msg[:240],
+            "message": msg[:240],
+            "source": "6060/warning",
+            "hint": level or "SearchFreq /warning",
+        }
+        if it.get("time") or it.get("ts") or it.get("date"):
+            rec["ts"] = it.get("time") or it.get("ts") or it.get("date")
+        out.append(rec)
+    return out
+
+
+def _parse_antminer_readvol(text: str | None) -> dict | None:
+    """
+    /readvol — hashboard voltage, PSU feedback, power status.
+    Example: ``read current voltage:1300 feedback:12.907188 power status:0``
+    """
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    out: dict = {"raw": raw[:500], "source": "6060/readvol"}
+    if isinstance(obj, dict):
+        for k, dest in (
+            ("voltage", "voltage_mv"),
+            ("vol", "voltage_mv"),
+            ("feedback", "feedback_v"),
+            ("fb", "feedback_v"),
+            ("power_status", "power_status"),
+            ("powerstatus", "power_status"),
+            ("status", "power_status"),
+        ):
+            if obj.get(k) not in (None, ""):
+                out[dest] = obj.get(k)
+    m = re.search(r"voltage\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", raw, re.I)
+    if m:
+        try:
+            out["voltage_mv"] = float(m.group(1))
+        except (TypeError, ValueError):
+            pass
+    m = re.search(r"feedback\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", raw, re.I)
+    if m:
+        try:
+            out["feedback_v"] = float(m.group(1))
+        except (TypeError, ValueError):
+            pass
+    m = re.search(r"power\s*status\s*[:=]\s*([-+]?\d+)", raw, re.I)
+    if m:
+        try:
+            out["power_status"] = int(m.group(1))
+        except (TypeError, ValueError):
+            pass
+    # chainN:1300 snippets
+    chains: list[dict] = []
+    for m in re.finditer(
+        r"(?:chain|ch|pic)\s*(\d+)\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", raw, re.I
+    ):
+        try:
+            chains.append({"chain": int(m.group(1)), "voltage_mv": float(m.group(2))})
+        except (TypeError, ValueError):
+            continue
+    if chains:
+        out["chains"] = chains
+    if (
+        out.get("voltage_mv") is None
+        and out.get("feedback_v") is None
+        and out.get("power_status") is None
+        and not chains
+    ):
+        return None
+    return out
+
+
+def _parse_kv_blob(text: str) -> dict:
+    """Loose key:value / key=value extractor for 6060 text summaries."""
+    kv: dict = {}
+    for m in re.finditer(
+        r"([A-Za-z][A-Za-z0-9_ \-]{1,32})\s*[:=]\s*([^\n,;]+)", str(text)
+    ):
+        k = re.sub(r"\s+", "_", m.group(1).strip().lower())
+        v = m.group(2).strip()
+        if k and v:
+            kv[k[:40]] = v[:80]
+    return kv
+
+
+def _parse_antminer_summary_6060(text: str | None) -> dict | None:
+    """/summary — control-board physical sensors (not CGMiner summary)."""
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    out: dict = {"raw": raw[:2000], "source": "6060/summary"}
+    if isinstance(obj, dict):
+        out["data"] = {
+            str(k)[:40]: obj[k]
+            for k in list(obj)[:40]
+            if not isinstance(obj[k], (dict, list))
+        }
+    kv = _parse_kv_blob(raw)
+    if kv:
+        out["fields"] = kv
+    return out if (out.get("data") or out.get("fields")) else out
+
+
+def _parse_antminer_ee_info(text: str | None) -> dict | None:
+    """
+    /ee_info — hashboard EEPROM: serials, factory freq/voltage tables.
+    """
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    boards: list[dict] = []
+    if isinstance(obj, dict):
+        rows = (
+            obj.get("boards")
+            or obj.get("chain")
+            or obj.get("chains")
+            or obj.get("data")
+            or obj.get("ee")
+        )
+        if isinstance(rows, list):
+            for i, row in enumerate(rows):
+                if not isinstance(row, dict):
+                    continue
+                boards.append(
+                    {
+                        "slot": row.get("chain", row.get("slot", i)),
+                        "pcb_sn": row.get("sn")
+                        or row.get("pcb_sn")
+                        or row.get("serial"),
+                        "freq": row.get("freq") or row.get("frequency"),
+                        "voltage": row.get("vol")
+                        or row.get("voltage")
+                        or row.get("volt"),
+                    }
+                )
+        elif isinstance(rows, dict):
+            for k, row in rows.items():
+                if not isinstance(row, dict):
+                    continue
+                boards.append(
+                    {
+                        "slot": row.get("chain", k),
+                        "pcb_sn": row.get("sn") or row.get("pcb_sn"),
+                        "freq": row.get("freq"),
+                        "voltage": row.get("vol") or row.get("voltage"),
+                    }
+                )
+    # text: "chain0 sn:xxx freq:525 vol:1300"
+    if not boards:
+        for m in re.finditer(
+            r"(?:chain|ch|board|pcb)\s*(\d+)[^\n]{0,160}", raw, re.I
+        ):
+            chunk = m.group(0)
+            rec: dict = {"slot": int(m.group(1))}
+            sn = re.search(r"(?:sn|serial)\s*[:=]\s*([A-Za-z0-9._-]{4,})", chunk, re.I)
+            if sn:
+                rec["pcb_sn"] = sn.group(1)
+            fq = re.search(r"freq(?:uency)?\s*[:=]\s*([0-9]+)", chunk, re.I)
+            if fq:
+                rec["freq"] = int(fq.group(1))
+            vl = re.search(r"vol(?:t(?:age)?)?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)", chunk, re.I)
+            if vl:
+                rec["voltage"] = float(vl.group(1))
+            if len(rec) > 1:
+                boards.append(rec)
+    out: dict = {"raw": raw[:4000], "source": "6060/ee_info"}
+    if boards:
+        out["boards"] = boards[:8]
+    return out
+
+
+def _parse_antminer_chip_stat(text: str | None) -> dict | None:
+    """
+    /chip_stat or /asic_stat — per-ASIC matrix; ``x`` = bad chip («крест»).
+    """
+    if not text or not str(text).strip():
+        return None
+    raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
+    obj = _try_parse_json_blob(raw)
+    chains: list[dict] = []
+    if isinstance(obj, dict):
+        rows = obj.get("chain") or obj.get("chains") or obj.get("data") or obj.get("asic")
+        if isinstance(rows, list):
+            for i, row in enumerate(rows):
+                if isinstance(row, str):
+                    pat = row
+                    chains.append(
+                        {
+                            "chain": i,
+                            "pattern": pat[:256],
+                            "ok": pat.lower().count("o"),
+                            "cross": len(re.findall(r"[xX×]", pat)),
+                        }
+                    )
+                elif isinstance(row, dict):
+                    pat = str(row.get("acs") or row.get("stat") or row.get("pattern") or "")
+                    chains.append(
+                        {
+                            "chain": row.get("chain", i),
+                            "pattern": pat[:256],
+                            "ok": row.get("ok", pat.lower().count("o")),
+                            "cross": row.get("x", row.get("cross", len(re.findall(r"[xX×]", pat)))),
+                        }
+                    )
+    if not chains:
+        for m in re.finditer(
+            r"(?:chain|ch|board)\s*(\d+)\s*[:=]\s*([oxX×\.]+)", raw, re.I
+        ):
+            pat = m.group(2)
+            chains.append(
+                {
+                    "chain": int(m.group(1)),
+                    "pattern": pat[:256],
+                    "ok": pat.lower().count("o"),
+                    "cross": len(re.findall(r"[xX×]", pat)),
+                }
+            )
+    if not chains:
+        # standalone o/x runs (one per line)
+        for i, ln in enumerate(raw.splitlines()):
+            pat = ln.strip()
+            if re.fullmatch(r"[oxX×\.\s]{8,}", pat):
+                compact = re.sub(r"\s+", "", pat)
+                chains.append(
+                    {
+                        "chain": i,
+                        "pattern": compact[:256],
+                        "ok": compact.lower().count("o"),
+                        "cross": len(re.findall(r"[xX×]", compact)),
+                    }
+                )
+    if not chains:
+        return {"raw": raw[:4000], "source": "6060/chip_stat"}
+    total_x = sum(int(c.get("cross") or 0) for c in chains)
+    total_ok = sum(int(c.get("ok") or 0) for c in chains)
+    return {
+        "source": "6060/chip_stat",
+        "chains": chains[:8],
+        "cross_total": total_x,
+        "ok_total": total_ok,
+        "chip_count": total_ok + total_x,
+        "raw": raw[:4000],
+    }
+
+
+_ANTMINER_6060_SLOW: dict[str, dict] = {}
+_ANTMINER_6060_SLOW_TTL = 90.0
+
+
+def _antminer_6060_slow_get(host: str, path: str, cache_key: str) -> str | None:
+    """Cached GET for EEPROM / chip matrix (changes rarely)."""
+    now = time.time()
+    slot = _ANTMINER_6060_SLOW.get(host) or {}
+    ts = float(slot.get(cache_key + "_ts") or 0)
+    if cache_key in slot and (now - ts) < _ANTMINER_6060_SLOW_TTL:
+        return slot.get(cache_key)
+    txt = _antminer_6060_get(host, path, timeout=2.0)
+    if txt is None and cache_key == "chip_stat":
+        txt = _antminer_6060_get(host, "/asic_stat", timeout=1.5)
+    slot[cache_key] = txt
+    slot[cache_key + "_ts"] = now
+    _ANTMINER_6060_SLOW[host] = slot
+    return txt
+
+
 def _parse_antminer_nonce_text(text: str | None) -> dict | None:
     """
     Best-effort parse of `/nonce` chip table.
@@ -24484,6 +25247,8 @@ def _parse_antminer_nonce_text(text: str | None) -> dict | None:
     if not text or not str(text).strip():
         return None
     raw = str(text).strip()
+    if re.search(r"404 not found|500 server error", raw, re.I):
+        return None
     chips: list[dict] = []
     # patterns: "chain0 asic12 nonce:12345" / "0-12:12345" / "nonce[0][12]=123"
     for m in re.finditer(
@@ -24521,51 +25286,254 @@ def _parse_antminer_nonce_text(text: str | None) -> dict | None:
 
 def _enrich_live_antminer_6060(host: str, body: dict) -> dict:
     """
-    Bitmain SearchFreqServer on :6060 (stock FW; availability depends on
-    model / PSU / firmware):
+    Bitmain SearchFreqServer on :6060 (stock / L9 / S19 FW):
 
-      GET /miner_power  → wall power watts  (e.g. ``miner power:3605``)
-      GET /nonce        → per-chip nonce table (some FW only)
-      GET /productName  → model string
-      GET /get_sn       → serial
+      GET /miner_power  → wall watts
+      GET /warning      → JSON critical alerts
+      GET /readvol      → chain voltage, PSU feedback, power status
+      GET /summary      → control-board physical sensors
+      GET /ee_info      → hashboard EEPROM (SN, factory freq/volt)
+      GET /chip_stat|/asic_stat → per-ASIC o/x matrix («кресты»)
+      GET /rate · /ideal_rate · /max_rate · /miner_status · /board_type
+      GET /power-0..3 · /adc   (read-only voltage / ADC)
+      GET /nonce · /productName · /get_sn
+
+    Write paths (/fan-N, /uart-N, /resetcore-…, /set_sn, /flush, …) are
+    never called from the poller.
 
     Non-fatal — leaves body unchanged when port closed or path unsupported.
     """
     if not host or not isinstance(body, dict):
         return body
     host = str(host).split(":")[0].strip()
-    # power — prefer 6060 over estimate when present
-    ptxt = _antminer_6060_get(host, "/miner_power", timeout=2.0)
+    now = time.time()
+    down_ts = float(_ANTMINER_6060_DOWN.get(host) or 0)
+    if down_ts and (now - down_ts) < _ANTMINER_6060_DOWN_TTL:
+        return body
+    hw: dict = dict(body.get("antminer_hw") or {}) if isinstance(body.get("antminer_hw"), dict) else {}
+    got = False
+    unit_hint = str(
+        body.get("hashrate_unit") or body.get("efficiency_unit") or ""
+    )
+
+    # Probe :6060 via /miner_power. None = port closed / timeout — skip rest.
+    ptxt = _antminer_6060_get(host, "/miner_power", timeout=1.5)
+    if ptxt is None:
+        _ANTMINER_6060_DOWN[host] = now
+        return body
+    _ANTMINER_6060_DOWN.pop(host, None)
     pw = _parse_antminer_miner_power(ptxt)
     if pw is not None:
+        got = True
         body["power"] = round(pw, 1)
         body["power_w"] = round(pw, 1)
         body["power_source"] = "antminer_6060"
         body["power_estimated"] = False
-        # efficiency if hashrate known
         try:
             th = float(body.get("hashrate_th") or 0)
             if th > 0:
+                unit = str(body.get("efficiency_unit") or "J/T").upper()
+                if unit in ("J/G", "J/GH"):
+                    ev, eu = round(pw / (th * 1000.0), 3), "J/G"
+                elif unit in ("J/M", "J/MH"):
+                    ev, eu = round(pw / (th * 1e6), 3), "J/M"
+                else:
+                    ev, eu = round(pw / th, 1), "J/T"
+                body["efficiency_value"] = ev
+                body["efficiency_unit"] = eu
                 body["efficiency_jth"] = round(pw / th, 2)
-                body["efficiency_value"] = body["efficiency_jth"]
-                body["efficiency_unit"] = "J/TH"
         except (TypeError, ValueError):
             pass
+
+    # /rate — live hashrate from SearchFreq (fills gaps / L9)
+    rtxt = _antminer_6060_get(host, "/rate", timeout=1.2)
+    rate_th = _parse_antminer_rate_text(rtxt, unit_hint=unit_hint)
+    if rate_th is not None and rate_th > 0:
+        got = True
+        hw["rate_th"] = rate_th
+        body["rate_th"] = rate_th
+        if body.get("hashrate_th") in (None, "", 0, 0.0) or (
+            isinstance(body.get("hashrate_th"), (int, float))
+            and float(body.get("hashrate_th") or 0) <= 0
+        ):
+            body["hashrate_th"] = rate_th
+            body["hashrate_hs"] = rate_th * 1e12
+
+    # /readvol — every poll
+    vtxt = _antminer_6060_get(host, "/readvol", timeout=1.5)
+    svol = _parse_antminer_readvol(vtxt)
+    if svol:
+        got = True
+        hw["readvol"] = svol
+        mv = svol.get("voltage_mv")
+        fb = svol.get("feedback_v")
+        try:
+            if mv is not None:
+                mvf = float(mv)
+                body["hashboard_voltage_mv"] = mvf
+                # 1000–2000 typically mV on PIC
+                if 200 <= mvf <= 2500 and body.get("board_voltage") in (None, ""):
+                    body["board_voltage"] = round(mvf / 1000.0, 3) if mvf > 80 else mvf
+        except (TypeError, ValueError):
+            pass
+        try:
+            if fb is not None:
+                fbf = float(fb)
+                body["psu_feedback_v"] = fbf
+                if body.get("psu_vin") in (None, "") and 8 <= fbf <= 16:
+                    body["psu_vin"] = round(fbf, 3)
+        except (TypeError, ValueError):
+            pass
+        if svol.get("power_status") is not None:
+            body["psu_status"] = svol.get("power_status")
+
+    # /warning — every poll
+    wtxt = _antminer_6060_get(host, "/warning", timeout=1.5)
+    warns = _parse_antminer_warning(wtxt)
+    if warns:
+        got = True
+        hw["warnings"] = warns
+        body["antminer_warnings"] = warns
+        errs = list(body.get("miner_errors") or [])
+        seen = {(str(e.get("code")), str(e.get("cause") or e.get("message") or "")) for e in errs}
+        for w in warns:
+            key = (str(w.get("code") or "6060"), str(w.get("cause") or ""))
+            if key in seen:
+                continue
+            errs.append(w)
+            seen.add(key)
+        body["miner_errors"] = errs
+
+    # slower / less chatty paths (cached ~90s)
+    stxt = _antminer_6060_slow_get(host, "/summary", "summary")
+    ssum = _parse_antminer_summary_6060(stxt)
+    if ssum:
+        hw["summary"] = ssum
+        body["antminer_summary"] = ssum.get("fields") or ssum.get("data") or ssum
+
+    etxt = _antminer_6060_slow_get(host, "/ee_info", "ee_info")
+    ee = _parse_antminer_ee_info(etxt)
+    if ee:
+        hw["ee_info"] = ee
+        body["antminer_ee"] = ee
+        # fill missing PCB SN from EEPROM
+        ee_boards = ee.get("boards") if isinstance(ee.get("boards"), list) else []
+        if ee_boards and isinstance(body.get("boards_detail"), list):
+            by_slot = {}
+            for b in ee_boards:
+                if isinstance(b, dict) and b.get("slot") is not None:
+                    by_slot[int(b["slot"])] = b
+            for rec in body["boards_detail"]:
+                if not isinstance(rec, dict):
+                    continue
+                try:
+                    sl = int(rec.get("slot"))
+                except (TypeError, ValueError):
+                    continue
+                src = by_slot.get(sl)
+                if src and src.get("pcb_sn") and not rec.get("pcb_sn"):
+                    rec["pcb_sn"] = src["pcb_sn"]
+                if src and src.get("freq") and not rec.get("freq"):
+                    rec["freq"] = src["freq"]
+
+    ctxt = _antminer_6060_slow_get(host, "/chip_stat", "chip_stat")
+    cstat = _parse_antminer_chip_stat(ctxt)
+    if cstat and (cstat.get("chains") or cstat.get("chip_count")):
+        hw["chip_stat"] = cstat
+        body["antminer_chip_stat"] = cstat
+        if cstat.get("cross_total") is not None:
+            body["asic_cross"] = cstat.get("cross_total")
+        if cstat.get("chip_count") and not body.get("chipmap_hint"):
+            body["chipmap_hint"] = {
+                "source": "6060/chip_stat",
+                "chip_count": cstat.get("chip_count"),
+                "cross": cstat.get("cross_total"),
+            }
+
+    itxt = _antminer_6060_slow_get(host, "/ideal_rate", "ideal_rate")
+    ideal_th = _parse_antminer_rate_text(itxt, unit_hint=unit_hint)
+    if ideal_th:
+        got = True
+        hw["ideal_rate_th"] = ideal_th
+        body["ideal_rate_th"] = ideal_th
+        if body.get("factory_th") in (None, "", 0):
+            body["factory_th"] = ideal_th
+        if body.get("tagged_th") in (None, "", 0):
+            body["tagged_th"] = ideal_th
+
+    mtxt = _antminer_6060_slow_get(host, "/max_rate", "max_rate")
+    max_th = _parse_antminer_rate_text(mtxt, unit_hint=unit_hint)
+    if max_th:
+        got = True
+        hw["max_rate_th"] = max_th
+        body["max_rate_th"] = max_th
+
+    mst = _antminer_6060_get(host, "/miner_status", timeout=1.2)
+    st = _parse_antminer_miner_status(mst)
+    if st:
+        got = True
+        hw["miner_status"] = st
+        body["miner_status_6060"] = st
+
+    btyp = _antminer_6060_slow_get(host, "/board_type", "board_type")
+    bt = _parse_antminer_board_type(btyp)
+    if bt:
+        got = True
+        hw["board_type"] = bt
+        body["board_type"] = body.get("board_type") or bt
+        if not body.get("hash_board"):
+            body["hash_board"] = bt
+
+    # /power-0..3 — per-chain voltage (read-only)
+    chain_volts: list[dict] = []
+    for i in range(4):
+        ptxt_i = _antminer_6060_slow_get(host, f"/power-{i}", f"power_{i}")
+        if not ptxt_i or re.search(r"404 not found|500 server error", ptxt_i, re.I):
+            continue
+        parsed = _parse_antminer_readvol(ptxt_i) or {}
+        rec = {"chain": i, "raw": str(ptxt_i).strip()[:200]}
+        if parsed.get("voltage_mv") is not None:
+            rec["voltage_mv"] = parsed["voltage_mv"]
+        elif parsed.get("feedback_v") is not None:
+            rec["voltage_v"] = parsed["feedback_v"]
+        else:
+            m = re.search(r"([0-9]+(?:\.[0-9]+)?)", str(ptxt_i))
+            if m:
+                rec["voltage_mv"] = float(m.group(1))
+        chain_volts.append(rec)
+    if chain_volts:
+        got = True
+        hw["chain_voltage"] = chain_volts
+        body["chain_voltage"] = chain_volts
+
+    atxt = _antminer_6060_slow_get(host, "/adc", "adc")
+    adc = _parse_antminer_adc(atxt)
+    if adc:
+        got = True
+        hw["adc"] = adc
+        body["antminer_adc"] = adc
+
     # product / serial (fill gaps)
     if not body.get("miner_type") or not str(body.get("miner_type")).strip():
-        name = _antminer_6060_get(host, "/productName", timeout=1.5)
+        name = _antminer_6060_slow_get(host, "/productName", "productName")
         if name and name.strip() and "not found" not in name.lower():
             body["miner_type"] = name.strip()
             body.setdefault("model_name", name.strip())
     if not body.get("serial"):
-        sn = _antminer_6060_get(host, "/get_sn", timeout=1.5)
+        sn = _antminer_6060_slow_get(host, "/get_sn", "get_sn")
         if sn and sn.strip() and "not found" not in sn.lower() and len(sn.strip()) < 64:
             body["serial"] = sn.strip()
-    # chip nonces — optional (many FW close the socket; keep short timeout)
-    ntxt = _antminer_6060_get(host, "/nonce", timeout=1.2)
+    # /nonce — optional chip table (some FW close the socket; cache 90s)
+    ntxt = _antminer_6060_slow_get(host, "/nonce", "nonce")
     nparsed = _parse_antminer_nonce_text(ntxt)
     if nparsed:
+        got = True
         body["antminer_nonce"] = nparsed
+        hw["nonce"] = {
+            "nonce_total": nparsed.get("nonce_total"),
+            "chip_count": nparsed.get("chip_count"),
+            "source": "6060/nonce",
+        }
         if nparsed.get("nonce_total") is not None:
             body["nonce_total"] = nparsed.get("nonce_total")
         if nparsed.get("chips") and not body.get("chipmap_hint"):
@@ -24573,8 +25541,89 @@ def _enrich_live_antminer_6060(host: str, body: dict) -> dict:
                 "source": "6060/nonce",
                 "chip_count": nparsed.get("chip_count"),
             }
-    body["antminer_6060"] = True
+    if hw:
+        body["antminer_hw"] = hw
+    if got:
+        body["antminer_6060"] = True
     return body
+
+
+def _antminer_6060_snapshot_from_live(live: dict | None, *, host: str | None = None) -> dict:
+    """Sanitized SearchFreq snapshot for GET /api/miner/antminer6060 (cache only)."""
+    live = live if isinstance(live, dict) else {}
+    hw = live.get("antminer_hw") if isinstance(live.get("antminer_hw"), dict) else {}
+    nonce = live.get("antminer_nonce") if isinstance(live.get("antminer_nonce"), dict) else {}
+    power_src = str(live.get("power_source") or "")
+    power_w = live.get("power_w") if live.get("power_w") is not None else live.get("power")
+    if power_src != "antminer_6060":
+        power_w = None
+    return {
+        "ok": True,
+        "available": bool(live.get("antminer_6060")),
+        "host": host or live.get("host"),
+        "power_w": power_w,
+        "power_source": power_src or None,
+        "rate_th": live.get("rate_th"),
+        "ideal_rate_th": live.get("ideal_rate_th"),
+        "max_rate_th": live.get("max_rate_th"),
+        "miner_status": live.get("miner_status_6060") or hw.get("miner_status"),
+        "board_type": live.get("board_type") or hw.get("board_type"),
+        "hashboard_voltage_mv": live.get("hashboard_voltage_mv"),
+        "psu_feedback_v": live.get("psu_feedback_v"),
+        "psu_status": live.get("psu_status"),
+        "asic_cross": live.get("asic_cross"),
+        "nonce_total": live.get("nonce_total") or nonce.get("nonce_total"),
+        "nonce_chips": nonce.get("chip_count") or (hw.get("nonce") or {}).get("chip_count"),
+        "warnings": live.get("antminer_warnings") or hw.get("warnings") or [],
+        "chain_voltage": live.get("chain_voltage") or hw.get("chain_voltage"),
+        "adc": live.get("antminer_adc") or hw.get("adc"),
+        "product": live.get("miner_type") or live.get("model_name"),
+        "serial": live.get("serial"),
+        "catalog": {
+            "polled_every": list(_ANTMINER_6060_POLL_EVERY),
+            "polled_slow": list(_ANTMINER_6060_POLL_SLOW),
+            "never": list(_ANTMINER_6060_NEVER),
+        },
+    }
+
+
+def get_antminer_6060_snapshot(host: str | None = None) -> dict:
+    """Read-only 6060 view from live_cache / fleet_live — never hits the miner."""
+    want = str(host or "").strip().split(":")[0]
+    live = None
+    if want:
+        try:
+            fmap = _load_fleet_live_map(max_age_sec=180.0)
+            for key, entry in (fmap or {}).items():
+                if not isinstance(entry, dict):
+                    continue
+                kh = str(key).split(":")[0]
+                eh = str(entry.get("host") or "").split(":")[0]
+                if kh == want or eh == want:
+                    live = entry
+                    break
+        except Exception:
+            live = None
+    if not isinstance(live, dict):
+        try:
+            live = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC) or {}
+        except Exception:
+            live = {}
+        if want and isinstance(live, dict):
+            lh = str(live.get("host") or "").split(":")[0]
+            if lh and lh != want:
+                return {
+                    "ok": False,
+                    "available": False,
+                    "host": want,
+                    "error": "no live snapshot for host",
+                    "catalog": {
+                        "polled_every": list(_ANTMINER_6060_POLL_EVERY),
+                        "polled_slow": list(_ANTMINER_6060_POLL_SLOW),
+                        "never": list(_ANTMINER_6060_NEVER),
+                    },
+                }
+    return _antminer_6060_snapshot_from_live(live, host=want or None)
 
 
 def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> dict:
@@ -24648,8 +25697,7 @@ def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> d
             body["chip_avg"] = round(sum(temps) / len(temps), 1)
             body["chip_max"] = round(max(temps), 1)
             body["chip_min"] = round(min(temps), 1)
-            if body.get("boards") in (None, [], [None], [0], [0.0]):
-                body["boards"] = temps[:4]
+            # temps ≠ extra hashboards (V1 mini is 1× HB). Don't inflate boards[].
         fans = []
         for k in ("fanspeed0", "fanspeed1", "fanspeed2", "fanspeed3"):
             try:
@@ -24789,6 +25837,10 @@ def _fetch_live_goldshell_http(host: str, port: int = 80) -> dict | None:
         # Device online even if pool dead (initialising)
         body["pool_ok"] = bool(any_up)
     try:
+        body = _stamp_hashboard_meta(body, None)
+    except Exception:
+        pass
+    try:
         if apply_model_profile_to_live is not None:
             body = apply_model_profile_to_live(body, vendor="goldshell")
     except Exception:
@@ -24888,6 +25940,227 @@ def _enrich_live_goldshell(host: str, body: dict) -> dict:
     return body
 
 
+def _devs_row_hashrate_th(d: dict, vendor: str | None = None) -> float | None:
+    """Normalize one CGMiner DEVS row hashrate to TH/s."""
+    if not isinstance(d, dict):
+        return None
+    for key in ("GHS 5s", "GHS av", "GHS 30m", "RT HASHRATE", "HS RT"):
+        if d.get(key) not in (None, ""):
+            try:
+                raw = d[key]
+                if isinstance(raw, str):
+                    m = re.search(r"([\d.]+)\s*([TGM]?H)", raw, re.I)
+                    if m:
+                        v = float(m.group(1))
+                        u = m.group(2).upper()
+                        if u.startswith("T"):
+                            return v
+                        if u.startswith("G"):
+                            return v / 1000.0
+                        if u.startswith("M"):
+                            return v / 1e6
+                v = float(raw)
+                if v <= 0:
+                    continue
+                # bare GHS field is GH/s
+                if str(key).upper().startswith("GHS") or v < 50_000:
+                    return v / 1000.0
+                return v / 1e6
+            except (TypeError, ValueError):
+                continue
+    for key in ("MHS 5s", "MHS av", "MHS 1m", "MHS 5m"):
+        if d.get(key) not in (None, ""):
+            try:
+                v = float(d[key])
+            except (TypeError, ValueError):
+                continue
+            if v <= 0:
+                continue
+            # Whatsminer-scale raw megahashes
+            if v >= 1e5:
+                return v / 1e6
+            # Goldshell UI shows GH/s but DEVS often puts 1124.45 in MHS
+            vend = str(vendor or "").lower()
+            if vend in ("goldshell", "cgminer") and v >= 20:
+                return v / 1000.0
+            return v / 1e6
+    return None
+
+
+def _devs_row_temps(d: dict) -> tuple[float | None, float | None]:
+    """Primary / secondary board temps (e.g. Goldshell 84.0 / 69.6)."""
+    if not isinstance(d, dict):
+        return None, None
+    primary = None
+    extras: list[float] = []
+    # "84.0 °C / 69.6 °C" sometimes stuffed in one field
+    for key, val in d.items():
+        if not isinstance(val, str) or "/" not in val:
+            continue
+        if "temp" not in str(key).lower() and "°" not in val and "C" not in val:
+            continue
+        found = re.findall(r"(\d+(?:\.\d+)?)\s*°?\s*C?", val)
+        nums = []
+        for x in found:
+            try:
+                tv = float(x)
+            except ValueError:
+                continue
+            if -20 < tv < 200:
+                nums.append(tv)
+        if len(nums) >= 2:
+            return nums[0], nums[1]
+    for key in (
+        "Temperature",
+        "temp",
+        "Temp",
+        "temp1",
+        "temp2",
+        "Temperature2",
+        "Chip Temperature",
+        "Chip Temp",
+        "Chip Temp Avg",
+        "Chip Temp Max",
+        "temp_pcb",
+        "temp_chip",
+        "Inlet Temperature",
+        "Outlet Temperature",
+    ):
+        if d.get(key) in (None, ""):
+            continue
+        try:
+            tv = float(d[key])
+        except (TypeError, ValueError):
+            continue
+        if not (-20 < tv < 200) or tv == 0:
+            continue
+        if primary is None and key in ("Temperature", "temp", "Temp", "temp1"):
+            primary = tv
+        else:
+            extras.append(tv)
+    if primary is None and extras:
+        primary = extras.pop(0)
+    secondary = None
+    for x in extras:
+        if primary is None or abs(x - primary) > 0.15:
+            secondary = x
+            break
+    return primary, secondary
+
+
+def _stamp_hashboard_meta(body: dict, devs: list | None = None) -> dict:
+    """Attach vendor board names + per-board hashrate/temps from CGMiner DEVS."""
+    if not isinstance(body, dict):
+        return body
+    vendor = str(body.get("vendor") or body.get("api_vendor") or "").strip()
+    style = vendor_hashboard_style(vendor)
+    body["hashboard_style"] = {
+        "prefix": style.get("prefix"),
+        "index_base": style.get("index_base"),
+        "api_prefix": style.get("api_prefix"),
+        "display": style.get("display"),
+    }
+    n = 0
+    try:
+        n = int(body.get("board_count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if isinstance(devs, list) and len(devs) > n:
+        n = len(devs)
+    if n <= 0:
+        boards = body.get("boards")
+        if isinstance(boards, list):
+            n = len(boards)
+    n = max(0, min(8, n))
+    labels: list[str] = []
+    details: list[dict] = []
+    board_ths: list[float] = []
+    temps: list[float] = []
+    temps2: list[float | None] = []
+    for i in range(n or 0):
+        raw_name = None
+        d = None
+        if isinstance(devs, list):
+            for cand in devs:
+                if not isinstance(cand, dict):
+                    continue
+                nm = str(cand.get("Name") or cand.get("name") or "").strip()
+                idx = parse_hashboard_index(nm, style)
+                slot = cand.get("Slot")
+                asc = cand.get("ASC")
+                if idx == i or slot == i or asc == i:
+                    d = cand
+                    raw_name = nm or None
+                    break
+            if d is None and i < len(devs) and isinstance(devs[i], dict):
+                d = devs[i]
+                raw_name = str(d.get("Name") or d.get("name") or "").strip() or None
+        label = format_hashboard_id(i, vendor, raw_name=raw_name, style=style)
+        labels.append(label)
+        th = _devs_row_hashrate_th(d, vendor) if d else None
+        t1, t2 = _devs_row_temps(d) if d else (None, None)
+        if t1 is None and isinstance(body.get("boards"), list) and i < len(body["boards"]):
+            try:
+                t1 = float(body["boards"][i])  # type: ignore[index]
+            except (TypeError, ValueError):
+                t1 = None
+        if th is not None:
+            board_ths.append(round(th, 4))
+        if t1 is not None:
+            temps.append(t1)
+        temps2.append(t2)
+        rec = {
+            "slot": i,
+            "id": label,
+            "name": raw_name or label,
+        }
+        if th is not None:
+            rec["hashrate_th"] = round(th, 4)
+        if t1 is not None:
+            rec["temp_c"] = round(t1, 1)
+        if t2 is not None:
+            rec["temp2_c"] = round(t2, 1)
+        if isinstance(d, dict):
+            for src, dst in (
+                ("Accepted", "accepted"),
+                ("Rejected", "rejected"),
+                ("Hardware Errors", "hw_errors"),
+                ("Diff1 Work", "nonces"),
+                ("Nonce", "nonces"),
+            ):
+                if d.get(src) not in (None, ""):
+                    try:
+                        rec[dst] = int(float(d[src]))
+                    except (TypeError, ValueError):
+                        pass
+        details.append(rec)
+    if labels:
+        body["board_labels"] = labels
+    if details:
+        body["boards_detail"] = details
+    if board_ths and not body.get("boards_th"):
+        body["boards_th"] = board_ths
+    # Goldshell (and similar): two temps per board → PCB / chip
+    if any(t is not None for t in temps2):
+        if not body.get("board_chip_avg") or not any(
+            x not in (None, 0, 0.0) for x in (body.get("board_chip_avg") or [])
+        ):
+            body["board_chip_avg"] = [
+                (round(t, 1) if t is not None else None) for t in temps2
+            ]
+        if not body.get("board_chip_max"):
+            body["board_chip_max"] = list(body["board_chip_avg"])
+        if not body.get("board_chip_min"):
+            body["board_chip_min"] = list(body["board_chip_avg"])
+    if temps and body.get("chip_avg") in (None, ""):
+        body["chip_avg"] = round(sum(temps) / len(temps), 1)
+        body["chip_max"] = round(max(temps), 1)
+        body["chip_min"] = round(min(temps), 1)
+    if n and not body.get("board_count"):
+        body["board_count"] = n
+    return body
+
+
 def _cgminer_apply_stats(body: dict) -> dict:
     """Pull fans / frequency / temps / chain rates from CGMiner/BMMiner ``stats``."""
     try:
@@ -24953,18 +26226,33 @@ def _cgminer_apply_stats(body: dict) -> dict:
                     temps.append(tv)
             except (TypeError, ValueError):
                 pass
-        # Bitmain per-chain rate (GH/s scale, e.g. 5.27)
-        for i in range(1, 9):
-            for key in (f"chain_rate{i}", f"chain_rateideal{i}"):
-                if row.get(key) not in (None, ""):
-                    try:
-                        gh = float(row[key])
-                        if gh > 0:
-                            # store as TH for fleet boards_th column
-                            board_ths.append(round(gh / 1000.0, 4))
-                    except (TypeError, ValueError):
-                        pass
-                    break
+        # Bitmain per-chain rate (GH/s like 5.27, or MH/s like 5670)
+        for i in range(0, 9):
+            found = False
+            for key in (
+                f"chain_rate{i}",
+                f"chain_rateideal{i}",
+                f"chain_hashrate{i}",
+                f"chain_ghz{i}",
+            ):
+                if row.get(key) in (None, ""):
+                    continue
+                try:
+                    raw = row[key]
+                    if isinstance(raw, str):
+                        raw = raw.replace(",", ".").split()[0]
+                    v = float(raw)
+                    if v <= 0:
+                        continue
+                    # ≥100 → MH/s (L9 ~5.6 GH/s per board often sent as 5600)
+                    th = v / 1e6 if v >= 100 else v / 1000.0
+                    board_ths.append(round(th, 6))
+                    found = True
+                except (TypeError, ValueError, IndexError):
+                    continue
+                break
+            if found:
+                continue
         if freq is None:
             for key in ("frequency", "Frequency", "freq", "freq1", "GHS 30m"):
                 if row.get(key) not in (None, ""):
@@ -25567,6 +26855,13 @@ def _fetch_live_direct() -> dict:
             body = _enrich_live_goldshell(host_only, body)
     except Exception as e:
         print(f"[live] goldshell enrich: {e}")
+    # Vendor hashboard names (SM0 / CH1 / CPB0 / HB1) + Goldshell per-CPB temps
+    try:
+        body = _stamp_hashboard_meta(
+            body, devs if isinstance(devs, list) else None
+        )
+    except Exception as e:
+        print(f"[live] hashboard meta: {e}")
     # Model profile: trade name + power estimate when ASIC omits wall power
     try:
         if apply_model_profile_to_live is not None:
@@ -25582,6 +26877,9 @@ def _fetch_live_direct() -> dict:
             vendor_l in ("antminer", "bitmain")
             or "antminer" in type_l
             or body.get("bmminer")
+            or type_l.startswith("l9")
+            or type_l.startswith("s19")
+            or type_l.startswith("s21")
         ):
             body = _enrich_live_antminer_6060(host_only, body)
     except Exception as e:
@@ -34051,6 +35349,13 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/miner/model", "/api/model"):
             self._api_miner_model_resolve()
             return
+        if path in (
+            "/api/miner/antminer6060",
+            "/api/miner/antminer_6060",
+            "/api/antminer/6060",
+        ):
+            self._api_antminer_6060()
+            return
         if path == "/api/miner/config":
             self._api_miner_config_get()
             return
@@ -36483,6 +37788,15 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(500, {"ok": False, "error": str(e)})
 
+    def _api_antminer_6060(self) -> None:
+        """GET /api/miner/antminer6060[?host=192.168.13.78] — cache snapshot only."""
+        qs = parse_qs(urlparse(self.path).query)
+        host = (qs.get("host") or qs.get("ip") or [""])[0]
+        try:
+            self._json_response(200, get_antminer_6060_snapshot(host or None))
+        except Exception as e:
+            self._json_response(500, {"ok": False, "error": str(e)})
+
     def _api_miner_model_resolve(self) -> None:
         """
         GET /api/miner/model?type=M63_VK2A
@@ -37195,6 +38509,7 @@ def main() -> None:
     print(f"devices:           GET/POST /api/devices · /set · /test · /delete")
     print(f"chipmap:           GET /api/chipmap · POST /api/chipmap/config · refresh")
     print(f"miner models:      GET /api/miner/models · /api/miner/model?type=M63")
+    print(f"antminer 6060:     GET /api/miner/antminer6060[?host=]  (read cache, never writes)")
     try:
         if role_enabled("edge_luci_proxy"):
             lp = get_luci_proxy_cfg()

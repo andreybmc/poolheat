@@ -10,7 +10,15 @@
       "logo_dark": "/icons/vendors/antminer.png",
       "default_port": 80,
       "color": "#ef4444",
-      "order": 10
+      "order": 10,
+      "hashboard": {
+        "prefix": "CH",
+        "index_base": 1,
+        "api_prefix": "chain",
+        "api_index_base": 0,
+        "display": "{prefix}{n}",
+        "note": "API chain0/chain1… · UI CH1 CH2 CH3"
+      }
     },
     {
       "id": "avalon",
@@ -20,7 +28,14 @@
       "logo": "/icons/vendors/avalon.png",
       "default_port": 4028,
       "color": "#3b82f6",
-      "order": 20
+      "order": 20,
+      "hashboard": {
+        "prefix": "MM",
+        "index_base": 0,
+        "api_prefix": "MM",
+        "api_index_base": 0,
+        "display": "{prefix}{n}"
+      }
     },
     {
       "id": "goldshell",
@@ -32,7 +47,15 @@
       "color": "#eab308",
       "order": 30,
       "api": "cgminer",
-      "note": "CGMiner/ckbminer on :4028 (command=); HTTP /mcb/status|setting|pools on :80"
+      "note": "CGMiner/ckbminer on :4028 (command=); HTTP /mcb/status|setting|pools on :80",
+      "hashboard": {
+        "prefix": "CPB",
+        "index_base": 0,
+        "api_prefix": "CPB",
+        "api_index_base": 0,
+        "display": "{prefix}{n}",
+        "note": "CPB0 CPB1… · per-board temp + hashrate in DEVS"
+      }
     },
     {
       "id": "ipollo",
@@ -44,7 +67,15 @@
       "color": "#3b82f6",
       "order": 40,
       "api": "cgminer",
-      "note": "CGMiner API on :4028 (command=); LuCI theme ipolloeth on :80"
+      "note": "CGMiner API on :4028 (command=); LuCI theme ipolloeth on :80",
+      "hashboard": {
+        "prefix": "HB",
+        "index_base": 1,
+        "api_prefix": "HB",
+        "api_index_base": 1,
+        "display": "{prefix}{n}",
+        "note": "HB1 HB2 HB3…"
+      }
     },
     {
       "id": "whatsminer",
@@ -54,7 +85,15 @@
       "logo": "/icons/vendors/whatsminer.png",
       "default_port": 4028,
       "color": "#f59e0b",
-      "order": 90
+      "order": 90,
+      "hashboard": {
+        "prefix": "SM",
+        "index_base": 0,
+        "api_prefix": "SM",
+        "api_index_base": 0,
+        "display": "{prefix}{n}",
+        "note": "SM0 SM1 SM2…"
+      }
     }
   ]
 }

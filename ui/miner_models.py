@@ -1262,10 +1262,17 @@ def apply_model_profile_to_live(
     except (TypeError, ValueError):
         cur_pf = None
 
+    src_now = str(live.get("power_source") or "").lower()
+    already_est = live.get("power_estimated") is True or src_now in (
+        "model",
+        "estimate",
+        "estimated",
+        "profile",
+    )
     need_est = cur_pf is None or cur_pf <= 0
     # Models that omit wall power on :4028 still get a model estimate — but
     # never clobber a real meter (Antminer :6060/miner_power, PSU, etc.).
-    metered_src = str(live.get("power_source") or "").lower() in (
+    metered_src = src_now in (
         "antminer_6060",
         "6060",
         "meter",
@@ -1275,6 +1282,11 @@ def apply_model_profile_to_live(
     )
     if reported_flag is False and not metered_src and (cur_pf is None or cur_pf <= 0):
         need_est = True
+    if already_est and not metered_src:
+        # second apply() must not re-label a model estimate as metered
+        live["power_estimated"] = True
+        live["power_source"] = src_now or "model"
+        need_est = False
     if need_est and pwr_cfg.get("estimate_from_efficiency", True):
         try:
             hs = float(live["hashrate_hs"]) if live.get("hashrate_hs") is not None else None
@@ -1302,8 +1314,12 @@ def apply_model_profile_to_live(
             )
             live["efficiency_note"] = est.get("note")
     elif cur_pf is not None and cur_pf > 0:
-        live.setdefault("power_source", "meter")
-        live["power_estimated"] = False
+        if already_est and not metered_src:
+            live["power_estimated"] = True
+            live["power_source"] = src_now or "model"
+        else:
+            live.setdefault("power_source", "meter")
+            live["power_estimated"] = False
         try:
             th = float(live.get("hashrate_th") or 0)
             ev, eu = efficiency_from_power(cur_pf, th, ainfo)
@@ -1337,6 +1353,48 @@ def _apply_algo_when_no_profile(live: dict[str, Any], vendor: str | None) -> Non
         th = float(live["hashrate_th"]) if live.get("hashrate_th") not in (None, "") else None
     except (TypeError, ValueError):
         p, th = None, None
+    src = str(live.get("power_source") or "").lower()
+    metered = src in (
+        "antminer_6060",
+        "6060",
+        "meter",
+        "psu",
+        "summary",
+        "api",
+    )
+    if (p is None or p <= 0) and not metered:
+        fam = lookup_family(
+            live.get("miner_type")
+            or live.get("model_code")
+            or (live.get("model") if isinstance(live.get("model"), str) else None)
+        )
+        if fam:
+            hs = None
+            try:
+                hs = float(live["hashrate_hs"]) if live.get("hashrate_hs") is not None else None
+            except (TypeError, ValueError):
+                hs = None
+            est = estimate_power_from_profile(fam, hashrate_hs=hs, hashrate_th=th)
+            if est:
+                live["power"] = est["power_w"]
+                live["power_source"] = "model"
+                live["power_estimated"] = True
+                p = est["power_w"]
+                want = str((ainfo or {}).get("efficiency_unit") or est["efficiency_unit"])
+                live["efficiency_value"] = round(
+                    convert_efficiency(
+                        float(est["efficiency_value"]), est["efficiency_unit"], want
+                    ),
+                    1 if _eff_unit_key(want) == "j/t" else 3,
+                )
+                live["efficiency_unit"] = want
+                live["efficiency_jth"] = convert_efficiency(
+                    float(est["efficiency_value"]), est["efficiency_unit"], "J/T"
+                )
+    elif p and p > 0 and src in ("model", "estimate", "estimated", "profile"):
+        live["power_estimated"] = True
+    elif p and p > 0 and not live.get("power_estimated") and metered:
+        live["power_estimated"] = False
     if p and th and th > 0 and live.get("efficiency_value") is None:
         ev, eu = efficiency_from_power(p, th, ainfo)
         if ev is not None:
