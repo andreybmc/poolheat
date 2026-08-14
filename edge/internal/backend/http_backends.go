@@ -174,6 +174,132 @@ func controlShelly(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result,
 	return tryGen("1")
 }
 
+// ewelinkParseSwitch extracts on/off from CoolKit params (plug / multi / breaker).
+func ewelinkParseSwitch(data map[string]any) *bool {
+	if data == nil {
+		return nil
+	}
+	if v, ok := data["switch"]; ok {
+		s := strings.ToLower(strAny(v))
+		if s == "on" || s == "1" || s == "true" {
+			b := true
+			return &b
+		}
+		if s == "off" || s == "0" || s == "false" {
+			b := false
+			return &b
+		}
+	}
+	// multi-outlet
+	if arr, ok := data["switches"].([]any); ok {
+		anyOn := false
+		found := false
+		for _, it := range arr {
+			m, ok := it.(map[string]any)
+			if !ok {
+				continue
+			}
+			found = true
+			s := strings.ToLower(strAny(m["switch"]))
+			if s == "on" || s == "1" || s == "true" {
+				anyOn = true
+			}
+		}
+		if found {
+			return &anyOn
+		}
+	}
+	// some FW nest under params
+	if p, ok := data["params"].(map[string]any); ok {
+		return ewelinkParseSwitch(p)
+	}
+	// numeric relay
+	for _, k := range []string{"relay", "state", "outlet"} {
+		if v, ok := data[k]; ok {
+			s := strings.ToLower(strAny(v))
+			if s == "on" || s == "1" || s == "true" {
+				b := true
+				return &b
+			}
+			if s == "off" || s == "0" || s == "false" {
+				b := false
+				return &b
+			}
+		}
+	}
+	return nil
+}
+
+// ewelinkParsePower best-effort W/V/A from CoolKit params.
+func ewelinkParsePower(data map[string]any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	out := map[string]any{}
+	// voltage
+	for _, k := range []string{"voltage", "voltage_00", "voltage_0"} {
+		if v, ok := data[k]; ok {
+			if f, ok := asFloat(v); ok {
+				if f > 400 {
+					f = f / 100
+				}
+				out["voltage_v"] = f
+				break
+			}
+		}
+	}
+	// current
+	for _, k := range []string{"current", "current_00", "current_0", "supplyCurrent"} {
+		if v, ok := data[k]; ok {
+			if f, ok := asFloat(v); ok {
+				if f > 20 {
+					f = f / 100
+				}
+				out["current_a"] = f
+				break
+			}
+		}
+	}
+	// power
+	for _, k := range []string{"power", "actPow_00", "actPow_0", "supplyPower"} {
+		if v, ok := data[k]; ok {
+			if f, ok := asFloat(v); ok {
+				if f > 5000 {
+					f = f / 100
+				}
+				out["power_w"] = f
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func asFloat(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	case string:
+		var f float64
+		_, err := fmt.Sscanf(strings.TrimSpace(t), "%f", &f)
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
 // CoolKit LAN: AES-128-CBC, key=MD5(devicekey), PKCS7. Matches ui/ewelink_lan.py.
 func ewelinkPKCS7Pad(b []byte, block int) []byte {
 	n := block - (len(b) % block)
@@ -262,6 +388,51 @@ func ewelinkBuildPayload(devID, selfAPI string, data map[string]any, devicekey s
 	return json.Marshal(payload)
 }
 
+// ewelinkProtoCache remembers diy|lan per IP for mode=auto (thread-safe enough for poller).
+var ewelinkProtoCache = map[string]string{}
+
+func ewelinkRespOK(j map[string]any) bool {
+	if j == nil {
+		return false
+	}
+	errCode := j["error"]
+	return errCode == nil || errCode == 0 || errCode == float64(0) || errCode == "0"
+}
+
+func ewelinkPathOrder(mode, ip, devicekey string) []bool {
+	// returns ordered useLAN flags
+	switch mode {
+	case "lan":
+		return []bool{true}
+	case "diy":
+		return []bool{false}
+	default: // auto
+		cached := ewelinkProtoCache[ip]
+		var order []bool
+		switch cached {
+		case "lan":
+			if devicekey != "" {
+				order = []bool{true, false}
+			} else {
+				order = []bool{false}
+			}
+		case "diy":
+			if devicekey != "" {
+				order = []bool{false, true}
+			} else {
+				order = []bool{false}
+			}
+		default:
+			if devicekey != "" {
+				order = []bool{true, false} // LAN first when key known
+			} else {
+				order = []bool{false}
+			}
+		}
+		return order
+	}
+}
+
 func controlEwelink(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result, error) {
 	ip := strings.TrimSpace(cfg.IP)
 	devID := strings.TrimSpace(cfg.DeviceID)
@@ -276,28 +447,25 @@ func controlEwelink(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result
 	if mode == "" {
 		mode = "auto"
 	}
+	if mode != "auto" && mode != "diy" && mode != "lan" {
+		mode = "auto"
+	}
 	devicekey := strings.TrimSpace(cfg.EwelinkDeviceKey)
 	selfAPI := strings.TrimSpace(cfg.EwelinkAPIKey)
-	useKey := false
-	switch mode {
-	case "lan":
-		if devicekey == "" {
-			return Result{}, fmt.Errorf("eWeLink devicekey empty (LAN encrypt)")
-		}
-		useKey = true
-	case "diy":
-		useKey = false
-	default: // auto
-		useKey = devicekey != ""
-	}
-	key := ""
-	if useKey {
-		key = devicekey
+	if mode == "lan" && devicekey == "" {
+		return Result{}, fmt.Errorf("eWeLink devicekey empty (LAN encrypt)")
 	}
 	base := fmt.Sprintf("http://%s:%d/zeroconf", ip, port)
 	hdrs := map[string]string{"Content-Type": "application/json"}
 
-	post := func(cmd string, data map[string]any, withKey string) (map[string]any, error) {
+	post := func(cmd string, data map[string]any, useLAN bool) (map[string]any, error) {
+		withKey := ""
+		if useLAN {
+			if devicekey == "" {
+				return nil, fmt.Errorf("eWeLink devicekey empty (LAN encrypt)")
+			}
+			withKey = devicekey
+		}
 		body, err := ewelinkBuildPayload(devID, selfAPI, data, withKey)
 		if err != nil {
 			return nil, err
@@ -313,7 +481,6 @@ func controlEwelink(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result
 		if err := json.Unmarshal([]byte(text), &j); err != nil {
 			return nil, fmt.Errorf("eWeLink %s: bad JSON", cmd)
 		}
-		// decrypt response when encrypted
 		if withKey != "" {
 			if ds, ok := j["data"].(string); ok {
 				iv, _ := j["iv"].(string)
@@ -327,40 +494,84 @@ func controlEwelink(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result
 		return j, nil
 	}
 
+	remember := func(useLAN bool) {
+		if mode == "auto" {
+			if useLAN {
+				ewelinkProtoCache[ip] = "lan"
+			} else {
+				ewelinkProtoCache[ip] = "diy"
+			}
+		}
+	}
+
+	paths := ewelinkPathOrder(mode, ip, devicekey)
+
 	if on == nil {
-		// status: info / getState
+		// status — try each transport.
+		// POWR2 / PSF-X67 (uiid 32): POST /zeroconf/statistics returns encrypted
+		// {voltage,current,power} — info/getState often empty (SonoffLAN-compatible).
 		var last error
-		for _, cmd := range []string{"info", "getState"} {
-			j, err := post(cmd, map[string]any{}, key)
-			if err != nil {
-				last = err
-				// auto: try DIY if encrypt failed
-				if mode == "auto" && key != "" {
-					if j2, err2 := post(cmd, map[string]any{}, ""); err2 == nil {
-						j = j2
-						err = nil
-					}
-				}
+		var best *Result
+		for _, useLAN := range paths {
+			if useLAN {
+				_, _ = post("uiActive", map[string]any{"uiActive": 60}, true)
+				_, _ = post("sledonline", map[string]any{"sledOnline": "on"}, true)
+			}
+			type cmdSpec struct {
+				cmd  string
+				data map[string]any
+			}
+			cmds := []cmdSpec{
+				{"statistics", map[string]any{}},
+				{"getState", map[string]any{}},
+				{"info", map[string]any{}},
+			}
+			merged := map[string]any{}
+			for _, cs := range cmds {
+				j, err := post(cs.cmd, cs.data, useLAN)
 				if err != nil {
+					last = err
 					continue
 				}
-			}
-			data, _ := j["data"].(map[string]any)
-			sw := strAny(data["switch"])
-			if sw == "" {
-				if arr, ok := data["switches"].([]any); ok && len(arr) > 0 {
-					if m0, ok := arr[0].(map[string]any); ok {
-						sw = strAny(m0["switch"])
+				data, _ := j["data"].(map[string]any)
+				if data == nil {
+					data = map[string]any{}
+				}
+				for k, v := range data {
+					merged[k] = v
+				}
+				sw := ewelinkParseSwitch(merged)
+				pwr := ewelinkParsePower(merged)
+				if sw != nil || pwr != nil || ewelinkRespOK(j) {
+					remember(useLAN)
+					r := Result{On: sw, Backend: "ewelink", Power: pwr}
+					if sw != nil && pwr != nil {
+						return r, nil
 					}
+					if pwr != nil {
+						best = &r
+						continue // still try getState for switch
+					}
+					if sw != nil {
+						if best != nil && best.Power != nil {
+							best.On = sw
+							return *best, nil
+						}
+						return r, nil
+					}
+					if best == nil {
+						best = &r
+					}
+				} else {
+					last = fmt.Errorf("eWeLink error=%v", j["error"])
 				}
 			}
-			b := sw == "on" || sw == "1" || strings.EqualFold(sw, "true")
-			// if no switch field, leave unknown only when data empty
-			if sw == "" && len(data) == 0 {
-				last = fmt.Errorf("eWeLink info: no switch state")
-				continue
+			if best != nil && best.Power != nil {
+				return *best, nil
 			}
-			return Result{On: &b, Backend: "ewelink"}, nil
+		}
+		if best != nil {
+			return *best, nil
 		}
 		if last != nil {
 			return Result{}, last
@@ -372,7 +583,6 @@ func controlEwelink(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result
 	if *on {
 		sw = "on"
 	}
-	// try single-channel then multi
 	attempts := []struct {
 		cmd  string
 		data map[string]any
@@ -381,30 +591,19 @@ func controlEwelink(ctx context.Context, on *bool, cfg config.DeviceCfg) (Result
 		{"switches", map[string]any{"switches": []map[string]any{{"outlet": cfg.EwelinkOutlet, "switch": sw}}}},
 	}
 	var last error
-	for _, a := range attempts {
-		j, err := post(a.cmd, a.data, key)
-		if err != nil {
-			last = err
-			continue
-		}
-		errCode := j["error"]
-		if errCode == nil || errCode == 0 || errCode == float64(0) || errCode == "0" {
-			got := *on
-			return Result{On: &got, Backend: "ewelink"}, nil
-		}
-		last = fmt.Errorf("eWeLink error=%v", errCode)
-	}
-	// auto fallback: DIY if encrypt failed
-	if mode == "auto" && key != "" {
-		j, err := post("switch", map[string]any{"switch": sw}, "")
-		if err == nil {
-			errCode := j["error"]
-			if errCode == nil || errCode == 0 || errCode == float64(0) || errCode == "0" {
+	for _, useLAN := range paths {
+		for _, a := range attempts {
+			j, err := post(a.cmd, a.data, useLAN)
+			if err != nil {
+				last = err
+				continue
+			}
+			if ewelinkRespOK(j) {
+				remember(useLAN)
 				got := *on
 				return Result{On: &got, Backend: "ewelink"}, nil
 			}
-		} else {
-			last = err
+			last = fmt.Errorf("eWeLink error=%v", j["error"])
 		}
 	}
 	if last != nil {

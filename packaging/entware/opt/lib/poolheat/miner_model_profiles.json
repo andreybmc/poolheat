@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "Per-model ASIC profiles: display names, sensors, efficiency for power estimate when ASIC does not report wall power.",
+  "comment": "Per-model ASIC profiles: display names, algo/coin, sensors, efficiency for power estimate when ASIC does not report wall power.",
   "models": [
     {
       "id": "goldshell.ck_box",
@@ -99,7 +99,7 @@
       "display_name": "V1 mini",
       "display_name_full": "iPollo V1 mini",
       "manufacturer": "iPollo",
-      "algo": "etchash",
+      "algo": "ethash",
       "coin": "ETC",
       "cooling": "air",
       "hashrate_unit": "MH/s",

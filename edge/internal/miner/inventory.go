@@ -259,6 +259,7 @@ type ManagedMiner struct {
 	Serial       string `json:"serial,omitempty"`       // factory / customer SN
 	Inventory    string `json:"inventory,omitempty"`    // inventory / asset number
 	Cooling      string `json:"cooling,omitempty"`      // air | hydro | immersion
+	Algo         string `json:"algo,omitempty"`         // sha256 | scrypt | eaglesong | …
 	PoolID       string `json:"pool_id,omitempty"`      // heat pool this miner serves
 	MinerType     string `json:"miner_type,omitempty"`   // raw type from API
 	MAC          string `json:"mac,omitempty"`

@@ -703,9 +703,17 @@ def lan_send(
 
 
 def parse_power_params(params: dict | None) -> dict | None:
-    """Extract power_w / voltage_v / current_a from device params."""
+    """Extract power_w / voltage_v / current_a from device params (LAN or cloud)."""
     if not isinstance(params, dict):
         return None
+    # flatten one level of nested params/config
+    flat = dict(params)
+    for nest_k in ("params", "config", "data"):
+        nested = params.get(nest_k)
+        if isinstance(nested, dict):
+            for k, v in nested.items():
+                flat.setdefault(k, v)
+
     out: dict[str, float] = {}
 
     def _f(v) -> float | None:
@@ -716,53 +724,69 @@ def parse_power_params(params: dict | None) -> dict | None:
         except (TypeError, ValueError):
             return None
 
-    # POWR3 / S60: centi-units (×0.01)
-    # Older POW: already SI
-    def pick(keys: tuple[str, ...], scale_hint: float | None = None) -> float | None:
-        for k in keys:
-            if k not in params:
-                continue
-            v = _f(params.get(k))
-            if v is None:
-                continue
-            if scale_hint:
-                return v * scale_hint
-            # heuristic: voltage > 50 as raw V; if voltage ~22000 → /100
-            return v
-        return None
-
-    # voltage
-    for k in ("voltage", "voltage_00", "voltage_0"):
-        v = _f(params.get(k))
+    # voltage (SI or centi-V)
+    for k in (
+        "voltage",
+        "voltage_00",
+        "voltage_0",
+        "voltage_01",
+        "voltageV",
+        "vol",
+        "V",
+    ):
+        v = _f(flat.get(k))
         if v is None:
             continue
         out["voltage_v"] = round(v / 100.0, 2) if v > 400 else round(v, 2)
         break
-    # current
-    for k in ("current", "current_00", "current_0", "supplyCurrent"):
-        v = _f(params.get(k))
+    # current (SI or centi-A)
+    for k in (
+        "current",
+        "current_00",
+        "current_0",
+        "current_01",
+        "supplyCurrent",
+        "currentA",
+        "cur",
+        "I",
+    ):
+        v = _f(flat.get(k))
         if v is None:
             continue
-        # POWR/S60: centi-amps (45 → 0.45 A). SI amps for light loads stay ≤ ~20.
         if v > 20:
             out["current_a"] = round(v / 100.0, 3)
         else:
             out["current_a"] = round(v, 3)
         break
-    # power
-    for k in ("power", "actPow_00", "actPow_0", "supplyPower"):
-        v = _f(params.get(k))
+    # power (SI or centi-W); multi-channel sum actPow_00+actPow_01
+    psum = 0.0
+    pfound = False
+    for k in (
+        "power",
+        "actPow_00",
+        "actPow_0",
+        "actPow_01",
+        "actPow_1",
+        "supplyPower",
+        "powerW",
+        "pwr",
+        "P",
+    ):
+        v = _f(flat.get(k))
         if v is None:
             continue
-        # POWR3 stores centi-watts; plain POW may store watts
-        if v > 5000:  # e.g. 15000 = 150.00 W
-            out["power_w"] = round(v / 100.0, 2)
-        else:
-            out["power_w"] = round(v, 2)
+        if k.startswith("actPow"):
+            psum += v / 100.0 if v > 5000 else v
+            pfound = True
+            continue
+        out["power_w"] = round(v / 100.0, 2) if v > 5000 else round(v, 2)
+        pfound = True
         break
+    if "power_w" not in out and pfound and psum > 0:
+        out["power_w"] = round(psum, 2)
     # energy day kWh
-    for k in ("dayKwh", "hundredDaysKwhData"):
-        v = _f(params.get(k))
+    for k in ("dayKwh", "hundredDaysKwhData", "oneKwh", "energy", "energy_kwh"):
+        v = _f(flat.get(k))
         if v is None:
             continue
         out["energy_kwh"] = round(v / 100.0 if v > 100 else v, 3)
@@ -789,6 +813,17 @@ def parse_switch(params: dict | None) -> bool | None:
     return None
 
 
+# Per-host detected transport for mode=auto: "diy" | "lan"
+_EWELINK_PROTO_CACHE: dict[str, str] = {}
+
+
+def _ewelink_ok(resp: dict | None) -> bool:
+    if not isinstance(resp, dict):
+        return False
+    err = resp.get("error")
+    return err in (0, "0", None)
+
+
 def control(
     ip: str,
     deviceid: str,
@@ -800,157 +835,339 @@ def control(
     outlet: int = 0,
     timeout: float = 5.0,
     self_apikey: str | None = None,
+    email: str | None = None,
+    password: str | None = None,
+    country_code: str = "+7",
+    region: str | None = None,
+    cloud_fallback: bool = True,
 ) -> dict[str, Any]:
     """
-    Read (on=None) or set switch. Tries DIY first when mode=auto and no key,
-    else encrypted LAN when devicekey present.
+    Read (on=None) or set switch.
+
+    mode:
+      diy  — unencrypted only
+      lan  — AES encrypt only (needs devicekey)
+      auto — detect: try LAN if devicekey present, else DIY; on failure try the
+             other path. Caches working path per IP so subsequent calls are fast.
+
+    Optional email/password + cloud_fallback: if LAN status has no switch/power,
+    enrich from CoolKit cloud. Set cloud_fallback=False for a fast LAN-only probe
+    (e.g. right after set).
     """
     ip = str(ip or "").strip()
     deviceid = str(deviceid or "").strip()
     port = int(port or 8081)
-    mode = str(mode or "auto").lower()
+    mode = str(mode or "auto").lower().strip()
+    if mode not in ("auto", "diy", "lan"):
+        mode = "auto"
     devicekey = str(devicekey or "").strip() or None
     self_apikey = str(self_apikey or "").strip() or "123"
+    email = str(email or "").strip() or None
+    password = str(password or "") or None
     if not ip:
         raise ValueError("IP empty")
     if not deviceid:
         raise ValueError("deviceid empty")
+    if mode == "lan" and not devicekey:
+        raise ValueError("devicekey empty (LAN encrypt)")
 
-    use_encrypt = False
-    if mode == "lan":
-        if not devicekey:
+    def _send(use_lan: bool, cmd: str, data: dict | None = None) -> dict:
+        key = devicekey if use_lan else None
+        if use_lan and not key:
             raise ValueError("devicekey empty (LAN encrypt)")
-        use_encrypt = True
-    elif mode == "diy":
-        use_encrypt = False
-    else:
-        # auto: prefer encrypt if key known
-        use_encrypt = bool(devicekey)
-
-    key = devicekey if use_encrypt else None
-
-    def _send(cmd: str, data: dict | None = None) -> dict:
         return lan_send(
             ip,
             deviceid,
             devicekey=key,
             command=cmd,
-            data=data,
+            data=data if data is not None else {},
             port=port,
             timeout=timeout,
             self_apikey=self_apikey if key else "123",
         )
 
-    # set
+    def _paths() -> list[bool]:
+        """Ordered list of use_lan flags to try."""
+        if mode == "lan":
+            return [True]
+        if mode == "diy":
+            return [False]
+        # auto
+        cached = _EWELINK_PROTO_CACHE.get(ip)
+        order: list[bool] = []
+        if cached == "lan" and devicekey:
+            order = [True, False]
+        elif cached == "diy":
+            order = [False] + ([True] if devicekey else [])
+        else:
+            # prefer LAN when key known (cloud-paired plugs), else DIY
+            if devicekey:
+                order = [True, False]
+            else:
+                order = [False]
+        # dedupe preserve order
+        seen: set[bool] = set()
+        out: list[bool] = []
+        for u in order:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+        return out
+
+    def _remember(use_lan: bool) -> None:
+        if mode == "auto":
+            _EWELINK_PROTO_CACHE[ip] = "lan" if use_lan else "diy"
+
+    # ── set ──────────────────────────────────────────────────────────────
     if on is not None:
-        # multi-channel style for some plugs
         data_single = {"switch": "on" if on else "off"}
         data_multi = {
             "switches": [{"outlet": int(outlet), "switch": "on" if on else "off"}]
         }
         last_err: Exception | None = None
-        for cmd, data in (("switch", data_single), ("switches", data_multi)):
-            try:
-                resp = _send(cmd, data)
-                err = resp.get("error")
-                if err in (0, "0", None):
-                    return {
-                        "on": bool(on),
-                        "backend": "ewelink",
-                        "mode": "lan" if key else "diy",
-                        "ip": ip,
-                        "raw": resp,
-                    }
-                last_err = RuntimeError(f"error={err}: {resp}")
-            except Exception as e:
-                last_err = e
-                continue
-        # fallback: try opposite encrypt mode once
-        if mode == "auto" and devicekey and key:
-            try:
-                resp = lan_send(
-                    ip,
-                    deviceid,
-                    devicekey=None,
-                    command="switch",
-                    data=data_single,
-                    port=port,
-                    timeout=timeout,
-                )
-                if resp.get("error") in (0, "0", None):
-                    return {
-                        "on": bool(on),
-                        "backend": "ewelink",
-                        "mode": "diy",
-                        "ip": ip,
-                        "raw": resp,
-                    }
-            except Exception:
-                pass
+        for use_lan in _paths():
+            for cmd, data in (("switch", data_single), ("switches", data_multi)):
+                try:
+                    resp = _send(use_lan, cmd, data)
+                    if _ewelink_ok(resp):
+                        _remember(use_lan)
+                        return {
+                            "on": bool(on),
+                            "backend": "ewelink",
+                            "mode": "lan" if use_lan else "diy",
+                            "ip": ip,
+                            "raw": resp,
+                        }
+                    last_err = RuntimeError(f"error={resp.get('error')}: {resp}")
+                except Exception as e:
+                    last_err = e
+                    continue
         raise RuntimeError(f"eWeLink set failed: {last_err}")
 
-    # read status
-    params: dict = {}
-    # Request power reporting window (POW/POWR/S60)
-    if key:
-        try:
-            _send("uiActive", {"uiActive": 120})
-        except Exception:
-            try:
-                _send("uiActive", {"outlet": int(outlet), "time": 120})
-            except Exception:
-                pass
-    # info / getState
-    resp = None
+    # ── status ───────────────────────────────────────────────────────────
     last_err = None
-    for cmd in ("info", "getState"):
-        try:
-            resp = _send(cmd, {})
-            if isinstance(resp, dict):
-                break
-        except Exception as e:
-            last_err = e
-            resp = None
-    if not isinstance(resp, dict):
-        # auto fallback: try DIY if LAN failed and vice versa
-        if mode == "auto" and devicekey:
+    best: dict[str, Any] | None = None  # prefer path that yields switch/power
+    for use_lan in _paths():
+        resp = None
+        params: dict = {}
+        # Order matters (SonoffLAN / local reverse-engineering):
+        #  - statistics → POWR2/PSF-X67 (uiid 32) returns encrypted
+        #    {voltage,current,power} over LAN (info/getState usually empty)
+        #  - sledonline poke can refresh TH sensors
+        #  - getState/info for switch
+        for cmd, pdata in (
+            ("statistics", {}),
+            ("sledonline", {"sledOnline": "on"}),
+            ("getState", {}),
+            ("info", {}),
+        ):
             try:
-                resp = lan_send(
-                    ip,
-                    deviceid,
-                    devicekey=None if key else devicekey,
-                    command="info",
-                    data={},
-                    port=port,
-                    timeout=timeout,
-                )
+                resp = _send(use_lan, cmd, pdata)
             except Exception as e:
-                raise RuntimeError(f"eWeLink status failed: {last_err or e}") from e
-        else:
-            raise RuntimeError(f"eWeLink status failed: {last_err}")
+                last_err = e
+                resp = None
+                continue
+            if not isinstance(resp, dict):
+                continue
+            data = resp.get("data_decrypted")
+            if not isinstance(data, dict):
+                data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+            # HTTP encrypt response may put ciphertext in data+iv without data_decrypted
+            # if decrypt failed earlier — try again
+            if (
+                not isinstance(data, dict)
+                and resp.get("data")
+                and resp.get("iv")
+                and use_lan
+                and devicekey
+            ):
+                try:
+                    data = decrypt_data(
+                        str(resp["data"]), str(resp["iv"]), devicekey
+                    )
+                    resp["data_decrypted"] = data
+                except Exception:
+                    data = {}
+            if isinstance(data, dict):
+                params.update(data)
+            # merge multi-outlet rows into flat actPow_xx if present
+            sw_list = params.get("switches")
+            if isinstance(sw_list, list):
+                for it in sw_list:
+                    if not isinstance(it, dict):
+                        continue
+                    oi = it.get("outlet")
+                    for mk in ("current", "voltage", "actPow", "power"):
+                        if mk in it and oi is not None:
+                            params.setdefault(f"{mk}_{int(oi):02d}", it.get(mk))
+            sw = parse_switch(params)
+            power = parse_power_params(params)
+            if sw is not None or power or _ewelink_ok(resp):
+                _remember(use_lan)
+                result = {
+                    "on": sw,
+                    "backend": "ewelink",
+                    "mode": "lan" if use_lan else "diy",
+                    "ip": ip,
+                    "http": 200,
+                    "params": params,
+                    "power": power,
+                    "fw": params.get("fwVersion") or params.get("fw_version"),
+                    "raw_error": resp.get("error"),
+                    "source": "lan-statistics"
+                    if cmd == "statistics" and power
+                    else ("lan" if use_lan else "diy"),
+                    "raw": {
+                        k: resp.get(k)
+                        for k in ("error", "seq", "sequence")
+                        if k in resp
+                    },
+                }
+                # Prefer LAN power over continuing; still try getState for switch
+                if power and sw is not None:
+                    return result
+                if power:
+                    best = result
+                    # keep going to pick up switch from getState/info
+                    continue
+                if sw is not None:
+                    if best and best.get("power"):
+                        best["on"] = sw
+                        return best
+                    return result
+                if best is None:
+                    best = result
+        if best and best.get("power"):
+            return best
+        if not params and last_err is None and resp is None:
+            continue
+        if resp is not None and not _ewelink_ok(resp):
+            last_err = RuntimeError(f"error={resp.get('error')}")
 
-    err = resp.get("error")
-    # error 0 or missing is ok; some FW return error on getState but are online
-    data = resp.get("data_decrypted")
-    if not isinstance(data, dict):
-        data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
-    if isinstance(data, dict):
-        params.update(data)
+    # Cloud meter fallback only if LAN had no power (and caller allows it).
+    # Prefer LAN POST /zeroconf/statistics for PSF-X67 / POWR2 (uiid 32).
+    if cloud_fallback and email and password and not (
+        best and isinstance(best.get("power"), dict) and best.get("power")
+    ):
+        try:
+            cloud = cloud_device_live(
+                email,
+                password,
+                deviceid,
+                country_code=country_code or "+7",
+                region=region,
+            )
+        except Exception as e:
+            cloud = None
+            last_err = e
+        if isinstance(cloud, dict):
+            power = cloud.get("power") if isinstance(cloud.get("power"), dict) else None
+            sw = cloud.get("on")
+            params = cloud.get("params") if isinstance(cloud.get("params"), dict) else {}
+            # merge onto LAN best if any
+            base = dict(best or {})
+            if sw is not None:
+                base["on"] = sw
+            if power:
+                base["power"] = power
+            if params:
+                base["params"] = {**(base.get("params") or {}), **params}
+            base.setdefault("backend", "ewelink")
+            base.setdefault("mode", (best or {}).get("mode") or "lan")
+            base.setdefault("ip", ip)
+            base["http"] = 200
+            base["cloud"] = True
+            if cloud.get("productModel"):
+                base["productModel"] = cloud.get("productModel")
+            if cloud.get("fw"):
+                base["fw"] = cloud.get("fw")
+            if cloud.get("rssi") is not None:
+                base["rssi"] = cloud.get("rssi")
+            if base.get("on") is not None or base.get("power"):
+                return base
+            if best is None:
+                best = base
 
-    sw = parse_switch(params)
-    power = parse_power_params(params)
-    return {
-        "on": sw,
-        "backend": "ewelink",
-        "mode": "lan" if key else "diy",
-        "ip": ip,
-        "http": 200,
-        "params": params,
-        "power": power,
-        "fw": params.get("fwVersion") or params.get("fw_version"),
-        "raw_error": err,
-        "raw": {k: resp.get(k) for k in ("error", "seq", "sequence") if k in resp},
-    }
+    if best is not None:
+        return best
+    raise RuntimeError(f"eWeLink status failed: {last_err}")
+
+
+# Access-token cache for cloud meter fallback: email → {at, region, apikey, ts}
+_CLOUD_AT_CACHE: dict[str, dict[str, Any]] = {}
+_CLOUD_AT_TTL = 50 * 60  # seconds
+
+
+def cloud_device_live(
+    email: str,
+    password: str,
+    deviceid: str,
+    *,
+    country_code: str = "+7",
+    region: str | None = None,
+) -> dict[str, Any] | None:
+    """
+    CoolKit cloud snapshot for one device (switch + power/voltage/current).
+
+    Used when LAN zeroconf returns empty data (common on some POW/PSF FW).
+    Caches access token ~50 min per email.
+    """
+    email = str(email or "").strip()
+    password = str(password or "")
+    deviceid = str(deviceid or "").strip()
+    if not email or not password or not deviceid:
+        return None
+    now = time.time()
+    cached = _CLOUD_AT_CACHE.get(email.lower())
+    auth = None
+    if (
+        isinstance(cached, dict)
+        and cached.get("at")
+        and (now - float(cached.get("ts") or 0)) < _CLOUD_AT_TTL
+    ):
+        auth = {
+            "at": cached["at"],
+            "region": cached.get("region") or "eu",
+            "apikey": cached.get("apikey"),
+        }
+    else:
+        try:
+            auth = cloud_login(
+                email, password, country_code=country_code, region=region
+            )
+            _CLOUD_AT_CACHE[email.lower()] = {
+                "at": auth.get("at"),
+                "region": auth.get("region"),
+                "apikey": auth.get("apikey"),
+                "ts": now,
+            }
+        except Exception as e:
+            print(f"[ewelink] cloud_device_live login: {e}", flush=True)
+            return None
+    try:
+        devices = cloud_list_devices(auth["at"], auth["region"])
+    except Exception as e:
+        # token expired → one retry
+        _CLOUD_AT_CACHE.pop(email.lower(), None)
+        print(f"[ewelink] cloud_device_live list: {e}", flush=True)
+        return None
+    for d in devices:
+        if str(d.get("deviceid") or "") != deviceid:
+            continue
+        params = d.get("params") if isinstance(d.get("params"), dict) else {}
+        return {
+            "on": parse_switch(params),
+            "power": parse_power_params(params),
+            "params": params,
+            "productModel": d.get("productModel"),
+            "name": d.get("name"),
+            "online": d.get("online"),
+            "uiid": d.get("uiid"),
+            "fw": params.get("fwVersion") or params.get("fw_version"),
+            "rssi": params.get("rssi"),
+            "source": "cloud",
+        }
+    return None
 
 
 def login_and_find_device(

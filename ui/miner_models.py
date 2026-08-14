@@ -38,6 +38,200 @@ MANUFACTURERS: dict[str, dict[str, Any]] = {
     },
 }
 
+# Canonical mining algorithms (id stored in miners.db / live).
+# Default meter units (hashrate + efficiency) are per-algo, not per-model.
+ALGO_INFO: dict[str, dict[str, str]] = {
+    "sha256": {
+        "id": "sha256",
+        "name": "SHA-256",
+        "name_ru": "SHA-256",
+        "coin": "BTC",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    },
+    "scrypt": {
+        "id": "scrypt",
+        "name": "Scrypt",
+        "name_ru": "Scrypt",
+        "coin": "LTC",
+        "hashrate_unit": "GH/s",
+        "efficiency_unit": "J/G",
+    },
+    "eaglesong": {
+        "id": "eaglesong",
+        "name": "Eaglesong",
+        "name_ru": "Eaglesong",
+        "coin": "CKB",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    },
+    "ethash": {
+        "id": "ethash",
+        "name": "Ethash",
+        "name_ru": "Ethash",
+        "coin": "ETC",
+        "hashrate_unit": "MH/s",
+        "efficiency_unit": "J/M",
+    },
+    "kheavyhash": {
+        "id": "kheavyhash",
+        "name": "kHeavyHash",
+        "name_ru": "kHeavyHash",
+        "coin": "KAS",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    },
+    "blake2s": {
+        "id": "blake2s",
+        "name": "Blake2s",
+        "name_ru": "Blake2s",
+        "coin": "KDA",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    },
+    "handshake": {
+        "id": "handshake",
+        "name": "Handshake",
+        "name_ru": "Handshake",
+        "coin": "HNS",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    },
+    "equihash": {
+        "id": "equihash",
+        "name": "Equihash",
+        "name_ru": "Equihash",
+        "coin": "ZEC",
+        "hashrate_unit": "MH/s",
+        "efficiency_unit": "J/M",
+    },
+    "x11": {
+        "id": "x11",
+        "name": "X11",
+        "name_ru": "X11",
+        "coin": "DASH",
+        "hashrate_unit": "GH/s",
+        "efficiency_unit": "J/G",
+    },
+}
+
+_VENDOR_DEFAULT_ALGO: dict[str, str] = {
+    "microbt": "sha256",
+    "whatsminer": "sha256",
+    "bitmain": "sha256",
+    "antminer": "sha256",
+    "avalon": "sha256",
+    "canaan": "sha256",
+}
+
+
+def normalize_algo(raw: Any) -> str:
+    s = re.sub(r"[^a-z0-9]+", "", str(raw or "").strip().lower())
+    aliases = {
+        "sha2": "sha256",
+        "sha256d": "sha256",
+        "btc": "sha256",
+        "bitcoin": "sha256",
+        "ltc": "scrypt",
+        "litecoin": "scrypt",
+        "ckb": "eaglesong",
+        "nervos": "eaglesong",
+        "etc": "ethash",
+        "etchash": "ethash",
+        "ethash": "ethash",
+        "etcethash": "ethash",
+        "kas": "kheavyhash",
+        "kaspa": "kheavyhash",
+        "heavyhash": "kheavyhash",
+    }
+    s = aliases.get(s, s)
+    return s
+
+
+def algo_info(raw: Any) -> dict[str, str] | None:
+    aid = normalize_algo(raw)
+    if not aid:
+        return None
+    known = ALGO_INFO.get(aid)
+    if known:
+        return dict(known)
+    # unknown but non-empty — keep as free-form id, BTC-class units
+    label = str(raw or aid).strip() or aid
+    return {
+        "id": aid,
+        "name": label,
+        "name_ru": label,
+        "coin": "",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    }
+
+
+def algo_display(raw: Any, *, lang: str = "en") -> str:
+    info = algo_info(raw)
+    if not info:
+        return ""
+    if str(lang).startswith("ru"):
+        return info.get("name_ru") or info.get("name") or info["id"]
+    return info.get("name") or info["id"]
+
+
+def list_algos() -> list[dict[str, str]]:
+    return [dict(v) for v in ALGO_INFO.values()]
+
+
+def _eff_unit_key(u: str) -> str:
+    s = re.sub(r"[^a-z/]", "", str(u or "").lower())
+    if s in ("j/g", "j/gh"):
+        return "j/g"
+    if s in ("j/m", "j/mh"):
+        return "j/m"
+    return "j/t"
+
+
+# How many J/T equal one unit of this efficiency label.
+_JT_PER_UNIT = {"j/t": 1.0, "j/g": 1000.0, "j/m": 1_000_000.0}
+
+
+def convert_efficiency(value: float, from_unit: str, to_unit: str) -> float:
+    """Convert J/T ↔ J/G ↔ J/M. 205 J/T == 0.205 J/G == 0.000205 J/M."""
+    src = _JT_PER_UNIT[_eff_unit_key(from_unit)]
+    dst = _JT_PER_UNIT[_eff_unit_key(to_unit)]
+    return float(value) * src / dst
+
+
+def apply_algo_meta(dst: dict[str, Any], ainfo: dict[str, Any] | None) -> None:
+    """Stamp algo id/name/coin and default meter units onto live or inventory."""
+    if not isinstance(dst, dict) or not ainfo or not ainfo.get("id"):
+        return
+    dst["algo"] = ainfo["id"]
+    dst["algo_display"] = ainfo.get("name") or ainfo["id"]
+    if ainfo.get("coin") and not dst.get("coin"):
+        dst["coin"] = ainfo["coin"]
+    if ainfo.get("hashrate_unit"):
+        dst["hashrate_unit"] = ainfo["hashrate_unit"]
+    if ainfo.get("efficiency_unit"):
+        dst["efficiency_unit"] = ainfo["efficiency_unit"]
+
+
+def efficiency_from_power(
+    power_w: float,
+    hashrate_th: float,
+    ainfo: dict[str, Any] | None,
+) -> tuple[float | None, str]:
+    unit = str((ainfo or {}).get("efficiency_unit") or "J/T")
+    try:
+        p = float(power_w)
+        th = float(hashrate_th)
+    except (TypeError, ValueError):
+        return None, unit
+    if p <= 0 or th <= 0:
+        return None, unit
+    val = convert_efficiency(p / th, "J/T", unit)
+    key = _eff_unit_key(unit)
+    digits = 1 if key == "j/t" else 3
+    return round(val, digits), unit
+
 # ── Family profiles (prefix match after normalize, longest first) ────────────
 # id: manufacturer.family_key
 
@@ -468,6 +662,11 @@ _FAMILIES: list[dict[str, Any]] = [
     },
 ]
 
+# BTC-class families inherit SHA-256 unless a row sets its own algo/coin.
+for _fam in _FAMILIES:
+    _fam.setdefault("algo", "sha256")
+    _fam.setdefault("coin", "BTC")
+
 
 def normalize_miner_type(miner_type: Optional[str]) -> str:
     if not miner_type:
@@ -675,6 +874,12 @@ def resolve_miner_model(
     cooling = (fam or {}).get("cooling") or (
         "liquid" if chip_layout.get("style") == "hydro" else "air"
     )
+    algo_id = normalize_algo((fam or {}).get("algo")) or _VENDOR_DEFAULT_ALGO.get(
+        str(mfr.get("id") or ""), ""
+    )
+    coin = str((fam or {}).get("coin") or "").strip()
+    if not coin:
+        coin = (algo_info(algo_id) or {}).get("coin") or ""
     efficiency = dict((fam or {}).get("efficiency") or {})
     api = dict((fam or {}).get("api") or {"vendor": mfr.get("api_vendors", ["whatsminer"])[0]})
 
@@ -687,6 +892,11 @@ def resolve_miner_model(
         "family_id": (fam or {}).get("id"),
         "family": (fam or {}).get("family"),
         "cooling": cooling,
+        "algo": algo_id or None,
+        "algo_display": algo_display(algo_id) or None,
+        "coin": coin or None,
+        "hashrate_unit": (algo_info(algo_id) or {}).get("hashrate_unit"),
+        "efficiency_unit": (algo_info(algo_id) or {}).get("efficiency_unit"),
         "boards": boards_cfg,
         "chip_layout": chip_layout,
         "sensors": sensors,
@@ -740,6 +950,13 @@ def list_families(*, manufacturer: str | None = None) -> list[dict[str, Any]]:
                 "manufacturer_name": mfr.get("name"),
                 "brand": mfr.get("brand"),
                 "cooling": fam.get("cooling"),
+                "algo": fam.get("algo"),
+                "algo_display": algo_display(fam.get("algo")),
+                "coin": fam.get("coin"),
+                "hashrate_unit": (algo_info(fam.get("algo")) or {}).get("hashrate_unit"),
+                "efficiency_unit": (algo_info(fam.get("algo")) or {}).get(
+                    "efficiency_unit"
+                ),
                 "boards": fam.get("boards"),
                 "chip_layout": fam.get("chip_layout"),
                 "sensors": fam.get("sensors"),
@@ -852,6 +1069,51 @@ def lookup_model_profile(
     return dict(best) if best else None
 
 
+def resolve_miner_algo(
+    *,
+    vendor: str | None = None,
+    miner_type: str | None = None,
+    model: str | None = None,
+    model_name: str | None = None,
+    model_code: str | None = None,
+    explicit: str | None = None,
+) -> dict[str, str]:
+    """
+    Per-model algorithm: JSON profile → family profile → vendor default.
+
+    ``explicit`` (already stored on the miner) wins when set.
+    Returns {id, name, name_ru, coin} or empty id.
+    """
+    if explicit and str(explicit).strip():
+        info = algo_info(explicit)
+        if info:
+            return info
+    prof = lookup_model_profile(
+        vendor=vendor,
+        miner_type=miner_type,
+        model=model,
+        model_name=model_name,
+        model_code=model_code,
+    )
+    if isinstance(prof, dict) and (prof.get("algo") or prof.get("algorithm")):
+        info = algo_info(prof.get("algo") or prof.get("algorithm"))
+        if info:
+            if not info.get("coin") and prof.get("coin"):
+                info["coin"] = str(prof.get("coin") or "")
+            return info
+    fam = lookup_family(miner_type or model_code or model or model_name)
+    if isinstance(fam, dict) and fam.get("algo"):
+        info = algo_info(fam.get("algo"))
+        if info:
+            if not info.get("coin") and fam.get("coin"):
+                info["coin"] = str(fam.get("coin") or "")
+            return info
+    vend = _norm_key(vendor or "")
+    default = _VENDOR_DEFAULT_ALGO.get(vend, "")
+    info = algo_info(default) if default else None
+    return info or {"id": "", "name": "", "name_ru": "", "coin": ""}
+
+
 def estimate_power_from_profile(
     profile: dict[str, Any] | None,
     *,
@@ -903,17 +1165,17 @@ def estimate_power_from_profile(
     if j_gh is not None and gh is not None and gh > 0:
         j_used = float(j_gh)
         rate_used = gh
-        unit = "J/GH"
+        unit = "J/G"
         watts = gh * j_used
     elif j_mh is not None and mh is not None and mh > 0:
         j_used = float(j_mh)
         rate_used = mh
-        unit = "J/MH"
+        unit = "J/M"
         watts = mh * j_used
     elif j_th is not None and th is not None and th > 0:
         j_used = float(j_th)
         rate_used = th
-        unit = "J/TH"
+        unit = "J/T"
         watts = th * j_used
     else:
         return None
@@ -958,6 +1220,7 @@ def apply_model_profile_to_live(
         model_code=live.get("model_code"),
     )
     if not prof:
+        _apply_algo_when_no_profile(live, str(vend) if vend else None)
         return live
 
     disp = str(prof.get("display_name") or "").strip()
@@ -977,7 +1240,18 @@ def apply_model_profile_to_live(
         bool(reported_flag) if reported_flag is not None else True
     )
 
-    # Prefer preferred hashrate unit from profile for UI
+    ainfo = resolve_miner_algo(
+        vendor=str(vend) if vend else None,
+        miner_type=live.get("miner_type"),
+        model=live.get("model") if isinstance(live.get("model"), str) else None,
+        model_name=live.get("model_name"),
+        model_code=live.get("model_code"),
+        explicit=live.get("algo") or live.get("algorithm"),
+    )
+    apply_algo_meta(live, ainfo)
+    if isinstance(prof, dict) and prof.get("coin") and not live.get("coin"):
+        live["coin"] = str(prof.get("coin") or "")
+    # Profile may override hashrate unit only when algo has no default
     if prof.get("hashrate_unit") and not live.get("hashrate_unit"):
         live["hashrate_unit"] = prof.get("hashrate_unit")
 
@@ -1015,24 +1289,28 @@ def apply_model_profile_to_live(
             live["power"] = est["power_w"]
             live["power_source"] = "model"
             live["power_estimated"] = True
-            live["efficiency_value"] = est["efficiency_value"]
-            live["efficiency_unit"] = est["efficiency_unit"]
-            if est["efficiency_unit"] == "J/TH":
-                live["efficiency_jth"] = est["efficiency_value"]
-            elif est["efficiency_unit"] == "J/GH" and th and th > 0:
-                # also expose J/TH equivalent for charts that only know jth
-                live["efficiency_jth"] = float(est["efficiency_value"]) * 1000.0
+            want = str((ainfo or {}).get("efficiency_unit") or est["efficiency_unit"])
+            live["efficiency_value"] = round(
+                convert_efficiency(
+                    float(est["efficiency_value"]), est["efficiency_unit"], want
+                ),
+                1 if _eff_unit_key(want) == "j/t" else 3,
+            )
+            live["efficiency_unit"] = want
+            live["efficiency_jth"] = convert_efficiency(
+                float(est["efficiency_value"]), est["efficiency_unit"], "J/T"
+            )
             live["efficiency_note"] = est.get("note")
     elif cur_pf is not None and cur_pf > 0:
         live.setdefault("power_source", "meter")
         live["power_estimated"] = False
-        # fill efficiency from measured power when possible
         try:
             th = float(live.get("hashrate_th") or 0)
-            if th > 0 and live.get("efficiency_jth") is None:
-                live["efficiency_jth"] = round(cur_pf / th, 2)
-                live["efficiency_value"] = live["efficiency_jth"]
-                live["efficiency_unit"] = "J/TH"
+            ev, eu = efficiency_from_power(cur_pf, th, ainfo)
+            if ev is not None:
+                live["efficiency_value"] = ev
+                live["efficiency_unit"] = eu
+                live["efficiency_jth"] = convert_efficiency(ev, eu, "J/T")
         except (TypeError, ValueError):
             pass
 
@@ -1043,6 +1321,30 @@ def apply_model_profile_to_live(
     return live
 
 
+def _apply_algo_when_no_profile(live: dict[str, Any], vendor: str | None) -> None:
+    """Fill algo + default units from family/vendor when JSON profile missed."""
+    ainfo = resolve_miner_algo(
+        vendor=vendor,
+        miner_type=live.get("miner_type"),
+        model=live.get("model") if isinstance(live.get("model"), str) else None,
+        model_name=live.get("model_name"),
+        model_code=live.get("model_code"),
+        explicit=live.get("algo") or live.get("algorithm"),
+    )
+    apply_algo_meta(live, ainfo)
+    try:
+        p = float(live["power"]) if live.get("power") not in (None, "") else None
+        th = float(live["hashrate_th"]) if live.get("hashrate_th") not in (None, "") else None
+    except (TypeError, ValueError):
+        p, th = None, None
+    if p and th and th > 0 and live.get("efficiency_value") is None:
+        ev, eu = efficiency_from_power(p, th, ainfo)
+        if ev is not None:
+            live["efficiency_value"] = ev
+            live["efficiency_unit"] = eu
+            live["efficiency_jth"] = convert_efficiency(ev, eu, "J/T")
+
+
 def catalog_summary() -> dict[str, Any]:
     skus = _load_chipmap_skus()
     profiles = load_model_profiles()
@@ -1051,6 +1353,7 @@ def catalog_summary() -> dict[str, Any]:
         "manufacturers": list_manufacturers(),
         "families": list_families(),
         "chipmap_sku_count": len(skus),
+        "algos": list_algos(),
         "model_profiles": [
             {
                 "id": p.get("id"),
@@ -1058,6 +1361,16 @@ def catalog_summary() -> dict[str, Any]:
                 "display_name": p.get("display_name"),
                 "display_name_full": p.get("display_name_full"),
                 "match": p.get("match"),
+                "algo": normalize_algo(p.get("algo") or p.get("algorithm")),
+                "algo_display": algo_display(p.get("algo") or p.get("algorithm")),
+                "coin": p.get("coin"),
+                "hashrate_unit": (algo_info(p.get("algo") or p.get("algorithm")) or {}).get(
+                    "hashrate_unit"
+                )
+                or p.get("hashrate_unit"),
+                "efficiency_unit": (
+                    algo_info(p.get("algo") or p.get("algorithm")) or {}
+                ).get("efficiency_unit"),
                 "efficiency": p.get("efficiency"),
                 "power": p.get("power"),
                 "rated": p.get("rated"),

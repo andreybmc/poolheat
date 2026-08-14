@@ -57,12 +57,14 @@ from urllib.parse import parse_qs, urlparse
 
 try:
     from miner_models import (
+        algo_display as miner_algo_display,
         apply_model_profile_to_live,
         catalog_summary as miner_models_catalog,
         list_families as miner_models_list_families,
         list_manufacturers as miner_models_list_manufacturers,
         lookup_model_profile,
         resolve_hashboard_layout as _mm_resolve_hashboard_layout,
+        resolve_miner_algo,
         resolve_miner_model,
     )
 except ImportError:
@@ -74,12 +76,14 @@ except ImportError:
         if str(_lib) not in _sys.path:
             _sys.path.insert(0, str(_lib))
         from miner_models import (
+            algo_display as miner_algo_display,
             apply_model_profile_to_live,
             catalog_summary as miner_models_catalog,
             list_families as miner_models_list_families,
             list_manufacturers as miner_models_list_manufacturers,
             lookup_model_profile,
             resolve_hashboard_layout as _mm_resolve_hashboard_layout,
+            resolve_miner_algo,
             resolve_miner_model,
         )
     except ImportError:
@@ -88,6 +92,8 @@ except ImportError:
         miner_models_list_manufacturers = None  # type: ignore
         _mm_resolve_hashboard_layout = None  # type: ignore
         resolve_miner_model = None  # type: ignore
+        resolve_miner_algo = None  # type: ignore
+        miner_algo_display = None  # type: ignore
         apply_model_profile_to_live = None  # type: ignore
         lookup_model_profile = None  # type: ignore
 
@@ -313,6 +319,8 @@ POOL_PRESETS_FILE = DATA / "pool_presets.json"
 FILTRATION_CFG_FILE = DATA / "filtration_config.json"
 # Peripherals → Devices (Tapo / webhook / … actuators)
 DEVICES_CFG_FILE = DATA / "devices_config.json"
+# Cloud app credentials vault (eWeLink / Tuya / Smart Life / …) per ecosystem+country
+CLOUD_CREDENTIALS_FILE = DATA / "cloud_credentials.json"
 # Runtime Device Shadow (reported/desired/online/power) — NOT settings
 DEVICES_STATE_FILE = DATA / "devices_state.json"
 # Shared mining work snapshot for devices poller process (policy/collector write)
@@ -3178,35 +3186,37 @@ def _actuator_error_reason(
     if be in ("ewelink", "sonoff", "sonoff_diy") or "ewelink" in low or "diy" in low:
         if "device_id empty" in low or "deviceid empty" in low:
             return (
-                "eWeLink deviceid empty (DIY id)"
+                "eWeLink deviceid empty"
                 if en
-                else "eWeLink deviceid пуст (DIY id)"
-            )
-        if "closed" in low:
-            return (
-                "eWeLink port closed — DIY mode off / wrong IP"
-                if en
-                else "eWeLink порт закрыт — нет DIY mode / неверный IP"
+                else "eWeLink deviceid пуст"
             )
         if "devicekey empty" in low or "devicekey empty (lan" in low:
             return (
-                "eWeLink devicekey empty — Get devicekey (cloud login)"
+                "eWeLink devicekey empty"
                 if en
-                else "eWeLink devicekey пуст — «Получить devicekey» (облако)"
+                else "eWeLink devicekey пуст"
             )
-        if "empty reply" in low or "timeout" in low or "reset" in low:
-            # Often means DIY tried on a cloud-paired (encrypted) plug
-            return (
-                "eWeLink LAN not responding (need devicekey / check IP·deviceid)"
-                if en
-                else "eWeLink LAN не отвечает (нужен devicekey / проверьте IP·deviceid)"
-            )
-        if "404" in low or "not found" in low:
-            return (
-                "eWeLink wrong deviceid"
-                if en
-                else "eWeLink неверный deviceid"
-            )
+        # Connectivity / DIY / LAN / empty reply / timeout → laconic offline
+        if (
+            "closed" in low
+            or "empty reply" in low
+            or "timeout" in low
+            or "timed out" in low
+            or "reset" in low
+            or "unreachable" in low
+            or "not responding" in low
+            or "не отвечает" in low
+            or "offline" in low
+            or "connection refused" in low
+            or "no route" in low
+            or "404" in low
+            or "not found" in low
+            or "set failed" in low
+            or "status failed" in low
+            or "no switch state" in low
+            or "switch state" in low
+        ):
+            return "device offline" if en else "устройство не в сети"
     if be == "tapo" or "tapo" in low:
         if (
             "email/password empty" in low
@@ -3693,12 +3703,15 @@ def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
     eWeLink / Sonoff LAN:
       diy  — unencrypted POST /zeroconf/*
       lan  — AES-128-CBC with devicekey (from cloud)
-      auto — encrypt if devicekey set, else DIY (+ fallback)
+      auto — detect DIY vs LAN (try both; cache winner per IP). Never error
+             just because the other transport was tried first.
     """
     ip = str(cfg.get("ip") or "").strip()
     device_id = str(cfg.get("device_id") or "").strip()
     port = int(cfg.get("ewelink_port") or 8081)
     mode = str(cfg.get("ewelink_mode") or "auto").strip().lower()
+    if mode not in ("auto", "diy", "lan"):
+        mode = "auto"
     devicekey = str(
         cfg.get("ewelink_devicekey")
         or cfg.get("devicekey")
@@ -3719,6 +3732,7 @@ def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
         raise ValueError("eWeLink IP empty")
     if not device_id:
         raise ValueError("eWeLink device_id empty")
+    # auto: missing key is fine — DIY will be tried; only hard-require key for lan
     if mode == "lan" and not devicekey:
         raise ValueError(
             "eWeLink devicekey empty — cloud login (email/password) or paste key"
@@ -3734,6 +3748,10 @@ def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
             from .ewelink_lan import control as ewelink_control  # type: ignore
         except ImportError as e:
             raise RuntimeError("ewelink_lan module missing") from e
+    email = str(cfg.get("email") or "").strip()
+    password = str(cfg.get("password") or "")
+    country = str(cfg.get("ewelink_country") or cfg.get("country_code") or "+7")
+    region = str(cfg.get("ewelink_region") or "") or None
     try:
         out = ewelink_control(
             ip,
@@ -3745,11 +3763,71 @@ def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
             outlet=outlet,
             timeout=6.0,
             self_apikey=self_apikey or None,
+            email=email or None,
+            password=password or None,
+            country_code=country,
+            region=region,
         )
     except Exception as e:
         raise RuntimeError(str(e)) from e
+    # After set: one quick LAN /zeroconf/statistics for W/V/A (PSF-X67 / POWR2)
+    if on is not None and not (
+        isinstance(out.get("power"), dict) and out.get("power")
+    ):
+        try:
+            from ewelink_lan import (  # type: ignore
+                lan_send as _ew_lan_send,
+                parse_power_params as _ew_parse_power,
+            )
+        except ImportError:
+            try:
+                from .ewelink_lan import (  # type: ignore
+                    lan_send as _ew_lan_send,
+                    parse_power_params as _ew_parse_power,
+                )
+            except ImportError:
+                _ew_lan_send = None  # type: ignore
+        if _ew_lan_send is not None and devicekey:
+            try:
+                sr = _ew_lan_send(
+                    ip,
+                    device_id,
+                    devicekey=devicekey,
+                    command="statistics",
+                    data={},
+                    port=port,
+                    timeout=3.0,
+                    self_apikey=self_apikey or "123",
+                )
+                data = sr.get("data_decrypted")
+                if not isinstance(data, dict):
+                    data = sr.get("data") if isinstance(sr.get("data"), dict) else {}
+                pwr = _ew_parse_power(data if isinstance(data, dict) else None)
+                if pwr:
+                    out["power"] = pwr
+                    out["params"] = data
+            except Exception:
+                pass
     if isinstance(out.get("power"), dict):
         out["power"] = _normalize_power_metrics(out["power"]) or out.get("power")
+    # attach extras for UI power line
+    if isinstance(out.get("power"), dict):
+        if out.get("rssi") is not None:
+            out["power"]["rssi"] = out.get("rssi")
+        if out.get("fw"):
+            out["power"]["fw"] = out.get("fw")
+        if out.get("productModel"):
+            out["power"]["model"] = out.get("productModel")
+    elif out.get("rssi") is not None or out.get("fw") or out.get("productModel"):
+        out["power"] = {
+            k: v
+            for k, v in {
+                "rssi": out.get("rssi"),
+                "fw": out.get("fw"),
+                "model": out.get("productModel"),
+            }.items()
+            if v is not None
+        }
     return out
 
 
@@ -5076,6 +5154,199 @@ def _save_devices_cfg() -> None:
         _save_json_atomic(DEVICES_CFG_FILE, payload)
 
 
+# ── Cloud credentials vault (shared app logins per ecosystem / country) ─────
+_cloud_creds_lock = threading.RLock()
+_cloud_creds: dict = {"version": 1, "accounts": []}
+
+
+def _load_cloud_credentials() -> None:
+    global _cloud_creds
+    with _cloud_creds_lock:
+        try:
+            if CLOUD_CREDENTIALS_FILE.is_file():
+                raw = json.loads(
+                    CLOUD_CREDENTIALS_FILE.read_text(encoding="utf-8")
+                )
+                if isinstance(raw, dict) and isinstance(raw.get("accounts"), list):
+                    _cloud_creds = {
+                        "version": int(raw.get("version") or 1),
+                        "accounts": [
+                            a for a in raw["accounts"] if isinstance(a, dict)
+                        ],
+                    }
+                    return
+        except Exception as e:
+            print(f"[cloud-creds] load: {e}", flush=True)
+        _cloud_creds = {"version": 1, "accounts": []}
+
+
+def _save_cloud_credentials() -> None:
+    with _cloud_creds_lock:
+        try:
+            CLOUD_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "accounts": list(_cloud_creds.get("accounts") or []),
+            }
+            _save_json_atomic(CLOUD_CREDENTIALS_FILE, payload)
+        except Exception as e:
+            print(f"[cloud-creds] save: {e}", flush=True)
+
+
+def _normalize_cloud_eco(eco: str) -> str:
+    e = str(eco or "").strip().lower()
+    if e in ("sonoff", "sonoff_diy"):
+        return "ewelink"
+    if e in ("smart_life", "sl"):
+        return "smartlife"
+    if e in ("tuya_smart", "tuyasmart"):
+        return "tuya"
+    if e in ("mi", "mihome", "mi_home", "miio"):
+        return "xiaomi"
+    return e or "ewelink"
+
+
+def list_cloud_credentials(
+    *, ecosystem: str | None = None, redact: bool = True
+) -> list[dict]:
+    """List saved cloud app accounts (optionally filter by ecosystem)."""
+    with _cloud_creds_lock:
+        if not (_cloud_creds.get("accounts") or []):
+            _load_cloud_credentials()
+        rows = []
+        want = _normalize_cloud_eco(ecosystem) if ecosystem else None
+        for a in _cloud_creds.get("accounts") or []:
+            if not isinstance(a, dict):
+                continue
+            eco = _normalize_cloud_eco(a.get("ecosystem") or "")
+            if want and eco != want:
+                continue
+            row = {
+                "id": str(a.get("id") or ""),
+                "ecosystem": eco,
+                "email": str(a.get("email") or "").strip(),
+                "country": str(a.get("country") or "").strip(),
+                "region": str(a.get("region") or "").strip(),
+                "label": str(a.get("label") or "").strip(),
+                "updated_ts": a.get("updated_ts"),
+            }
+            if not redact:
+                row["password"] = str(a.get("password") or "")
+            else:
+                row["password_set"] = bool(str(a.get("password") or "").strip())
+            if row["id"] and row["email"]:
+                rows.append(row)
+        # newest first
+        rows.sort(key=lambda r: str(r.get("updated_ts") or ""), reverse=True)
+        return rows
+
+
+def upsert_cloud_credential(
+    *,
+    ecosystem: str,
+    email: str,
+    password: str | None = None,
+    country: str = "",
+    region: str = "",
+    label: str = "",
+) -> dict:
+    """
+    Save / update cloud app credentials for ecosystem+email(+country).
+    Empty password keeps existing password when updating.
+    """
+    eco = _normalize_cloud_eco(ecosystem)
+    email = str(email or "").strip()
+    if not email:
+        raise ValueError("email required")
+    country = str(country or "").strip()
+    region = str(region or "").strip()
+    label = str(label or "").strip()[:80]
+    pw = str(password or "")
+    if pw in ("••••", "****", "***"):
+        pw = ""
+    with _cloud_creds_lock:
+        if not (_cloud_creds.get("accounts") or []):
+            _load_cloud_credentials()
+        accounts = list(_cloud_creds.get("accounts") or [])
+        hit = None
+        for i, a in enumerate(accounts):
+            if not isinstance(a, dict):
+                continue
+            if _normalize_cloud_eco(a.get("ecosystem")) != eco:
+                continue
+            if str(a.get("email") or "").strip().lower() != email.lower():
+                continue
+            # same ecosystem+email; country match preferred, else first
+            if country and str(a.get("country") or "").strip() == country:
+                hit = i
+                break
+            if hit is None:
+                hit = i
+        now = datetime.now().isoformat(timespec="seconds")
+        if hit is not None:
+            cur = dict(accounts[hit])
+            cur["email"] = email
+            cur["ecosystem"] = eco
+            if country:
+                cur["country"] = country
+            if region:
+                cur["region"] = region
+            if label:
+                cur["label"] = label
+            if pw:
+                cur["password"] = pw
+            cur["updated_ts"] = now
+            if not cur.get("id"):
+                cur["id"] = "acc_" + uuid.uuid4().hex[:12]
+            accounts[hit] = cur
+            out = cur
+        else:
+            out = {
+                "id": "acc_" + uuid.uuid4().hex[:12],
+                "ecosystem": eco,
+                "email": email,
+                "password": pw,
+                "country": country,
+                "region": region,
+                "label": label,
+                "updated_ts": now,
+            }
+            accounts.append(out)
+        _cloud_creds["accounts"] = accounts
+        _save_cloud_credentials()
+        return {
+            "id": out["id"],
+            "ecosystem": eco,
+            "email": email,
+            "country": out.get("country") or country,
+            "region": out.get("region") or region,
+            "label": out.get("label") or label,
+            "password_set": bool(str(out.get("password") or "").strip()),
+            "updated_ts": out.get("updated_ts"),
+        }
+
+
+def get_cloud_credential_secret(acc_id: str) -> dict | None:
+    acc_id = str(acc_id or "").strip()
+    if not acc_id:
+        return None
+    with _cloud_creds_lock:
+        if not (_cloud_creds.get("accounts") or []):
+            _load_cloud_credentials()
+        for a in _cloud_creds.get("accounts") or []:
+            if isinstance(a, dict) and str(a.get("id") or "") == acc_id:
+                return {
+                    "id": acc_id,
+                    "ecosystem": _normalize_cloud_eco(a.get("ecosystem")),
+                    "email": str(a.get("email") or ""),
+                    "password": str(a.get("password") or ""),
+                    "country": str(a.get("country") or ""),
+                    "region": str(a.get("region") or ""),
+                    "label": str(a.get("label") or ""),
+                }
+    return None
+
+
 def get_devices_cfg(*, redact: bool = True) -> dict:
     with _devices_cfg_lock:
         # pick up shadow updates written by devices-poller process
@@ -5293,6 +5564,40 @@ def upsert_device(raw: dict) -> dict:
                 },
             )
     _save_devices_cfg()
+    # Persist cloud app login for this ecosystem (suggest later in UI)
+    try:
+        be = str(nd_cfg.get("backend") or "").lower()
+        email = str(nd_cfg.get("email") or "").strip()
+        pw = str(nd_cfg.get("password") or "").strip()
+        if email and pw and be in (
+            "ewelink",
+            "sonoff",
+            "sonoff_diy",
+            "tuya",
+            "smartlife",
+            "tapo",
+        ):
+            eco = "ewelink" if be in ("ewelink", "sonoff", "sonoff_diy") else be
+            if be == "smartlife":
+                eco = "smartlife"
+            country = ""
+            region = ""
+            if eco == "ewelink":
+                country = str(nd_cfg.get("ewelink_country") or "+7")
+                region = str(nd_cfg.get("ewelink_region") or "")
+            elif eco in ("tuya", "smartlife"):
+                country = str(nd_cfg.get("tuya_country") or "7")
+                region = str(nd_cfg.get("tuya_region") or "")
+                eco = str(nd_cfg.get("tuya_ecosystem") or eco)
+            upsert_cloud_credential(
+                ecosystem=eco,
+                email=email,
+                password=pw,
+                country=country,
+                region=region,
+            )
+    except Exception as ce:
+        print(f"[cloud-creds] upsert on device save: {ce}", flush=True)
     out = get_device_by_id(nd_cfg["id"], redact=True)
     return out or _merge_device_runtime(nd_cfg, rt_in)
 
@@ -6268,7 +6573,8 @@ def device_poll_status(
             if power:
                 d["last_power"] = power
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
-            # lights / dimmers
+            # lights / dimmers only — never store eWeLink protocol mode (lan/diy)
+            # as last_mode (UI treats last_mode as light mode → false dimmer UI).
             br = out.get("brightness")
             if br is None and out.get("brightness_pct") is not None:
                 br = out.get("brightness_pct")
@@ -6277,8 +6583,9 @@ def device_poll_status(
                     d["last_brightness"] = max(0, min(100, int(br)))
                 except (TypeError, ValueError):
                     pass
-            if out.get("mode"):
-                d["last_mode"] = str(out.get("mode"))
+            mode_raw = str(out.get("mode") or "").strip().lower()
+            if mode_raw in ("white", "colour", "color", "scene", "music"):
+                d["last_mode"] = "colour" if mode_raw == "color" else mode_raw
             tel = {}
             for k in (
                 "brightness_raw",
@@ -6558,10 +6865,15 @@ def device_set(
                     pass
             elif bright_i is not None:
                 d["last_brightness"] = bright_i
-            if out.get("mode"):
-                d["last_mode"] = str(out.get("mode"))
-            elif mode_s:
-                d["last_mode"] = mode_s
+            # Light modes only — ignore eWeLink diy/lan protocol "mode"
+            mode_raw = str(out.get("mode") or mode_s or "").strip().lower()
+            if mode_raw in ("white", "colour", "color", "scene", "music"):
+                d["last_mode"] = "colour" if mode_raw == "color" else mode_raw
+            elif be in ("ewelink", "sonoff", "sonoff_diy") and str(
+                d.get("last_mode") or ""
+            ).lower() in ("lan", "diy", "auto"):
+                # clear stale protocol mode that triggered false dimmer UI
+                d["last_mode"] = None
 
         _device_update_in_store(did, _mut)
         snap = _device_cfg_snapshot(did) or cfg
@@ -8329,6 +8641,9 @@ def _chipmap_compact_payload(data: dict) -> dict:
                 "family",
                 "layout",
                 "cooling",
+                "algo",
+                "algo_display",
+                "coin",
                 "boards",
                 "chips_per_board",
                 "cpd",
@@ -10179,6 +10494,34 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
     cooling = _normalize_miner_cooling(
         m.get("cooling") or m.get("cooling_type") or m.get("cool")
     )
+    algo = str(m.get("algo") or m.get("algorithm") or "").strip()
+    algo_disp = str(m.get("algo_display") or "").strip()
+    hr_unit = str(m.get("hashrate_unit") or "").strip()
+    eff_unit = str(m.get("efficiency_unit") or "").strip()
+    if resolve_miner_algo is not None:
+        try:
+            ainfo = resolve_miner_algo(
+                vendor=vendor,
+                miner_type=miner_type or model_code,
+                model=model,
+                model_code=model_code,
+                explicit=algo,
+            )
+            if ainfo.get("id"):
+                algo = str(ainfo["id"])
+                algo_disp = str(ainfo.get("name") or algo)
+                hr_unit = hr_unit or str(ainfo.get("hashrate_unit") or "")
+                eff_unit = eff_unit or str(ainfo.get("efficiency_unit") or "")
+        except Exception:
+            pass
+    if algo and not algo_disp:
+        if miner_algo_display is not None:
+            try:
+                algo_disp = miner_algo_display(algo) or algo
+            except Exception:
+                algo_disp = algo
+        else:
+            algo_disp = algo
     pool_id = str(m.get("pool_id") or m.get("heat_pool_id") or "").strip()
     # reserved for future cloud / multi-site identity (not shown in UI yet)
     global_id = str(m.get("global_id") or "").strip()
@@ -10204,6 +10547,10 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         )[:64],
         "cooling": cooling,
         "cooling_name": _miner_cooling_name(cooling),
+        "algo": algo[:32],
+        "algo_display": (algo_disp or algo)[:32],
+        "hashrate_unit": hr_unit[:16],
+        "efficiency_unit": eff_unit[:16],
         "pool_id": pool_id[:48] if pool_id else "",
         "miner_type": miner_type[:64] or model_code[:64],
         "mac": str(m.get("mac") or "").strip()[:32] or None,
@@ -10294,6 +10641,7 @@ def _ensure_miners_db() -> None:
                     serial TEXT NOT NULL DEFAULT '',
                     inventory TEXT NOT NULL DEFAULT '',
                     cooling TEXT NOT NULL DEFAULT 'air',
+                    algo TEXT NOT NULL DEFAULT '',
                     pool_id TEXT NOT NULL DEFAULT '',
                     miner_type TEXT NOT NULL DEFAULT '',
                     mac TEXT,
@@ -10309,6 +10657,16 @@ def _ensure_miners_db() -> None:
                 """
             )
             conn.commit()
+            # existing DBs created before algo column
+            cols = {
+                str(r[1])
+                for r in conn.execute("PRAGMA table_info(managed_miners)").fetchall()
+            }
+            if "algo" not in cols:
+                conn.execute(
+                    "ALTER TABLE managed_miners ADD COLUMN algo TEXT NOT NULL DEFAULT ''"
+                )
+                conn.commit()
             _miners_db_ready = True
             do_migrate = True
         finally:
@@ -10426,9 +10784,13 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         t = float(th) if th is not None else None
     except (TypeError, ValueError):
         t = None
-    eff = None
-    if p is not None and t is not None and t > 0:
+    eff = live.get("efficiency_jth")
+    if eff is None and p is not None and t is not None and t > 0:
         eff = round(p / t, 2)
+    if not live.get("efficiency_value") and p is not None and t is not None and t > 0:
+        # last-resort J/T if profile apply didn't fill algo units
+        live.setdefault("efficiency_value", eff)
+        live.setdefault("efficiency_unit", "J/T")
     # temps: prefer liquid, else chip_avg / env
     temp = live.get("liquid")
     if temp is None:
@@ -10543,6 +10905,9 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         "hashrate_unit": live.get("hashrate_unit"),
         "model_display": live.get("model_display"),
         "model_display_full": live.get("model_display_full"),
+        "algo": live.get("algo"),
+        "algo_display": live.get("algo_display"),
+        "coin": live.get("coin"),
         "power_source": live.get("power_source"),
         "power_estimated": live.get("power_estimated"),
         "efficiency_value": live.get("efficiency_value"),
@@ -10753,6 +11118,20 @@ def get_miners_fleet() -> dict:
                     )
                 if not row.get("vendor") and host_live.get("vendor"):
                     row["vendor"] = host_live.get("vendor")
+                live_algo = (
+                    (sl or {}).get("algo")
+                    or host_live.get("algo")
+                    or (sl or {}).get("algo_display")
+                )
+                if live_algo and not row.get("algo"):
+                    row["algo"] = (sl or {}).get("algo") or host_live.get("algo") or ""
+                    row["algo_display"] = (
+                        (sl or {}).get("algo_display")
+                        or host_live.get("algo_display")
+                        or live_algo
+                    )
+                elif (sl or {}).get("algo_display") and not row.get("algo_display"):
+                    row["algo_display"] = sl.get("algo_display")
                 if host_live.get("fw_ver") and not row.get("fw_ver"):
                     row["fw_ver"] = host_live.get("fw_ver")
                 if host_live.get("serial") and not row.get("serial"):
@@ -10844,6 +11223,7 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
         "serial",
         "inventory",
         "cooling",
+        "algo",
         "pool_id",
         "miner_type",
         "mac",
@@ -10880,6 +11260,7 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
                         str(m.get("serial") or "")[:96],
                         str(m.get("inventory") or "")[:64],
                         str(m.get("cooling") or "air"),
+                        str(m.get("algo") or "")[:32],
                         str(m.get("pool_id") or "")[:48],
                         str(m.get("miner_type") or "")[:64],
                         m.get("mac"),
@@ -11165,10 +11546,14 @@ def update_managed(mid: str, fields: dict | None) -> dict:
         "password",
         "miner_type",
         "pool_id",
+        "algo",
+        "algorithm",
     )
     for k in str_keys:
         if k in fields and fields[k] is not None:
             found[k] = str(fields[k]).strip()
+    if "algorithm" in fields and "algo" not in fields:
+        found["algo"] = str(fields.get("algorithm") or "").strip()
     if "cooling" in fields or "cooling_type" in fields:
         found["cooling"] = _normalize_miner_cooling(
             fields.get("cooling", fields.get("cooling_type"))
@@ -11193,6 +11578,10 @@ def update_managed(mid: str, fields: dict | None) -> dict:
         found["model_code"] = found["miner_type"]
     if found.get("model_code") and not found.get("model"):
         found["model"] = found["model_code"]
+    # model/vendor change without explicit algo → resolve from catalog
+    if "algo" not in fields and "algorithm" not in fields:
+        if any(k in fields for k in ("model", "model_code", "miner_type", "vendor")):
+            found["algo"] = ""
     was_active = found.get("role") == "active"
     out = _save_miners_managed(managed)
     # if active connection fields changed — re-apply
@@ -33256,6 +33645,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/devices/secret", "/api/devices/reveal"):
             self._api_devices_secret_get()
             return
+        if path in (
+            "/api/devices/credentials",
+            "/api/cloud/credentials",
+        ):
+            self._api_cloud_credentials_get()
+            return
+        if path in (
+            "/api/devices/credentials/secret",
+            "/api/cloud/credentials/secret",
+        ):
+            self._api_cloud_credentials_secret_get()
+            return
         if path in ("/api/devices/poller", "/api/devices/poller/config"):
             self._api_devices_poller_get()
             return
@@ -33780,6 +34181,12 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/devices", "/api/devices/save", "/api/devices/config"):
             self._api_devices_post()
+            return
+        if path in (
+            "/api/devices/credentials",
+            "/api/cloud/credentials",
+        ):
+            self._api_cloud_credentials_post()
             return
         if path in ("/api/devices/poller", "/api/devices/poller/config"):
             self._api_devices_poller_post()
@@ -35230,6 +35637,51 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_cloud_credentials_get(self) -> None:
+        """GET /api/devices/credentials?ecosystem=ewelink"""
+        try:
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            eco = str((qs.get("ecosystem") or qs.get("eco") or [""])[0] or "").strip()
+            rows = list_cloud_credentials(ecosystem=eco or None, redact=True)
+            self._json_response(
+                200, {"ok": True, "accounts": rows, "ecosystem": eco or None}
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_cloud_credentials_secret_get(self) -> None:
+        """GET /api/devices/credentials/secret?id=acc_… — fill form password."""
+        try:
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            acc_id = str((qs.get("id") or [""])[0] or "").strip()
+            row = get_cloud_credential_secret(acc_id)
+            if not row:
+                self._json_response(
+                    404, {"ok": False, "error": "credential not found"}
+                )
+                return
+            self._json_response(200, {"ok": True, **row})
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
+    def _api_cloud_credentials_post(self) -> None:
+        """POST {ecosystem, email, password?, country?, region?, label?}"""
+        try:
+            req = self._read_json_body() or {}
+            if not isinstance(req, dict):
+                raise ValueError("expected object")
+            out = upsert_cloud_credential(
+                ecosystem=str(req.get("ecosystem") or req.get("backend") or ""),
+                email=str(req.get("email") or ""),
+                password=req.get("password"),
+                country=str(req.get("country") or req.get("country_code") or ""),
+                region=str(req.get("region") or ""),
+                label=str(req.get("label") or ""),
+            )
+            self._json_response(200, {"ok": True, "account": out})
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_ewelink_devices_login(self) -> None:
         """
         POST {email, password, country_code?, region?, device_id?}
@@ -35280,7 +35732,12 @@ class Handler(SimpleHTTPRequestHandler):
                     "name": match_raw.get("name"),
                     "online": match_raw.get("online"),
                     "productModel": match_raw.get("productModel"),
+                    "brandName": match_raw.get("brandName"),
+                    "uiid": match_raw.get("uiid"),
                     "ip": match_raw.get("ip"),
+                    "params": match_raw.get("params")
+                    if isinstance(match_raw.get("params"), dict)
+                    else None,
                 }
             out = {
                 "ok": True,
@@ -35289,6 +35746,18 @@ class Handler(SimpleHTTPRequestHandler):
                 "device_count": n_dev,
                 "match": match,
             }
+            # Always remember eWeLink cloud login for this country
+            try:
+                if email and password:
+                    upsert_cloud_credential(
+                        ecosystem="ewelink",
+                        email=email,
+                        password=password,
+                        country=cc,
+                        region=str(out.get("region") or ""),
+                    )
+            except Exception as ce:
+                print(f"[ewelink] cred vault: {ce}", flush=True)
             if store_id and match and match.get("devicekey"):
                 key = str(match.get("devicekey"))
                 did_cloud = str(match.get("deviceid") or "")

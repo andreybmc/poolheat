@@ -1468,6 +1468,46 @@
       font-size: 0.9rem;
       outline: none;
       transition: border-color 0.15s;
+      box-sizing: border-box;
+      min-height: 40px;
+    }
+    /* Match input height for action buttons next to fields */
+    .btn.btn-field-h {
+      width: 100%;
+      min-height: 40px;
+      height: 40px;
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-sizing: border-box;
+      line-height: 1.2;
+    }
+    /* Spinner only while .is-loading — never override [hidden] when idle */
+    .btn.btn-field-h .btn-spin {
+      display: none;
+      width: 16px;
+      height: 16px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      flex-shrink: 0;
+      box-sizing: border-box;
+    }
+    .btn.btn-field-h.is-loading .btn-spin {
+      display: inline-block;
+      animation: btn-spin 0.7s linear infinite;
+    }
+    .btn.btn-field-h.is-loading .btn-label {
+      opacity: 0.9;
+    }
+    .btn.btn-field-h.is-loading {
+      pointer-events: none;
+      opacity: 0.95;
+    }
+    @keyframes btn-spin {
+      to { transform: rotate(360deg); }
     }
 
     /* time fields — same look as text/number; custom clock icon */
@@ -6676,6 +6716,11 @@
                 <div class="hint" id="info-model-boards">—</div>
               </div>
               <div class="metric">
+                <label data-i18n="mp.col.algo">Algorithm</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-algo">—</div>
+                <div class="hint" id="info-model-coin">coin —</div>
+              </div>
+              <div class="metric">
                 <label>Chip layout</label>
                 <div class="val" style="font-size:0.95rem" id="info-model-layout">—</div>
                 <div class="hint" id="info-model-sensors">sensors —</div>
@@ -8058,7 +8103,7 @@
                     <th data-i18n="fleet.col.name">Name</th>
                     <th data-i18n="fleet.col.model">Model</th>
                     <th data-i18n="fleet.col.hash">Hashrate</th>
-                    <th data-i18n="fleet.col.power_eff">Power · J/TH</th>
+                    <th data-i18n="fleet.col.power_eff">Power · eff</th>
                     <th data-i18n="fleet.col.temp">Temp</th>
                     <th data-i18n="fleet.col.boards_fans">Boards · Fans</th>
                     <th data-i18n="fleet.col.mode">Mode</th>
@@ -8410,7 +8455,8 @@
                 </div>
                 <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
                   <label class="field"><span data-i18n="dev.tuya_email">App email</span>
-                    <input type="text" id="dev-tuya-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                    <input type="text" id="dev-tuya-email" list="dev-tuya-email-list" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                    <datalist id="dev-tuya-email-list"></datalist>
                   </label>
                   <label class="field"><span data-i18n="dev.tuya_password">App password</span>
                     <span class="pw-wrap">
@@ -8465,7 +8511,10 @@
                   <label class="field"><span data-i18n="dev.tuya_device_id">Device ID</span>
                     <input type="text" id="dev-tuya-device-id" placeholder="bf…" autocomplete="off" />
                   </label>
-                  <button type="button" class="btn" id="btn-tuya-fetch-keys" data-i18n="dev.tuya_fetch">Get keys</button>
+                  <button type="button" class="btn btn-field-h" id="btn-tuya-fetch-keys">
+                    <span class="btn-label" data-i18n="dev.tuya_fetch">Получить ключи</span>
+                    <span class="btn-spin" aria-hidden="true" hidden></span>
+                  </button>
                 </div>
                 <div class="row" style="grid-template-columns:1fr;gap:12px;margin-top:10px">
                   <label class="field"><span data-i18n="dev.tuya_local_key">local_key</span>
@@ -8557,7 +8606,7 @@
                 <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:10px">
                   <label class="field"><span data-i18n="dev.ewelink_mode">Mode</span>
                     <select id="dev-ewelink-mode">
-                      <option value="auto">auto (DIY → LAN encrypt)</option>
+                      <option value="auto">auto (detect DIY / LAN)</option>
                       <option value="lan">LAN encrypt (devicekey)</option>
                       <option value="diy">DIY only</option>
                     </select>
@@ -8573,9 +8622,10 @@
                     <input type="number" id="dev-ewelink-outlet" value="0" min="0" max="7" />
                   </label>
                 </div>
-                <div class="row" style="grid-template-columns:1fr 1fr 120px 1fr;gap:12px;margin-top:10px">
+                <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
                   <label class="field"><span data-i18n="dev.ewelink_email">eWeLink email</span>
-                    <input type="text" id="dev-ewelink-email" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                    <input type="text" id="dev-ewelink-email" list="dev-ewelink-email-list" inputmode="email" placeholder="you@mail.com" autocomplete="off" />
+                    <datalist id="dev-ewelink-email-list"></datalist>
                   </label>
                   <label class="field"><span data-i18n="dev.ewelink_password">eWeLink password</span>
                     <span class="pw-wrap">
@@ -8583,14 +8633,48 @@
                       <button type="button" class="pw-eye" data-pw-for="dev-ewelink-password" title="Show" aria-label="Show">👁</button>
                     </span>
                   </label>
+                </div>
+                <div class="row" style="grid-template-columns:minmax(180px,1.1fr) 1fr;gap:12px;margin-top:10px;align-items:end">
                   <label class="field"><span data-i18n="dev.ewelink_country">Country</span>
-                    <input type="text" id="dev-ewelink-country" value="+7" placeholder="+7" />
+                    <select id="dev-ewelink-country">
+                      <option value="+7">+7 — RU / KZ · Россия / Казахстан</option>
+                      <option value="+375">+375 — BY · Беларусь</option>
+                      <option value="+380">+380 — UA · Украина</option>
+                      <option value="+1">+1 — US / CA · США / Канада</option>
+                      <option value="+44">+44 — UK · Великобритания</option>
+                      <option value="+49">+49 — DE · Германия</option>
+                      <option value="+33">+33 — FR · Франция</option>
+                      <option value="+48">+48 — PL · Польша</option>
+                      <option value="+371">+371 — LV · Латвия</option>
+                      <option value="+372">+372 — EE · Эстония</option>
+                      <option value="+370">+370 — LT · Литва</option>
+                      <option value="+420">+420 — CZ · Чехия</option>
+                      <option value="+36">+36 — HU · Венгрия</option>
+                      <option value="+40">+40 — RO · Румыния</option>
+                      <option value="+359">+359 — BG · Болгария</option>
+                      <option value="+90">+90 — TR · Турция</option>
+                      <option value="+86">+86 — CN · Китай</option>
+                      <option value="+81">+81 — JP · Япония</option>
+                      <option value="+82">+82 — KR · Корея</option>
+                      <option value="+61">+61 — AU · Австралия</option>
+                      <option value="+91">+91 — IN · Индия</option>
+                      <option value="+55">+55 — BR · Бразилия</option>
+                      <option value="+52">+52 — MX · Мексика</option>
+                      <option value="+971">+971 — AE · ОАЭ</option>
+                      <option value="+966">+966 — SA · Саудовская Аравия</option>
+                      <option value="+972">+972 — IL · Израиль</option>
+                      <option value="+65">+65 — SG · Сингапур</option>
+                      <option value="+66">+66 — TH · Таиланд</option>
+                      <option value="+62">+62 — ID · Индонезия</option>
+                      <option value="+84">+84 — VN · Вьетнам</option>
+                    </select>
                   </label>
                   <label class="field" style="justify-content:flex-end">
                     <span>&nbsp;</span>
-                    <button type="button" class="btn ghost" id="dev-ewelink-cloud-btn" style="width:100%"
-                            data-i18n="dev.ewelink_cloud">
-                      Get devicekey
+                    <button type="button" class="btn ghost btn-field-h" id="dev-ewelink-cloud-btn"
+                            title="Получить devicekey">
+                      <span class="btn-label" data-i18n="dev.ewelink_cloud">Получить devicekey</span>
+                      <span class="btn-spin" aria-hidden="true" hidden></span>
                     </button>
                   </label>
                 </div>
@@ -9107,6 +9191,20 @@
                 <option value="air">Air</option>
                 <option value="hydro">Hydro</option>
                 <option value="immersion">Immersion</option>
+              </select>
+            </label>
+            <label class="field"><span data-i18n="mp.col.algo">Algorithm</span>
+              <select id="mp-edit-algo">
+                <option value="">—</option>
+                <option value="sha256">SHA-256 · TH/s · J/T</option>
+                <option value="scrypt">Scrypt · GH/s · J/G</option>
+                <option value="eaglesong">Eaglesong · TH/s · J/T</option>
+                <option value="ethash">Ethash · MH/s · J/M</option>
+                <option value="kheavyhash">kHeavyHash · TH/s · J/T</option>
+                <option value="blake2s">Blake2s · TH/s · J/T</option>
+                <option value="handshake">Handshake · TH/s · J/T</option>
+                <option value="equihash">Equihash · MH/s · J/M</option>
+                <option value="x11">X11 · GH/s · J/G</option>
               </select>
             </label>
             <label class="field"><span data-i18n="mp.col.serial">Serial number</span>
@@ -10065,8 +10163,8 @@
         "fleet.col.model": "Model",
         "fleet.col.hash": "Hashrate",
         "fleet.col.power": "Power",
-        "fleet.col.eff": "J/TH",
-        "fleet.col.power_eff": "Power · J/TH",
+        "fleet.col.eff": "Eff",
+        "fleet.col.power_eff": "Power · eff",
         "fleet.col.temp": "Temp",
         "fleet.col.fan": "Fan",
         "fleet.col.boards_fans": "Boards · Fans",
@@ -10213,6 +10311,7 @@
         "mp.col.serial": "Serial",
         "mp.col.inventory": "Inv #",
         "mp.col.cooling": "Cooling",
+        "mp.col.algo": "Algorithm",
         "mp.col.pool": "Pool",
         "mp.edit": "Edit",
         "mp.edit_title": "Edit miner",
@@ -10882,6 +10981,7 @@
         "dev.ewelink_fetching": "Getting devicekey…",
         "dev.ewelink_got_key": "devicekey loaded",
         "dev.ewelink_no_match": "No matching device in cloud (check deviceid / IP)",
+        "dev.tuya_fetching": "Getting keys…",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
         "filt.method": "Method",
@@ -11029,8 +11129,8 @@
         "fleet.col.model": "Модель",
         "fleet.col.hash": "Хешрейт",
         "fleet.col.power": "Мощность",
-        "fleet.col.eff": "J/TH",
-        "fleet.col.power_eff": "Вт · J/TH",
+        "fleet.col.eff": "Эфф.",
+        "fleet.col.power_eff": "Вт · эфф.",
         "fleet.col.temp": "Темп.",
         "fleet.col.fan": "Вент.",
         "fleet.col.boards_fans": "Платы · Вент.",
@@ -11177,6 +11277,7 @@
         "mp.col.serial": "Серийный",
         "mp.col.inventory": "Инв. №",
         "mp.col.cooling": "Охлаждение",
+        "mp.col.algo": "Алгоритм",
         "mp.col.pool": "Бассейн",
         "mp.edit": "Изм.",
         "mp.edit_title": "Редактировать майнер",
@@ -11222,7 +11323,7 @@
         "dev.tuya_country": "Страна",
         "dev.tuya_region": "Регион",
         "dev.tuya_device_id": "Device ID",
-        "dev.tuya_fetch": "Получить keys",
+        "dev.tuya_fetch": "Получить ключи",
         "dev.tuya_local_key": "local_key",
         "dev.tuya_version": "Версия LAN-протокола",
         "dev.tuya_dps": "Switch DPS",
@@ -11846,6 +11947,8 @@
         "dev.ewelink_fetching": "Получаю devicekey…",
         "dev.ewelink_got_key": "devicekey получен",
         "dev.ewelink_no_match": "Устройство не найдено в облаке (проверьте deviceid / IP)",
+        "dev.tuya_fetching": "Получаю ключи…",
+        "dev.tuya_fetch": "Получить ключи",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
         "filt.method": "Метод",
@@ -12417,16 +12520,16 @@
         body: "Circulation flow, L/h.\nFull turnover time ≈ V(m³)×1000 / Q(L/h) (h).",
       },
       hashrate: {
-        title: "Hashrate TH/s",
-        body: "Current miner hashrate.",
+        title: "Hashrate",
+        body: "Current hashrate in the algorithm default unit.\nSHA-256 / Eaglesong: TH/s · Scrypt: GH/s · Ethash: MH/s.",
       },
       freq: {
         title: "freq_avg",
         body: "Average chip frequency (MHz).",
       },
       efficiency: {
-        title: "J/T (J/TH)",
-        body: "W ÷ TH/s — joule per terahash.\nLower is better.",
+        title: "Efficiency",
+        body: "Joules per hash unit for this algorithm.\nSHA-256 / Eaglesong: J/T · Scrypt: J/G · Ethash: J/M.\nLower is better.",
       },
       low_hash: {
         title: "LOW_HASH",
@@ -23698,19 +23801,17 @@
     }
 
     function formatTh(v, unitHint) {
-      /* Accept TH/s number, or auto-scale tiny values (ETH MH/s as 1e-6 TH). */
+      /* live.hashrate_th is TH/s; unitHint picks the algo default display. */
       const n = Number(v);
       if (!Number.isFinite(n)) return "—";
       const hint = String(unitHint || "").toUpperCase();
-      if (hint.indexOf("MH") >= 0 || (n > 0 && n < 0.01)) {
-        const mhs = n < 0.01 ? n * 1e6 : n; /* TH→MH when tiny */
-        if (mhs >= 100) return mhs.toFixed(1) + " MH/s";
-        if (mhs >= 10) return mhs.toFixed(2) + " MH/s";
-        return mhs.toFixed(2) + " MH/s";
+      if (hint.indexOf("MH") >= 0) {
+        const mhs = n < 0.1 ? n * 1e6 : n;
+        return (mhs >= 100 ? mhs.toFixed(1) : mhs.toFixed(2)) + " MH/s";
       }
-      if (hint.indexOf("GH") >= 0 || (n >= 0.01 && n < 1)) {
+      if (hint.indexOf("GH") >= 0) {
         const ghs = n < 1 ? n * 1e3 : n;
-        return ghs.toFixed(2) + " GH/s";
+        return (ghs >= 100 ? ghs.toFixed(1) : ghs.toFixed(2)) + " GH/s";
       }
       if (n >= 100) return n.toFixed(1) + " TH/s";
       if (n >= 10) return n.toFixed(2) + " TH/s";
@@ -23985,6 +24086,8 @@
             m.name,
             m.model,
             m.model_code,
+            m.algo,
+            m.algo_display,
             m.vendor,
             m.vendor_name,
             m.cell,
@@ -24056,13 +24159,22 @@
             m.model_display_full ||
             (live && live.model_display_full) ||
             "";
-          if (full && full !== model) return full;
-          if (m.model_code && m.model && m.model !== m.model_code)
-            return m.model_code;
-          return m.cooling_name || "";
+          const algo =
+            m.algo_display ||
+            (live && live.algo_display) ||
+            m.algo ||
+            (live && live.algo) ||
+            "";
+          const bits = [];
+          if (full && full !== model) bits.push(full);
+          else if (m.model_code && m.model && m.model !== m.model_code)
+            bits.push(m.model_code);
+          if (algo) bits.push(algo);
+          else if (m.cooling_name) bits.push(m.cooling_name);
+          return bits.join(" · ");
         })();
         const hr = live
-          ? formatTh(live.hashrate_th, live.hashrate_unit)
+          ? formatTh(live.hashrate_th, live.hashrate_unit || m.hashrate_unit)
           : "—";
         let pw = live ? formatWatts(live.power) : "—";
         if (live && live.power_estimated && live.power != null) {
@@ -24074,12 +24186,15 @@
             const n = Number(live.efficiency_value);
             if (!Number.isFinite(n)) return "—";
             const u = String(live.efficiency_unit);
-            // J/GH often 0.205 — more decimals; J/TH one decimal
-            const dig = u.indexOf("GH") >= 0 || u.indexOf("MH") >= 0 ? 3 : 1;
+            const ul = u.toUpperCase();
+            const dig =
+              ul.indexOf("G") >= 0 || ul === "J/M" || ul.indexOf("MH") >= 0
+                ? 3
+                : 1;
             return n.toFixed(dig) + " " + u;
           }
           if (live.efficiency_jth != null) {
-            return Number(live.efficiency_jth).toFixed(1) + " J/TH";
+            return Number(live.efficiency_jth).toFixed(1) + " J/T";
           }
           return "—";
         })();
@@ -24687,6 +24802,7 @@
         o.value = fam;
         o.textContent = brand ? brand + " " + fam : fam;
         o.dataset.cooling = String(f.cooling || "air");
+        o.dataset.algo = String(f.algo || "");
         const match = Array.isArray(f.match) && f.match.length ? f.match[0] : fam;
         o.dataset.codeHint = String(match || fam);
         sel.appendChild(o);
@@ -24710,6 +24826,17 @@
       const cool = opt.dataset.cooling;
       const coolEl = document.getElementById("mp-edit-cooling");
       if (cool && coolEl) coolEl.value = cool;
+      const algo = opt.dataset.algo;
+      const algoEl = document.getElementById("mp-edit-algo");
+      if (algo && algoEl) {
+        if (![...algoEl.options].some((o) => o.value === algo)) {
+          const extra = document.createElement("option");
+          extra.value = algo;
+          extra.textContent = algo;
+          algoEl.appendChild(extra);
+        }
+        algoEl.value = algo;
+      }
       const codeEl = document.getElementById("mp-edit-model-code");
       // only suggest code if empty
       if (codeEl && !String(codeEl.value || "").trim() && opt.dataset.codeHint) {
@@ -24915,6 +25042,19 @@
       );
       set("mp-edit-model-code", m.model_code || m.miner_type || "");
       set("mp-edit-cooling", m.cooling || "air");
+      (function setAlgo() {
+        const el = document.getElementById("mp-edit-algo");
+        const aid = String(m.algo || "").trim().replace(/^etchash$/i, "ethash");
+        if (!el) return;
+        if (aid && ![...el.options].some((o) => o.value === aid)) {
+          const extra = document.createElement("option");
+          extra.value = aid;
+          extra.textContent = m.algo_display || aid;
+          el.appendChild(extra);
+        }
+        el.value = aid;
+        if (!aid) applyModelSelectHints();
+      })();
       set("mp-edit-serial", m.serial || "");
       set("mp-edit-inventory", m.inventory || "");
       fillHeatPoolSelect(document.getElementById("mp-edit-pool"), m.pool_id || "");
@@ -24949,6 +25089,7 @@
           document.getElementById("mp-edit-model-code")?.value || ""
         ).trim(),
         cooling: (document.getElementById("mp-edit-cooling")?.value || "air").trim(),
+        algo: (document.getElementById("mp-edit-algo")?.value || "").trim(),
         serial: (document.getElementById("mp-edit-serial")?.value || "").trim(),
         inventory: (
           document.getElementById("mp-edit-inventory")?.value || ""
@@ -26961,6 +27102,15 @@
           );
           const cool = (p && p.cooling) || "—";
           setTxt("info-model-cooling", cool);
+          const algoLbl =
+            (p && (p.algo_display || p.algo)) ||
+            (m && (m.algo_display || m.algo)) ||
+            "—";
+          setTxt("info-model-algo", algoLbl);
+          setTxt(
+            "info-model-coin",
+            p && p.coin ? "coin " + p.coin : "coin —"
+          );
           const nB = boards.count != null ? boards.count : p && p.board_count;
           const note = boards.note || (p && p.board_layout_note) || "";
           setTxt(
@@ -27006,6 +27156,8 @@
           setTxt("info-model-mfr", "—");
           setTxt("info-model-family", "family —");
           setTxt("info-model-cooling", "—");
+          setTxt("info-model-algo", "—");
+          setTxt("info-model-coin", "coin —");
           setTxt("info-model-boards", "—");
           setTxt("info-model-layout", "—");
           setTxt("info-model-sensors", "sensors —");
@@ -33948,6 +34100,11 @@
               : " kWh")
         );
       }
+      // optional extras (rssi / fw) when present on power or telemetry blob
+      const rssi = Number(p.rssi);
+      if (Number.isFinite(rssi) && rssi < 0) {
+        parts.push(rssi + " dBm");
+      }
       if (!parts.length) return "";
       return (
         '<div class="dev-power-line" style="font-size:0.82rem;font-weight:600;margin-top:3px;color:var(--text);opacity:0.92">' +
@@ -33959,10 +34116,23 @@
 
     function deviceIsLight(d) {
       if (!d) return false;
+      const be = String(d.backend || "").toLowerCase();
+      // eWeLink / Sonoff plugs & breakers are switches with power meters — not dimmers.
+      // (backend "mode" diy|lan was wrongly stored as last_mode and triggered light UI.)
+      if (be === "ewelink" || be === "sonoff" || be === "sonoff_diy") {
+        const k0 = String(d.device_kind || "").toLowerCase();
+        return k0 === "light" || k0 === "dimmer" || k0 === "lamp" || k0 === "bulb";
+      }
       const k = String(d.device_kind || "").toLowerCase();
       if (k === "light" || k === "dimmer" || k === "lamp" || k === "bulb") return true;
+      if (k === "switch" || k === "plug" || k === "relay") return false;
       if (d.backend === "tuya" && Number(d.tuya_switch_dps) === 20) return true;
-      if (d.last_brightness != null || d.last_mode) return true;
+      // last_mode only counts for real light modes (not eWeLink lan/diy/auto)
+      const lm = String(d.last_mode || "")
+        .trim()
+        .toLowerCase();
+      const lightModes = { white: 1, colour: 1, color: 1, scene: 1, music: 1 };
+      if (d.last_brightness != null || lightModes[lm]) return true;
       return false;
     }
 
@@ -34445,7 +34615,25 @@
           d.backend === "ewelink" && d.password_set ? "•••• (saved)" : "••••";
       }
       const ewCc = document.getElementById("dev-ewelink-country");
-      if (ewCc) ewCc.value = d.ewelink_country || "+7";
+      if (ewCc) {
+        const cc = String(d.ewelink_country || "+7").trim() || "+7";
+        const norm = cc.startsWith("+") ? cc : "+" + cc.replace(/^\+/, "");
+        let found = false;
+        for (const o of ewCc.options || []) {
+          if (o.value === norm || o.value === cc) {
+            ewCc.value = o.value;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const opt = document.createElement("option");
+          opt.value = norm;
+          opt.textContent = norm;
+          ewCc.appendChild(opt);
+          ewCc.value = norm;
+        }
+      }
       const ewStat = document.getElementById("dev-ewelink-status");
       if (ewStat && d.backend === "ewelink") {
         ewStat.textContent = d.ewelink_devicekey_set
@@ -34454,6 +34642,19 @@
               "dev.ewelink_need_key",
               "devicekey optional for DIY · Get devicekey for LAN encrypt / power meters"
             );
+      }
+      // Load saved eWeLink accounts for this ecosystem
+      if (d.backend === "ewelink") {
+        void loadCloudCredentials("ewelink").then((acc) => {
+          fillCredDatalist("dev-ewelink-email-list", acc);
+          bindCloudCredSuggest(
+            "ewelink",
+            "dev-ewelink-email",
+            "dev-ewelink-password",
+            "dev-ewelink-country",
+            null
+          );
+        });
       }
       // After reload, list API redacts secrets — fetch devicekey so field shows it
       if (
@@ -34550,7 +34751,20 @@
         ccEl.value = cc;
       }
       setV("dev-tuya-region", d.tuya_region || "eu");
-      setV("dev-tuya-device-id", d.device_id || "");
+      // Saved Smart Life / Tuya accounts for this ecosystem
+      if (d.backend === "tuya" || d.backend === "smartlife") {
+        const eco = d.tuya_ecosystem || d.backend || "smartlife";
+        void loadCloudCredentials(eco).then((acc) => {
+          fillCredDatalist("dev-tuya-email-list", acc);
+          bindCloudCredSuggest(
+            eco,
+            "dev-tuya-email",
+            "dev-tuya-password",
+            "dev-tuya-country",
+            "dev-tuya-region"
+          );
+        });
+      }      setV("dev-tuya-device-id", d.device_id || "");
       setV("dev-tuya-local-key", "");
       const tlk = document.getElementById("dev-tuya-local-key");
       if (tlk) tlk.placeholder = d.tuya_local_key_set ? "•••• (saved)" : "auto after Get keys";
@@ -35158,6 +35372,7 @@
 
     async function tuyaFetchKeysFromEditor() {
       const st = document.getElementById("dev-tuya-status");
+      const btn = document.getElementById("btn-tuya-fetch-keys");
       const email = (document.getElementById("dev-tuya-email")?.value || "").trim();
       let password = document.getElementById("dev-tuya-password")?.value || "";
       const eco = document.getElementById("dev-tuya-eco")?.value || "smartlife";
@@ -35169,6 +35384,12 @@
         return;
       }
       if (st) st.textContent = "logging in…";
+      setBtnLoading(btn, true, {
+        busyKey: "dev.tuya_fetching",
+        busyFb: "Получаю ключи…",
+        idleKey: "dev.tuya_fetch",
+        idleFb: "Получить ключи",
+      });
       try {
         const res = await fetch("/api/devices/tuya/login", {
           method: "POST",
@@ -35184,6 +35405,25 @@
         });
         const body = await res.json();
         if (!res.ok || body.ok === false) throw new Error(body.error || "HTTP " + res.status);
+        // remember login for this ecosystem+country
+        try {
+          if (email && password) {
+            await fetch("/api/devices/credentials", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                ecosystem: eco,
+                email,
+                password,
+                country,
+                region,
+              }),
+            });
+            void loadCloudCredentials(eco).then((acc) =>
+              fillCredDatalist("dev-tuya-email-list", acc)
+            );
+          }
+        } catch (_) { /* ignore vault errors */ }
         const list = body.devices || [];
         if (st) st.textContent = "OK · " + list.length + " devices";
         const pick = document.getElementById("dev-tuya-pick");
@@ -35230,11 +35470,169 @@
       } catch (e) {
         if (st) st.textContent = "error: " + e.message;
         toastError("Tuya login: " + e.message);
+      } finally {
+        setBtnLoading(btn, false, {
+          idleKey: "dev.tuya_fetch",
+          idleFb: "Получить ключи",
+        });
       }
     }
     document
       .getElementById("btn-tuya-fetch-keys")
       ?.addEventListener("click", () => void tuyaFetchKeysFromEditor());
+
+    /** Cloud credentials vault: per ecosystem+country suggestions */
+    let cloudCredsCache = { ewelink: [], smartlife: [], tuya: [], tapo: [] };
+
+    function setBtnLoading(btn, on, opts) {
+      // opts: { idleKey, idleFb, busyKey, busyFb }
+      if (!btn) return;
+      const spin = btn.querySelector(".btn-spin");
+      const lab = btn.querySelector(".btn-label");
+      const o = opts || {};
+      if (on) {
+        btn.classList.add("is-loading");
+        btn.disabled = true;
+        if (spin) {
+          spin.hidden = false;
+          spin.removeAttribute("hidden");
+        }
+        if (lab) {
+          lab.textContent = t(
+            o.busyKey || "dev.ewelink_fetching",
+            o.busyFb || "Получаю devicekey…"
+          );
+        }
+      } else {
+        btn.classList.remove("is-loading");
+        btn.disabled = false;
+        if (spin) {
+          spin.hidden = true;
+          spin.setAttribute("hidden", "");
+        }
+        if (lab) {
+          lab.textContent = t(
+            o.idleKey || "dev.ewelink_cloud",
+            o.idleFb || "Получить devicekey"
+          );
+        }
+      }
+    }
+
+    async function loadCloudCredentials(ecosystem) {
+      const eco = String(ecosystem || "").toLowerCase() || "ewelink";
+      try {
+        const res = await fetch(
+          "/api/devices/credentials?ecosystem=" + encodeURIComponent(eco),
+          { cache: "no-store" }
+        );
+        const j = await res.json();
+        if (res.ok && j && j.ok) {
+          cloudCredsCache[eco] = j.accounts || [];
+        }
+      } catch (_) {
+        cloudCredsCache[eco] = cloudCredsCache[eco] || [];
+      }
+      return cloudCredsCache[eco] || [];
+    }
+
+    function fillCredDatalist(listId, accounts) {
+      const dl = document.getElementById(listId);
+      if (!dl) return;
+      dl.innerHTML = "";
+      (accounts || []).forEach((a) => {
+        if (!a || !a.email) return;
+        const opt = document.createElement("option");
+        opt.value = a.email;
+        opt.label =
+          a.email +
+          (a.country ? " · " + a.country : "") +
+          (a.label ? " · " + a.label : "");
+        opt.dataset.accId = a.id || "";
+        opt.dataset.country = a.country || "";
+        opt.dataset.region = a.region || "";
+        dl.appendChild(opt);
+      });
+    }
+
+    async function applyCloudCredentialByEmail(eco, email, fields) {
+      // fields: { emailId, passwordId, countryId, regionId }
+      const accounts = cloudCredsCache[eco] || (await loadCloudCredentials(eco));
+      const hit = (accounts || []).find(
+        (a) =>
+          a &&
+          String(a.email || "").toLowerCase() === String(email || "").toLowerCase()
+      );
+      if (!hit || !hit.id) return false;
+      try {
+        const res = await fetch(
+          "/api/devices/credentials/secret?id=" + encodeURIComponent(hit.id),
+          { cache: "no-store" }
+        );
+        const j = await res.json();
+        if (!res.ok || !j.ok) return false;
+        const em = document.getElementById(fields.emailId);
+        const pw = document.getElementById(fields.passwordId);
+        const cc = document.getElementById(fields.countryId);
+        const rg = fields.regionId
+          ? document.getElementById(fields.regionId)
+          : null;
+        if (em && j.email) em.value = j.email;
+        if (pw && j.password) {
+          pw.value = j.password;
+          pw.placeholder = "••••";
+        }
+        if (cc && j.country) {
+          // select or input
+          const v = String(j.country);
+          if (cc.tagName === "SELECT") {
+            // match option by value or by stripping +
+            let found = false;
+            for (const o of cc.options) {
+              if (o.value === v || o.value === v.replace(/^\+/, "") || ("+" + o.value) === v) {
+                cc.value = o.value;
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              // add custom option
+              const opt = document.createElement("option");
+              opt.value = v.startsWith("+") ? v : v;
+              opt.textContent = v;
+              cc.appendChild(opt);
+              cc.value = opt.value;
+            }
+          } else {
+            cc.value = v;
+          }
+        }
+        if (rg && j.region) rg.value = j.region;
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function bindCloudCredSuggest(eco, emailId, passwordId, countryId, regionId) {
+      const em = document.getElementById(emailId);
+      if (!em || em.dataset.credBound === "1") return;
+      em.dataset.credBound = "1";
+      const run = () => {
+        void applyCloudCredentialByEmail(eco, em.value.trim(), {
+          emailId,
+          passwordId,
+          countryId,
+          regionId,
+        });
+      };
+      em.addEventListener("change", run);
+      em.addEventListener("blur", () => {
+        // only auto-fill password if empty
+        const pw = document.getElementById(passwordId);
+        if (pw && !String(pw.value || "").trim()) run();
+      });
+    }
 
     async function ewelinkFetchKeysFromEditor() {
       const st = document.getElementById("dev-ewelink-status");
@@ -35250,8 +35648,13 @@
         return;
       }
       if (st)
-        st.textContent = t("dev.ewelink_fetching", "Getting devicekey…");
-      if (btn) btn.disabled = true;
+        st.textContent = t("dev.ewelink_fetching", "Получаю devicekey…");
+      setBtnLoading(btn, true, {
+        busyKey: "dev.ewelink_fetching",
+        busyFb: "Получаю devicekey…",
+        idleKey: "dev.ewelink_cloud",
+        idleFb: "Получить devicekey",
+      });
       const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const to = setTimeout(() => {
         try {
@@ -35305,6 +35708,10 @@
         }
         if (ipEl && auto.ip && !ipEl.value.trim()) ipEl.value = auto.ip;
         if (modeEl) modeEl.value = "auto";
+        // refresh suggestions after vault save
+        void loadCloudCredentials("ewelink").then((acc) =>
+          fillCredDatalist("dev-ewelink-email-list", acc)
+        );
         const label =
           (auto.name || auto.deviceid || "") +
           (auto.productModel ? " · " + auto.productModel : "");
@@ -35327,7 +35734,10 @@
         if (st) st.textContent = "error: " + msg;
         toastError("eWeLink: " + msg);
       } finally {
-        if (btn) btn.disabled = false;
+        setBtnLoading(btn, false, {
+          idleKey: "dev.ewelink_cloud",
+          idleFb: "Получить devicekey",
+        });
       }
     }
     document
