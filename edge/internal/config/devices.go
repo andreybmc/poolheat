@@ -127,6 +127,8 @@ type DeviceCfg struct {
 	EnforceDesired         bool `json:"enforce_desired"`
 	AllowOffWhileMining    bool `json:"allow_off_while_mining"`
 	AllowOnWhileSuspend    bool `json:"allow_on_while_suspend"`
+	// MinerID binds mining auto/gates to a managed miner; empty = ignore mining policy
+	MinerID string `json:"miner_id"`
 
 	// ewelink (LAN DIY or CoolKit AES with devicekey)
 	EwelinkPort      int    `json:"ewelink_port"`
@@ -332,6 +334,7 @@ func parseDevice(m map[string]any) (DeviceCfg, error) {
 		EnforceDesired: asBool(m["enforce_desired"], false),
 		AllowOffWhileMining: asBool(m["allow_off_while_mining"], false),
 		AllowOnWhileSuspend: asBool(m["allow_on_while_suspend"], false),
+		MinerID:        str(m["miner_id"]),
 		EwelinkPort:   8081,
 		EwelinkMode:   "auto",
 		WebhookMethod: "GET",

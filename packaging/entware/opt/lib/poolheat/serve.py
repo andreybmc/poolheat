@@ -3392,6 +3392,12 @@ def device_notify_line(d: dict, on: bool | None, lang: str = "ru") -> str:
 
 
 def _filtration_backend_tapo(on: bool | None, cfg: dict) -> dict:
+    raise RuntimeError(
+        "Tapo control removed from serve — use devices-poller (Go)"
+    )
+
+
+def _filtration_backend_tapo_legacy_unused(on: bool | None, cfg: dict) -> dict:
     """on=None → read only; else set. Uses KLAP (new FW) or legacy."""
     ip = str(cfg.get("ip") or "").strip()
     email = str(cfg.get("email") or "").strip()
@@ -3702,12 +3708,16 @@ def probe_ewelink_diy(
 
 
 def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
+    """Deprecated — LAN control only via Go devices-poller."""
+    raise RuntimeError(
+        "eWeLink control removed from serve — use devices-poller (Go)"
+    )
+
+
+def _filtration_backend_ewelink_legacy_unused(on: bool | None, cfg: dict) -> dict:
     """
-    eWeLink / Sonoff LAN:
-      diy  — unencrypted POST /zeroconf/*
-      lan  — AES-128-CBC with devicekey (from cloud)
-      auto — detect DIY vs LAN (try both; cache winner per IP). Never error
-             just because the other transport was tried first.
+    LEGACY (unused): eWeLink / Sonoff LAN in-process.
+    Kept only as reference; never call from serve hot path.
     """
     ip = str(cfg.get("ip") or "").strip()
     device_id = str(cfg.get("device_id") or "").strip()
@@ -3835,6 +3845,12 @@ def _filtration_backend_ewelink(on: bool | None, cfg: dict) -> dict:
 
 
 def _filtration_backend_webhook(on: bool | None, cfg: dict) -> dict:
+    raise RuntimeError(
+        "Webhook control removed from serve — use devices-poller (Go)"
+    )
+
+
+def _filtration_backend_webhook_legacy_unused(on: bool | None, cfg: dict) -> dict:
     if on is None:
         # no reliable read for generic webhooks
         return {
@@ -3872,6 +3888,12 @@ def _filtration_backend_webhook(on: bool | None, cfg: dict) -> dict:
 
 
 def _filtration_backend_shelly(on: bool | None, cfg: dict) -> dict:
+    raise RuntimeError(
+        "Shelly control removed from serve — use devices-poller (Go)"
+    )
+
+
+def _filtration_backend_shelly_legacy_unused(on: bool | None, cfg: dict) -> dict:
     ip = str(cfg.get("ip") or "").strip()
     if not ip:
         raise ValueError("Shelly IP empty")
@@ -3993,6 +4015,12 @@ def _filtration_backend_shelly(on: bool | None, cfg: dict) -> dict:
 
 
 def _filtration_backend_ha(on: bool | None, cfg: dict) -> dict:
+    raise RuntimeError(
+        "Home Assistant control removed from serve — use devices-poller (Go)"
+    )
+
+
+def _filtration_backend_ha_legacy_unused(on: bool | None, cfg: dict) -> dict:
     base = str(cfg.get("ha_url") or "").rstrip("/")
     token = str(cfg.get("ha_token") or "")
     entity = str(cfg.get("ha_entity_id") or "").strip()
@@ -4041,21 +4069,71 @@ def _filtration_backend_ha(on: bool | None, cfg: dict) -> dict:
     return {"on": bool(on), "backend": "homeassistant", "entity": entity, "http": code}
 
 
+def _filtration_device_cfg() -> dict | None:
+    """
+    Resolve legacy filtration_cfg to a multi-device row (poller owns I/O).
+    Prefer alias filtration/filter/filt, else first enabled matching backend+ip.
+    """
+    filtr = _filtration_cfg_snapshot()
+    be = str(filtr.get("backend") or "").strip().lower()
+    ip = str(filtr.get("ip") or "").strip()
+    with _devices_cfg_lock:
+        devices = list(_devices_cfg.get("devices") or [])
+    # 1) known aliases
+    for alias in ("filtration", "filter", "filt", "pump"):
+        for d in devices:
+            if not isinstance(d, dict):
+                continue
+            if str(d.get("alias") or "").strip().lower() == alias and d.get("enabled", True):
+                return dict(d)
+    # 2) match backend + ip
+    for d in devices:
+        if not isinstance(d, dict) or not d.get("enabled", True):
+            continue
+        db = str(d.get("backend") or "").strip().lower()
+        dip = str(d.get("ip") or "").strip()
+        if be and db and be != db:
+            continue
+        if ip and dip and ip != dip:
+            continue
+        if be or ip:
+            return dict(d)
+    return None
+
+
 def _filtration_dispatch(on: bool | None) -> dict:
-    """on=None read; else set. Uses current cfg backend."""
-    cfg = _filtration_cfg_snapshot()
-    be = str(cfg.get("backend") or "tapo").lower()
-    if be == "tapo":
-        return _filtration_backend_tapo(on, cfg)
-    if be in ("ewelink", "sonoff", "sonoff_diy"):
-        return _filtration_backend_ewelink(on, cfg)
-    if be == "webhook":
-        return _filtration_backend_webhook(on, cfg)
-    if be == "shelly":
-        return _filtration_backend_shelly(on, cfg)
-    if be in ("homeassistant", "ha"):
-        return _filtration_backend_ha(on, cfg)
-    raise ValueError(f"unknown backend: {be}")
+    """
+    on=None read; else set.
+
+    Legacy filtration API — no direct Tuya/eWeLink/Tapo in serve.
+    Control only via multi-device row → Go devices-poller IPC.
+    """
+    dev = _filtration_device_cfg()
+    if not dev or not dev.get("id"):
+        raise RuntimeError(
+            "filtration: no multi-device entry — add a peripheral device "
+            "(LAN control is only via devices-poller)"
+        )
+    # merge any live filtration secrets not yet on device row
+    filtr = _filtration_cfg_snapshot()
+    cfg = dict(dev)
+    for k in (
+        "password",
+        "email",
+        "device_id",
+        "ip",
+        "ewelink_devicekey",
+        "ewelink_apikey",
+        "tuya_local_key",
+        "ha_token",
+    ):
+        if not cfg.get(k) and filtr.get(k):
+            cfg[k] = filtr.get(k)
+    # physical on for set; inverted handled inside device_set path via poller SetLogical
+    # Here we pass physical like old filtration (no invert on legacy cfg)
+    if on is not None:
+        cfg["_logical_on"] = bool(on)
+    return _device_backend_dispatch(on, cfg)
 
 
 def filtration_test() -> dict:
@@ -4919,6 +4997,8 @@ def _normalize_device(raw: dict | None, *, keep_secrets: bool = True) -> dict | 
         "allow_off_while_mining": _as_bool(raw.get("allow_off_while_mining", False)),
         "allow_on_while_suspend": _as_bool(raw.get("allow_on_while_suspend", False)),
         "enforce_desired": _as_bool(raw.get("enforce_desired", False)),
+        # Bound managed miner id; empty = mining policy ignored for this device
+        "miner_id": str(raw.get("miner_id") or raw.get("bound_miner_id") or "").strip(),
         **fields,
         # reported (observed) logical state — also exposed as reported_on in API
         "last_on": last_on,
@@ -5063,6 +5143,10 @@ def _load_devices_cfg() -> None:
         poller = _normalize_devices_poller(
             raw.get("poller") if isinstance(raw.get("poller"), dict) else None
         )
+        # Soft-migrate: bind mining-flagged devices to active/sole miner
+        clean, mig_bind = _migrate_device_miner_binds(clean)
+        if mig_bind:
+            migrated = True
         _devices_cfg = {"version": 1, "poller": poller, "devices": clean}
         # load state file, then overlay anything still stuck in old config
         _load_devices_state()
@@ -5720,54 +5804,42 @@ def _device_cfg_snapshot(did: str) -> dict | None:
 
 
 def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
-    """on=None read; else set physical state."""
+    """
+    on=None read; else set physical state.
+
+    **All** LAN device I/O goes through Go devices-poller (device_req IPC).
+    serve must not import/call tinytuya, ewelink_lan, Tapo KLAP, etc. at runtime —
+    those backends live only in poolheat-devices-poller.
+    """
     be = str(cfg.get("backend") or "tapo").lower()
     if be in ("smartlife", "smart_life"):
         be = "tuya"
     if be in ("mi", "mihome", "mi_home", "miio", "mijia"):
         be = "xiaomi"
-    # eWeLink LAN encrypt (devicekey / CoolKit AES) lives in Python.
-    # Go devices-poller is DIY-only without key → "DIY not responding" on
-    # cloud-paired plugs. Always control eWeLink from serve.
-    if be in ("ewelink", "sonoff", "sonoff_diy"):
-        return _filtration_backend_ewelink(on, cfg)
-    # Prefer devices-poller for other LAN (no tinytuya / hang in serve)
-    if devices_poller_process_alive():
-        # device_set passes logical via _logical_on; status has on=None.
-        # Light extras: _set_brightness (0–100), _set_mode (white|colour|…).
-        bright_i = None
-        if cfg.get("_set_brightness") is not None:
-            try:
-                bright_i = max(0, min(100, int(cfg.get("_set_brightness"))))
-            except (TypeError, ValueError):
-                bright_i = None
-        mode_s = str(cfg.get("_set_mode") or "").strip().lower() or None
-        if mode_s == "color":
-            mode_s = "colour"
-        if mode_s and mode_s not in ("white", "colour", "scene", "music"):
-            mode_s = None
-        return _device_control_via_poller(
-            on,
-            cfg,
-            backend_hint=be,
-            brightness=bright_i,
-            mode=mode_s,
-        )
-    if be == "tuya":
-        raise RuntimeError(
-            "Tuya requires devices-poller (tinytuya removed from serve)"
-        )
-    if be == "tapo":
-        return _filtration_backend_tapo(on, cfg)
-    if be == "webhook":
-        return _filtration_backend_webhook(on, cfg)
-    if be == "shelly":
-        return _filtration_backend_shelly(on, cfg)
-    if be in ("homeassistant", "ha"):
-        return _filtration_backend_ha(on, cfg)
-    if be == "xiaomi":
-        return _device_backend_xiaomi(on, cfg)
-    raise ValueError(f"unknown backend: {be}")
+    if be in ("sonoff", "sonoff_diy"):
+        be = "ewelink"
+    if be in ("ha",):
+        be = "homeassistant"
+    # device_set passes logical via _logical_on; status has on=None.
+    # Light extras: _set_brightness (0–100), _set_mode (white|colour|…).
+    bright_i = None
+    if cfg.get("_set_brightness") is not None:
+        try:
+            bright_i = max(0, min(100, int(cfg.get("_set_brightness"))))
+        except (TypeError, ValueError):
+            bright_i = None
+    mode_s = str(cfg.get("_set_mode") or "").strip().lower() or None
+    if mode_s == "color":
+        mode_s = "colour"
+    if mode_s and mode_s not in ("white", "colour", "scene", "music"):
+        mode_s = None
+    return _device_control_via_poller(
+        on,
+        cfg,
+        backend_hint=be,
+        brightness=bright_i,
+        mode=mode_s,
+    )
 
 
 def _device_logical_to_physical(logical_on: bool, inverted: bool) -> bool:
@@ -5991,6 +6063,11 @@ def _device_ready(cfg: dict) -> bool:
 # ── Xiaomi / Mi Home LAN (miIO UDP 54321) ─────────────────────────────────────
 
 def _device_backend_xiaomi(on: bool | None, cfg: dict) -> dict:
+    """Deprecated: use _device_backend_dispatch → poller only."""
+    return _device_control_via_poller(on, cfg, backend_hint="xiaomi")
+
+
+def _device_backend_xiaomi_legacy_unused(on: bool | None, cfg: dict) -> dict:
     """
     LAN control via miIO (UDP 54321). Needs IP + 32-hex token.
     Token once (extractor / HA / cloud tools) — no ongoing cloud dependency.
@@ -6756,8 +6833,9 @@ def device_set(
         }
     be = str(cfg.get("backend") or "tapo")
     inverted = bool(cfg.get("inverted"))
-    work = _mining_work_state()
-    if not force:
+    # Mining gates only when device is bound to a miner with known work state
+    work = device_mining_work(cfg)
+    if not force and work:
         if not on and work == "resume" and not bool(
             cfg.get("allow_off_while_mining", False)
         ):
@@ -6936,22 +7014,109 @@ def _device_suspend_off_remaining(did: str) -> int | None:
     return max(0, rem)
 
 
-def write_mining_work_snapshot(work: str | None, *, source: str = "") -> None:
-    """Publish mining work for the devices poller process (file IPC)."""
+def _norm_mining_work_token(work: str | None) -> str:
     w = str(work or "").strip().lower()
     if w == "mining":
         w = "resume"
     if w == "sleep":
         w = "suspend"
-    if w not in ("resume", "suspend"):
-        w = ""
+    if w in ("resume", "suspend"):
+        return w
+    return ""
+
+
+def write_mining_work_snapshot(
+    work: str | None,
+    *,
+    source: str = "",
+    miner_id: str | None = None,
+    host: str | None = None,
+    by_miner: dict | None = None,
+    merge: bool = True,
+) -> None:
+    """
+    Publish mining work for devices poller (file IPC).
+
+    Top-level ``work`` = active miner (legacy).
+    ``by_miner[miner_id]`` = per-miner resume|suspend for device binding.
+    When ``merge`` is True, existing by_miner entries are kept and updated.
+    """
+    w = _norm_mining_work_token(work)
+    now = time.time()
+    prev: dict = {}
+    if merge:
+        try:
+            raw = _load_json(MINING_WORK_FILE, {})
+            if isinstance(raw, dict):
+                prev = raw
+        except Exception:
+            prev = {}
+    by: dict = {}
+    if merge and isinstance(prev.get("by_miner"), dict):
+        for k, v in prev["by_miner"].items():
+            if not isinstance(v, dict):
+                continue
+            mid = str(k or "").strip()
+            if not mid:
+                continue
+            ww = _norm_mining_work_token(v.get("work"))
+            if not ww:
+                continue
+            try:
+                ts = float(v.get("ts") or 0)
+            except (TypeError, ValueError):
+                ts = 0.0
+            by[mid] = {
+                "work": ww,
+                "ts": ts or now,
+                "host": str(v.get("host") or "")[:80] or None,
+            }
+    if isinstance(by_miner, dict):
+        for k, v in by_miner.items():
+            mid = str(k or "").strip()
+            if not mid or not isinstance(v, dict):
+                continue
+            ww = _norm_mining_work_token(v.get("work"))
+            if not ww:
+                continue
+            try:
+                ts = float(v.get("ts") or now)
+            except (TypeError, ValueError):
+                ts = now
+            by[mid] = {
+                "work": ww,
+                "ts": ts,
+                "host": str(v.get("host") or "")[:80] or None,
+            }
+    mid_one = str(miner_id or "").strip()
+    if mid_one and w:
+        by[mid_one] = {
+            "work": w,
+            "ts": now,
+            "host": str(host or "")[:80] or None,
+        }
+    active_id = mid_one or str(prev.get("active_miner_id") or "").strip() or None
+    # if only by_miner updates (no top-level work), keep previous top work when fresh
+    top_w = w or None
+    top_ts = now
+    if not top_w and merge:
+        pw = _norm_mining_work_token(prev.get("work"))
+        try:
+            pts = float(prev.get("ts") or 0)
+        except (TypeError, ValueError):
+            pts = 0.0
+        if pw and pts > 0:
+            top_w = pw
+            top_ts = pts
     try:
         _save_json(
             MINING_WORK_FILE,
             {
-                "work": w or None,
-                "ts": time.time(),
-                "source": str(source or "")[:40],
+                "work": top_w,
+                "ts": top_ts,
+                "source": str(source or prev.get("source") or "")[:40],
+                "active_miner_id": active_id,
+                "by_miner": by,
             },
         )
     except Exception as e:
@@ -6959,7 +7124,7 @@ def write_mining_work_snapshot(work: str | None, *, source: str = "") -> None:
 
 
 def read_mining_work_snapshot(max_age_sec: float = 180.0) -> str | None:
-    """Read mining work written by policy/collector. None if missing/stale."""
+    """Read global mining work (active miner). None if missing/stale."""
     try:
         raw = _load_json(MINING_WORK_FILE, {})
         if not isinstance(raw, dict):
@@ -6967,16 +7132,145 @@ def read_mining_work_snapshot(max_age_sec: float = 180.0) -> str | None:
         ts = float(raw.get("ts") or 0)
         if ts <= 0 or (time.time() - ts) > float(max_age_sec):
             return None
-        w = str(raw.get("work") or "").strip().lower()
-        if w == "mining":
-            w = "resume"
-        if w == "sleep":
-            w = "suspend"
-        if w in ("resume", "suspend"):
-            return w
+        w = _norm_mining_work_token(raw.get("work"))
+        return w or None
     except Exception:
         pass
     return None
+
+
+def read_mining_work_by_miner(
+    miner_id: str | None, max_age_sec: float = 180.0
+) -> str | None:
+    """Per-miner resume|suspend from mining_work.json by_miner map."""
+    mid = str(miner_id or "").strip()
+    if not mid:
+        return None
+    try:
+        raw = _load_json(MINING_WORK_FILE, {})
+        if not isinstance(raw, dict):
+            return None
+        by = raw.get("by_miner") if isinstance(raw.get("by_miner"), dict) else {}
+        ent = by.get(mid)
+        if not isinstance(ent, dict):
+            # fallback: if this is the active miner, use top-level work
+            if str(raw.get("active_miner_id") or "").strip() == mid:
+                return read_mining_work_snapshot(max_age_sec=max_age_sec)
+            return None
+        try:
+            ts = float(ent.get("ts") or 0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        if ts <= 0 or (time.time() - ts) > float(max_age_sec):
+            return None
+        return _norm_mining_work_token(ent.get("work")) or None
+    except Exception:
+        return None
+
+
+def _default_bind_miner_id() -> str:
+    """
+    Soft-migration target: active managed miner, else sole enabled miner.
+    Empty if ambiguous / none.
+    """
+    try:
+        managed = get_miners_managed()
+    except Exception:
+        return ""
+    miners = [
+        m
+        for m in (managed.get("miners") or [])
+        if isinstance(m, dict) and m.get("enabled", True)
+    ]
+    if not miners:
+        return ""
+    for m in miners:
+        if str(m.get("role") or "").lower() == "active":
+            mid = str(m.get("id") or "").strip()
+            if mid:
+                return mid
+    if len(miners) == 1:
+        return str(miners[0].get("id") or "").strip()
+    return ""
+
+
+def _device_needs_miner_bind_migration(d: dict) -> bool:
+    """True if device has mining policy flags but no miner_id yet."""
+    if str(d.get("miner_id") or "").strip():
+        return False
+    if bool(d.get("auto_on_mining")) or bool(d.get("auto_off_suspend")):
+        return True
+    # allow_off false + enabled device historically blocked OFF while mining
+    if d.get("allow_off_while_mining") is False and (
+        bool(d.get("auto_on_mining")) or bool(d.get("auto_off_suspend"))
+    ):
+        return True
+    return False
+
+
+def _migrate_device_miner_binds(devices: list[dict]) -> tuple[list[dict], bool]:
+    """Bind mining-flagged devices to active/sole miner. Returns (devices, changed)."""
+    target = _default_bind_miner_id()
+    if not target:
+        return devices, False
+    changed = False
+    out: list[dict] = []
+    for d in devices:
+        if not isinstance(d, dict):
+            continue
+        nd = dict(d)
+        if _device_needs_miner_bind_migration(nd):
+            nd["miner_id"] = target
+            changed = True
+            print(
+                f"[devices] migrate miner_id={target} for "
+                f"{nd.get('alias') or nd.get('id')}",
+                flush=True,
+            )
+        out.append(nd)
+    return out, changed
+
+
+def _miner_label_for_id(miner_id: str | None) -> str | None:
+    mid = str(miner_id or "").strip()
+    if not mid:
+        return None
+    try:
+        for m in get_miners_managed().get("miners") or []:
+            if not isinstance(m, dict):
+                continue
+            if str(m.get("id") or "").strip() == mid:
+                alias = str(m.get("alias") or m.get("name") or "").strip()
+                host = str(m.get("host") or "").strip()
+                if alias and host:
+                    return f"{alias} · {host}"
+                return alias or host or mid
+    except Exception:
+        pass
+    return mid
+
+
+def device_mining_work(
+    device: dict | None, *, max_age_sec: float | None = None
+) -> str | None:
+    """
+    Mining work for this device's bound miner: resume|suspend|None.
+
+    None means mining policy must be ignored (unbound, unknown, or stale).
+    """
+    if not isinstance(device, dict):
+        return None
+    mid = str(device.get("miner_id") or "").strip()
+    if not mid:
+        return None
+    if max_age_sec is None:
+        try:
+            max_age_sec = float(
+                get_devices_poller_cfg().get("mining_work_max_age_sec") or 300
+            )
+        except Exception:
+            max_age_sec = 300.0
+    return read_mining_work_by_miner(mid, max_age_sec=float(max_age_sec))
 
 
 def _load_devices_deadlines() -> None:
@@ -7046,21 +7340,22 @@ def _device_set_with_timeout(
             ) from e
 
 
-def devices_sync_with_mining(measured_work: str | None) -> None:
+def devices_sync_with_mining(measured_work: str | None = None) -> None:
     """
     Mining policy: Auto ON on Resume / Auto OFF on Suspend (per-device flags).
 
-    Uses **reported** last_on (like legacy filtration), not desired:
-    while mining + auto_on_mining → ensure physical ON even if desired was
-    already True (stale shadow) or device was added after poller start.
-    Config is reloaded every poller tick — start-before-add is fine.
+    Per-device: only if ``miner_id`` is set and that miner's work is known.
+    Unbound devices ignore mining policy entirely.
+    ``measured_work`` is ignored for bound devices (kept for call-site compat).
     """
-    work = str(measured_work or "").lower()
-    if work not in ("resume", "suspend", "sleep", "mining"):
-        return
-    if work == "mining":
-        work = "resume"
+    _ = measured_work  # legacy arg; resolve per device from by_miner
     now = time.time()
+    try:
+        max_age = float(
+            get_devices_poller_cfg().get("mining_work_max_age_sec") or 300
+        )
+    except Exception:
+        max_age = 300.0
     with _devices_cfg_lock:
         devices = [
             _merge_device_runtime(
@@ -7082,6 +7377,13 @@ def devices_sync_with_mining(measured_work: str | None) -> None:
             continue
         did = str(cfg.get("id") or "")
         if not did:
+            continue
+        # Unbound or unknown miner work → do not apply mining auto policy
+        work = device_mining_work(cfg, max_age_sec=max_age)
+        if not work:
+            # clear stale suspend-off if unbound / miner offline
+            if not str(cfg.get("miner_id") or "").strip():
+                _devices_suspend_off_deadline.pop(did, None)
             continue
         auto_on = bool(cfg.get("auto_on_mining", False))
         auto_off = bool(cfg.get("auto_off_suspend", False))
@@ -7307,22 +7609,11 @@ def devices_poller_loop() -> None:
                         f"cfg={n_dev}",
                         flush=True,
                     )
-                # 3) mining auto policy (optional; uses mining_work snapshot)
-                max_age = float(pol.get("mining_work_max_age_sec") or 300)
-                work = read_mining_work_snapshot(max_age_sec=max_age)
-                if work is None:
-                    work = _mining_work_state()
-                if work:
-                    devices_sync_with_mining(work)
-                else:
-                    # isolated process: without mining_work.json auto policy is blind
-                    # (throttle log — every ~60s)
-                    if int(time.time()) % 60 < max(3, int(pol.get("interval_sec") or 5)):
-                        print(
-                            f"[devices-poller] no mining_work "
-                            f"(snapshot stale/missing, cfg={n_dev})",
-                            flush=True,
-                        )
+                # 3) mining auto policy — per-device bound miner (by_miner map)
+                try:
+                    devices_sync_with_mining()
+                except Exception as e:
+                    print(f"[devices-poller] mining sync: {e}", flush=True)
             _save_devices_deadlines()
         except Exception as e:
             print(f"[devices-poller] tick: {e}", flush=True)
@@ -7342,7 +7633,17 @@ def devices_poller_loop() -> None:
 
 
 def devices_poller_main() -> None:
-    """Entry for ``python serve.py --devices-poller`` (separate process)."""
+    """
+    DEPRECATED: ``python serve.py --devices-poller``.
+
+    Production uses Go ``poolheat-devices-poller`` only. serve never spawns this.
+    """
+    print(
+        "[devices-poller] WARNING: Python devices-poller is deprecated. "
+        "Use /opt/bin/poolheat-devices-poller (Go). "
+        "serve no longer spawns this process.",
+        flush=True,
+    )
     _devices_poller_stop.clear()
 
     def _sig(_signum=None, _frame=None) -> None:
@@ -7369,7 +7670,7 @@ def devices_poller_main() -> None:
     except Exception as e:
         print(f"[devices-poller] tmp cleanup: {e}", flush=True)
     print(
-        f"[devices-poller] pid={os.getpid()} data={DATA}",
+        f"[devices-poller] pid={os.getpid()} data={DATA} (python/deprecated)",
         flush=True,
     )
     try:
@@ -7447,13 +7748,24 @@ def start_devices_poller_process() -> None:
     except Exception:
         logf = None
     go_bin = _resolve_devices_poller_bin()
-    if go_bin:
-        # Explicit --data so Go always uses same DATA as serve (USB path etc.)
-        cmd = [go_bin, "-data", str(DATA)]
-        kind = "go"
-    else:
-        cmd = [sys.executable, script, "--devices-poller"]
-        kind = "python"
+    if not go_bin:
+        # Device LAN I/O is Go-only — never spawn Python --devices-poller
+        # (would load tinytuya / ewelink into a second heavy process).
+        print(
+            "devices-poller:    ERROR — poolheat-devices-poller binary missing "
+            "(install dual-arch package). Device control disabled "
+            "(no tinytuya/ewelink in serve).",
+            flush=True,
+        )
+        if logf:
+            try:
+                logf.close()
+            except Exception:
+                pass
+        return
+    # Explicit --data so Go always uses same DATA as serve (USB path etc.)
+    cmd = [go_bin, "-data", str(DATA)]
+    kind = "go"
     try:
         env = os.environ.copy()
         env["POOLHEAT_DATA"] = str(DATA)
@@ -7543,7 +7855,27 @@ def miner_live_loop() -> None:
             live = fetch_live()
             publish_live_snapshot(live)
             try:
-                write_mining_work_snapshot(_live_work(live), source="miner-poller")
+                mid = ""
+                host = ""
+                try:
+                    mid = _default_bind_miner_id()  # active or sole
+                    # prefer exact host match
+                    live_host = _live_host_ip(live) if isinstance(live, dict) else ""
+                    host = live_host or str((live or {}).get("host") or "").split(":")[0]
+                    for m in get_miners_managed().get("miners") or []:
+                        if not isinstance(m, dict):
+                            continue
+                        if str(m.get("host") or "").strip() == host and host:
+                            mid = str(m.get("id") or mid).strip()
+                            break
+                except Exception:
+                    pass
+                write_mining_work_snapshot(
+                    _live_work(live),
+                    source="miner-poller",
+                    miner_id=mid or None,
+                    host=host or None,
+                )
             except Exception:
                 pass
             try:
@@ -8368,19 +8700,28 @@ def get_device_status(did: str, *, probe_live: bool = False) -> dict:
             d = get_device_by_id(did, redact=True) or d
         except Exception:
             pass
-    work = _mining_work_state()
+    mid = str(d.get("miner_id") or "").strip()
+    work = device_mining_work(d) if mid else None
     mining = work == "resume" if work else None
     on = d.get("last_on")
-    can_off = bool(d.get("allow_off_while_mining")) or not (
-        bool(d.get("enabled")) and mining is True and on is True
-    )
-    can_on = bool(d.get("allow_on_while_suspend")) or not (
-        bool(d.get("enabled")) and mining is False and on is False
-    )
+    # Unbound: no mining gates (can always toggle)
+    if not mid or work is None:
+        can_off = True
+        can_on = True
+    else:
+        can_off = bool(d.get("allow_off_while_mining")) or not (
+            bool(d.get("enabled")) and mining is True and on is True
+        )
+        can_on = bool(d.get("allow_on_while_suspend")) or not (
+            bool(d.get("enabled")) and mining is False and on is False
+        )
     return {
         "ok": True,
         **d,
+        "miner_id": mid or None,
+        "miner_label": _miner_label_for_id(mid),
         "mining": mining,
+        "bound_mining_work": work,
         "can_turn_off": can_off,
         "can_turn_on": can_on,
     }
@@ -11257,6 +11598,43 @@ def _poll_managed_fleet_live() -> None:
                 print(f"[fleet-live] {host}:{port}: {e}", flush=True)
     if by_host:
         _publish_fleet_live_map(by_host)
+        # Merge per-miner work for device binding (devices-poller reads by_miner)
+        try:
+            by_miner: dict = {}
+            host_to_id: dict[str, str] = {}
+            for m in miners:
+                mid = str(m.get("id") or "").strip()
+                host = str(m.get("host") or "").strip()
+                if mid and host:
+                    host_to_id[host] = mid
+            now = time.time()
+            for host, live in by_host.items():
+                mid = host_to_id.get(host)
+                if not mid or not isinstance(live, dict):
+                    continue
+                if live.get("ok") is False and not live.get("hashrate_th"):
+                    continue
+                try:
+                    w = _live_work(live)
+                except Exception:
+                    continue
+                ww = _norm_mining_work_token(w)
+                if not ww:
+                    continue
+                by_miner[mid] = {
+                    "work": ww,
+                    "ts": now,
+                    "host": host,
+                }
+            if by_miner:
+                write_mining_work_snapshot(
+                    None,
+                    source="fleet-live",
+                    by_miner=by_miner,
+                    merge=True,
+                )
+        except Exception as e:
+            print(f"[fleet-live] mining_work by_miner: {e}", flush=True)
 
 
 def get_miners_fleet() -> dict:
@@ -37002,29 +37380,39 @@ class Handler(SimpleHTTPRequestHandler):
                 except Exception as e:
                     probe_info = {"probed": 0, "errors": 1, "error": str(e)[:120]}
             body = get_devices_cfg(redact=True)
-            # attach gate flags from mining state (cache)
-            work = _mining_work_state()
-            mining = work == "resume" if work else None
+            # attach gate flags from per-device bound miner work
+            global_work = _mining_work_state()
+            global_mining = global_work == "resume" if global_work else None
             devices = []
             for d in body.get("devices") or []:
+                mid = str(d.get("miner_id") or "").strip()
+                work = device_mining_work(d) if mid else None
+                mining = work == "resume" if work else None
                 on = d.get("last_on")
-                can_off = bool(d.get("allow_off_while_mining")) or not (
-                    bool(d.get("enabled")) and mining is True and on is True
-                )
-                can_on = bool(d.get("allow_on_while_suspend")) or not (
-                    bool(d.get("enabled")) and mining is False and on is False
-                )
+                if not mid or work is None:
+                    can_off = True
+                    can_on = True
+                else:
+                    can_off = bool(d.get("allow_off_while_mining")) or not (
+                        bool(d.get("enabled")) and mining is True and on is True
+                    )
+                    can_on = bool(d.get("allow_on_while_suspend")) or not (
+                        bool(d.get("enabled")) and mining is False and on is False
+                    )
                 devices.append(
                     {
                         **d,
+                        "miner_id": mid or None,
+                        "miner_label": _miner_label_for_id(mid),
                         "mining": mining,
+                        "bound_mining_work": work,
                         "can_turn_off": can_off,
                         "can_turn_on": can_on,
                     }
                 )
             body["devices"] = devices
             body["ok"] = True
-            body["mining"] = mining
+            body["mining"] = global_mining
             if probe_info is not None:
                 body["probe"] = probe_info
             self._json_response(200, body)

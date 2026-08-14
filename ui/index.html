@@ -8783,6 +8783,13 @@
                 <span class="collapse-label" data-i18n="dev.mining_options">Mining options</span>
               </button>
               <div class="collapse-panel is-collapsed" id="dev-mining-panel" hidden>
+                <label class="field" style="margin-bottom:12px">
+                  <span data-i18n="dev.miner_bind">Bound miner</span>
+                  <select id="dev-miner-id">
+                    <option value="" data-i18n="dev.miner_unbound">— not bound —</option>
+                  </select>
+                  <span class="desc" data-i18n="dev.miner_bind_desc">Auto On/Off and mining locks apply only when a miner is bound. Unbound devices ignore mining settings.</span>
+                </label>
                 <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
                   <label class="check">
                     <input type="checkbox" id="dev-auto-mining" />
@@ -10423,6 +10430,9 @@
         "dev.show_bot": "Show button in bot",
         "dev.control_type": "Control type",
         "dev.mining_options": "Mining options",
+        "dev.miner_bind": "Bound miner",
+        "dev.miner_bind_desc": "Auto On/Off and mining locks apply only when a miner is bound. Unbound devices ignore mining settings.",
+        "dev.miner_unbound": "— not bound —",
         "dev.auto_on_mining": "Auto On while mining",
         "dev.auto_on_mining_desc": "Resume → device ON",
         "dev.enforce_desired": "Keep state",
@@ -11389,6 +11399,9 @@
         "dev.show_bot": "Отображать кнопку в боте",
         "dev.control_type": "Тип управления",
         "dev.mining_options": "Опции при майнинге",
+        "dev.miner_bind": "Привязанный майнер",
+        "dev.miner_bind_desc": "Auto On/Off и блокировки при майнинге работают только при привязке. Без майнера mining-настройки игнорируются.",
+        "dev.miner_unbound": "— не привязан —",
         "dev.auto_on_mining": "Auto On при майнинге",
         "dev.auto_on_mining_desc": "Resume → устройство ON",
         "dev.enforce_desired": "Удерживать состояние",
@@ -34550,6 +34563,13 @@
           if (d.inverted) tags.push(t("dev.inverted_tag", "inv"));
           if (d.show_in_bot) tags.push(t("dev.bot_tag", "bot"));
           if (d.auto_on_mining) tags.push("auto↑");
+          if (d.miner_id) {
+            const ml =
+              d.miner_label ||
+              d.miner_alias ||
+              String(d.miner_id).slice(0, 12);
+            tags.push("⛏ " + ml);
+          }
           if (d.online === false) {
             tags.push(t("dev.tag_offline", "offline"));
           }
@@ -34856,6 +34876,71 @@
       await persistDeviceOrder(next.map((d) => d.id));
     }
 
+    /** Populate #dev-miner-id from managed fleet inventory. */
+    async function fillDeviceMinerSelect(selectedId) {
+      const sel = document.getElementById("dev-miner-id");
+      if (!sel) return;
+      const want = selectedId != null ? String(selectedId) : "";
+      const unbound =
+        typeof t === "function"
+          ? t("dev.miner_unbound", "— not bound —")
+          : "— not bound —";
+      let miners = [];
+      try {
+        const res = await fetch("/api/miners/managed", { cache: "no-store" });
+        const body = await res.json();
+        const list =
+          (body && (body.miners || body.items || body.list)) ||
+          (Array.isArray(body) ? body : []);
+        if (Array.isArray(list)) miners = list;
+      } catch (_) {
+        miners = [];
+      }
+      // fleet has live overlay if managed empty shape differs
+      if (!miners.length) {
+        try {
+          const res = await fetch("/api/miners/fleet", { cache: "no-store" });
+          const body = await res.json();
+          const list = (body && body.miners) || [];
+          if (Array.isArray(list)) miners = list;
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      let html =
+        '<option value="">' + unbound.replace(/</g, "&lt;") + "</option>";
+      miners.forEach((m) => {
+        if (!m || typeof m !== "object") return;
+        const id = String(m.id || "").trim();
+        if (!id) return;
+        const alias = String(m.alias || m.name || "").trim();
+        const host = String(m.host || "").trim();
+        const role = String(m.role || "").trim();
+        let lab = alias && host ? alias + " · " + host : alias || host || id;
+        if (role === "active") lab += " ★";
+        const selAttr = id === want ? " selected" : "";
+        html +=
+          '<option value="' +
+          id.replace(/"/g, "&quot;") +
+          '"' +
+          selAttr +
+          ">" +
+          lab.replace(/</g, "&lt;") +
+          "</option>";
+      });
+      // keep current selection if miner not in list (orphan id)
+      if (want && !miners.some((m) => m && String(m.id) === want)) {
+        html +=
+          '<option value="' +
+          want.replace(/"/g, "&quot;") +
+          '" selected>' +
+          want.replace(/</g, "&lt;") +
+          "</option>";
+      }
+      sel.innerHTML = html;
+      if (want) sel.value = want;
+    }
+
     function openDeviceEditor(device) {
       const wantId = device && device.id ? String(device.id) : "";
       // toggle: same row already open → collapse
@@ -34888,6 +34973,7 @@
         allow_off_while_mining: false,
         allow_on_while_suspend: false,
         enforce_desired: false,
+        miner_id: "",
       };
       document.getElementById("device-id").value = d.id || "";
       document.getElementById("device-alias").value = d.alias || "";
@@ -35157,13 +35243,15 @@
       if (enf) enf.checked = !!d.enforce_desired;
       document.getElementById("dev-allow-off-mining").checked = !!d.allow_off_while_mining;
       document.getElementById("dev-allow-on-suspend").checked = !!d.allow_on_while_suspend;
-      // expand mining panel if any flag set
+      void fillDeviceMinerSelect(d.miner_id || "");
+      // expand mining panel if any flag set or miner bound
       const anyMining =
         d.auto_on_mining ||
         d.auto_off_suspend ||
         d.allow_off_while_mining ||
         d.allow_on_while_suspend ||
-        d.enforce_desired;
+        d.enforce_desired ||
+        !!d.miner_id;
       setDevMiningOpen(!!anyMining);
       syncDeviceBackendUi();
       renderDeviceIconPicker();
@@ -35334,6 +35422,7 @@
         allow_off_while_mining: !!document.getElementById("dev-allow-off-mining")?.checked,
         allow_on_while_suspend: !!document.getElementById("dev-allow-on-suspend")?.checked,
         enforce_desired: !!document.getElementById("dev-enforce-desired")?.checked,
+        miner_id: (document.getElementById("dev-miner-id")?.value || "").trim(),
       };
       if (!payload.id) delete payload.id;
       // empty secrets → omit so server keeps saved

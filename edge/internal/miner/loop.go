@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -78,7 +79,14 @@ func Run(s Settings) error {
 			if work == "sleep" {
 				work = "suspend"
 			}
-			if err := WriteMiningWork(s.DataDir, work, "miner-poller"); err != nil {
+			mid, mhost := "", s.Host
+			if am := ActiveManaged(s.DataDir); am != nil {
+				mid = strings.TrimSpace(am.ID)
+				if am.Host != "" {
+					mhost = am.Host
+				}
+			}
+			if err := WriteMiningWorkEx(s.DataDir, work, "miner-poller", mid, mhost); err != nil {
 				log.Printf("[miner-poller] mining_work: %v", err)
 			}
 			// light log every ~30s

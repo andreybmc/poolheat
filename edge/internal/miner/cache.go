@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -23,8 +24,59 @@ func PublishLive(dataDir string, live map[string]any, host string, pid int) erro
 }
 
 // WriteMiningWork publishes resume|suspend for devices-poller.
+// Merges into existing by_miner so fleet-live entries for other miners survive.
 func WriteMiningWork(dataDir string, work string, source string) error {
-	w := work
+	return WriteMiningWorkEx(dataDir, work, source, "", "")
+}
+
+// WriteMiningWorkEx updates top-level work and optionally by_miner[minerID].
+func WriteMiningWorkEx(dataDir string, work string, source string, minerID string, host string) error {
+	w := normWork(work)
+	now := float64(time.Now().UnixNano()) / 1e9
+	path := filepath.Join(dataDir, "mining_work.json")
+
+	// merge existing
+	prev := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &prev)
+	}
+	by := map[string]any{}
+	if rawBy, ok := prev["by_miner"].(map[string]any); ok {
+		for k, v := range rawBy {
+			if m, ok := v.(map[string]any); ok {
+				by[k] = m
+			}
+		}
+	}
+	mid := strings.TrimSpace(minerID)
+	if mid != "" && w != "" {
+		by[mid] = map[string]any{
+			"work": w,
+			"ts":   now,
+			"host": host,
+		}
+	}
+	activeID := mid
+	if activeID == "" {
+		if s, ok := prev["active_miner_id"].(string); ok {
+			activeID = strings.TrimSpace(s)
+		}
+	}
+	payload := map[string]any{
+		"work":            nil,
+		"ts":              now,
+		"source":          source,
+		"active_miner_id": activeID,
+		"by_miner":        by,
+	}
+	if w != "" {
+		payload["work"] = w
+	}
+	return writeJSONAtomic(path, payload)
+}
+
+func normWork(work string) string {
+	w := strings.ToLower(strings.TrimSpace(work))
 	switch w {
 	case "mining":
 		w = "resume"
@@ -32,17 +84,9 @@ func WriteMiningWork(dataDir string, work string, source string) error {
 		w = "suspend"
 	}
 	if w != "resume" && w != "suspend" {
-		w = ""
+		return ""
 	}
-	payload := map[string]any{
-		"work":   nil,
-		"ts":     float64(time.Now().UnixNano()) / 1e9,
-		"source": source,
-	}
-	if w != "" {
-		payload["work"] = w
-	}
-	return writeJSONAtomic(filepath.Join(dataDir, "mining_work.json"), payload)
+	return w
 }
 
 func writeJSONAtomic(path string, v any) error {

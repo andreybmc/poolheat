@@ -468,27 +468,40 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 	return probed, errors, enforced
 }
 
-// SyncWithMining applies auto_on / auto_off policy.
-func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, work string, pol config.PollerCfg) {
-	work = strings.ToLower(work)
-	if work == "mining" {
-		work = "resume"
-	}
-	if work == "sleep" {
-		work = "suspend"
-	}
-	if work != "resume" && work != "suspend" {
-		return
-	}
+// SyncWithMining applies auto_on / auto_off policy per bound miner.
+// Unbound devices (empty MinerID) skip mining policy entirely.
+// workByMiner maps managed miner id → resume|suspend (from mining_work by_miner).
+// globalWork is legacy fallback when a bound miner has no by_miner entry but is active.
+func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, workByMiner map[string]string, globalWork string, pol config.PollerCfg) {
 	timeout := pol.SetTimeout()
 	backoff := float64(pol.ErrorBackoffSec)
 	if backoff < 5 {
 		backoff = 5
 	}
 	now := float64(time.Now().UnixNano()) / 1e9
+	if workByMiner == nil {
+		workByMiner = map[string]string{}
+	}
 
 	for _, cfg := range devices {
 		if !cfg.IsEnabled() || !backend.Ready(cfg) || cfg.ID == "" {
+			continue
+		}
+		// Unbound → ignore mining auto policy
+		mid := strings.TrimSpace(cfg.MinerID)
+		if mid == "" {
+			delete(s.Deadlines, cfg.ID)
+			continue
+		}
+		work := strings.ToLower(strings.TrimSpace(workByMiner[mid]))
+		if work == "mining" {
+			work = "resume"
+		}
+		if work == "sleep" {
+			work = "suspend"
+		}
+		if work != "resume" && work != "suspend" {
+			// unknown/stale for this miner — skip (no false triggers)
 			continue
 		}
 		did := cfg.ID
@@ -515,6 +528,7 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		delay := float64(cfg.OffDelaySec())
 		var want *bool
 		src := "auto"
+		_ = globalWork // reserved for future active-id fallback
 
 		if work == "resume" {
 			if _, ok := s.Deadlines[did]; ok {

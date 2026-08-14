@@ -109,9 +109,21 @@ func Run(dataDir string) error {
 					log.Printf("[devices-poller] status ok=%d err=%d hold=%d cfg=%d",
 						probed, errs, enforced, nDev)
 				}
-				work := mining.Read(paths.MiningWork(dataDir), float64(pol.MiningWorkMaxAgeSec))
-				if work != "" {
-					store.SyncWithMining(ctx, cfgFile.Devices, work, pol)
+				snap := mining.ReadAll(paths.MiningWork(dataDir), float64(pol.MiningWorkMaxAgeSec))
+				by := map[string]string{}
+				for mid, e := range snap.ByMiner {
+					if e.Work != "" {
+						by[mid] = e.Work
+					}
+				}
+				// if active has top-level work but no by_miner entry, expose it
+				if snap.ActiveMinerID != "" && snap.Work != "" {
+					if _, ok := by[snap.ActiveMinerID]; !ok {
+						by[snap.ActiveMinerID] = snap.Work
+					}
+				}
+				if len(by) > 0 || snap.Work != "" {
+					store.SyncWithMining(ctx, cfgFile.Devices, by, snap.Work, pol)
 				} else {
 					// throttle log ~60s
 					if time.Now().Unix()%60 < int64(max(3, pol.IntervalSec)) {
