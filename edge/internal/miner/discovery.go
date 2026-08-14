@@ -548,10 +548,14 @@ func strAny(v any) string {
 	}
 }
 
-// expandRanges: CIDR, start-end, single IP (same as fleet.py).
+// expandRanges: CIDR, start-end, last-octet range, single IP
+// (matches Python _expand_scan_ranges in serve.py).
+// Invalid entries are skipped with a log line so one bad range cannot
+// abort the whole scan (e.g. "192.168.1.10-13" used to fail everything).
 func expandRanges(ranges []string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
+	var firstErr error
 	for _, r := range ranges {
 		r = strings.TrimSpace(r)
 		if r == "" {
@@ -559,7 +563,11 @@ func expandRanges(ranges []string) ([]string, error) {
 		}
 		ips, err := expandOneRange(r)
 		if err != nil {
-			return nil, fmt.Errorf("range %q: %w", r, err)
+			log.Printf("[miner-poller] discovery skip range %q: %v", r, err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("range %q: %w", r, err)
+			}
+			continue
 		}
 		for _, ip := range ips {
 			if seen[ip] {
@@ -573,6 +581,12 @@ func expandRanges(ranges []string) ([]string, error) {
 	const maxHosts = 4096
 	if len(out) > maxHosts {
 		return nil, fmt.Errorf("too many hosts (%d > %d) — shrink ranges", len(out), maxHosts)
+	}
+	if len(out) == 0 {
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		return nil, fmt.Errorf("no hosts after expanding ranges")
 	}
 	return out, nil
 }
@@ -606,35 +620,143 @@ func expandOneRange(s string) ([]string, error) {
 		return ips, nil
 	}
 	if strings.Contains(s, "-") {
-		parts := strings.SplitN(s, "-", 2)
-		start := net.ParseIP(strings.TrimSpace(parts[0]))
-		end := net.ParseIP(strings.TrimSpace(parts[1]))
-		if start == nil || end == nil {
-			return nil, fmt.Errorf("invalid IP range")
+		// 1) Full IP–IP: 192.168.1.1-192.168.2.240
+		if a, b, ok := splitFullIPRange(s); ok {
+			return expandIPToIP(a, b)
 		}
-		s4, e4 := start.To4(), end.To4()
-		if s4 == nil || e4 == nil {
-			return nil, fmt.Errorf("only IPv4 ranges supported")
+		// 2) Compact multi-octet: 192.168.1-2.1-250  or  192.168.1.10-40
+		if ips, err := expandOctetPattern(s); err == nil {
+			return ips, nil
+		} else if err != errNotOctetPattern {
+			return nil, err
 		}
-		si := ipToUint(s4)
-		ei := ipToUint(e4)
-		if ei < si {
-			si, ei = ei, si
-		}
-		if ei-si > 4096 {
-			return nil, fmt.Errorf("range too large")
-		}
-		var ips []string
-		for i := si; i <= ei; i++ {
-			ips = append(ips, uintToIP(i).String())
-		}
-		return ips, nil
+		return nil, fmt.Errorf("invalid IP range")
 	}
 	ip := net.ParseIP(s)
 	if ip == nil {
 		return nil, fmt.Errorf("invalid IP")
 	}
 	return []string{ip.String()}, nil
+}
+
+// splitFullIPRange detects "a.b.c.d-e.f.g.h" (exactly two full IPv4s).
+func splitFullIPRange(s string) (start, end string, ok bool) {
+	// find dash that sits between two dotted quads
+	// e.g. 192.168.1.1-192.168.2.240
+	for i := 0; i < len(s); i++ {
+		if s[i] != '-' {
+			continue
+		}
+		left := strings.TrimSpace(s[:i])
+		right := strings.TrimSpace(s[i+1:])
+		if net.ParseIP(left) != nil && net.ParseIP(right) != nil &&
+			net.ParseIP(left).To4() != nil && net.ParseIP(right).To4() != nil {
+			return left, right, true
+		}
+	}
+	return "", "", false
+}
+
+func expandIPToIP(a, b string) ([]string, error) {
+	start := net.ParseIP(a).To4()
+	end := net.ParseIP(b).To4()
+	if start == nil || end == nil {
+		return nil, fmt.Errorf("only IPv4 ranges supported")
+	}
+	si := ipToUint(start)
+	ei := ipToUint(end)
+	if ei < si {
+		si, ei = ei, si
+	}
+	if ei-si > 4096 {
+		return nil, fmt.Errorf("range too large")
+	}
+	var ips []string
+	for i := si; i <= ei; i++ {
+		ips = append(ips, uintToIP(i).String())
+	}
+	return ips, nil
+}
+
+var errNotOctetPattern = fmt.Errorf("not an octet pattern")
+
+// expandOctetPattern expands compact forms:
+//
+//	192.168.1.10-40      → last octet 10..40
+//	192.168.1-2.1-250    → 3rd 1..2, 4th 1..250
+//	10.0-1.5-10.1-20     → each octet may be N or N-M
+//
+// Exactly 4 dotted segments; each is "N" or "N-M" (0–255).
+func expandOctetPattern(s string) ([]string, error) {
+	segs := strings.Split(s, ".")
+	if len(segs) != 4 {
+		return nil, errNotOctetPattern
+	}
+	type bounds struct{ lo, hi int }
+	var b [4]bounds
+	for i, seg := range segs {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			return nil, errNotOctetPattern
+		}
+		if strings.Contains(seg, "-") {
+			ab := strings.SplitN(seg, "-", 2)
+			if len(ab) != 2 {
+				return nil, errNotOctetPattern
+			}
+			lo, err1 := atoiOctet(strings.TrimSpace(ab[0]))
+			hi, err2 := atoiOctet(strings.TrimSpace(ab[1]))
+			if err1 != nil || err2 != nil {
+				return nil, errNotOctetPattern
+			}
+			if lo > hi {
+				lo, hi = hi, lo
+			}
+			b[i] = bounds{lo, hi}
+		} else {
+			n, err := atoiOctet(seg)
+			if err != nil {
+				return nil, errNotOctetPattern
+			}
+			b[i] = bounds{n, n}
+		}
+	}
+	// estimate size
+	n := 1
+	for i := 0; i < 4; i++ {
+		n *= b[i].hi - b[i].lo + 1
+		if n > 4096 {
+			return nil, fmt.Errorf("range too large (%d hosts)", n)
+		}
+	}
+	var ips []string
+	for o0 := b[0].lo; o0 <= b[0].hi; o0++ {
+		for o1 := b[1].lo; o1 <= b[1].hi; o1++ {
+			for o2 := b[2].lo; o2 <= b[2].hi; o2++ {
+				for o3 := b[3].lo; o3 <= b[3].hi; o3++ {
+					ips = append(ips, fmt.Sprintf("%d.%d.%d.%d", o0, o1, o2, o3))
+				}
+			}
+		}
+	}
+	return ips, nil
+}
+
+func atoiOctet(s string) (int, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty")
+	}
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("not a number")
+		}
+		n = n*10 + int(c-'0')
+		if n > 255 {
+			return 0, fmt.Errorf("octet overflow")
+		}
+	}
+	return n, nil
 }
 
 func incIP(ip net.IP) {

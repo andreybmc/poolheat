@@ -49,7 +49,14 @@ func Ready(cfg config.DeviceCfg) bool {
 	case "tapo", "shelly":
 		return ip != ""
 	case "ewelink":
-		return ip != "" && strings.TrimSpace(cfg.DeviceID) != ""
+		if ip == "" || strings.TrimSpace(cfg.DeviceID) == "" {
+			return false
+		}
+		mode := strings.ToLower(strings.TrimSpace(cfg.EwelinkMode))
+		if mode == "lan" {
+			return strings.TrimSpace(cfg.EwelinkDeviceKey) != ""
+		}
+		return true
 	case "webhook":
 		return strings.TrimSpace(cfg.WebhookOnURL) != "" || strings.TrimSpace(cfg.WebhookOffURL) != ""
 	case "homeassistant":

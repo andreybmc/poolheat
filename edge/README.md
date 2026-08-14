@@ -22,7 +22,15 @@ Low-RAM edge workers for Keenetic Entware.
 ```bash
 cd edge
 # wm-lib via replace in go.mod → /Users/…/projects/mining/wm-lib
-make build-arm64
+# Always build BOTH arches for a release:
+make build-all-arch
+# Or single arch:
+make build-arm64    # Peak aarch64
+make build-mipsel   # Giant mipsel softfloat
+
+# Full dual-arch packages + optional GitHub publish:
+#   sh packaging/entware/release.sh
+#   sh packaging/entware/release.sh --publish
 # → packaging/entware/opt/bin/poolheat-{devices,miner}-poller
 ```
 

@@ -128,8 +128,12 @@ type DeviceCfg struct {
 	AllowOffWhileMining    bool `json:"allow_off_while_mining"`
 	AllowOnWhileSuspend    bool `json:"allow_on_while_suspend"`
 
-	// ewelink
-	EwelinkPort int `json:"ewelink_port"`
+	// ewelink (LAN DIY or CoolKit AES with devicekey)
+	EwelinkPort      int    `json:"ewelink_port"`
+	EwelinkMode      string `json:"ewelink_mode"`      // auto | diy | lan
+	EwelinkDeviceKey string `json:"ewelink_devicekey"` // cloud devicekey (LAN encrypt)
+	EwelinkAPIKey    string `json:"ewelink_apikey"`    // user selfApikey
+	EwelinkOutlet    int    `json:"ewelink_outlet"`
 
 	// webhook
 	WebhookOnURL   string `json:"webhook_on_url"`
@@ -155,10 +159,54 @@ type DeviceCfg struct {
 	TuyaLocalKey  string  `json:"tuya_local_key"`
 	TuyaVersion   float64 `json:"tuya_version"`
 	TuyaSwitchDPS int     `json:"tuya_switch_dps"`
+	// Lights / dimmers (Smart Life): switch often DPS 20, bright 22, mode 21
+	TuyaBrightDPS int `json:"tuya_bright_dps"` // 0 = default 22 for light/dimmer
+	TuyaModeDPS   int `json:"tuya_mode_dps"`   // 0 = default 21 for light/dimmer
+	// device_kind: switch | light | dimmer (hint for UI + DPS defaults)
+	DeviceKind string `json:"device_kind"`
+
+	// One-shot set overrides (not persisted; filled from device_req)
+	SetBrightness *int    `json:"-"` // 0–100 percent
+	SetMode       *string `json:"-"` // white|colour|scene|music
 
 	// xiaomi
 	XiaomiToken string `json:"xiaomi_token"`
 	XiaomiModel string `json:"xiaomi_model"`
+}
+
+// IsLight returns true for light/dimmer kinds (or empty kind with light DPS hints).
+func (d DeviceCfg) IsLight() bool {
+	k := strings.ToLower(strings.TrimSpace(d.DeviceKind))
+	if k == "light" || k == "dimmer" || k == "lamp" || k == "bulb" {
+		return true
+	}
+	// auto: switch dps 20 is almost always a light
+	if d.TuyaSwitchDPS == 20 {
+		return true
+	}
+	return false
+}
+
+// BrightDPS returns brightness DPS (default 22 for lights).
+func (d DeviceCfg) BrightDPS() int {
+	if d.TuyaBrightDPS > 0 {
+		return d.TuyaBrightDPS
+	}
+	if d.IsLight() {
+		return 22
+	}
+	return 0
+}
+
+// ModeDPS returns work-mode DPS (default 21 for lights).
+func (d DeviceCfg) ModeDPS() int {
+	if d.TuyaModeDPS > 0 {
+		return d.TuyaModeDPS
+	}
+	if d.IsLight() {
+		return 21
+	}
+	return 0
 }
 
 func (d DeviceCfg) IsEnabled() bool {
@@ -285,6 +333,7 @@ func parseDevice(m map[string]any) (DeviceCfg, error) {
 		AllowOffWhileMining: asBool(m["allow_off_while_mining"], false),
 		AllowOnWhileSuspend: asBool(m["allow_on_while_suspend"], false),
 		EwelinkPort:   8081,
+		EwelinkMode:   "auto",
 		WebhookMethod: "GET",
 		ShellyGen:     "auto",
 		TuyaEcosystem: "smartlife",
@@ -292,6 +341,13 @@ func parseDevice(m map[string]any) (DeviceCfg, error) {
 		TuyaRegion:    "eu",
 		TuyaVersion:   3.4,
 		TuyaSwitchDPS: 1,
+		DeviceKind:    str(m["device_kind"]),
+	}
+	if v, ok := asInt(m["tuya_bright_dps"]); ok {
+		d.TuyaBrightDPS = clamp(v, 0, 255)
+	}
+	if v, ok := asInt(m["tuya_mode_dps"]); ok {
+		d.TuyaModeDPS = clamp(v, 0, 255)
 	}
 	if v, ok := m["enabled"]; ok {
 		b := asBool(v, true)
@@ -302,6 +358,21 @@ func parseDevice(m map[string]any) (DeviceCfg, error) {
 	}
 	if v, ok := asInt(m["ewelink_port"]); ok {
 		d.EwelinkPort = clamp(v, 1, 65535)
+	}
+	em := strings.ToLower(str(m["ewelink_mode"]))
+	if em == "diy" || em == "lan" || em == "auto" {
+		d.EwelinkMode = em
+	}
+	d.EwelinkDeviceKey = str(m["ewelink_devicekey"])
+	if d.EwelinkDeviceKey == "" {
+		d.EwelinkDeviceKey = str(m["devicekey"])
+	}
+	d.EwelinkAPIKey = str(m["ewelink_apikey"])
+	if d.EwelinkAPIKey == "" {
+		d.EwelinkAPIKey = str(m["apikey"])
+	}
+	if v, ok := asInt(m["ewelink_outlet"]); ok {
+		d.EwelinkOutlet = clamp(v, 0, 7)
 	}
 	d.WebhookOnURL = str(m["webhook_on_url"])
 	d.WebhookOffURL = str(m["webhook_off_url"])

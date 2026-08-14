@@ -101,8 +101,58 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 			r.LastPower = res.Power
 			r.LastPowerTS = &ts
 		}
+		applyLightExtra(r, res.Extra)
 	})
 	return nil
+}
+
+func applyLightExtra(r *state.Runtime, extra map[string]any) {
+	if extra == nil {
+		return
+	}
+	if v, ok := extra["brightness_pct"]; ok && v != nil {
+		switch t := v.(type) {
+		case float64:
+			n := int(t)
+			r.LastBrightness = &n
+		case int:
+			r.LastBrightness = &t
+		case int64:
+			n := int(t)
+			r.LastBrightness = &n
+		}
+	}
+	if v, ok := extra["mode"].(string); ok && v != "" {
+		r.LastMode = &v
+	}
+	// compact telemetry for UI (avoid huge raw dumps)
+	tel := map[string]any{}
+	if v, ok := extra["brightness_raw"]; ok {
+		tel["brightness_raw"] = v
+	}
+	if v, ok := extra["mode"]; ok {
+		tel["mode"] = v
+	}
+	if v, ok := extra["colour_data"]; ok {
+		tel["colour_data"] = v
+	}
+	if v, ok := extra["dps"]; ok {
+		// keep only light-related keys
+		if dps, ok := v.(map[string]any); ok {
+			small := map[string]any{}
+			for _, k := range []string{"20", "21", "22", "24", "25", "26", "34"} {
+				if x, ok := dps[k]; ok {
+					small[k] = x
+				}
+			}
+			if len(small) > 0 {
+				tel["dps"] = small
+			}
+		}
+	}
+	if len(tel) > 0 {
+		r.LastTelemetry = tel
+	}
 }
 
 // ApplyPolicy runs enforce_desired or adopt after a successful status probe.
@@ -122,14 +172,16 @@ func (s *Store) ApplyPolicy(ctx context.Context, cfg config.DeviceCfg) error {
 	return nil
 }
 
-// SetLogical sets logical ON/OFF.
+// SetLogical sets logical ON/OFF (and optional light brightness/mode via cfg.Set*).
 // force=true: always talk to device (enforce path — don't trust cached LastOn).
 func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, source string, force bool) error {
 	did := cfg.ID
 	be := cfg.BackendNorm()
 	// no-op if already reported same (unless force — enforce must re-check hardware)
+	// Still send if brightness/mode requested.
+	lightSet := cfg.SetBrightness != nil || cfg.SetMode != nil
 	rt := s.getRT(did)
-	if !force && rt.LastOn != nil && *rt.LastOn == on {
+	if !force && !lightSet && rt.LastOn != nil && *rt.LastOn == on {
 		s.update(did, func(r *state.Runtime) {
 			r.DesiredOn = boolPtr(on)
 		})
@@ -170,6 +222,7 @@ func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, s
 			r.LastPower = res.Power
 			r.LastPowerTS = &ts
 		}
+		applyLightExtra(r, res.Extra)
 	})
 	s.DesiredTouched[did] = true
 	if res.Skipped {

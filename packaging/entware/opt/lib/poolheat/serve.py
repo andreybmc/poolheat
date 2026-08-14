@@ -3188,11 +3188,18 @@ def _actuator_error_reason(
                 if en
                 else "eWeLink порт закрыт — нет DIY mode / неверный IP"
             )
-        if "empty reply" in low or "timeout" in low or "reset" in low:
+        if "devicekey empty" in low or "devicekey empty (lan" in low:
             return (
-                "eWeLink DIY not responding (enable DIY mode, check deviceid)"
+                "eWeLink devicekey empty — Get devicekey (cloud login)"
                 if en
-                else "eWeLink DIY не отвечает (включите DIY mode, проверьте deviceid)"
+                else "eWeLink devicekey пуст — «Получить devicekey» (облако)"
+            )
+        if "empty reply" in low or "timeout" in low or "reset" in low:
+            # Often means DIY tried on a cloud-paired (encrypted) plug
+            return (
+                "eWeLink LAN not responding (need devicekey / check IP·deviceid)"
+                if en
+                else "eWeLink LAN не отвечает (нужен devicekey / проверьте IP·deviceid)"
             )
         if "404" in low or "not found" in low:
             return (
@@ -4425,7 +4432,9 @@ DEVICE_ICON_DEFAULTS: tuple[str, ...] = (
     "🔔",
 )
 
-_devices_cfg_lock = threading.Lock()
+# RLock: handlers often mutate under lock then call _save_devices_cfg() which
+# also acquires the same lock (plain Lock → permanent deadlock, eWeLink "logging in…").
+_devices_cfg_lock = threading.RLock()
 # deep-ish init — never share DEFAULT_DEVICES_CFG["devices"] list object
 _devices_cfg: dict = {
     "version": 1,
@@ -4452,6 +4461,11 @@ def _device_runtime_defaults() -> dict:
         "last_action": None,
         "last_power": None,
         "last_power_ts": None,
+        "last_brightness": None,
+        "last_mode": None,
+        "last_telemetry": None,
+        "desired_brightness": None,
+        "desired_mode": None,
     }
 
 
@@ -4469,6 +4483,11 @@ def _extract_device_runtime(raw: dict | None) -> dict:
         "last_action",
         "last_power",
         "last_power_ts",
+        "last_brightness",
+        "last_mode",
+        "last_telemetry",
+        "desired_brightness",
+        "desired_mode",
     ):
         if k not in raw:
             continue
@@ -4478,6 +4497,16 @@ def _extract_device_runtime(raw: dict | None) -> dict:
                 if isinstance(raw.get("last_power"), dict)
                 else None
             )
+        elif k == "last_telemetry":
+            out[k] = raw.get(k) if isinstance(raw.get(k), dict) else None
+        elif k in ("last_brightness", "desired_brightness"):
+            try:
+                out[k] = max(0, min(100, int(raw.get(k))))
+            except (TypeError, ValueError):
+                out[k] = None
+        elif k in ("last_mode", "desired_mode"):
+            s = str(raw.get(k) or "").strip()
+            out[k] = s or None
         elif k in ("last_on", "desired_on", "online"):
             v = raw.get(k)
             out[k] = None if v is None else _as_bool(v)
@@ -4635,6 +4664,11 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         "tuya_local_key": str(raw.get("tuya_local_key") or raw.get("local_key") or ""),
         "tuya_version": 3.4,
         "tuya_switch_dps": 1,
+        "tuya_bright_dps": 0,  # 0 = default 22 for lights
+        "tuya_mode_dps": 0,  # 0 = default 21 for lights
+        "device_kind": str(raw.get("device_kind") or raw.get("kind") or "").strip().lower()[
+            :16
+        ],
         # Xiaomi / Mi Home (LAN miIO; token once)
         "xiaomi_token": str(
             raw.get("xiaomi_token") or raw.get("miio_token") or raw.get("token") or ""
@@ -4664,6 +4698,27 @@ def _device_backend_fields_from_raw(raw: dict) -> dict:
         out["tuya_switch_dps"] = max(1, min(255, int(raw.get("tuya_switch_dps") or raw.get("switch_dps") or 1)))
     except (TypeError, ValueError):
         out["tuya_switch_dps"] = 1
+    try:
+        out["tuya_bright_dps"] = max(
+            0, min(255, int(raw.get("tuya_bright_dps") or raw.get("bright_dps") or 0))
+        )
+    except (TypeError, ValueError):
+        out["tuya_bright_dps"] = 0
+    try:
+        out["tuya_mode_dps"] = max(
+            0, min(255, int(raw.get("tuya_mode_dps") or raw.get("mode_dps") or 0))
+        )
+    except (TypeError, ValueError):
+        out["tuya_mode_dps"] = 0
+    dk = str(out.get("device_kind") or "").strip().lower()
+    if dk in ("lamp", "bulb", "led"):
+        dk = "light"
+    if dk not in ("", "switch", "light", "dimmer", "plug", "relay"):
+        dk = ""
+    # auto-kind for Tuya lights (switch on DPS 20)
+    if not dk and out.get("backend") == "tuya" and int(out.get("tuya_switch_dps") or 0) == 20:
+        dk = "dimmer"
+    out["device_kind"] = dk
     try:
         out["ewelink_port"] = max(1, min(65535, int(raw.get("ewelink_port") or 8081)))
     except (TypeError, ValueError):
@@ -5363,18 +5418,39 @@ def _device_backend_dispatch(on: bool | None, cfg: dict) -> dict:
         be = "tuya"
     if be in ("mi", "mihome", "mi_home", "miio", "mijia"):
         be = "xiaomi"
-    # Prefer devices-poller for all LAN (no tinytuya / hang in serve)
+    # eWeLink LAN encrypt (devicekey / CoolKit AES) lives in Python.
+    # Go devices-poller is DIY-only without key → "DIY not responding" on
+    # cloud-paired plugs. Always control eWeLink from serve.
+    if be in ("ewelink", "sonoff", "sonoff_diy"):
+        return _filtration_backend_ewelink(on, cfg)
+    # Prefer devices-poller for other LAN (no tinytuya / hang in serve)
     if devices_poller_process_alive():
-        # device_set passes logical via _logical_on; status has on=None
-        return _device_control_via_poller(on, cfg, backend_hint=be)
+        # device_set passes logical via _logical_on; status has on=None.
+        # Light extras: _set_brightness (0–100), _set_mode (white|colour|…).
+        bright_i = None
+        if cfg.get("_set_brightness") is not None:
+            try:
+                bright_i = max(0, min(100, int(cfg.get("_set_brightness"))))
+            except (TypeError, ValueError):
+                bright_i = None
+        mode_s = str(cfg.get("_set_mode") or "").strip().lower() or None
+        if mode_s == "color":
+            mode_s = "colour"
+        if mode_s and mode_s not in ("white", "colour", "scene", "music"):
+            mode_s = None
+        return _device_control_via_poller(
+            on,
+            cfg,
+            backend_hint=be,
+            brightness=bright_i,
+            mode=mode_s,
+        )
     if be == "tuya":
         raise RuntimeError(
             "Tuya requires devices-poller (tinytuya removed from serve)"
         )
     if be == "tapo":
         return _filtration_backend_tapo(on, cfg)
-    if be in ("ewelink", "sonoff", "sonoff_diy"):
-        return _filtration_backend_ewelink(on, cfg)
     if be == "webhook":
         return _filtration_backend_webhook(on, cfg)
     if be == "shelly":
@@ -5739,10 +5815,15 @@ def _device_control_via_poller(
     *,
     backend_hint: str = "",
     timeout_sec: float = 15.0,
+    brightness: int | None = None,
+    mode: str | None = None,
 ) -> dict:
     """
     Enqueue device_req.json for Go devices-poller (all LAN backends).
     serve never imports tinytuya.
+
+    brightness: 0–100 % for lights/dimmers (optional)
+    mode: white|colour|scene|music (optional)
     """
     if not devices_poller_process_alive():
         raise RuntimeError(
@@ -5753,11 +5834,11 @@ def _device_control_via_poller(
     if not did:
         raise RuntimeError("device id missing")
     req_id = uuid.uuid4().hex
-    req = {
+    req: dict = {
         "id": req_id,
         "ts": time.time(),
         "device_id": did,
-        "on": on,  # None = status; bool = physical set (poller treats as logical — see note)
+        "on": on,  # None = status; bool = set (logical when _logical_on)
         "source": "serve",
         "force": True,
     }
@@ -5766,6 +5847,15 @@ def _device_control_via_poller(
     # we pass logical via a flag when present on cfg.
     if on is not None and "_logical_on" in cfg:
         req["on"] = bool(cfg["_logical_on"])
+    if brightness is not None:
+        try:
+            b = int(brightness)
+            req["brightness"] = max(0, min(100, b))
+        except (TypeError, ValueError):
+            pass
+    if mode is not None and str(mode).strip():
+        req["mode"] = str(mode).strip().lower()
+    # light-only set (brightness/mode) is still a set even if on is None
     with _device_cmd_ipc_lock:
         try:
             if DEVICE_RESULT_FILE.is_file():
@@ -5800,6 +5890,13 @@ def _device_control_via_poller(
                     out["reason"] = raw.get("reason") or "already_in_state"
                 if isinstance(raw.get("power"), dict):
                     out["power"] = raw["power"]
+                if raw.get("brightness") is not None:
+                    try:
+                        out["brightness"] = int(raw["brightness"])
+                    except (TypeError, ValueError):
+                        pass
+                if raw.get("mode"):
+                    out["mode"] = str(raw["mode"])
                 if isinstance(raw.get("extra"), dict):
                     out.update({k: v for k, v in raw["extra"].items() if k not in out})
                 return out
@@ -5815,8 +5912,22 @@ def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
     """
     Tuya LAN — only via devices-poller (no tinytuya in serve).
     Status: on=None; set: on=True/False (physical already resolved by caller).
+    Optional light fields on cfg: _set_brightness (0–100), _set_mode.
     """
-    return _device_control_via_poller(on, cfg, backend_hint="tuya")
+    bright = cfg.get("_set_brightness")
+    mode = cfg.get("_set_mode")
+    try:
+        bright_i = int(bright) if bright is not None else None
+    except (TypeError, ValueError):
+        bright_i = None
+    mode_s = str(mode).strip() if mode else None
+    return _device_control_via_poller(
+        on,
+        cfg,
+        backend_hint="tuya",
+        brightness=bright_i,
+        mode=mode_s or None,
+    )
 
 
 def tuya_refresh_device_keys(
@@ -6157,6 +6268,30 @@ def device_poll_status(
             if power:
                 d["last_power"] = power
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
+            # lights / dimmers
+            br = out.get("brightness")
+            if br is None and out.get("brightness_pct") is not None:
+                br = out.get("brightness_pct")
+            if br is not None:
+                try:
+                    d["last_brightness"] = max(0, min(100, int(br)))
+                except (TypeError, ValueError):
+                    pass
+            if out.get("mode"):
+                d["last_mode"] = str(out.get("mode"))
+            tel = {}
+            for k in (
+                "brightness_raw",
+                "brightness_pct",
+                "mode",
+                "colour_data",
+                "dps",
+                "switch_dps_used",
+            ):
+                if k in out and out[k] is not None:
+                    tel[k] = out[k]
+            if tel:
+                d["last_telemetry"] = tel
 
         _device_update_in_store(did, _mut)
 
@@ -6246,14 +6381,16 @@ def device_test(did: str) -> dict:
 
 def device_set(
     did: str,
-    on: bool,
+    on: bool | None = None,
     *,
     source: str = "manual",
     force: bool = False,
     error_lang: str = "ru",
+    brightness: int | None = None,
+    mode: str | None = None,
 ) -> dict:
     """
-    Set device logical ON/OFF.
+    Set device logical ON/OFF and optional light params.
 
     Design:
       1) UI/API stamps desired_on immediately (hold target for devices-poller)
@@ -6261,8 +6398,40 @@ def device_set(
       3) poller background loop keeps reported == desired when enforce_desired is on
     Gates: allow_off_while_mining / allow_on_while_suspend (unless force).
     Inverted devices flip physical polarity.
+
+    brightness: 0–100 % (lights/dimmers)
+    mode: white|colour|scene|music
     """
-    on = bool(on)
+    bright_i: int | None = None
+    if brightness is not None:
+        try:
+            bright_i = max(0, min(100, int(brightness)))
+        except (TypeError, ValueError):
+            bright_i = None
+    mode_s = str(mode).strip().lower() if mode else None
+    if mode_s in ("color",):
+        mode_s = "colour"
+    if mode_s and mode_s not in ("white", "colour", "scene", "music"):
+        mode_s = None
+    light_only = on is None and (bright_i is not None or mode_s)
+    if on is None and not light_only:
+        return {
+            "ok": False,
+            "error": "on or brightness/mode required"
+            if str(error_lang or "ru").lower().startswith("en")
+            else "нужен on или brightness/mode",
+        }
+    if on is not None:
+        on = bool(on)
+    elif bright_i is not None and bright_i > 0:
+        on = True  # dimming implies turn on
+    else:
+        # mode-only or brightness 0: keep last_on if known
+        cfg0 = _device_cfg_snapshot(did) or {}
+        if cfg0.get("last_on") is not None:
+            on = bool(cfg0.get("last_on"))
+        else:
+            on = True
     el = str(error_lang or "ru").lower().startswith("en")
     cfg = _device_cfg_snapshot(did)
     if not cfg:
@@ -6306,13 +6475,26 @@ def device_set(
     # Always write desired first — poller hold must not depend on set success.
     def _mut_desired(d):
         d["desired_on"] = bool(on)
+        if bright_i is not None:
+            d["desired_brightness"] = bright_i
+        if mode_s:
+            d["desired_mode"] = mode_s
 
     _device_update_in_store(did, _mut_desired)
 
     physical = _device_logical_to_physical(on, inverted)
     prev = cfg.get("last_on")
+    prev_br = cfg.get("last_brightness")
+    prev_mode = cfg.get("last_mode")
     # No-op if already in desired logical state (avoids Tuya toggle-on-repeat)
-    if prev is not None and bool(prev) is on and not force:
+    # Still apply when brightness/mode requested.
+    light_set = bright_i is not None or mode_s
+    if (
+        prev is not None
+        and bool(prev) is on
+        and not force
+        and not light_set
+    ):
         return {
             "ok": True,
             "id": did,
@@ -6328,10 +6510,16 @@ def device_set(
             "skipped": True,
             "reason": "already_in_state",
             "power": cfg.get("last_power"),
+            "brightness": prev_br,
+            "mode": prev_mode,
         }
     try:
         cfg_call = dict(cfg)
         cfg_call["_logical_on"] = bool(on)  # poller SetLogical wants logical
+        if bright_i is not None:
+            cfg_call["_set_brightness"] = bright_i
+        if mode_s:
+            cfg_call["_set_mode"] = mode_s
         out = _device_backend_dispatch(physical, cfg_call)
         if out.get("transport") == "devices-poller" or out.get("on_is_logical"):
             # poller returns logical on
@@ -6360,8 +6548,23 @@ def device_set(
             if power:
                 d["last_power"] = power
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
+            br = out.get("brightness")
+            if br is None and out.get("brightness_pct") is not None:
+                br = out.get("brightness_pct")
+            if br is not None:
+                try:
+                    d["last_brightness"] = max(0, min(100, int(br)))
+                except (TypeError, ValueError):
+                    pass
+            elif bright_i is not None:
+                d["last_brightness"] = bright_i
+            if out.get("mode"):
+                d["last_mode"] = str(out.get("mode"))
+            elif mode_s:
+                d["last_mode"] = mode_s
 
         _device_update_in_store(did, _mut)
+        snap = _device_cfg_snapshot(did) or cfg
         ret = {
             "ok": True,
             "id": did,
@@ -6370,6 +6573,8 @@ def device_set(
             "physical_on": bool(got_phys),
             "source": source,
             "backend": be,
+            "brightness": snap.get("last_brightness"),
+            "mode": snap.get("last_mode"),
             "alias": cfg.get("alias"),
             "name": cfg.get("name"),
             "icon": cfg.get("icon"),
@@ -10401,9 +10606,12 @@ def _poll_managed_fleet_live() -> None:
     """
     Poll every enabled managed miner (Whatsminer / iPollo / Goldshell / …)
     and write fleet_live.json. Active host also refreshes via normal path.
+
+    Called from:
+      • Python --miner-poller live loop
+      • main serve fleet_live_loop (when Go poller owns :4028 — otherwise
+        fleet_live goes stale and the UI marks every row offline)
     """
-    if not _is_this_python_miner_poller():
-        return
     try:
         managed = get_miners_managed()
     except Exception:
@@ -10424,6 +10632,22 @@ def _poll_managed_fleet_live() -> None:
             port = int(m.get("port") or 4028)
         except (TypeError, ValueError):
             port = 4028
+        # Seed protocol cache from inventory so first poll after restart
+        # does not send Whatsminer {cmd:…} to CGMiner/iPollo/Antminer.
+        vendor_hint = str(m.get("vendor") or m.get("api_vendor") or "").lower()
+        if vendor_hint in (
+            "ipollo",
+            "antminer",
+            "bitmain",
+            "goldshell",
+            "avalon",
+            "cgminer",
+        ):
+            with _ASIC_PROTO_LOCK:
+                _ASIC_PROTO_CACHE[host] = "cgminer"
+        elif vendor_hint in ("whatsminer", "microbt"):
+            with _ASIC_PROTO_LOCK:
+                _ASIC_PROTO_CACHE[host] = "whatsminer"
         try:
             with _asic_target_override(host, port):
                 live = _fetch_live_direct()
@@ -11091,62 +11315,102 @@ def _default_discovery_ranges() -> list[str]:
     return out
 
 
-def _expand_scan_ranges(ranges: list[str]) -> list[str]:
-    """CIDR / start-end / single IP → host list (cap 4096)."""
+def _expand_one_scan_range(s: str) -> list[str]:
+    """
+    Expand one range token to host IPs.
+
+    Supported:
+      • CIDR:              192.168.1.0/24
+      • full IP–IP:        192.168.1.1-192.168.2.240
+      • last-octet:        192.168.1.1-40
+      • multi-octet:       192.168.1-2.1-250   (3rd 1..2, 4th 1..250)
+      • single IP:         192.168.1.10
+    """
     import ipaddress
 
+    s = str(s or "").strip()
+    if not s:
+        return []
+    if "/" in s:
+        net = ipaddress.ip_network(s, strict=False)
+        hosts = list(net.hosts()) if net.num_addresses > 2 else list(net)
+        return [str(ip) for ip in hosts]
+
+    if "-" in s:
+        # 1) full IP–IP (dash between two dotted quads)
+        m = re.fullmatch(
+            r"(\d{1,3}(?:\.\d{1,3}){3})\s*-\s*(\d{1,3}(?:\.\d{1,3}){3})", s
+        )
+        if m:
+            ia = int(ipaddress.IPv4Address(m.group(1)))
+            ib = int(ipaddress.IPv4Address(m.group(2)))
+            if ib < ia:
+                ia, ib = ib, ia
+            if ib - ia > 4096:
+                raise ValueError(f"range too large: {s}")
+            return [str(ipaddress.IPv4Address(n)) for n in range(ia, ib + 1)]
+
+        # 2) compact multi-octet / last-octet: exactly 4 dotted segments,
+        #    each "N" or "N-M"
+        segs = s.split(".")
+        if len(segs) == 4 and all(
+            re.fullmatch(r"\d{1,3}(?:-\d{1,3})?", seg.strip()) for seg in segs
+        ):
+            bounds: list[tuple[int, int]] = []
+            for seg in segs:
+                seg = seg.strip()
+                if "-" in seg:
+                    a, b = seg.split("-", 1)
+                    lo, hi = int(a), int(b)
+                    if lo > hi:
+                        lo, hi = hi, lo
+                else:
+                    lo = hi = int(seg)
+                if lo < 0 or hi > 255:
+                    raise ValueError(f"invalid octet range: {s}")
+                bounds.append((lo, hi))
+            n = 1
+            for lo, hi in bounds:
+                n *= hi - lo + 1
+                if n > 4096:
+                    raise ValueError(f"range too large ({n} hosts): {s}")
+            out: list[str] = []
+            for o0 in range(bounds[0][0], bounds[0][1] + 1):
+                for o1 in range(bounds[1][0], bounds[1][1] + 1):
+                    for o2 in range(bounds[2][0], bounds[2][1] + 1):
+                        for o3 in range(bounds[3][0], bounds[3][1] + 1):
+                            out.append(f"{o0}.{o1}.{o2}.{o3}")
+            return out
+
+        raise ValueError(f"invalid IP range: {s}")
+
+    return [str(ipaddress.IPv4Address(s))]
+
+
+def _expand_scan_ranges(ranges: list[str]) -> list[str]:
+    """CIDR / start-end / multi-octet / single IP → host list (cap 4096).
+
+    Invalid entries are skipped (log) so one bad range cannot abort the scan.
+    """
     seen: set[str] = set()
     out: list[str] = []
+    errors: list[str] = []
     for r in ranges or []:
         s = str(r or "").strip()
         if not s:
             continue
         try:
-            if "/" in s:
-                net = ipaddress.ip_network(s, strict=False)
-                hosts = list(net.hosts()) if net.num_addresses > 2 else list(net)
-                for ip in hosts:
-                    ip_s = str(ip)
-                    if ip_s not in seen:
-                        seen.add(ip_s)
-                        out.append(ip_s)
-            elif "-" in s:
-                a, b = [x.strip() for x in s.split("-", 1)]
-                # Support "192.168.1.10-20" (last-octet range) and full IPs
-                if re.fullmatch(r"\d{1,3}", b) and a.count(".") == 3:
-                    prefix = a.rsplit(".", 1)[0]
-                    start_o = int(a.rsplit(".", 1)[1])
-                    end_o = int(b)
-                    if end_o < start_o:
-                        start_o, end_o = end_o, start_o
-                    if end_o > 255 or start_o < 0:
-                        raise ValueError(f"invalid octet range: {s}")
-                    for o in range(start_o, end_o + 1):
-                        ip_s = f"{prefix}.{o}"
-                        if ip_s not in seen:
-                            seen.add(ip_s)
-                            out.append(ip_s)
-                else:
-                    ia = int(ipaddress.IPv4Address(a))
-                    ib = int(ipaddress.IPv4Address(b))
-                    if ib < ia:
-                        ia, ib = ib, ia
-                    if ib - ia > 4096:
-                        raise ValueError(f"range too large: {s}")
-                    for n in range(ia, ib + 1):
-                        ip_s = str(ipaddress.IPv4Address(n))
-                        if ip_s not in seen:
-                            seen.add(ip_s)
-                            out.append(ip_s)
-            else:
-                ip_s = str(ipaddress.IPv4Address(s))
+            for ip_s in _expand_one_scan_range(s):
                 if ip_s not in seen:
                     seen.add(ip_s)
                     out.append(ip_s)
         except Exception as e:
-            raise ValueError(f"range {s!r}: {e}") from e
+            errors.append(f"{s!r}: {e}")
+            print(f"[miner-poller] discovery skip range {s!r}: {e}", flush=True)
         if len(out) > 4096:
             raise ValueError(f"too many hosts ({len(out)} > 4096) — shrink ranges")
+    if not out and errors:
+        raise ValueError("; ".join(errors[:3]))
     return out
 
 
@@ -17350,9 +17614,15 @@ def miner_cmd(cmd: dict, timeout: float = 5.0) -> dict:
     On-demand miner JSON read (pools, summary, …).
 
     - Python miner-poller process: direct TCP (owns :4028).
+    - Fleet multi-host override (_asic_target_override): direct TCP — Go
+      miner-poller is single-target and cannot reach standby hosts.
     - HTTP serve / other roles: file IPC → miner-poller only.
     """
     if _is_this_python_miner_poller():
+        return _miner_cmd_unlocked(cmd, timeout=timeout)
+    # Multi-host fleet live: TLS host override → this host is not the Go
+    # poller's active target. Without direct TCP every standby shows offline.
+    if getattr(_tls_asic, "host", None):
         return _miner_cmd_unlocked(cmd, timeout=timeout)
     if not miner_poller_process_alive():
         raise RuntimeError(
@@ -19804,11 +20074,15 @@ def version_cmp(a: str, b: str) -> int:
 
 
 def get_version_info() -> dict:
+    host = detect_host_package_arch()
     return {
         "version": get_app_version(),
         "github_repo": GITHUB_REPO,
         "github_branch": GITHUB_BRANCH,
         "github_url": f"https://github.com/{GITHUB_REPO}",
+        "host_machine": host.get("machine"),
+        "host_pkg_arch": host.get("pkg_arch"),
+        "host_arch_source": host.get("source"),
     }
 
 
@@ -20036,6 +20310,454 @@ def _select_release_notes(
     }
 
 
+# ── Host architecture → GitHub release package ─────────────────────────────
+# Release assets (see packaging/entware/build-ipk.sh):
+#   poolheat_${ver}_${pkg_arch}.ipk
+#   poolheat-${ver}-opt-${pkg_arch}.tar.gz   (optional; preferred when present)
+#   poolheat-${ver}-opt.tar.gz              (legacy single-arch; last resort)
+
+# ELF e_machine (little-endian)
+_ELF_EM_MIPS = 8
+_ELF_EM_ARM = 40
+_ELF_EM_X86_64 = 62
+_ELF_EM_AARCH64 = 183
+
+# Entware package architecture tags used in asset filenames
+_PKG_ARCH_AARCH64 = "aarch64-3.10"
+_PKG_ARCH_MIPSELSF = "mipselsf-3.4"
+
+# Prefer higher score when matching release assets
+_PKG_ARCH_ALIASES: dict[str, tuple[str, ...]] = {
+    _PKG_ARCH_AARCH64: (
+        "aarch64-3.10",
+        "aarch64_3.10",
+        "aarch64",
+        "arm64",
+    ),
+    _PKG_ARCH_MIPSELSF: (
+        "mipselsf-3.4",
+        "mipselsf_3.4",
+        "mipselsf",
+        "mipsel",
+        "mips",
+    ),
+}
+
+
+def _elf_machine(path: Path | str | bytes | None) -> int | None:
+    """Return ELF e_machine or None if not a valid ELF."""
+    try:
+        if isinstance(path, (bytes, bytearray)):
+            b = bytes(path[:20])
+        else:
+            p = Path(path) if not isinstance(path, Path) else path
+            if not p.is_file():
+                return None
+            with p.open("rb") as f:
+                b = f.read(20)
+        if len(b) < 20 or b[:4] != b"\x7fELF":
+            return None
+        # e_machine at offset 18 (little-endian for our targets)
+        return int.from_bytes(b[18:20], "little")
+    except Exception:
+        return None
+
+
+def _expected_elf_for_pkg_arch(pkg_arch: str) -> set[int]:
+    a = str(pkg_arch or "").lower()
+    if "mips" in a:
+        return {_ELF_EM_MIPS}
+    if "aarch64" in a or a in ("arm64",):
+        return {_ELF_EM_AARCH64}
+    if a.startswith("arm") or "armv7" in a:
+        return {_ELF_EM_ARM, _ELF_EM_AARCH64}
+    return set()
+
+
+def detect_host_package_arch() -> dict:
+    """
+    Detect router CPU / Entware package architecture for OTA asset selection.
+
+    Returns:
+      machine: uname -m (aarch64, mips, …)
+      pkg_arch: Entware tag used in release filenames (aarch64-3.10 / mipselsf-3.4)
+      elf_ok: set of acceptable ELF e_machine values for Go pollers
+      source: how pkg_arch was decided
+    """
+    machine = ""
+    try:
+        machine = (os.uname().machine or "").strip().lower()
+    except Exception:
+        try:
+            machine = (os.environ.get("HOSTTYPE") or "").strip().lower()
+        except Exception:
+            machine = ""
+
+    # Entware: /opt/etc/opkg.conf → arch aarch64-3.10 1
+    opkg_archs: list[str] = []
+    try:
+        conf = Path("/opt/etc/opkg.conf")
+        if conf.is_file():
+            for line in conf.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line.startswith("arch "):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        opkg_archs.append(parts[1].strip().lower())
+    except Exception:
+        pass
+
+    source = "uname"
+    pkg_arch = ""
+    # Prefer explicit Entware arch from opkg.conf
+    for a in opkg_archs:
+        if "mipsel" in a or a.startswith("mips"):
+            pkg_arch = _PKG_ARCH_MIPSELSF
+            source = "opkg.conf"
+            break
+        if "aarch64" in a or a in ("arm64",):
+            pkg_arch = _PKG_ARCH_AARCH64
+            source = "opkg.conf"
+            break
+
+    if not pkg_arch:
+        if machine in ("aarch64", "arm64"):
+            pkg_arch = _PKG_ARCH_AARCH64
+        elif machine in ("mips", "mipsel", "mips64", "mips64el"):
+            pkg_arch = _PKG_ARCH_MIPSELSF
+        elif machine.startswith("arm"):
+            # rare 32-bit Keenetic — no dedicated package yet; try aarch64 only if 64
+            pkg_arch = _PKG_ARCH_AARCH64 if "64" in machine else _PKG_ARCH_AARCH64
+            source = "uname-arm-fallback"
+        else:
+            # last resort: inspect currently installed poller ELF
+            em = _elf_machine("/opt/bin/poolheat-devices-poller") or _elf_machine(
+                "/opt/bin/poolheat-miner-poller"
+            )
+            if em == _ELF_EM_MIPS:
+                pkg_arch = _PKG_ARCH_MIPSELSF
+                source = "installed-poller-elf"
+            elif em == _ELF_EM_AARCH64:
+                pkg_arch = _PKG_ARCH_AARCH64
+                source = "installed-poller-elf"
+            else:
+                pkg_arch = _PKG_ARCH_AARCH64
+                source = "default-aarch64"
+
+    return {
+        "machine": machine or None,
+        "pkg_arch": pkg_arch,
+        "opkg_archs": opkg_archs,
+        "elf_machines": sorted(_expected_elf_for_pkg_arch(pkg_arch)),
+        "source": source,
+    }
+
+
+def _release_asset_score(name: str, pkg_arch: str) -> int:
+    """
+    Higher = better match for this host.
+    Prefer arch-specific opt tarball, then arch ipk, then legacy opt.tar.gz.
+    """
+    n = str(name or "").lower()
+    if not n.startswith("poolheat"):
+        return -1
+    aliases = _PKG_ARCH_ALIASES.get(pkg_arch, (pkg_arch,))
+    arch_hit = any(a.lower() in n for a in aliases)
+    other_arches = []
+    for k, als in _PKG_ARCH_ALIASES.items():
+        if k == pkg_arch:
+            continue
+        other_arches.extend(als)
+    other_hit = any(a.lower() in n for a in other_arches)
+
+    if n.endswith(".ipk"):
+        if arch_hit and not other_hit:
+            return 80
+        if arch_hit:
+            return 70
+        return -1  # never pick foreign-arch ipk
+    if n.endswith(".tar.gz") or n.endswith(".tgz"):
+        if "opt" in n and arch_hit and not other_hit:
+            return 100  # poolheat-X-opt-mipselsf-3.4.tar.gz
+        if "opt" in n and arch_hit:
+            return 90
+        # legacy single-arch tarball — usable only as last resort
+        if re.match(r"poolheat-[\d.]+-opt\.tar\.gz$", n) and not other_hit:
+            return 20
+        if "opt" in n and not arch_hit and not other_hit:
+            return 15
+        return -1
+    return -1
+
+
+def _pick_release_asset(
+    assets: list | None, pkg_arch: str
+) -> dict | None:
+    """Pick best GitHub release asset for host pkg_arch."""
+    if not isinstance(assets, list):
+        return None
+    best: dict | None = None
+    best_score = -1
+    for a in assets:
+        if not isinstance(a, dict):
+            continue
+        name = str(a.get("name") or "")
+        url = str(a.get("browser_download_url") or a.get("url") or "").strip()
+        if not name or not url:
+            continue
+        sc = _release_asset_score(name, pkg_arch)
+        if sc > best_score:
+            best_score = sc
+            best = {
+                "name": name,
+                "url": url,
+                "size": a.get("size"),
+                "content_type": a.get("content_type"),
+                "score": sc,
+            }
+    return best if best_score >= 0 else None
+
+
+def _github_release_for_ref(ref: str | None) -> dict | None:
+    """Fetch release JSON by tag, or latest if ref empty / branch-like."""
+    ref = (ref or "").strip()
+    try:
+        if ref and re.match(r"^v?\d+(\.\d+)*", ref):
+            tag = ref if ref.startswith("v") else ref
+            # try exact, then with/without v
+            for t in (tag, tag.lstrip("v"), f"v{tag.lstrip('v')}"):
+                try:
+                    rel = _http_json(
+                        f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/{t}"
+                    )
+                    if isinstance(rel, dict) and rel.get("tag_name") and not rel.get("message"):
+                        return rel
+                except Exception:
+                    continue
+        rel = _http_json(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+        )
+        if isinstance(rel, dict) and rel.get("tag_name") and not rel.get("message"):
+            return rel
+    except Exception:
+        return None
+    return None
+
+
+def _parse_ar_members(blob: bytes) -> dict[str, bytes]:
+    """Minimal System V ar parser (for .ipk)."""
+    if not blob.startswith(b"!<arch>\n"):
+        raise ValueError("not an ar archive")
+    out: dict[str, bytes] = {}
+    off = 8
+    n = len(blob)
+    while off + 60 <= n:
+        hdr = blob[off : off + 60]
+        off += 60
+        name = hdr[0:16].decode("ascii", errors="replace").strip()
+        try:
+            size = int(hdr[48:58].decode("ascii", errors="replace").strip())
+        except ValueError as e:
+            raise ValueError(f"bad ar size for {name!r}") from e
+        if size < 0 or off + size > n:
+            raise ValueError(f"ar member truncated: {name}")
+        data = blob[off : off + size]
+        off += size
+        if size % 2:
+            off += 1
+        # GNU long names not needed for our ipks
+        out[name] = data
+    return out
+
+
+def _extract_ipk_data_root(ipk_blob: bytes, dest: Path) -> Path:
+    """
+    Extract ipk data.tar.gz into dest; return path to extracted root
+    (directory that contains opt/ or is opt itself).
+    """
+    import io
+    import tarfile
+
+    members = _parse_ar_members(ipk_blob)
+    data_blob = None
+    for key in ("data.tar.gz", "data.tar.xz", "data.tar.zst", "data.tar"):
+        if key in members:
+            data_blob = members[key]
+            mode = "r:gz" if key.endswith(".gz") else "r:"
+            if key.endswith(".xz"):
+                mode = "r:xz"
+            break
+    if data_blob is None:
+        raise ValueError("ipk missing data.tar.*")
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(data_blob), mode=mode) as tar:
+        # safe extract
+        for m in tar.getmembers():
+            name = m.name.replace("\\", "/")
+            if name.startswith("/") or ".." in name.split("/"):
+                continue
+            tar.extract(m, path=dest)
+    # find opt/
+    opt = dest / "opt"
+    if opt.is_dir():
+        return dest
+    for p in dest.rglob("opt"):
+        if p.is_dir() and ((p / "bin").is_dir() or (p / "lib").is_dir()):
+            return p.parent
+    return dest
+
+
+def _install_tree_from_opt(
+    opt_root: Path,
+    *,
+    lib_dir: Path,
+    www_dir: Path,
+    entware: bool,
+    pkg_arch: str,
+    installed: list[str],
+    skip_wrong_arch_binaries: bool = True,
+) -> list[str]:
+    """
+    Copy poolheat files from an extracted opt/ tree (ipk data or opt.tar.gz).
+    Refuse Go pollers whose ELF machine does not match pkg_arch.
+    """
+    warnings: list[str] = []
+    # opt_root may be .../opt or parent containing opt/
+    if (opt_root / "opt").is_dir():
+        base = opt_root / "opt"
+    else:
+        base = opt_root
+
+    mapping: list[tuple[Path, Path]] = []
+    # Python + UI
+    lib_src = base / "lib" / "poolheat"
+    if lib_src.is_dir():
+        for rel in (
+            "serve.py",
+            "luci_proxy.py",
+            "miner_models.py",
+            "tuya_mobile.py",
+            "xiaomi_miio.py",
+            "ewelink_lan.py",
+            "tuya_lan_ctl.py",
+            "chipmap_skus.json",
+            "miner_vendors.json",
+            "miner_model_profiles.json",
+            "migrate-layout.sh",
+            "VERSION",
+        ):
+            s = lib_src / rel
+            if s.is_file():
+                mapping.append((s, lib_dir / rel))
+        # whatsminer package
+        wm_src = lib_src / "whatsminer"
+        wm_dst = lib_dir / "whatsminer"
+        if wm_src.is_dir():
+            try:
+                if wm_dst.exists():
+                    shutil.rmtree(wm_dst)
+                shutil.copytree(
+                    wm_src,
+                    wm_dst,
+                    ignore=shutil.ignore_patterns(
+                        "__pycache__", "*.pyc", ".DS_Store"
+                    ),
+                )
+                installed.append(str(wm_dst))
+            except Exception as e:
+                warnings.append(f"whatsminer: {e}")
+
+    www_src = base / "share" / "poolheat" / "www"
+    if www_src.is_dir():
+        for rel in ("index.html", "miner_vendors.json"):
+            s = www_src / rel
+            if s.is_file():
+                mapping.append((s, www_dir / rel))
+        icons_src = www_src / "icons"
+        icons_dst = www_dir / "icons"
+        if icons_src.is_dir():
+            try:
+                icons_dst.mkdir(parents=True, exist_ok=True)
+                for p in sorted(icons_src.rglob("*")):
+                    if not p.is_file():
+                        continue
+                    if p.name == ".DS_Store" or "__pycache__" in p.parts:
+                        continue
+                    rel = p.relative_to(icons_src)
+                    mapping.append((p, icons_dst / rel))
+                installed.append(str(icons_dst))
+            except Exception as e:
+                warnings.append(f"icons: {e}")
+
+    ver_src = base / "share" / "poolheat" / "VERSION"
+    if not ver_src.is_file():
+        ver_src = lib_src / "VERSION" if lib_src.is_dir() else Path()
+    if ver_src.is_file():
+        mapping.append((ver_src, lib_dir / "VERSION"))
+        if entware:
+            mapping.append((ver_src, Path("/opt/share/poolheat/VERSION")))
+
+    if entware:
+        bin_src = base / "bin"
+        for name in (
+            "poolheatd",
+            "poolheat-devices-poller",
+            "poolheat-miner-poller",
+        ):
+            s = bin_src / name
+            if s.is_file():
+                mapping.append((s, Path("/opt/bin") / name))
+        for name in ("S99poolheat", "S99poolheat-standalone"):
+            s = base / "etc" / "init.d" / name
+            if s.is_file():
+                mapping.append((s, Path("/opt/etc/init.d") / name))
+
+    expect_elf = _expected_elf_for_pkg_arch(pkg_arch)
+    for src, dst in mapping:
+        if not src.is_file():
+            continue
+        # Guard: never install wrong-arch pollers (root cause of Giant outage)
+        if dst.name in ("poolheat-devices-poller", "poolheat-miner-poller"):
+            em = _elf_machine(src)
+            if skip_wrong_arch_binaries and expect_elf and em not in expect_elf:
+                msg = (
+                    f"skip {dst.name}: ELF machine={em} "
+                    f"not in {sorted(expect_elf)} for pkg_arch={pkg_arch}"
+                )
+                print(f"[update] {msg}", flush=True)
+                warnings.append(msg)
+                continue
+            if em is None:
+                msg = f"skip {dst.name}: not a valid ELF"
+                print(f"[update] {msg}", flush=True)
+                warnings.append(msg)
+                continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            data = src.read_bytes()
+            tmp = dst.with_suffix(dst.suffix + ".new")
+            tmp.write_bytes(data)
+            tmp.replace(dst)
+            if dst.name in (
+                "poolheatd",
+                "poolheat-devices-poller",
+                "poolheat-miner-poller",
+                "S99poolheat",
+                "S99poolheat-standalone",
+                "serve.py",
+                "migrate-layout.sh",
+                "tuya_lan_ctl.py",
+            ):
+                try:
+                    os.chmod(dst, 0o755)
+                except Exception:
+                    pass
+            installed.append(str(dst))
+        except Exception as e:
+            warnings.append(f"{dst}: {e}")
+    return warnings
+
+
 def check_github_update(*, lang: str = "en") -> dict:
     """
     Compare installed VERSION with GitHub:
@@ -20046,9 +20768,12 @@ def check_github_update(*, lang: str = "en") -> dict:
 
     Release notes support bilingual bodies (see _split_bilingual_release_notes).
     ``lang`` selects preferred notes language; missing RU → English default.
+
+    Includes host package architecture + matching release asset for OTA.
     """
     ui_lang = _normalize_notes_lang(lang)
     current = get_app_version()
+    host = detect_host_package_arch()
     out: dict = {
         "ok": True,
         "current_version": current,
@@ -20073,8 +20798,16 @@ def check_github_update(*, lang: str = "en") -> dict:
         "notes_ru": None,
         "notes_available": [],
         "ui_lang": ui_lang,
+        # architecture-aware OTA
+        "host_machine": host.get("machine"),
+        "host_pkg_arch": host.get("pkg_arch"),
+        "host_arch_source": host.get("source"),
+        "package_asset": None,
+        "package_url": None,
+        "package_score": None,
     }
     latest: str | None = None
+    rel_obj: dict | None = None
     try:
         # 1) releases
         try:
@@ -20082,6 +20815,7 @@ def check_github_update(*, lang: str = "en") -> dict:
                 f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
             )
             if isinstance(rel, dict) and rel.get("tag_name") and not rel.get("message"):
+                rel_obj = rel
                 latest = str(rel["tag_name"]).lstrip("vV")
                 out["source"] = "release"
                 out["tag"] = rel.get("tag_name")
@@ -20091,6 +20825,14 @@ def check_github_update(*, lang: str = "en") -> dict:
                 body_notes = (rel.get("body") or "").replace("\r\n", "\n").strip()
                 note_pack = _select_release_notes(body_notes, lang=ui_lang)
                 out.update(note_pack)
+                asset = _pick_release_asset(
+                    rel.get("assets") if isinstance(rel.get("assets"), list) else [],
+                    str(host.get("pkg_arch") or _PKG_ARCH_AARCH64),
+                )
+                if asset:
+                    out["package_asset"] = asset.get("name")
+                    out["package_url"] = asset.get("url")
+                    out["package_score"] = asset.get("score")
         except urllib.error.HTTPError as e:
             if e.code != 404:
                 raise
@@ -20453,8 +21195,13 @@ def _flush_update_restart_notify() -> None:
 
 def apply_github_update(ref: str | None = None, *, source: str = "manual") -> dict:
     """
-    Download GitHub archive and install full package: serve, UI, VERSION,
-    whatsminer lib, poolheatd, Go pollers (devices/miner), init scripts.
+    Install poolheat update from GitHub, architecture-aware:
+
+      1) Detect host Entware arch (aarch64-3.10 / mipselsf-3.4)
+      2) Prefer matching release asset (.ipk or opt-<arch>.tar.gz)
+      3) Fallback: source tree archive for Python/UI only; pollers only if
+         ELF machine matches host (never install Peak aarch64 binaries on Giant)
+
     Does not overwrite /opt/etc/poolheat/config.json.
     ``source`` is written to the action log (manual | auto | telegram).
     """
@@ -20481,6 +21228,9 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
             ]
             entware = True
 
+        host = detect_host_package_arch()
+        pkg_arch = str(host.get("pkg_arch") or _PKG_ARCH_AARCH64)
+
         target_ref = (ref or "").strip()
         # Prefer latest known from check, else branch
         if not target_ref:
@@ -20493,318 +21243,338 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
             target_ref = target_ref or GITHUB_BRANCH
         target_ref = str(target_ref).strip() or GITHUB_BRANCH
 
-        # Build archive URL
-        # tags/branches both work as refs/heads/X or refs/tags/X; GitHub also accepts
-        # https://github.com/owner/repo/archive/refs/heads/main.tar.gz
-        if re.match(r"^[0-9a-f]{7,40}$", target_ref):
-            archive_url = (
-                f"https://codeload.github.com/{GITHUB_REPO}/tar.gz/{target_ref}"
-            )
-        elif target_ref == GITHUB_BRANCH or not target_ref.startswith("v"):
-            # try heads first; for version tags user may pass v0.2.0
-            if re.match(r"^v?\d+\.\d+", target_ref):
-                tag = target_ref if target_ref.startswith("v") else f"v{target_ref}"
-                archive_url = (
-                    f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag}.tar.gz"
-                )
-                # also keep plain tag without v as fallback later
-            else:
-                archive_url = (
-                    f"https://github.com/{GITHUB_REPO}/archive/refs/heads/"
-                    f"{target_ref}.tar.gz"
-                )
-        else:
-            archive_url = (
-                f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{target_ref}.tar.gz"
-            )
-
         import tempfile
         import tarfile
 
         errors: list[str] = []
-        blob: bytes | None = None
-        used_url = archive_url
-        urls_try = [archive_url]
-        # fallbacks
-        if "refs/tags/" in archive_url:
-            bare = target_ref.lstrip("v")
-            urls_try.append(
-                f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{GITHUB_BRANCH}.tar.gz"
-            )
-            urls_try.append(
-                f"https://github.com/{GITHUB_REPO}/archive/refs/tags/v{bare}.tar.gz"
-            )
-            urls_try.append(
-                f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{bare}.tar.gz"
-            )
-        elif "refs/heads/" in archive_url:
-            pass
-        for u in urls_try:
-            try:
-                blob = _http_bytes(u, timeout=90)
-                used_url = u
-                break
-            except Exception as e:
-                errors.append(f"{u}: {e}")
-                blob = None
-        if not blob:
-            return {
-                "ok": False,
-                "error": "download failed: " + "; ".join(errors[:3]),
-                "tried": urls_try,
-            }
-
+        warnings: list[str] = []
         installed: list[str] = []
-        new_version = None
-        with tempfile.TemporaryDirectory(prefix="poolheat-upd-") as td:
-            tdir = Path(td)
-            tgz_path = tdir / "src.tar.gz"
-            tgz_path.write_bytes(blob)
-            with tarfile.open(tgz_path, "r:gz") as tar:
-                # safe extract: only known relative paths
-                def _safe_members(members):
-                    for m in members:
-                        name = m.name.replace("\\", "/")
-                        if name.startswith("/") or ".." in name.split("/"):
-                            continue
-                        # strip first path component (repo-branch/)
-                        parts = name.split("/", 1)
-                        if len(parts) < 2:
-                            continue
-                        rel = parts[1]
-                        if rel in (
-                            "ui/serve.py",
-                            "ui/index.html",
-                            "ui/miner_vendors.json",
-                            "ui/chipmap_skus.json",
-                            "VERSION",
-                            "packaging/entware/opt/bin/poolheatd",
-                            "packaging/entware/opt/bin/poolheat-devices-poller",
-                            "packaging/entware/opt/bin/poolheat-miner-poller",
-                            "packaging/entware/opt/etc/init.d/S99poolheat",
-                            "packaging/entware/opt/etc/init.d/S99poolheat-standalone",
-                            "packaging/entware/migrate-layout.sh",
-                        ):
-                            yield m
-                        elif rel.startswith("ui/") and rel.endswith(
-                            (".py", ".html", ".json")
-                        ):
-                            yield m
-                        # vendored whatsminer-lib package
-                        elif rel.startswith("ui/whatsminer/") and (
-                            rel.endswith(".py")
-                            or rel.endswith(".json")
-                            or rel.endswith(".md")
-                            or rel.endswith("LICENSE")
-                            or rel.endswith(".txt")
-                        ):
-                            yield m
-                        # App favicons / brand icons + weather set
-                        elif rel.startswith("ui/icons/") and (
-                            rel.endswith(
-                                (
-                                    ".svg",
-                                    ".png",
-                                    ".ico",
-                                    ".webp",
-                                    ".jpg",
-                                    ".jpeg",
-                                )
-                            )
-                            or rel.endswith("LICENSE")
-                            or rel.endswith("README.md")
-                        ):
-                            yield m
+        used_url = ""
+        install_mode = ""  # release-ipk | release-opt | source-archive
+        package_asset = None
 
-                tar.extractall(path=tdir, members=_safe_members(tar))
-
-            # find extracted root
-            roots = [p for p in tdir.iterdir() if p.is_dir()]
-            src_root = roots[0] if roots else tdir
-
-            mapping = [
-                (src_root / "ui" / "serve.py", lib_dir / "serve.py"),
-                (
-                    src_root / "ui" / "luci_proxy.py",
-                    lib_dir / "luci_proxy.py",
-                ),
-                (
-                    src_root / "ui" / "miner_models.py",
-                    lib_dir / "miner_models.py",
-                ),
-                (
-                    src_root / "ui" / "tuya_mobile.py",
-                    lib_dir / "tuya_mobile.py",
-                ),
-                (
-                    src_root / "ui" / "xiaomi_miio.py",
-                    lib_dir / "xiaomi_miio.py",
-                ),
-                (
-                    src_root / "ui" / "ewelink_lan.py",
-                    lib_dir / "ewelink_lan.py",
-                ),
-                (
-                    src_root / "ui" / "chipmap_skus.json",
-                    lib_dir / "chipmap_skus.json",
-                ),
-                (
-                    src_root / "ui" / "miner_vendors.json",
-                    lib_dir / "miner_vendors.json",
-                ),
-                (
-                    src_root / "ui" / "miner_vendors.json",
-                    www_dir / "miner_vendors.json",
-                ),
-                (src_root / "ui" / "index.html", www_dir / "index.html"),
-                (
-                    src_root / "packaging/entware/migrate-layout.sh",
-                    lib_dir / "migrate-layout.sh",
-                ),
-            ]
-            # whatsminer-lib package (vendored next to serve.py)
-            wm_src = src_root / "ui" / "whatsminer"
-            wm_dst = lib_dir / "whatsminer"
-            if wm_src.is_dir():
+        # ── 1) Arch-specific release package (preferred on Entware) ─────────
+        if entware:
+            rel = _github_release_for_ref(target_ref)
+            asset = None
+            if isinstance(rel, dict):
+                asset = _pick_release_asset(
+                    rel.get("assets") if isinstance(rel.get("assets"), list) else [],
+                    pkg_arch,
+                )
+                # if check already resolved an asset for this host, prefer it
+                last = _update_state.get("last_check") or {}
+                if (
+                    isinstance(last, dict)
+                    and last.get("package_url")
+                    and last.get("host_pkg_arch") == pkg_arch
+                    and (not asset or last.get("package_score", 0) >= (asset or {}).get("score", 0))
+                ):
+                    asset = {
+                        "name": last.get("package_asset"),
+                        "url": last.get("package_url"),
+                        "score": last.get("package_score"),
+                    }
+            if asset and asset.get("url"):
+                package_asset = asset.get("name")
                 try:
-                    if wm_dst.exists():
-                        shutil.rmtree(wm_dst)
+                    print(
+                        f"[update] host={host.get('machine')} pkg_arch={pkg_arch} "
+                        f"asset={asset.get('name')} score={asset.get('score')}",
+                        flush=True,
+                    )
+                    blob = _http_bytes(str(asset["url"]), timeout=180)
+                    used_url = str(asset["url"])
+                    with tempfile.TemporaryDirectory(prefix="poolheat-pkg-") as td:
+                        tdir = Path(td)
+                        name = str(asset.get("name") or "pkg.bin").lower()
+                        if name.endswith(".ipk"):
+                            install_mode = "release-ipk"
+                            root = _extract_ipk_data_root(blob, tdir / "ipk")
+                            w = _install_tree_from_opt(
+                                root,
+                                lib_dir=lib_dir,
+                                www_dir=www_dir,
+                                entware=entware,
+                                pkg_arch=pkg_arch,
+                                installed=installed,
+                            )
+                            warnings.extend(w)
+                        elif name.endswith(".tar.gz") or name.endswith(".tgz"):
+                            install_mode = "release-opt"
+                            tgz_path = tdir / "opt.tar.gz"
+                            tgz_path.write_bytes(blob)
+                            with tarfile.open(tgz_path, "r:gz") as tar:
+                                for m in tar.getmembers():
+                                    nm = m.name.replace("\\", "/")
+                                    if nm.startswith("/") or ".." in nm.split("/"):
+                                        continue
+                                    tar.extract(m, path=tdir / "optroot")
+                            w = _install_tree_from_opt(
+                                tdir / "optroot",
+                                lib_dir=lib_dir,
+                                www_dir=www_dir,
+                                entware=entware,
+                                pkg_arch=pkg_arch,
+                                installed=installed,
+                            )
+                            warnings.extend(w)
+                        else:
+                            errors.append(f"unsupported asset type: {name}")
+                            installed = []
+                except Exception as e:
+                    errors.append(f"package {asset.get('name')}: {e}")
+                    installed = []
+                    print(f"[update] package install failed: {e}", flush=True)
+
+        # ── 2) Fallback: source archive (Python/UI; pollers only if ELF OK) ─
+        if not installed:
+            if re.match(r"^[0-9a-f]{7,40}$", target_ref):
+                archive_url = (
+                    f"https://codeload.github.com/{GITHUB_REPO}/tar.gz/{target_ref}"
+                )
+            elif target_ref == GITHUB_BRANCH or not target_ref.startswith("v"):
+                if re.match(r"^v?\d+\.\d+", target_ref):
+                    tag = target_ref if target_ref.startswith("v") else f"v{target_ref}"
+                    archive_url = (
+                        f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{tag}.tar.gz"
+                    )
+                else:
+                    archive_url = (
+                        f"https://github.com/{GITHUB_REPO}/archive/refs/heads/"
+                        f"{target_ref}.tar.gz"
+                    )
+            else:
+                archive_url = (
+                    f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{target_ref}.tar.gz"
+                )
+
+            blob = None
+            urls_try = [archive_url]
+            if "refs/tags/" in archive_url:
+                bare = target_ref.lstrip("v")
+                urls_try.append(
+                    f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{GITHUB_BRANCH}.tar.gz"
+                )
+                urls_try.append(
+                    f"https://github.com/{GITHUB_REPO}/archive/refs/tags/v{bare}.tar.gz"
+                )
+                urls_try.append(
+                    f"https://github.com/{GITHUB_REPO}/archive/refs/tags/{bare}.tar.gz"
+                )
+            for u in urls_try:
+                try:
+                    blob = _http_bytes(u, timeout=120)
+                    used_url = u
+                    break
+                except Exception as e:
+                    errors.append(f"{u}: {e}")
+                    blob = None
+            if not blob:
+                return {
+                    "ok": False,
+                    "error": "download failed: " + "; ".join(errors[:4]),
+                    "tried": urls_try,
+                    "host_pkg_arch": pkg_arch,
+                    "host_machine": host.get("machine"),
+                }
+
+            install_mode = "source-archive"
+            with tempfile.TemporaryDirectory(prefix="poolheat-upd-") as td:
+                tdir = Path(td)
+                tgz_path = tdir / "src.tar.gz"
+                tgz_path.write_bytes(blob)
+                with tarfile.open(tgz_path, "r:gz") as tar:
+                    def _safe_members(members):
+                        for m in members:
+                            name = m.name.replace("\\", "/")
+                            if name.startswith("/") or ".." in name.split("/"):
+                                continue
+                            parts = name.split("/", 1)
+                            if len(parts) < 2:
+                                continue
+                            rel = parts[1]
+                            if rel in (
+                                "ui/serve.py",
+                                "ui/index.html",
+                                "ui/miner_vendors.json",
+                                "ui/chipmap_skus.json",
+                                "VERSION",
+                                "packaging/entware/opt/bin/poolheatd",
+                                "packaging/entware/opt/bin/poolheat-devices-poller",
+                                "packaging/entware/opt/bin/poolheat-miner-poller",
+                                "packaging/entware/opt/etc/init.d/S99poolheat",
+                                "packaging/entware/opt/etc/init.d/S99poolheat-standalone",
+                                "packaging/entware/migrate-layout.sh",
+                            ):
+                                yield m
+                            elif rel.startswith("ui/") and rel.endswith(
+                                (".py", ".html", ".json")
+                            ):
+                                yield m
+                            elif rel.startswith("ui/whatsminer/") and (
+                                rel.endswith(".py")
+                                or rel.endswith(".json")
+                                or rel.endswith(".md")
+                                or rel.endswith("LICENSE")
+                                or rel.endswith(".txt")
+                            ):
+                                yield m
+                            elif rel.startswith("ui/icons/") and (
+                                rel.endswith(
+                                    (
+                                        ".svg",
+                                        ".png",
+                                        ".ico",
+                                        ".webp",
+                                        ".jpg",
+                                        ".jpeg",
+                                    )
+                                )
+                                or rel.endswith("LICENSE")
+                                or rel.endswith("README.md")
+                            ):
+                                yield m
+
+                    tar.extractall(path=tdir, members=_safe_members(tar))
+
+                roots = [p for p in tdir.iterdir() if p.is_dir()]
+                src_root = roots[0] if roots else tdir
+
+                # Build a synthetic opt/ tree from source layout for shared installer
+                synth = tdir / "synth_opt" / "opt"
+                (synth / "lib" / "poolheat").mkdir(parents=True, exist_ok=True)
+                (synth / "share" / "poolheat" / "www").mkdir(parents=True, exist_ok=True)
+                (synth / "bin").mkdir(parents=True, exist_ok=True)
+                (synth / "etc" / "init.d").mkdir(parents=True, exist_ok=True)
+
+                def _cp(src: Path, dst: Path) -> None:
+                    if src.is_file():
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, dst)
+
+                for name in (
+                    "serve.py",
+                    "luci_proxy.py",
+                    "miner_models.py",
+                    "tuya_mobile.py",
+                    "xiaomi_miio.py",
+                    "ewelink_lan.py",
+                    "tuya_lan_ctl.py",
+                    "chipmap_skus.json",
+                    "miner_vendors.json",
+                    "miner_model_profiles.json",
+                ):
+                    _cp(src_root / "ui" / name, synth / "lib" / "poolheat" / name)
+                _cp(
+                    src_root / "packaging/entware/migrate-layout.sh",
+                    synth / "lib" / "poolheat" / "migrate-layout.sh",
+                )
+                _cp(src_root / "VERSION", synth / "lib" / "poolheat" / "VERSION")
+                _cp(src_root / "VERSION", synth / "share" / "poolheat" / "VERSION")
+                _cp(
+                    src_root / "ui" / "index.html",
+                    synth / "share" / "poolheat" / "www" / "index.html",
+                )
+                _cp(
+                    src_root / "ui" / "miner_vendors.json",
+                    synth / "share" / "poolheat" / "www" / "miner_vendors.json",
+                )
+                wm = src_root / "ui" / "whatsminer"
+                if wm.is_dir():
                     shutil.copytree(
-                        wm_src,
-                        wm_dst,
+                        wm,
+                        synth / "lib" / "poolheat" / "whatsminer",
                         ignore=shutil.ignore_patterns(
                             "__pycache__", "*.pyc", ".DS_Store"
                         ),
                     )
-                    installed.append(str(wm_dst))
-                except Exception as e:
-                    print(f"[update] whatsminer package: {e}")
-            # Brand + weather icons → www/icons/ (favicon, app-icon, apple-touch, …)
-            icons_src = src_root / "ui" / "icons"
-            icons_dst = www_dir / "icons"
-            if icons_src.is_dir():
-                try:
-                    icons_dst.mkdir(parents=True, exist_ok=True)
-                    for p in sorted(icons_src.rglob("*")):
-                        if not p.is_file():
-                            continue
-                        if p.name in (".DS_Store",) or "__pycache__" in p.parts:
-                            continue
-                        suf = p.suffix.lower()
-                        if suf not in (
-                            ".svg",
-                            ".png",
-                            ".ico",
-                            ".webp",
-                            ".jpg",
-                            ".jpeg",
-                        ) and p.name not in ("LICENSE", "README.md"):
-                            continue
-                        rel = p.relative_to(icons_src)
-                        mapping.append((p, icons_dst / rel))
-                    installed.append(str(icons_dst))
-                except Exception as e:
-                    print(f"[update] icons: {e}")
-            ver_src = src_root / "VERSION"
-            if ver_src.is_file():
-                new_version = _read_version_file(ver_src)
-                for vt in version_targets:
-                    mapping.append((ver_src, vt))
-
-            if entware:
-                mapping.extend(
-                    [
-                        (
-                            src_root
-                            / "packaging/entware/opt/bin/poolheatd",
-                            Path("/opt/bin/poolheatd"),
-                        ),
-                        (
-                            src_root
-                            / "packaging/entware/opt/bin/poolheat-devices-poller",
-                            Path("/opt/bin/poolheat-devices-poller"),
-                        ),
-                        (
-                            src_root
-                            / "packaging/entware/opt/bin/poolheat-miner-poller",
-                            Path("/opt/bin/poolheat-miner-poller"),
-                        ),
-                        (
-                            src_root
-                            / "packaging/entware/opt/etc/init.d/S99poolheat",
-                            Path("/opt/etc/init.d/S99poolheat"),
-                        ),
-                        (
-                            src_root
-                            / "packaging/entware/opt/etc/init.d/S99poolheat-standalone",
-                            Path("/opt/etc/init.d/S99poolheat-standalone"),
-                        ),
-                    ]
-                )
-
-            for src, dst in mapping:
-                if not src.is_file():
-                    continue
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                data = src.read_bytes()
-                tmp = dst.with_suffix(dst.suffix + ".new")
-                tmp.write_bytes(data)
-                tmp.replace(dst)
-                if dst.name in (
+                icons = src_root / "ui" / "icons"
+                if icons.is_dir():
+                    shutil.copytree(
+                        icons,
+                        synth / "share" / "poolheat" / "www" / "icons",
+                        ignore=shutil.ignore_patterns(".DS_Store", "__pycache__"),
+                    )
+                for name in (
                     "poolheatd",
                     "poolheat-devices-poller",
                     "poolheat-miner-poller",
-                    "S99poolheat",
-                    "S99poolheat-standalone",
-                    "serve.py",
                 ):
-                    try:
-                        os.chmod(dst, 0o755)
-                    except Exception:
-                        pass
-                installed.append(str(dst))
-                if dst.name in (
-                    "poolheat-miner-poller",
-                    "poolheat-devices-poller",
-                    "migrate-layout.sh",
-                ):
-                    try:
-                        if dst.name == "migrate-layout.sh":
-                            os.chmod(dst, 0o755)
-                        print(
-                            f"[update] installed {dst} size={dst.stat().st_size}",
-                            flush=True,
-                        )
-                    except Exception:
-                        pass
+                    _cp(
+                        src_root / "packaging/entware/opt/bin" / name,
+                        synth / "bin" / name,
+                    )
+                for name in ("S99poolheat", "S99poolheat-standalone"):
+                    _cp(
+                        src_root / "packaging/entware/opt/etc/init.d" / name,
+                        synth / "etc" / "init.d" / name,
+                    )
 
-            # On-router layout migration (ui-demo→ui, ports, heat_pools seed)
-            if entware:
-                mig = lib_dir / "migrate-layout.sh"
-                if mig.is_file():
-                    try:
-                        import subprocess
+                w = _install_tree_from_opt(
+                    synth,
+                    lib_dir=lib_dir,
+                    www_dir=www_dir,
+                    entware=entware,
+                    pkg_arch=pkg_arch,
+                    installed=installed,
+                    skip_wrong_arch_binaries=True,
+                )
+                warnings.extend(w)
+                if any("skip poolheat-" in x for x in w):
+                    warnings.append(
+                        "source archive pollers skipped (wrong arch) — "
+                        "use arch-specific .ipk from GitHub release"
+                    )
 
-                        r = subprocess.run(
-                            ["sh", str(mig)],
-                            capture_output=True,
-                            text=True,
-                            timeout=60,
-                        )
-                        if r.stdout:
-                            print(r.stdout, flush=True)
-                        if r.returncode != 0 and r.stderr:
-                            print(f"[update] migrate-layout: {r.stderr}", flush=True)
-                        installed.append("migrate-layout")
-                    except Exception as e:
-                        print(f"[update] migrate-layout: {e}", flush=True)
+        # On-router layout migration
+        if entware and installed:
+            mig = lib_dir / "migrate-layout.sh"
+            if mig.is_file():
+                try:
+                    import subprocess
+
+                    r = subprocess.run(
+                        ["sh", str(mig)],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if r.stdout:
+                        print(r.stdout, flush=True)
+                    if r.returncode != 0 and r.stderr:
+                        print(f"[update] migrate-layout: {r.stderr}", flush=True)
+                    installed.append("migrate-layout")
+                except Exception as e:
+                    print(f"[update] migrate-layout: {e}", flush=True)
 
         if not installed:
             return {
                 "ok": False,
-                "error": "archive extracted but no installable files found",
-                "url": used_url,
+                "error": "install failed: " + ("; ".join(errors[:4]) or "no files"),
+                "url": used_url or None,
+                "host_pkg_arch": pkg_arch,
+                "host_machine": host.get("machine"),
+                "package_asset": package_asset,
+                "warnings": warnings[:8],
             }
+
+        # Verify pollers after install
+        poller_status = {}
+        for name in ("poolheat-devices-poller", "poolheat-miner-poller"):
+            p = Path("/opt/bin") / name if entware else lib_dir / name
+            em = _elf_machine(p) if p.is_file() else None
+            expect = set(host.get("elf_machines") or [])
+            ok = bool(em is not None and (not expect or em in expect))
+            poller_status[name] = {
+                "path": str(p) if p.is_file() else None,
+                "elf_machine": em,
+                "ok": ok,
+            }
+            if entware and p.is_file() and not ok:
+                warnings.append(
+                    f"{name} ELF machine={em} incompatible with {pkg_arch}"
+                )
 
         result = {
             "ok": True,
@@ -20815,14 +21585,19 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
             "url": used_url,
             "restart": entware,
             "source": apply_source,
+            "install_mode": install_mode,
+            "host_machine": host.get("machine"),
+            "host_pkg_arch": pkg_arch,
+            "package_asset": package_asset,
+            "pollers": poller_status,
+            "warnings": warnings[:12],
             "message": (
-                "Обновление установлено (serve, UI, поллеры, daemon, migrate)"
+                f"Обновление установлено ({install_mode or 'package'}, arch={pkg_arch})"
                 + ("; сервис перезапускается…" if entware else "")
             ),
             "applied_at": datetime.now().isoformat(timespec="seconds"),
         }
         _update_state["last_apply"] = result
-        # Action log (disk) — survives restart; written before process kill
         try:
             _log_update_apply(result, source=apply_source)
         except Exception as e:
@@ -32478,6 +33253,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path in ("/api/devices", "/api/devices/list", "/api/devices/config"):
             self._api_devices_get()
             return
+        if path in ("/api/devices/secret", "/api/devices/reveal"):
+            self._api_devices_secret_get()
+            return
         if path in ("/api/devices/poller", "/api/devices/poller/config"):
             self._api_devices_poller_get()
             return
@@ -34356,8 +35134,12 @@ class Handler(SimpleHTTPRequestHandler):
                     did = str(d.get("id") or "")
             if not did:
                 raise ValueError("id or alias required")
+            bright = req.get("brightness")
+            if bright is None:
+                bright = req.get("brightness_pct")
+            mode = req.get("mode") or req.get("work_mode")
             if path.endswith("/on"):
-                on = True
+                on: bool | None = True
             elif path.endswith("/off"):
                 on = False
             else:
@@ -34365,13 +35147,17 @@ class Handler(SimpleHTTPRequestHandler):
                     on = _as_bool(req.get("on"))
                 elif "state" in req:
                     on = _as_bool(req.get("state"))
+                elif bright is not None or mode:
+                    on = None  # light-only set
                 else:
-                    raise ValueError("on (bool) required")
+                    raise ValueError("on (bool) or brightness/mode required")
             out = device_set(
                 did,
-                bool(on),
+                on if on is None else bool(on),
                 source=str(req.get("source") or "manual"),
                 force=_as_bool(req.get("force", False)),
+                brightness=bright,
+                mode=str(mode) if mode else None,
             )
             code = 200 if out.get("ok") else 400
             self._json_response(code, out)
@@ -34396,10 +35182,58 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
+    def _api_devices_secret_get(self) -> None:
+        """
+        GET /api/devices/secret?id=<store_id>&field=ewelink_devicekey
+        Reveal one stored secret for the editor 👁 button (admin session).
+        """
+        try:
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            did = str((qs.get("id") or qs.get("device_id") or [""])[0] or "").strip()
+            field = str((qs.get("field") or ["ewelink_devicekey"])[0] or "").strip()
+            allowed = {
+                "ewelink_devicekey",
+                "ewelink_apikey",
+                "password",
+                "tuya_local_key",
+                "xiaomi_token",
+                "ha_token",
+            }
+            if field not in allowed:
+                raise ValueError(f"field not allowed: {field}")
+            if not did:
+                raise ValueError("id required")
+            snap = _device_cfg_snapshot(did)
+            if not snap:
+                raise ValueError("device not found")
+            val = snap.get(field)
+            if val is None or val == "":
+                self._json_response(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "secret not set",
+                        "field": field,
+                        "id": did,
+                    },
+                )
+                return
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    "id": did,
+                    "field": field,
+                    "value": str(val),
+                },
+            )
+        except Exception as e:
+            self._json_response(400, {"ok": False, "error": str(e)})
+
     def _api_ewelink_devices_login(self) -> None:
         """
         POST {email, password, country_code?, region?, device_id?}
-        → eWeLink cloud device list with devicekey for LAN encrypt.
+        → auto-matched eWeLink device + devicekey (no full inventory in UI).
         Optionally binds key onto poolheat device store id.
         """
         try:
@@ -34435,8 +35269,26 @@ class Handler(SimpleHTTPRequestHandler):
             )
             # strip access token from response
             out.pop("at", None)
-            # cache key on store device if matched
-            match = out.get("match") if isinstance(out.get("match"), dict) else None
+            n_dev = int(out.get("device_count") or len(out.get("devices") or []))
+            # UI only needs the auto-matched device (no full inventory dump)
+            match_raw = out.get("match") if isinstance(out.get("match"), dict) else None
+            match = None
+            if match_raw:
+                match = {
+                    "deviceid": match_raw.get("deviceid"),
+                    "devicekey": match_raw.get("devicekey"),
+                    "name": match_raw.get("name"),
+                    "online": match_raw.get("online"),
+                    "productModel": match_raw.get("productModel"),
+                    "ip": match_raw.get("ip"),
+                }
+            out = {
+                "ok": True,
+                "region": out.get("region"),
+                "apikey": out.get("apikey"),
+                "device_count": n_dev,
+                "match": match,
+            }
             if store_id and match and match.get("devicekey"):
                 key = str(match.get("devicekey"))
                 did_cloud = str(match.get("deviceid") or "")
@@ -34453,29 +35305,29 @@ class Handler(SimpleHTTPRequestHandler):
                         d["email"] = email
                     if password:
                         d["password"] = password
-                    if match.get("productModel") and not d.get("xiaomi_model"):
-                        pass
                     d["ewelink_region"] = out.get("region") or d.get("ewelink_region")
                     d["ewelink_country"] = cc
                     # optional: adopt cloud-reported LAN IP when form empty
                     if match.get("ip") and not str(d.get("ip") or "").strip():
                         d["ip"] = str(match.get("ip"))
 
-                # mutate config (not just runtime)
                 with _devices_cfg_lock:
                     devices = list(_devices_cfg.get("devices") or [])
                     for i, d in enumerate(devices):
                         if str(d.get("id") or "") == store_id:
                             nd = dict(d)
                             _mut(nd)
-                            devices[i] = _strip_device_runtime(_normalize_device(nd) or nd)
+                            devices[i] = _strip_device_runtime(
+                                _normalize_device(nd) or nd
+                            )
                             _devices_cfg["devices"] = devices
-                            _save_devices_cfg()
                             break
+                try:
+                    _save_devices_cfg()
+                except Exception as se:
+                    print(f"[ewelink] save devicekey: {se}", flush=True)
                 out["bound_device_id"] = store_id
                 out["bound_devicekey"] = True
-            # never return full keys for all devices in UI by default? User needs them.
-            # Return devicekey so UI can fill the field.
             self._json_response(200, out)
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
@@ -35525,6 +36377,23 @@ def main() -> None:
         tp.start()
     else:
         print("policy:            off (edge_policy role disabled)")
+    # Multi-host fleet live (Goldshell / iPollo / Antminer / …).
+    # Go miner-poller only keeps a single live_cache; without this loop
+    # fleet_live.json ages out and the UI shows every miner offline.
+    if role_enabled("edge_miner_poller"):
+
+        def _fleet_live_loop() -> None:
+            print("[fleet-live] loop start", flush=True)
+            while True:
+                try:
+                    _poll_managed_fleet_live()
+                except Exception as e:
+                    print(f"[fleet-live] {e}", flush=True)
+                time.sleep(15.0)
+
+        threading.Thread(
+            target=_fleet_live_loop, name="fleet-live", daemon=True
+        ).start()
     # Software auto-update (GitHub) — independent of policy role
     try:
         _load_update_cfg()

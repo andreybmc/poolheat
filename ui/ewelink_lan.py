@@ -963,7 +963,13 @@ def login_and_find_device(
     region: str | None = None,
 ) -> dict[str, Any]:
     """
-    Cloud login + device list. Optionally pick one device by id or IP.
+    Cloud login + auto-pick one device for LAN encrypt.
+
+    Match order:
+      1) exact deviceid
+      2) exact LAN IP (when cloud reports it)
+      3) single device in account
+      4) single device that has a devicekey
     """
     auth = cloud_login(
         email, password, country_code=country_code, region=region
@@ -974,19 +980,26 @@ def login_and_find_device(
     tip = str(ip or "").strip()
     if did:
         for d in devices:
-            if d.get("deviceid") == did:
+            if str(d.get("deviceid") or "") == did:
                 match = d
                 break
     if match is None and tip:
         for d in devices:
-            if d.get("ip") == tip:
+            if str(d.get("ip") or "").strip() == tip:
                 match = d
                 break
+    if match is None and len(devices) == 1:
+        match = devices[0]
+    if match is None:
+        with_key = [d for d in devices if d.get("devicekey")]
+        if len(with_key) == 1:
+            match = with_key[0]
     return {
         "ok": True,
         "region": auth["region"],
         "apikey": auth.get("apikey"),
         "devices": devices,
+        "device_count": len(devices),
         "match": match,
         "at": auth["at"],  # caller may discard
     }

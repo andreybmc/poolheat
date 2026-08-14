@@ -37,6 +37,9 @@ fi
 if [ -f "$ROOT/ui/ewelink_lan.py" ]; then
   cp -f "$ROOT/ui/ewelink_lan.py" /opt/lib/poolheat/ewelink_lan.py
 fi
+if [ -f "$ROOT/ui/tuya_lan_ctl.py" ]; then
+  cp -f "$ROOT/ui/tuya_lan_ctl.py" /opt/lib/poolheat/tuya_lan_ctl.py
+fi
 # whatsminer-lib (vendored package)
 if [ -d "$ROOT/ui/whatsminer" ]; then
   rm -rf /opt/lib/poolheat/whatsminer
@@ -65,14 +68,92 @@ if [ -f "$ROOT/VERSION" ]; then
 fi
 chmod 755 /opt/lib/poolheat/serve.py
 
-# launcher + pollers
+# launcher + pollers (architecture-aware)
 cp -f "$ROOT/packaging/entware/opt/bin/poolheatd" /opt/bin/poolheatd
 chmod 755 /opt/bin/poolheatd
-for bin in poolheat-miner-poller poolheat-devices-poller; do
-  if [ -f "$ROOT/packaging/entware/opt/bin/$bin" ]; then
-    cp -f "$ROOT/packaging/entware/opt/bin/$bin" "/opt/bin/$bin"
-    chmod 755 "/opt/bin/$bin"
+
+# Detect Entware / CPU arch so we never install Peak aarch64 pollers on Giant mips.
+_detect_pkg_arch() {
+  # opkg.conf first
+  if [ -f /opt/etc/opkg.conf ]; then
+    if grep -qE 'arch[[:space:]]+mips' /opt/etc/opkg.conf 2>/dev/null; then
+      echo mipsel
+      return
+    fi
+    if grep -qE 'arch[[:space:]]+aarch64' /opt/etc/opkg.conf 2>/dev/null; then
+      echo aarch64
+      return
+    fi
   fi
+  m=$(uname -m 2>/dev/null || echo "")
+  case "$m" in
+    aarch64|arm64) echo aarch64 ;;
+    mips|mipsel|mips64|mips64el) echo mipsel ;;
+    *) echo unknown ;;
+  esac
+}
+
+_elf_machine() {
+  # print e_machine as decimal, or empty
+  python3 - "$1" <<'PY' 2>/dev/null || true
+import struct,sys
+p=sys.argv[1]
+try:
+  b=open(p,"rb").read(20)
+  if b[:4]!=b"\x7fELF":
+    raise SystemExit
+  print(struct.unpack_from("<H",b,18)[0])
+except Exception:
+  pass
+PY
+}
+
+PKG_ARCH=$(_detect_pkg_arch)
+echo "host pkg arch: $PKG_ARCH (uname=$(uname -m 2>/dev/null))"
+case "$PKG_ARCH" in
+  aarch64)
+    DEV_SRC="$ROOT/dist/bin/poolheat-devices-poller-linux-arm64"
+    MIN_SRC="$ROOT/dist/bin/poolheat-miner-poller-linux-arm64"
+    ELF_WANT=183
+    ;;
+  mipsel)
+    DEV_SRC="$ROOT/dist/bin/poolheat-devices-poller-linux-mipsle"
+    MIN_SRC="$ROOT/dist/bin/poolheat-miner-poller-linux-mipsle"
+    ELF_WANT=8
+    ;;
+  *)
+    DEV_SRC=""
+    MIN_SRC=""
+    ELF_WANT=""
+    ;;
+esac
+# fallback to packaging/opt/bin only if ELF matches
+if [ ! -f "$DEV_SRC" ]; then
+  DEV_SRC="$ROOT/packaging/entware/opt/bin/poolheat-devices-poller"
+fi
+if [ ! -f "$MIN_SRC" ]; then
+  MIN_SRC="$ROOT/packaging/entware/opt/bin/poolheat-miner-poller"
+fi
+
+for pair in "devices:$DEV_SRC" "miner:$MIN_SRC"; do
+  kind=${pair%%:*}
+  src=${pair#*:}
+  dst="/opt/bin/poolheat-${kind}-poller"
+  if [ ! -f "$src" ]; then
+    echo "WARN: no $kind poller binary for $PKG_ARCH (skip)"
+    continue
+  fi
+  if [ -n "$ELF_WANT" ]; then
+    em=$(_elf_machine "$src")
+    if [ -n "$em" ] && [ "$em" != "$ELF_WANT" ]; then
+      echo "ERROR: refuse $src ELF machine=$em (want $ELF_WANT for $PKG_ARCH)"
+      echo "       build: make -C edge build-mipsel  OR  build-arm64"
+      continue
+    fi
+  fi
+  cp -f "$src" "$dst"
+  chmod 755 "$dst"
+  echo "installed $dst from $src"
 done
 
 # init

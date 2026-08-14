@@ -5737,10 +5737,8 @@
         </div>
       </div>
       <div class="header-meta">
-        <span class="pill warn tip" id="pill-dry" data-tip-key="dry_run"><span class="dot"></span> dry_run</span>
         <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
         <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
-        <span class="pill ok tip" id="pill-mode" data-tip-key="zone"><span class="dot"></span> —</span>
         <label class="lang-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-left:2px" title="Language / Lang">
           <span style="font-size:0.72rem;color:var(--dim)" data-i18n="lang.label_short">Lang</span>
           <select id="ui-lang-select" class="lang-select" aria-label="Language">
@@ -8495,7 +8493,26 @@
                     </label>
                     <label class="field"><span data-i18n="dev.tuya_dps">Switch DPS</span>
                       <input type="number" id="dev-tuya-dps-vis" value="1" min="1" max="255" />
-                      <span class="desc" data-i18n="dev.tuya_dps_hint">Relay datapoint number (usually 1). Change only for multi-gang / odd firmwares.</span>
+                      <span class="desc" data-i18n="dev.tuya_dps_hint">Relay datapoint number (usually 1). Lights/dimmers often use 20.</span>
+                    </label>
+                  </div>
+                  <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:10px">
+                    <label class="field"><span data-i18n="dev.device_kind">Device kind</span>
+                      <select id="dev-device-kind">
+                        <option value="">auto</option>
+                        <option value="switch">switch / plug</option>
+                        <option value="dimmer">dimmer / light</option>
+                        <option value="light">light</option>
+                      </select>
+                      <span class="desc" data-i18n="dev.device_kind_hint">auto: switch DPS 20 → dimmer UI (brightness + mode).</span>
+                    </label>
+                    <label class="field"><span data-i18n="dev.tuya_bright_dps">Brightness DPS</span>
+                      <input type="number" id="dev-tuya-bright-dps" value="0" min="0" max="255" placeholder="22" />
+                      <span class="desc" data-i18n="dev.tuya_bright_dps_hint">0 = default 22 for lights (0–1000 raw).</span>
+                    </label>
+                    <label class="field"><span data-i18n="dev.tuya_mode_dps">Mode DPS</span>
+                      <input type="number" id="dev-tuya-mode-dps" value="0" min="0" max="255" placeholder="21" />
+                      <span class="desc" data-i18n="dev.tuya_mode_dps_hint">0 = default 21 · white/colour/scene/music.</span>
                     </label>
                   </div>
                 </div>
@@ -8547,7 +8564,8 @@
                   </label>
                   <label class="field"><span data-i18n="dev.ewelink_devicekey">devicekey (LAN)</span>
                     <span class="pw-wrap">
-                      <input type="password" id="dev-ewelink-devicekey" placeholder="uuid from cloud" autocomplete="off" />
+                      <input type="password" id="dev-ewelink-devicekey" placeholder="uuid from cloud" autocomplete="off"
+                             data-reveal-field="ewelink_devicekey" spellcheck="false" />
                       <button type="button" class="pw-eye" data-pw-for="dev-ewelink-devicekey" title="Show" aria-label="Show">👁</button>
                     </span>
                   </label>
@@ -8572,11 +8590,10 @@
                     <span>&nbsp;</span>
                     <button type="button" class="btn ghost" id="dev-ewelink-cloud-btn" style="width:100%"
                             data-i18n="dev.ewelink_cloud">
-                      Cloud → devicekey
+                      Get devicekey
                     </button>
                   </label>
                 </div>
-                <select id="dev-ewelink-pick" style="display:none;width:100%;margin-top:8px" size="4"></select>
                 <p id="dev-ewelink-status" style="font-size:0.75rem;color:var(--dim);margin:8px 0 0"
                    data-i18n="filt.ewelink_note">
                   LAN encrypt needs devicekey (from eWeLink cloud). DIY mode works without key.
@@ -10247,7 +10264,16 @@
         "dev.tuya_version": "LAN protocol version",
         "dev.tuya_dps": "Switch DPS",
         "dev.tuya_version_hint": "Tuya TCP:6668 encryption. Almost always 3.4; 3.3 only on Err 914.",
-        "dev.tuya_dps_hint": "Relay datapoint number (usually 1). Change only for multi-gang / odd firmwares.",
+        "dev.tuya_dps_hint": "Relay datapoint number (usually 1). Lights/dimmers often use 20.",
+        "dev.device_kind": "Device kind",
+        "dev.device_kind_hint": "auto: switch DPS 20 → dimmer UI (brightness + mode).",
+        "dev.tuya_bright_dps": "Brightness DPS",
+        "dev.tuya_bright_dps_hint": "0 = default 22 for lights (0–1000 raw).",
+        "dev.tuya_mode_dps": "Mode DPS",
+        "dev.tuya_mode_dps_hint": "0 = default 21 · white/colour/scene/music.",
+        "dev.brightness": "Bright",
+        "dev.light_mode": "Mode",
+        "dev.light_set_ok": "Light",
         "dev.tuya_lan_adv": "Advanced settings",
         "dev.tuya_status_ready": "local_key: saved · LAN ready",
         "dev.tuya_status_need": "local_key: not set — press Get keys",
@@ -10850,9 +10876,12 @@
         "dev.ewelink_email": "eWeLink email",
         "dev.ewelink_password": "eWeLink password",
         "dev.ewelink_country": "Country",
-        "dev.ewelink_cloud": "Cloud → devicekey",
+        "dev.ewelink_cloud": "Get devicekey",
         "dev.ewelink_ready": "devicekey: saved · LAN encrypt ready",
-        "dev.ewelink_need_key": "devicekey optional for DIY · Cloud → key for LAN encrypt / power meters",
+        "dev.ewelink_need_key": "devicekey optional for DIY · Get devicekey for LAN encrypt / power meters",
+        "dev.ewelink_fetching": "Getting devicekey…",
+        "dev.ewelink_got_key": "devicekey loaded",
+        "dev.ewelink_no_match": "No matching device in cloud (check deviceid / IP)",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
         "filt.method": "Method",
@@ -11198,7 +11227,16 @@
         "dev.tuya_version": "Версия LAN-протокола",
         "dev.tuya_dps": "Switch DPS",
         "dev.tuya_version_hint": "Шифрование Tuya TCP:6668. Почти всегда 3.4; 3.3 только при Err 914.",
-        "dev.tuya_dps_hint": "Номер datapoint реле (обычно 1). Меняйте только для многокнопочных / странных прошивок.",
+        "dev.tuya_dps_hint": "Номер datapoint реле (обычно 1). У диммеров/ламп часто 20.",
+        "dev.device_kind": "Тип устройства",
+        "dev.device_kind_hint": "auto: switch DPS 20 → UI диммера (яркость + режим).",
+        "dev.tuya_bright_dps": "DPS яркости",
+        "dev.tuya_bright_dps_hint": "0 = по умолчанию 22 для ламп (raw 0–1000).",
+        "dev.tuya_mode_dps": "DPS режима",
+        "dev.tuya_mode_dps_hint": "0 = по умолчанию 21 · white/colour/scene/music.",
+        "dev.brightness": "Яркость",
+        "dev.light_mode": "Режим",
+        "dev.light_set_ok": "Свет",
         "dev.tuya_lan_adv": "Расширенные настройки",
         "dev.tuya_status_ready": "local_key: сохранён · LAN ready",
         "dev.tuya_status_need": "local_key: не задан — нажмите Get keys",
@@ -11802,9 +11840,12 @@
         "dev.ewelink_email": "eWeLink email",
         "dev.ewelink_password": "eWeLink пароль",
         "dev.ewelink_country": "Страна",
-        "dev.ewelink_cloud": "Облако → devicekey",
+        "dev.ewelink_cloud": "Получить devicekey",
         "dev.ewelink_ready": "devicekey: сохранён · LAN encrypt готов",
-        "dev.ewelink_need_key": "devicekey не обязателен для DIY · Облако → ключ для LAN encrypt / мощности",
+        "dev.ewelink_need_key": "devicekey не обязателен для DIY · «Получить devicekey» для LAN encrypt / мощности",
+        "dev.ewelink_fetching": "Получаю devicekey…",
+        "dev.ewelink_got_key": "devicekey получен",
+        "dev.ewelink_no_match": "Устройство не найдено в облаке (проверьте deviceid / IP)",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
         "filt.method": "Метод",
@@ -19612,7 +19653,8 @@
       if (needleEl) needleEl.style.left = pct + "%";
 
       document.getElementById("banner-dry").style.display = dry ? "flex" : "none";
-      document.getElementById("pill-dry").style.display = dry ? "inline-flex" : "none";
+      const pillDry = document.getElementById("pill-dry");
+      if (pillDry) pillDry.style.display = dry ? "inline-flex" : "none";
       updateWouldApplyLabels(dry);
 
       // WARMUP only when mining is active (not Suspend)
@@ -19869,20 +19911,7 @@
         setText("[data-bind=pw]", Math.round(r.power));
       }
 
-      const modePill = document.getElementById("pill-mode");
-      if (modePill) {
-        const cls = zone === "critical" ? "danger"
-          : zone === "z3" ? "warn"
-          : zone === "z0" ? "ok"
-          : zone === "z1" ? "ok"
-          : "accent";
-        modePill.className = "pill " + cls + " tip";
-        modePill.setAttribute("data-tip-key", "zone");
-        // full title: "Z3 · No heat" (not only Z3)
-        modePill.innerHTML =
-          '<span class="dot"></span> ' +
-          String(zoneName || zone || "—").replace(/</g, "&lt;");
-      }
+      // Header zone pill removed (zone stays on T_ctrl card).
 
       // server policy status line + override banner sync
       const psl = document.getElementById("policy-status-line");
@@ -20215,20 +20244,55 @@
     syncZonesFromGlobal();
     onLiveToggle();
 
-    // Password fields: 👁 show / hide
+    // Password fields: 👁 show / hide (+ optional reveal of saved secret)
     function bindPasswordEyes(root) {
       (root || document).querySelectorAll(".pw-eye[data-pw-for]").forEach((btn) => {
         if (btn.dataset.bound === "1") return;
         btn.dataset.bound = "1";
-        btn.addEventListener("click", (ev) => {
+        btn.addEventListener("click", async (ev) => {
           ev.preventDefault();
           const id = btn.getAttribute("data-pw-for");
           const inp = id ? document.getElementById(id) : null;
           if (!inp) return;
           const show = inp.type === "password";
+          // When revealing a saved (redacted) secret — fetch once from API
+          if (
+            show &&
+            !String(inp.value || "").trim() &&
+            inp.dataset.revealField
+          ) {
+            const did = (
+              document.getElementById("device-id")?.value || ""
+            ).trim();
+            const field = inp.dataset.revealField;
+            if (did && field) {
+              try {
+                btn.disabled = true;
+                const res = await fetch(
+                  "/api/devices/secret?id=" +
+                    encodeURIComponent(did) +
+                    "&field=" +
+                    encodeURIComponent(field),
+                  { cache: "no-store" }
+                );
+                const j = await res.json();
+                if (res.ok && j.ok && j.value) {
+                  inp.value = String(j.value);
+                } else if (j && j.error) {
+                  if (typeof toastWarn === "function")
+                    toastWarn(String(j.error));
+                }
+              } catch (e) {
+                if (typeof toastError === "function")
+                  toastError(e.message || String(e));
+              } finally {
+                btn.disabled = false;
+              }
+            }
+          }
           inp.type = show ? "text" : "password";
           btn.setAttribute("aria-pressed", show ? "true" : "false");
-          btn.title = show ? "Hide password" : "Show password";
+          btn.title = show ? "Hide" : "Show";
           btn.setAttribute("aria-label", btn.title);
           btn.textContent = show ? "🙈" : "👁";
         });
@@ -33893,6 +33957,71 @@
       );
     }
 
+    function deviceIsLight(d) {
+      if (!d) return false;
+      const k = String(d.device_kind || "").toLowerCase();
+      if (k === "light" || k === "dimmer" || k === "lamp" || k === "bulb") return true;
+      if (d.backend === "tuya" && Number(d.tuya_switch_dps) === 20) return true;
+      if (d.last_brightness != null || d.last_mode) return true;
+      return false;
+    }
+
+    function formatDeviceLightHtml(d) {
+      if (!deviceIsLight(d)) return "";
+      const idEsc = String(d.id || "").replace(/"/g, "");
+      const br =
+        d.last_brightness != null && Number.isFinite(Number(d.last_brightness))
+          ? Math.max(0, Math.min(100, Math.round(Number(d.last_brightness))))
+          : null;
+      const mode = String(d.last_mode || "").trim() || "white";
+      const modes = ["white", "colour", "scene", "music"];
+      const modeOpts = modes
+        .map(
+          (m) =>
+            '<option value="' +
+            m +
+            '"' +
+            (m === mode ? " selected" : "") +
+            ">" +
+            m +
+            "</option>"
+        )
+        .join("");
+      const brLabel = br != null ? br + "%" : "—";
+      return (
+        '<div class="dev-light-ctrl" data-device-light="' +
+        idEsc +
+        '" style="margin-top:8px;display:flex;flex-direction:column;gap:6px;max-width:280px">' +
+        '<div style="display:flex;align-items:center;gap:8px;font-size:0.78rem">' +
+        '<span style="color:var(--dim);min-width:3.2rem">💡 ' +
+        t("dev.brightness", "Bright") +
+        "</span>" +
+        '<input type="range" min="1" max="100" step="1" class="dev-bright-range" data-device-bright="' +
+        idEsc +
+        '" value="' +
+        (br != null ? br : 40) +
+        '" style="flex:1;min-width:0" ' +
+        (d.enabled === false ? "disabled" : "") +
+        "/>" +
+        '<span class="dev-bright-val" data-device-bright-val="' +
+        idEsc +
+        '" style="min-width:2.4rem;text-align:right;font-weight:600">' +
+        brLabel +
+        "</span></div>" +
+        '<div style="display:flex;align-items:center;gap:8px;font-size:0.78rem">' +
+        '<span style="color:var(--dim);min-width:3.2rem">' +
+        t("dev.light_mode", "Mode") +
+        "</span>" +
+        '<select class="dev-light-mode" data-device-mode="' +
+        idEsc +
+        '" style="flex:1;font-size:0.78rem;padding:4px 6px" ' +
+        (d.enabled === false ? "disabled" : "") +
+        ">" +
+        modeOpts +
+        "</select></div></div>"
+      );
+    }
+
     function renderDevicesList() {
       const box = document.getElementById("devices-list");
       const st = document.getElementById("devices-status");
@@ -33964,6 +34093,7 @@
               "</div>"
             : "";
           const powerHtml = formatDevicePowerHtml(d.last_power || d.power);
+          const lightHtml = formatDeviceLightHtml(d);
           const idEsc = String(d.id).replace(/"/g, "");
           const isOn = on === true;
           const pending = deviceTogglePending.has(String(d.id));
@@ -34011,7 +34141,7 @@
             '<span class="drag-handle" title="' +
             t("btn.drag_reorder", "Drag to reorder") +
             '" aria-label="Drag"></span>' +
-            "<div style='min-width:0'>" +
+            "<div style='min-width:0;flex:1'>" +
             '<div style="font-weight:650;font-size:0.92rem">' +
             '<span style="font-size:1.1rem;margin-right:5px">' +
             icon +
@@ -34021,6 +34151,7 @@
             alias +
             "</span></div>" +
             powerHtml +
+            lightHtml +
             '<div style="font-size:0.7rem;color:var(--dim);margin-top:2px">' +
             be +
             tagTxt +
@@ -34058,13 +34189,34 @@
           if (d) openDeviceEditor(d);
         });
       });
+      // light brightness / mode controls
+      box.querySelectorAll("[data-device-bright]").forEach((rng) => {
+        const id = rng.getAttribute("data-device-bright");
+        const valEl = box.querySelector(
+          '[data-device-bright-val="' + id + '"]'
+        );
+        rng.addEventListener("input", () => {
+          if (valEl) valEl.textContent = rng.value + "%";
+        });
+        rng.addEventListener("change", () => {
+          void setDeviceLight(id, { brightness: Number(rng.value) });
+        });
+        rng.addEventListener("click", (e) => e.stopPropagation());
+      });
+      box.querySelectorAll("[data-device-mode]").forEach((sel) => {
+        sel.addEventListener("change", () => {
+          const id = sel.getAttribute("data-device-mode");
+          void setDeviceLight(id, { mode: sel.value });
+        });
+        sel.addEventListener("click", (e) => e.stopPropagation());
+      });
       // click on summary (except switch/drag/actions) expands editor
       box.querySelectorAll(".device-item-summary").forEach((row) => {
         row.addEventListener("click", (e) => {
           if (
             e.target.closest &&
             e.target.closest(
-              ".dev-actions, .drag-handle, .dev-switch, button, input, label"
+              ".dev-actions, .drag-handle, .dev-switch, .dev-light-ctrl, button, input, select, label"
             )
           ) {
             return;
@@ -34117,6 +34269,57 @@
         const d = (devicesCache || []).find((x) => x && x.id === sid);
         const en = !d || d.enabled !== false;
         inp.disabled = !en || !!pending || deviceTogglePending.has(sid);
+      }
+    }
+
+    /** Set light brightness (0–100) and/or mode via /api/devices/set */
+    async function setDeviceLight(id, opts) {
+      opts = opts || {};
+      const sid = String(id || "");
+      if (!sid) return;
+      const body = { id: sid, source: "manual" };
+      if (opts.brightness != null && Number.isFinite(Number(opts.brightness))) {
+        body.brightness = Math.max(0, Math.min(100, Math.round(Number(opts.brightness))));
+      }
+      if (opts.mode) body.mode = String(opts.mode);
+      if (opts.on != null) body.on = !!opts.on;
+      try {
+        const res = await fetch("/api/devices/set", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const j = await res.json();
+        if (!res.ok || j.ok === false) throw new Error(j.error || "HTTP " + res.status);
+        // patch cache
+        const d = (devicesCache || []).find((x) => x && x.id === sid);
+        if (d) {
+          if (j.on != null) d.last_on = !!j.on;
+          if (j.brightness != null) d.last_brightness = j.brightness;
+          if (j.mode) d.last_mode = j.mode;
+          d.online = true;
+          d.last_error = null;
+        }
+        if (typeof toastSuccess === "function") {
+          const bits = [];
+          if (body.brightness != null) bits.push(body.brightness + "%");
+          if (body.mode) bits.push(body.mode);
+          toastSuccess(
+            t("dev.light_set_ok", "Light") +
+              (bits.length ? ": " + bits.join(" · ") : " OK")
+          );
+        }
+        // soft refresh UI values
+        if (body.brightness != null) {
+          const valEl = document.querySelector(
+            '[data-device-bright-val="' + sid + '"]'
+          );
+          if (valEl) valEl.textContent = body.brightness + "%";
+        }
+        if (j.on != null) applyDeviceSwitchUi(sid, !!j.on, { pending: false });
+      } catch (e) {
+        if (typeof toastError === "function") toastError(e.message || String(e));
+        if (typeof loadDevices === "function") void loadDevices();
       }
     }
 
@@ -34226,6 +34429,7 @@
       const ewKey = document.getElementById("dev-ewelink-devicekey");
       if (ewKey) {
         ewKey.value = "";
+        ewKey.type = "password";
         ewKey.placeholder = d.ewelink_devicekey_set
           ? "•••• (saved)"
           : "uuid from cloud";
@@ -34242,19 +34446,43 @@
       }
       const ewCc = document.getElementById("dev-ewelink-country");
       if (ewCc) ewCc.value = d.ewelink_country || "+7";
-      const ewPick = document.getElementById("dev-ewelink-pick");
-      if (ewPick) {
-        ewPick.style.display = "none";
-        ewPick.innerHTML = "";
-      }
       const ewStat = document.getElementById("dev-ewelink-status");
       if (ewStat && d.backend === "ewelink") {
         ewStat.textContent = d.ewelink_devicekey_set
           ? t("dev.ewelink_ready", "devicekey: saved · LAN encrypt ready")
           : t(
               "dev.ewelink_need_key",
-              "devicekey optional for DIY · Cloud → key for LAN encrypt / power meters"
+              "devicekey optional for DIY · Get devicekey for LAN encrypt / power meters"
             );
+      }
+      // After reload, list API redacts secrets — fetch devicekey so field shows it
+      if (
+        d.backend === "ewelink" &&
+        d.ewelink_devicekey_set &&
+        d.id &&
+        ewKey
+      ) {
+        void (async () => {
+          try {
+            const res = await fetch(
+              "/api/devices/secret?id=" +
+                encodeURIComponent(d.id) +
+                "&field=ewelink_devicekey",
+              { cache: "no-store" }
+            );
+            const j = await res.json();
+            if (res.ok && j && j.ok && j.value) {
+              ewKey.value = String(j.value);
+              ewKey.type = "password";
+              ewKey.placeholder = "•••• (saved)";
+              if (ewStat)
+                ewStat.textContent = t(
+                  "dev.ewelink_ready",
+                  "devicekey: saved · LAN encrypt ready"
+                );
+            }
+          } catch (_) { /* keep placeholder */ }
+        })();
       }
       document.getElementById("dev-wh-on").value = d.webhook_on_url || "";
       document.getElementById("dev-wh-off").value = d.webhook_off_url || "";
@@ -34338,6 +34566,24 @@
       setV("dev-tuya-dps", dps);
       setV("dev-tuya-version-sel", ver);
       setV("dev-tuya-dps-vis", dps);
+      // light/dimmer kind + DPS (LAN advanced)
+      const kindEl = document.getElementById("dev-device-kind");
+      if (kindEl) {
+        let k = String(d.device_kind || "").toLowerCase();
+        if (k === "lamp" || k === "bulb" || k === "led") k = "light";
+        if (!["", "switch", "dimmer", "light"].includes(k)) k = "";
+        kindEl.value = k;
+      }
+      const bDps =
+        d.tuya_bright_dps != null && d.tuya_bright_dps !== ""
+          ? String(d.tuya_bright_dps)
+          : "0";
+      const mDps =
+        d.tuya_mode_dps != null && d.tuya_mode_dps !== ""
+          ? String(d.tuya_mode_dps)
+          : "0";
+      setV("dev-tuya-bright-dps", bDps);
+      setV("dev-tuya-mode-dps", mDps);
       const advPanel = document.getElementById("dev-tuya-lan-adv-panel");
       const advBtn = document.getElementById("btn-tuya-lan-adv");
       if (advPanel) {
@@ -34517,6 +34763,19 @@
             document.getElementById("dev-tuya-dps-vis")?.value ||
               document.getElementById("dev-tuya-dps")?.value
           ) || 1,
+        device_kind: (document.getElementById("dev-device-kind")?.value || "")
+          .trim()
+          .toLowerCase(),
+        tuya_bright_dps: (() => {
+          const n = Number(document.getElementById("dev-tuya-bright-dps")?.value);
+          if (!Number.isFinite(n) || n <= 0) return 0;
+          return Math.max(0, Math.min(255, Math.round(n)));
+        })(),
+        tuya_mode_dps: (() => {
+          const n = Number(document.getElementById("dev-tuya-mode-dps")?.value);
+          if (!Number.isFinite(n) || n <= 0) return 0;
+          return Math.max(0, Math.min(255, Math.round(n)));
+        })(),
         xiaomi_token: (document.getElementById("dev-xiaomi-token")?.value || "").trim(),
         xiaomi_model: (document.getElementById("dev-xiaomi-model")?.value || "").trim(),
         auto_on_mining: !!document.getElementById("dev-auto-mining")?.checked,
@@ -34979,6 +35238,7 @@
 
     async function ewelinkFetchKeysFromEditor() {
       const st = document.getElementById("dev-ewelink-status");
+      const btn = document.getElementById("dev-ewelink-cloud-btn");
       const email = (document.getElementById("dev-ewelink-email")?.value || "").trim();
       let password = document.getElementById("dev-ewelink-password")?.value || "";
       const country = (document.getElementById("dev-ewelink-country")?.value || "+7").trim();
@@ -34989,11 +35249,20 @@
         toastWarn("eWeLink: email required");
         return;
       }
-      if (st) st.textContent = "logging in…";
+      if (st)
+        st.textContent = t("dev.ewelink_fetching", "Getting devicekey…");
+      if (btn) btn.disabled = true;
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const to = setTimeout(() => {
+        try {
+          ctrl && ctrl.abort();
+        } catch (_) { /* ignore */ }
+      }, 25000);
       try {
         const res = await fetch("/api/devices/ewelink/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: ctrl ? ctrl.signal : undefined,
           body: JSON.stringify({
             email,
             password: password || undefined,
@@ -35003,80 +35272,62 @@
             ewelink_deviceid: wantDid || undefined,
             target_deviceid: wantDid || undefined,
             ip: wantIp || undefined,
+            // UI does not need the full account inventory
+            slim: true,
           }),
         });
+        clearTimeout(to);
         const body = await res.json();
-        if (!res.ok || body.ok === false) throw new Error(body.error || "HTTP " + res.status);
-        const list = body.devices || [];
-        if (st) {
+        if (!res.ok || body.ok === false)
+          throw new Error(body.error || "HTTP " + res.status);
+
+        // Server auto-picks device by deviceid / IP / single-device account
+        const auto = body.match || null;
+        if (!auto || !auto.devicekey) {
+          const n = body.device_count != null ? body.device_count : "?";
+          throw new Error(
+            t(
+              "dev.ewelink_no_match",
+              "No matching device in cloud (check deviceid / IP)"
+            ) +
+              (n !== "?" ? " · cloud devices: " + n : "")
+          );
+        }
+        const idEl = document.getElementById("dev-device-id");
+        const keyEl = document.getElementById("dev-ewelink-devicekey");
+        const ipEl = document.getElementById("dev-ewelink-ip");
+        const modeEl = document.getElementById("dev-ewelink-mode");
+        if (idEl && auto.deviceid) idEl.value = auto.deviceid;
+        if (keyEl && auto.devicekey) {
+          keyEl.value = auto.devicekey;
+          keyEl.type = "password"; // keep masked; 👁 to reveal
+          keyEl.placeholder = "•••• (saved)";
+        }
+        if (ipEl && auto.ip && !ipEl.value.trim()) ipEl.value = auto.ip;
+        if (modeEl) modeEl.value = "auto";
+        const label =
+          (auto.name || auto.deviceid || "") +
+          (auto.productModel ? " · " + auto.productModel : "");
+        if (st)
           st.textContent =
-            "OK · " +
-            list.length +
-            " devices" +
-            (body.region ? " · " + body.region : "") +
-            (body.bound_devicekey ? " · key saved" : "");
-        }
-        const pick = document.getElementById("dev-ewelink-pick");
-        if (pick) {
-          pick.innerHTML = "";
-          list.forEach((d) => {
-            const o = document.createElement("option");
-            o.value = d.deviceid || "";
-            o.textContent =
-              (d.name || d.deviceid || "?") +
-              (d.devicekey ? " · key✓" : " · no key") +
-              (d.productModel ? " · " + d.productModel : "") +
-              (d.ip ? " · " + d.ip : "") +
-              (d.online ? " · online" : "");
-            o.dataset.key = d.devicekey || "";
-            o.dataset.ip = d.ip || "";
-            pick.appendChild(o);
-          });
-          pick.style.display = list.length ? "block" : "none";
-          pick.onchange = () => {
-            const opt = pick.selectedOptions[0];
-            if (!opt) return;
-            const idEl = document.getElementById("dev-device-id");
-            const keyEl = document.getElementById("dev-ewelink-devicekey");
-            const ipEl = document.getElementById("dev-ewelink-ip");
-            if (idEl) idEl.value = opt.value;
-            if (keyEl && opt.dataset.key) keyEl.value = opt.dataset.key;
-            if (ipEl && opt.dataset.ip && !ipEl.value.trim()) ipEl.value = opt.dataset.ip;
-            const modeEl = document.getElementById("dev-ewelink-mode");
-            if (modeEl && opt.dataset.key) modeEl.value = "auto";
-            if (st) st.textContent = "selected · " + (opt.textContent || opt.value);
-          };
-        }
-        // prefer server match (by deviceid or IP), else single device, else current id
-        let auto = body.match || null;
-        if (!auto && list.length === 1) auto = list[0];
-        if (!auto && wantDid) auto = list.find((x) => x.deviceid === wantDid) || null;
-        if (auto) {
-          if (document.getElementById("dev-device-id") && auto.deviceid)
-            document.getElementById("dev-device-id").value = auto.deviceid;
-          if (auto.devicekey && document.getElementById("dev-ewelink-devicekey"))
-            document.getElementById("dev-ewelink-devicekey").value = auto.devicekey;
-          if (auto.ip && document.getElementById("dev-ewelink-ip")) {
-            const ipEl = document.getElementById("dev-ewelink-ip");
-            if (ipEl && !ipEl.value.trim()) ipEl.value = auto.ip;
-          }
-          if (pick && auto.deviceid) pick.value = auto.deviceid;
-          if (st)
-            st.textContent =
-              "OK · key loaded · " +
-              (auto.name || auto.deviceid || "") +
-              (auto.productModel ? " · " + auto.productModel : "");
-        }
+            t("dev.ewelink_got_key", "devicekey loaded") +
+            (label ? " · " + label : "") +
+            (body.bound_devicekey ? " · saved" : "");
         toastSuccess(
-          "eWeLink: " +
-            list.length +
-            " devices" +
-            (auto && auto.devicekey ? " · key ready" : "")
+          t("dev.ewelink_got_key", "devicekey loaded") +
+            (auto.name ? ": " + auto.name : "")
         );
         if (typeof loadDevices === "function") void loadDevices();
       } catch (e) {
-        if (st) st.textContent = "error: " + e.message;
-        toastError("eWeLink login: " + e.message);
+        clearTimeout(to);
+        const msg =
+          e && (e.name === "AbortError" || /aborted/i.test(String(e.message || "")))
+            ? "timeout (25s) — cloud slow or server busy"
+            : e.message || String(e);
+        if (st) st.textContent = "error: " + msg;
+        toastError("eWeLink: " + msg);
+      } finally {
+        if (btn) btn.disabled = false;
       }
     }
     document

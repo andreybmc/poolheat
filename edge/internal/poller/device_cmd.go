@@ -27,27 +27,32 @@ const (
 
 // DeviceRequest is enqueued by serve for status (on=null) or set.
 type DeviceRequest struct {
-	ID       string `json:"id"`
+	ID       string  `json:"id"`
 	TS       float64 `json:"ts"`
-	DeviceID string `json:"device_id"`
+	DeviceID string  `json:"device_id"`
 	// On is nil for status-only; true/false for set (logical ON).
-	On     *bool  `json:"on"`
-	Source string `json:"source,omitempty"`
-	Force  bool   `json:"force,omitempty"`
+	// Brightness/Mode alone also count as set (lights/dimmers).
+	On         *bool   `json:"on"`
+	Brightness *int    `json:"brightness,omitempty"` // 0–100 %
+	Mode       *string `json:"mode,omitempty"`       // white|colour|scene|music
+	Source     string  `json:"source,omitempty"`
+	Force      bool    `json:"force,omitempty"`
 }
 
 // DeviceResult is written after handling DeviceRequest.
 type DeviceResult struct {
-	ID      string         `json:"id"`
-	OK      bool           `json:"ok"`
-	On      *bool          `json:"on,omitempty"` // logical on when known
-	Error   string         `json:"error,omitempty"`
-	TS      float64        `json:"ts"`
-	Backend string         `json:"backend,omitempty"`
-	Power   map[string]any `json:"power,omitempty"`
-	Skipped bool           `json:"skipped,omitempty"`
-	Reason  string         `json:"reason,omitempty"`
-	Extra   map[string]any `json:"extra,omitempty"`
+	ID         string         `json:"id"`
+	OK         bool           `json:"ok"`
+	On         *bool          `json:"on,omitempty"` // logical on when known
+	Brightness *int           `json:"brightness,omitempty"`
+	Mode       *string        `json:"mode,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	TS         float64        `json:"ts"`
+	Backend    string         `json:"backend,omitempty"`
+	Power      map[string]any `json:"power,omitempty"`
+	Skipped    bool           `json:"skipped,omitempty"`
+	Reason     string         `json:"reason,omitempty"`
+	Extra      map[string]any `json:"extra,omitempty"`
 }
 
 // ProcessPendingDeviceCmd handles one device_req.json if present.
@@ -107,8 +112,10 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 		src = "api"
 	}
 
+	isSet := req.On != nil || req.Brightness != nil || req.Mode != nil
+
 	// status only
-	if req.On == nil {
+	if !isSet {
 		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
 		if store != nil {
@@ -129,6 +136,11 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 			if rt.LastPower != nil {
 				res.Power = rt.LastPower
 			}
+			res.Brightness = rt.LastBrightness
+			res.Mode = rt.LastMode
+			if rt.LastTelemetry != nil {
+				res.Extra = rt.LastTelemetry
+			}
 			_ = state.Save(paths.DevicesState(dataDir), store.ByID)
 			return res
 		}
@@ -140,6 +152,8 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 		res.OK = true
 		res.Backend = br.Backend
 		res.Power = br.Power
+		res.Extra = br.Extra
+		fillLightResult(&res, br.Extra)
 		if br.On != nil {
 			logical := backend.PhysicalToLogical(*br.On, cfg.Inverted)
 			res.On = &logical
@@ -147,17 +161,55 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 		return res
 	}
 
-	// set logical
+	// set logical (+ optional light brightness/mode)
 	cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
+	cfgCopy := *cfg
+	if req.Brightness != nil {
+		b := *req.Brightness
+		if b < 0 {
+			b = 0
+		}
+		if b > 100 {
+			b = 100
+		}
+		cfgCopy.SetBrightness = &b
+	}
+	if req.Mode != nil && strings.TrimSpace(*req.Mode) != "" {
+		m := strings.TrimSpace(*req.Mode)
+		cfgCopy.SetMode = &m
+	}
+	// if only brightness/mode — keep current on state (or turn on when bright>0)
+	wantOn := false
+	if req.On != nil {
+		wantOn = *req.On
+	} else if store != nil {
+		rt := store.ByID[cfg.ID]
+		if rt.LastOn != nil {
+			wantOn = *rt.LastOn
+		} else {
+			wantOn = true // dimming implies on
+		}
+	} else {
+		wantOn = true
+	}
+	if req.Brightness != nil && *req.Brightness > 0 && req.On == nil {
+		wantOn = true
+	}
+
 	if store != nil {
-		err := store.SetLogical(cctx, *cfg, *req.On, src, req.Force)
+		err := store.SetLogical(cctx, cfgCopy, wantOn, src, req.Force || req.Brightness != nil || req.Mode != nil)
 		rt := store.ByID[cfg.ID]
 		if rt.LastOn != nil {
 			res.On = rt.LastOn
 		}
 		if rt.LastPower != nil {
 			res.Power = rt.LastPower
+		}
+		res.Brightness = rt.LastBrightness
+		res.Mode = rt.LastMode
+		if rt.LastTelemetry != nil {
+			res.Extra = rt.LastTelemetry
 		}
 		if err != nil {
 			res.Error = err.Error()
@@ -168,15 +220,15 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 		res.OK = true
 		res.Backend = cfg.BackendNorm()
 		if res.On == nil {
-			on := *req.On
+			on := wantOn
 			res.On = &on
 		}
 		_ = state.Save(paths.DevicesState(dataDir), store.ByID)
 		return res
 	}
 	// no store — direct backend
-	phys := backend.LogicalToPhysical(*req.On, cfg.Inverted)
-	br, err := backend.Control(cctx, &phys, *cfg)
+	phys := backend.LogicalToPhysical(wantOn, cfg.Inverted)
+	br, err := backend.Control(cctx, &phys, cfgCopy)
 	if err != nil {
 		res.Error = err.Error()
 		return res
@@ -186,12 +238,32 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 	res.Skipped = br.Skipped
 	res.Reason = br.Reason
 	res.Power = br.Power
+	res.Extra = br.Extra
+	fillLightResult(&res, br.Extra)
 	if br.On != nil {
 		logical := backend.PhysicalToLogical(*br.On, cfg.Inverted)
 		res.On = &logical
 	} else {
-		on := *req.On
+		on := wantOn
 		res.On = &on
 	}
 	return res
+}
+
+func fillLightResult(res *DeviceResult, extra map[string]any) {
+	if extra == nil {
+		return
+	}
+	if v, ok := extra["brightness_pct"]; ok && v != nil {
+		switch t := v.(type) {
+		case float64:
+			n := int(t)
+			res.Brightness = &n
+		case int:
+			res.Brightness = &t
+		}
+	}
+	if v, ok := extra["mode"].(string); ok && v != "" {
+		res.Mode = &v
+	}
 }

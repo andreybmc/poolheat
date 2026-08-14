@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/andreybmc/poolheat/edge/internal/jsonutil"
@@ -16,6 +17,10 @@ type Runtime struct {
 	LastAction  *string        `json:"last_action"`
 	LastPower   map[string]any `json:"last_power"`
 	LastPowerTS *string        `json:"last_power_ts"`
+	// Lights / dimmers
+	LastBrightness *int           `json:"last_brightness,omitempty"` // 0–100 %
+	LastMode       *string        `json:"last_mode,omitempty"`       // white|colour|scene|music
+	LastTelemetry  map[string]any `json:"last_telemetry,omitempty"`  // compact extras
 }
 
 type File struct {
@@ -91,7 +96,37 @@ func parseRuntime(m map[string]any) Runtime {
 		s := str(v)
 		r.LastPowerTS = &s
 	}
+	if v, ok := m["last_brightness"]; ok && v != nil {
+		if n, ok := asInt(v); ok {
+			r.LastBrightness = &n
+		}
+	}
+	if v, ok := m["last_mode"]; ok && v != nil {
+		s := str(v)
+		if s != "" {
+			r.LastMode = &s
+		}
+	}
+	if v, ok := m["last_telemetry"].(map[string]any); ok {
+		r.LastTelemetry = v
+	}
 	return r
+}
+
+func asInt(v any) (int, bool) {
+	switch t := v.(type) {
+	case float64:
+		return int(t), true
+	case int:
+		return t, true
+	case int64:
+		return int(t), true
+	case json.Number:
+		i, err := t.Int64()
+		return int(i), err == nil
+	default:
+		return 0, false
+	}
 }
 
 // DeadlinesFile holds suspend-off deadlines + sync throttle timestamps.
