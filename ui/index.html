@@ -28255,17 +28255,35 @@
       );
       if (!ok) return;
       const btn = document.getElementById("btn-update-apply");
+      const msgEl = document.getElementById("info-update-msg");
+      const phaseLabel = (phase, detail) => {
+        const map = {
+          queued: getUiLang() === "ru" ? "в очереди" : "queued",
+          downloading: getUiLang() === "ru" ? "скачивание" : "downloading",
+          extracting: getUiLang() === "ru" ? "распаковка" : "extracting",
+          installing: getUiLang() === "ru" ? "установка файлов" : "installing",
+          migrate: getUiLang() === "ru" ? "миграция" : "migrate",
+          done: getUiLang() === "ru" ? "готово" : "done",
+          restarting: getUiLang() === "ru" ? "перезапуск…" : "restarting…",
+          error: getUiLang() === "ru" ? "ошибка" : "error",
+        };
+        const base = map[phase] || phase || "…";
+        return detail ? base + " · " + detail : base;
+      };
       if (btn) {
         btn.disabled = true;
         btn.textContent =
           typeof t === "function" ? t("upd.installing", "Installing…") : "Installing…";
       }
       try {
+        // async:true — server returns immediately; install runs in background.
+        // Giant needs 2–4 min; sync POST used to time out in the browser.
         const res = await fetch("/api/update/apply", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             confirm: true,
+            async: true,
             ref: chk.tag || chk.latest_version || chk.github_branch || null,
           }),
           cache: "no-store",
@@ -28274,6 +28292,86 @@
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || ("HTTP " + res.status));
         }
+
+        // Async path: poll /api/update/status until busy=false
+        if (body.started || body.async) {
+          toastInfo(
+            getUiLang() === "ru"
+              ? "Установка в фоне (1–4 мин). Не закрывайте страницу."
+              : "Installing in background (1–4 min). Keep this page open.",
+            8000
+          );
+          const fromV = body.from_version || chk.current_version || "?";
+          const t0 = Date.now();
+          const maxMs = 10 * 60 * 1000; // 10 min hard cap
+          let lastPhase = "";
+          while (Date.now() - t0 < maxMs) {
+            await new Promise((r) => setTimeout(r, 2000));
+            let st = null;
+            try {
+              const sr = await fetch(
+                "/api/update/status?t=" + Date.now(),
+                { cache: "no-store" }
+              );
+              if (sr.ok) st = await sr.json();
+            } catch (_) {
+              // service may restart mid-poll — keep waiting
+              if (btn) btn.textContent = phaseLabel("restarting");
+              if (msgEl) {
+                msgEl.style.color = "var(--muted)";
+                msgEl.textContent =
+                  getUiLang() === "ru"
+                    ? "Сервис перезапускается…"
+                    : "Service restarting…";
+              }
+              continue;
+            }
+            if (!st) continue;
+            const phase = st.phase || (st.busy ? "installing" : null);
+            const detail = st.phase_detail || "";
+            if (phase && phase !== lastPhase) {
+              lastPhase = phase;
+              if (btn) btn.textContent = phaseLabel(phase, detail);
+              if (msgEl) {
+                msgEl.style.color =
+                  phase === "error" ? "var(--danger, #e55)" : "var(--muted)";
+                msgEl.textContent = phaseLabel(phase, detail);
+              }
+            }
+            if (st.busy) continue;
+            // finished
+            const apply = st.last_apply || {};
+            if (apply.ok === false) {
+              throw new Error(apply.error || "install failed");
+            }
+            const toV =
+              apply.to_version || st.version || chk.latest_version || "?";
+            toastSuccess(
+              "Updated " + fromV + " → " + toV + " · restarting…",
+              6000
+            );
+            setTxt("info-app-version", toV);
+            if (btn) btn.textContent = phaseLabel("restarting");
+            toastInfo(
+              getUiLang() === "ru"
+                ? "Ждём сервис… страница перезагрузится (до 60 с)"
+                : "Waiting for service… page reloads (up to 60 s)",
+              10000
+            );
+            void waitForServiceAliveThenReload({
+              timeoutMs: 60000,
+              intervalMs: 1000,
+            });
+            return;
+          }
+          throw new Error(
+            getUiLang() === "ru"
+              ? "таймаут установки (10 мин)"
+              : "install timeout (10 min)"
+          );
+        }
+
+        // Sync fallback (async:false)
         toastSuccess(
           "Updated " +
             (body.from_version || "?") +
@@ -28283,27 +28381,36 @@
           6000
         );
         setTxt("info-app-version", body.to_version || "—");
-        // After OTA: poll until service is alive, then reload (or force at 15s)
         if (body.restart) {
-          if (btn) btn.textContent = "Restarting…";
-          toastInfo("Waiting for service… page reloads on reply (max 15 s)", 8000);
+          if (btn) btn.textContent = phaseLabel("restarting");
+          toastInfo(
+            getUiLang() === "ru"
+              ? "Ждём сервис… страница перезагрузится (до 60 с)"
+              : "Waiting for service… page reloads (up to 60 s)",
+            10000
+          );
           void waitForServiceAliveThenReload({
-            timeoutMs: 15000,
-            intervalMs: 500,
+            timeoutMs: 60000,
+            intervalMs: 1000,
           });
         } else {
           lastUpdateCheck = null;
           void loadSystemInfo();
           if (btn) {
             btn.disabled = false;
-            btn.textContent = "Install";
+            btn.textContent =
+              typeof t === "function" ? t("btn.install", "Install") : "Install";
           }
         }
       } catch (e) {
-        toastError("Installing: " + e.message);
+        toastError(
+          (getUiLang() === "ru" ? "Установка: " : "Installing: ") +
+            (e.message || e)
+        );
         if (btn) {
           btn.disabled = false;
-          btn.textContent = "Install";
+          btn.textContent =
+            typeof t === "function" ? t("btn.install", "Install") : "Install";
         }
       }
     });
@@ -28311,18 +28418,19 @@
     /**
      * After service restart: light ping until OK, then reload.
      * Falls back to reload after timeoutMs even if still unreachable.
+     * Giant restart often needs 20–40 s (USB + poller start).
      */
     async function waitForServiceAliveThenReload(opts) {
       opts = opts || {};
-      const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 15000);
-      const intervalMs = Math.max(200, Number(opts.intervalMs) || 500);
+      const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 60000);
+      const intervalMs = Math.max(200, Number(opts.intervalMs) || 1000);
       const t0 = Date.now();
       // brief pause so old process can die before we start probing
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 1500));
       while (Date.now() - t0 < timeoutMs) {
         try {
           const ctrl = new AbortController();
-          const to = setTimeout(() => ctrl.abort(), Math.min(intervalMs + 200, 2000));
+          const to = setTimeout(() => ctrl.abort(), Math.min(intervalMs + 500, 3000));
           const res = await fetch(
             "/api/version?alive=1&t=" + Date.now(),
             { cache: "no-store", signal: ctrl.signal }

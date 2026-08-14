@@ -408,6 +408,9 @@ GITHUB_BRANCH = (
 _update_lock = threading.Lock()
 _update_state: dict = {
     "busy": False,
+    "phase": None,  # downloading | extracting | installing | migrate | done | error
+    "phase_detail": None,
+    "started_at": None,
     "last_check": None,
     "last_apply": None,
 }
@@ -20509,6 +20512,108 @@ def _http_bytes(url: str, timeout: float = 60.0) -> bytes:
         return resp.read()
 
 
+def _http_download_to_file(
+    url: str,
+    dest: Path,
+    *,
+    timeout: float = 300.0,
+    chunk_size: int = 256 * 1024,
+) -> int:
+    """
+    Stream HTTP body to disk (avoids holding full OTA package in RAM).
+    Critical on Giant (256 MiB): 8–15 MiB package + extract used to OOM/thrash.
+    Returns bytes written.
+    """
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"poolheat/{get_app_version()}"},
+        method="GET",
+    )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with dest.open("wb") as fh:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                written += len(chunk)
+                if written and written % (2 * 1024 * 1024) < chunk_size:
+                    _set_update_phase(
+                        "downloading",
+                        f"{written // (1024 * 1024)} MiB",
+                    )
+    return written
+
+
+def _set_update_phase(phase: str | None, detail: str | None = None) -> None:
+    try:
+        _update_state["phase"] = phase
+        _update_state["phase_detail"] = detail
+    except Exception:
+        pass
+
+
+def _stop_pollers_for_ota() -> None:
+    """
+    Stop Go pollers before replacing their ELF binaries.
+    Linux allows rename-over-running-exec, but on USB/Entware Keenetic
+    we still hit ETXTBSY / thrash when two 7–8 MiB pollers stay mapped.
+    """
+    needles = (
+        "poolheat-devices-poller",
+        "poolheat-miner-poller",
+    )
+    killed: list[str] = []
+    try:
+        for ent in Path("/proc").iterdir():
+            if not ent.name.isdigit():
+                continue
+            try:
+                raw = (ent / "cmdline").read_bytes()
+            except Exception:
+                continue
+            cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace")
+            for n in needles:
+                if n in cmd:
+                    try:
+                        os.kill(int(ent.name), 15)
+                        killed.append(f"{n}:{ent.name}")
+                    except Exception:
+                        pass
+                    break
+        if killed:
+            time.sleep(0.8)
+            # SIGKILL leftovers
+            for ent in Path("/proc").iterdir():
+                if not ent.name.isdigit():
+                    continue
+                try:
+                    raw = (ent / "cmdline").read_bytes()
+                except Exception:
+                    continue
+                cmd = raw.replace(b"\x00", b" ").decode("utf-8", errors="replace")
+                for n in needles:
+                    if n in cmd:
+                        try:
+                            os.kill(int(ent.name), 9)
+                        except Exception:
+                            pass
+                        break
+            print(f"[update] stopped pollers for OTA: {', '.join(killed)}", flush=True)
+    except Exception as e:
+        print(f"[update] stop pollers: {e}", flush=True)
+    for pidf in (
+        Path("/opt/var/poolheat/devices_poller.pid"),
+        Path("/opt/var/poolheat/miner_poller.pid"),
+    ):
+        try:
+            pidf.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def _normalize_notes_lang(lang: str | None) -> str:
     s = str(lang or "en").strip().lower()
     if s.startswith("ru") or s in ("рус", "russian", "русск"):
@@ -21582,7 +21687,92 @@ def _flush_update_restart_notify() -> None:
             pass
 
 
-def apply_github_update(ref: str | None = None, *, source: str = "manual") -> dict:
+def start_github_update_async(
+    ref: str | None = None, *, source: str = "manual"
+) -> dict:
+    """
+    Start OTA in a background thread and return immediately.
+
+    Giant reinstall of the mipselsf package takes ~2–4 minutes (USB + low RAM).
+    Synchronous POST /api/update/apply was dying in browsers/proxies before the
+    install finished — UI showed failure while files were still being written.
+    """
+    if _update_state.get("busy"):
+        return {
+            "ok": False,
+            "error": "update already in progress",
+            "busy": True,
+            "phase": _update_state.get("phase"),
+            "phase_detail": _update_state.get("phase_detail"),
+        }
+    # Try to reserve the lock without blocking the HTTP worker for minutes
+    if not _update_lock.acquire(blocking=False):
+        return {
+            "ok": False,
+            "error": "update already in progress",
+            "busy": True,
+        }
+    # Mark busy before spawning so concurrent POSTs see it
+    _update_state["busy"] = True
+    _update_state["started_at"] = datetime.now().isoformat(timespec="seconds")
+    _set_update_phase("queued", ref or "latest")
+    apply_source = (source or "manual").strip() or "manual"
+    target_ref = (ref or "").strip() or None
+
+    def _runner() -> None:
+        try:
+            # lock already held — use internal body
+            apply_github_update(
+                target_ref, source=apply_source, _lock_held=True
+            )
+        except Exception as e:
+            print(f"[update] async apply crashed: {e}", flush=True)
+            try:
+                err = {
+                    "ok": False,
+                    "error": str(e),
+                    "source": apply_source,
+                    "applied_at": datetime.now().isoformat(timespec="seconds"),
+                }
+                _update_state["last_apply"] = err
+                _set_update_phase("error", str(e)[:200])
+                _log_update_apply(err, source=apply_source)
+            except Exception:
+                pass
+            finally:
+                _update_state["busy"] = False
+                try:
+                    _update_lock.release()
+                except Exception:
+                    pass
+
+    threading.Thread(
+        target=_runner, name="poolheat-ota-apply", daemon=True
+    ).start()
+    return {
+        "ok": True,
+        "started": True,
+        "async": True,
+        "busy": True,
+        "from_version": get_app_version(),
+        "ref": target_ref,
+        "source": apply_source,
+        "phase": _update_state.get("phase"),
+        "message": (
+            "Установка запущена в фоне (обычно 1–4 мин). "
+            "Не закрывайте страницу — статус обновится сам."
+        ),
+        "poll_url": "/api/update/status",
+        "poll_interval_sec": 2,
+    }
+
+
+def apply_github_update(
+    ref: str | None = None,
+    *,
+    source: str = "manual",
+    _lock_held: bool = False,
+) -> dict:
     """
     Install poolheat update from GitHub, architecture-aware:
 
@@ -21593,10 +21783,15 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
 
     Does not overwrite /opt/etc/poolheat/config.json.
     ``source`` is written to the action log (manual | auto | telegram).
+
+    ``_lock_held``: caller already holds ``_update_lock`` and set busy
+    (used by async starter).
     """
-    if not _update_lock.acquire(blocking=False):
-        return {"ok": False, "error": "update already in progress"}
-    _update_state["busy"] = True
+    if not _lock_held:
+        if not _update_lock.acquire(blocking=False):
+            return {"ok": False, "error": "update already in progress"}
+        _update_state["busy"] = True
+        _update_state["started_at"] = datetime.now().isoformat(timespec="seconds")
     from_ver = get_app_version()
     apply_source = (source or "manual").strip() or "manual"
     try:
@@ -21672,14 +21867,29 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                         f"asset={asset.get('name')} score={asset.get('score')}",
                         flush=True,
                     )
-                    blob = _http_bytes(str(asset["url"]), timeout=180)
                     used_url = str(asset["url"])
+                    _set_update_phase("downloading", package_asset)
                     with tempfile.TemporaryDirectory(prefix="poolheat-pkg-") as td:
                         tdir = Path(td)
                         name = str(asset.get("name") or "pkg.bin").lower()
+                        # Stream to disk — never hold full package in RAM
                         if name.endswith(".ipk"):
+                            ipk_path = tdir / "pkg.ipk"
+                            n = _http_download_to_file(
+                                used_url, ipk_path, timeout=300
+                            )
+                            print(
+                                f"[update] downloaded {n} bytes → {ipk_path.name}",
+                                flush=True,
+                            )
                             install_mode = "release-ipk"
+                            _set_update_phase("extracting", package_asset)
+                            blob = ipk_path.read_bytes()
                             root = _extract_ipk_data_root(blob, tdir / "ipk")
+                            del blob
+                            if entware:
+                                _stop_pollers_for_ota()
+                            _set_update_phase("installing", package_asset)
                             w = _install_tree_from_opt(
                                 root,
                                 lib_dir=lib_dir,
@@ -21690,15 +21900,25 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                             )
                             warnings.extend(w)
                         elif name.endswith(".tar.gz") or name.endswith(".tgz"):
-                            install_mode = "release-opt"
                             tgz_path = tdir / "opt.tar.gz"
-                            tgz_path.write_bytes(blob)
+                            n = _http_download_to_file(
+                                used_url, tgz_path, timeout=300
+                            )
+                            print(
+                                f"[update] downloaded {n} bytes → {tgz_path.name}",
+                                flush=True,
+                            )
+                            install_mode = "release-opt"
+                            _set_update_phase("extracting", package_asset)
                             with tarfile.open(tgz_path, "r:gz") as tar:
                                 for m in tar.getmembers():
                                     nm = m.name.replace("\\", "/")
                                     if nm.startswith("/") or ".." in nm.split("/"):
                                         continue
                                     tar.extract(m, path=tdir / "optroot")
+                            if entware:
+                                _stop_pollers_for_ota()
+                            _set_update_phase("installing", package_asset)
                             w = _install_tree_from_opt(
                                 tdir / "optroot",
                                 lib_dir=lib_dir,
@@ -21715,6 +21935,7 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                     errors.append(f"package {asset.get('name')}: {e}")
                     installed = []
                     print(f"[update] package install failed: {e}", flush=True)
+                    _set_update_phase("error", str(e)[:200])
 
         # ── 2) Fallback: source archive (Python/UI; pollers only if ELF OK) ─
         if not installed:
@@ -21923,6 +22144,7 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                 try:
                     import subprocess
 
+                    _set_update_phase("migrate", "migrate-layout.sh")
                     r = subprocess.run(
                         ["sh", str(mig)],
                         capture_output=True,
@@ -21938,7 +22160,8 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                     print(f"[update] migrate-layout: {e}", flush=True)
 
         if not installed:
-            return {
+            _set_update_phase("error", "no files installed")
+            err = {
                 "ok": False,
                 "error": "install failed: " + ("; ".join(errors[:4]) or "no files"),
                 "url": used_url or None,
@@ -21946,7 +22169,10 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
                 "host_machine": host.get("machine"),
                 "package_asset": package_asset,
                 "warnings": warnings[:8],
+                "applied_at": datetime.now().isoformat(timespec="seconds"),
             }
+            _update_state["last_apply"] = err
+            return err
 
         # Verify pollers after install
         poller_status = {}
@@ -21987,15 +22213,24 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
             "applied_at": datetime.now().isoformat(timespec="seconds"),
         }
         _update_state["last_apply"] = result
+        _set_update_phase("done", result.get("to_version"))
         try:
             _log_update_apply(result, source=apply_source)
         except Exception as e:
             print(f"[update] log apply: {e}")
         if entware:
+            _set_update_phase("restarting", result.get("to_version"))
             _restart_poolheat_later()
         return result
     except Exception as e:
-        err = {"ok": False, "error": str(e), "source": apply_source}
+        err = {
+            "ok": False,
+            "error": str(e),
+            "source": apply_source,
+            "applied_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        _update_state["last_apply"] = err
+        _set_update_phase("error", str(e)[:200])
         try:
             _log_update_apply(err, source=apply_source)
         except Exception:
@@ -22003,7 +22238,10 @@ def apply_github_update(ref: str | None = None, *, source: str = "manual") -> di
         return err
     finally:
         _update_state["busy"] = False
-        _update_lock.release()
+        try:
+            _update_lock.release()
+        except Exception:
+            pass
 
 
 def _normalize_update_cfg(raw: dict | None) -> dict:
@@ -33996,6 +34234,9 @@ class Handler(SimpleHTTPRequestHandler):
                     "ok": True,
                     **get_version_info(),
                     "busy": bool(_update_state.get("busy")),
+                    "phase": _update_state.get("phase"),
+                    "phase_detail": _update_state.get("phase_detail"),
+                    "started_at": _update_state.get("started_at"),
                     "last_check": _update_state.get("last_check"),
                     "last_apply": _update_state.get("last_apply"),
                     "auto_update": get_update_cfg(),
@@ -34685,11 +34926,27 @@ class Handler(SimpleHTTPRequestHandler):
                     },
                 )
                 return
+            # Default async=True: Giant OTA takes 2–4 min; sync HTTP dies in UI/proxy.
+            # Pass {"async": false} only for local/debug tooling.
+            want_async = req.get("async")
+            if want_async is None:
+                want_async = True
+            if want_async in (False, "false", "0", 0, "no"):
+                want_async = False
+            else:
+                want_async = True
             try:
-                result = apply_github_update(
-                    ref=str(ref) if ref else None, source="manual"
-                )
+                if want_async:
+                    result = start_github_update_async(
+                        ref=str(ref) if ref else None, source="manual"
+                    )
+                else:
+                    result = apply_github_update(
+                        ref=str(ref) if ref else None, source="manual"
+                    )
                 code = 200 if result.get("ok") else 500
+                if result.get("error") == "update already in progress":
+                    code = 409
                 self._json_response(code, result)
             except Exception as e:
                 self._json_response(500, {"ok": False, "error": str(e)})
