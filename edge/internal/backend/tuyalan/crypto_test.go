@@ -54,6 +54,36 @@ func TestSessionKey34Len(t *testing.T) {
 	}
 }
 
+// tinytuya 3.4 SESS_KEY_NEG_START encrypts the 16-byte nonce with PKCS#7 pad
+// → 32-byte ciphertext. pad=False made plugs accept the session then drop STATUS.
+func TestSessionStart34Pad(t *testing.T) {
+	key := []byte("0123456789abcdef")
+	nonce := bytes.Repeat([]byte{0xab}, 16)
+	enc, err := encryptECB(key, nonce, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(enc) != 32 {
+		t.Fatalf("padded start ciphertext want 32, got %d", len(enc))
+	}
+	plain, err := decryptECB(key, enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(plain, nonce) {
+		t.Fatalf("roundtrip mismatch")
+	}
+	// finish HMAC is 32 bytes → pad → 48-byte ciphertext
+	fin := hmacSHA256(key, nonce)
+	encFin, err := encryptECB(key, fin, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encFin) != 48 {
+		t.Fatalf("padded finish ciphertext want 48, got %d", len(encFin))
+	}
+}
+
 func TestFrame6699Roundtrip(t *testing.T) {
 	key := []byte("0123456789abcdef")
 	plain := []byte("hello-tuya-35!!") // 15 bytes, GCM no pad

@@ -131,8 +131,16 @@ func readPacket55(r io.Reader, hmacKey []byte, useHMAC bool) (*packet, error) {
 		}
 	}
 	p := &packet{Seq: seq, Cmd: cmd, Payload: enc}
-	// tinytuya unpack always takes a 4-byte retcode on device→client 55AA
-	if len(enc) >= 4 && enc[0] == 0 && enc[1] == 0 && enc[2] == 0 {
+	// tinytuya unpack_message(no_retcode=False): ALWAYS strip 4-byte retcode on
+	// device→client 55AA (success is 0x00000000; non-zero is still a retcode).
+	// Conditional "starts with 0x00 0x00 0x00" left ciphertext misaligned when
+	// the first cipher block began with zeros — rare but fatal for STATUS.
+	if useHMAC && len(enc) >= 4 {
+		p.Ret = binary.BigEndian.Uint32(enc[:4])
+		p.HasRet = true
+		p.Payload = enc[4:]
+	} else if len(enc) >= 4 && enc[0] == 0 && enc[1] == 0 && enc[2] == 0 {
+		// 3.1/3.3 CRC frames: keep the old heuristic
 		p.Ret = binary.BigEndian.Uint32(enc[:4])
 		p.HasRet = true
 		p.Payload = enc[4:]

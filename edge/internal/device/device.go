@@ -74,6 +74,10 @@ func (s *Store) update(id string, mut func(*state.Runtime)) {
 func boolPtr(b bool) *bool    { return &b }
 func strPtr(s string) *string { return &s }
 
+// onlineFailGraceSec: after a recent successful probe, keep online=true for one
+// transient fail so a single Tuya timeout does not flash the whole fleet offline.
+const onlineFailGraceSec = 45.0
+
 // PollStatus probes device status only (no enforce). Use ApplyPolicy after all probes
 // so each set() gets a fresh timeout budget (status+set in one ctx often starved set).
 func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source string) error {
@@ -88,7 +92,17 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 		log.Printf("[devices] %s status fail (%s): %v", cfg.Label(), be, err)
 		pretty := UserFacingError(err, be)
 		s.update(did, func(r *state.Runtime) {
-			r.Online = boolPtr(false)
+			// Grace: if we saw the device recently, keep online until next fail.
+			// last_error still records the blip so backoff can throttle storms.
+			soft := false
+			if r.Online != nil && *r.Online && r.LastOkTS != nil {
+				if age := ageSeconds(*r.LastOkTS); age >= 0 && age < onlineFailGraceSec {
+					soft = true
+				}
+			}
+			if !soft {
+				r.Online = boolPtr(false)
+			}
 			r.LastError = strPtr(pretty)
 			r.LastAction = strPtr(source + "_fail")
 		})
@@ -118,6 +132,27 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 		applyLightExtra(r, res.Extra)
 	})
 	return nil
+}
+
+// ageSeconds parses LastOkTS (YYYY-MM-DDTHH:MM:SS local) and returns age in seconds.
+// Returns -1 if unparseable.
+func ageSeconds(iso string) float64 {
+	iso = strings.TrimSpace(iso)
+	if iso == "" {
+		return -1
+	}
+	// Accept with or without timezone / fractional seconds.
+	layouts := []string{
+		"2006-01-02T15:04:05",
+		time.RFC3339,
+		"2006-01-02T15:04:05Z07:00",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, iso, time.Local); err == nil {
+			return float64(time.Since(t)) / float64(time.Second)
+		}
+	}
+	return -1
 }
 
 func applyLightExtra(r *state.Runtime, extra map[string]any) {

@@ -106,10 +106,12 @@ func (d *Device) handshake(ctx context.Context) error {
 	var startPayload []byte
 	var err error
 	if d.is35 {
+		// 3.5: raw nonce, GCM at frame layer
 		startPayload = clientNonce
 	} else {
-		// nonce is already 16 bytes — no PKCS#7 (matches tinytuya pad=False for 3.4 START)
-		startPayload, err = encryptECB(d.local, clientNonce, false)
+		// 3.4: tinytuya AESCipher.encrypt(nonce, use_base64=False) → pad=True
+		// (PKCS#7). pad=False made some plugs accept the session then drop STATUS.
+		startPayload, err = encryptECB(d.local, clientNonce, true)
 		if err != nil {
 			return err
 		}
@@ -123,13 +125,12 @@ func (d *Device) handshake(ctx context.Context) error {
 	}
 	body := resp.Payload
 	if d.is34 {
-		// device→client 55AA often prefixes a 4-byte retcode before ciphertext
+		// readPacket55 already strips the 4-byte device→client retcode.
+		// Ciphertext remains; decrypt + PKCS#7 unpad (tinytuya step 2).
 		enc := body
-		if len(enc) >= 20 && enc[0] == 0 && enc[1] == 0 && enc[2] == 0 && (len(enc)-4)%16 == 0 {
-			enc = enc[4:]
-		}
 		plain, err := decryptECB(d.local, enc)
 		if err != nil || len(plain) < 16 {
+			// some firmwares omit PKCS#7 on the sess response
 			if raw, err2 := decryptECBRaw(d.local, enc); err2 == nil && len(raw) >= 16 {
 				plain = raw
 				err = nil
@@ -140,7 +141,7 @@ func (d *Device) handshake(ctx context.Context) error {
 		}
 		body = plain
 	}
-	// 3.5 sometimes prefixes a 4-byte retcode inside GCM plaintext.
+	// 3.5 GCM plaintext sometimes still carries a leading retcode.
 	if len(body) >= 52 && body[0] == 0 && body[1] == 0 && body[2] == 0 {
 		body = body[4:]
 	}
@@ -160,6 +161,7 @@ func (d *Device) handshake(ctx context.Context) error {
 	if d.is35 {
 		finPayload = fin
 	} else {
+		// tinytuya: encrypt(HMAC, pad=True) → 48-byte ciphertext
 		finPayload, err = encryptECB(d.local, fin, true)
 		if err != nil {
 			return err
