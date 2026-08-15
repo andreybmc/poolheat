@@ -12374,6 +12374,12 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
     except FuturesTimeout:
         err = f"poll timeout ({timeout:.0f}s)"
         print(f"[fleet-live] {host}:{port}: {err}", flush=True)
+        # Allow re-detect of Whatsminer vs CGMiner after timeouts
+        try:
+            with _ASIC_PROTO_LOCK:
+                _ASIC_PROTO_CACHE.pop(host, None)
+        except Exception:
+            pass
         return host, {
             "ok": False,
             "host": f"{host}:{port}",
@@ -12396,6 +12402,11 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
             return host, live_http
         err = str(e)[:200]
         print(f"[fleet-live] {host}:{port}: {err}", flush=True)
+        try:
+            with _ASIC_PROTO_LOCK:
+                _ASIC_PROTO_CACHE.pop(host, None)
+        except Exception:
+            pass
         return host, {
             "ok": False,
             "host": f"{host}:{port}",
@@ -12589,70 +12600,89 @@ def get_miners_fleet() -> dict:
         row = dict(m)
         host = str(m.get("host") or "").strip()
         role = str(m.get("role") or "standby")
-        # Prefer per-host fleet live, then active live_cache match
+        # Prefer per-host fleet live, then active live_cache match.
+        # Important: multi-host poll can stamp ok:false (timeout) while the Go
+        # miner-poller still has a fresh live_cache for the *active* host —
+        # never let a failed fleet stamp permanently hide a healthy active live.
         host_live = fleet_map.get(host) if host else None
+        match = bool(live_ip and host and host == live_ip)
+        active_ok = bool(
+            match and isinstance(live_slice, dict) and live_slice.get("ok")
+        )
+
+        def _apply_live_ok(src_live: dict, sl: dict | None) -> None:
+            nonlocal online_n, sum_th, sum_w
+            row["online"] = True
+            row["live"] = sl
+            row.pop("last_error", None)
+            online_n += 1
+            if sl and sl.get("hashrate_th") is not None:
+                try:
+                    sum_th += float(sl["hashrate_th"])
+                except (TypeError, ValueError):
+                    pass
+            if sl and sl.get("power") is not None:
+                try:
+                    sum_w += float(sl["power"])
+                except (TypeError, ValueError):
+                    pass
+            disp = (
+                (sl or {}).get("model_display")
+                or src_live.get("model_display")
+                or (sl or {}).get("model_display_full")
+                or src_live.get("model_display_full")
+            )
+            if disp:
+                row["model"] = disp
+                row["model_display"] = disp
+                row["model_display_full"] = (
+                    (sl or {}).get("model_display_full")
+                    or src_live.get("model_display_full")
+                    or disp
+                )
+            if not row.get("model_code") and (sl or {}).get("miner_type"):
+                row["model_code"] = (sl or {}).get("miner_type")
+            if not row.get("model") and (
+                src_live.get("model_name") or (sl or {}).get("miner_type")
+            ):
+                row["model"] = src_live.get("model_name") or (sl or {}).get(
+                    "miner_type"
+                )
+            if not row.get("vendor") and src_live.get("vendor"):
+                row["vendor"] = src_live.get("vendor")
+            live_algo = (
+                (sl or {}).get("algo")
+                or src_live.get("algo")
+                or (sl or {}).get("algo_display")
+            )
+            if live_algo and not row.get("algo"):
+                row["algo"] = (sl or {}).get("algo") or src_live.get("algo") or ""
+                row["algo_display"] = (
+                    (sl or {}).get("algo_display")
+                    or src_live.get("algo_display")
+                    or live_algo
+                )
+            elif (sl or {}).get("algo_display") and not row.get("algo_display"):
+                row["algo_display"] = sl.get("algo_display")
+            if src_live.get("fw_ver") and not row.get("fw_ver"):
+                row["fw_ver"] = src_live.get("fw_ver")
+            if src_live.get("serial") and not row.get("serial"):
+                row["serial"] = src_live.get("serial")
+            if src_live.get("mac") and not row.get("mac"):
+                row["mac"] = src_live.get("mac")
+
         if isinstance(host_live, dict):
             sl = _fleet_live_slice(host_live, host=host)
-            if sl and host_live.get("ok", True) and not host_live.get("error"):
-                row["online"] = True
-                row["live"] = sl
-                online_n += 1
-                if sl.get("hashrate_th") is not None:
-                    try:
-                        sum_th += float(sl["hashrate_th"])
-                    except (TypeError, ValueError):
-                        pass
-                if sl.get("power") is not None:
-                    try:
-                        sum_w += float(sl["power"])
-                    except (TypeError, ValueError):
-                        pass
-                # Trade name from model profile wins for UI (CK-BOX not CKBox)
-                disp = (
-                    (sl or {}).get("model_display")
-                    or host_live.get("model_display")
-                    or (sl or {}).get("model_display_full")
-                    or host_live.get("model_display_full")
-                )
-                if disp:
-                    row["model"] = disp
-                    row["model_display"] = disp
-                    row["model_display_full"] = (
-                        (sl or {}).get("model_display_full")
-                        or host_live.get("model_display_full")
-                        or disp
-                    )
-                if not row.get("model_code") and (sl or {}).get("miner_type"):
-                    row["model_code"] = (sl or {}).get("miner_type")
-                if not row.get("model") and (
-                    host_live.get("model_name")
-                    or (sl or {}).get("miner_type")
-                ):
-                    row["model"] = host_live.get("model_name") or (sl or {}).get(
-                        "miner_type"
-                    )
-                if not row.get("vendor") and host_live.get("vendor"):
-                    row["vendor"] = host_live.get("vendor")
-                live_algo = (
-                    (sl or {}).get("algo")
-                    or host_live.get("algo")
-                    or (sl or {}).get("algo_display")
-                )
-                if live_algo and not row.get("algo"):
-                    row["algo"] = (sl or {}).get("algo") or host_live.get("algo") or ""
-                    row["algo_display"] = (
-                        (sl or {}).get("algo_display")
-                        or host_live.get("algo_display")
-                        or live_algo
-                    )
-                elif (sl or {}).get("algo_display") and not row.get("algo_display"):
-                    row["algo_display"] = sl.get("algo_display")
-                if host_live.get("fw_ver") and not row.get("fw_ver"):
-                    row["fw_ver"] = host_live.get("fw_ver")
-                if host_live.get("serial") and not row.get("serial"):
-                    row["serial"] = host_live.get("serial")
-                if host_live.get("mac") and not row.get("mac"):
-                    row["mac"] = host_live.get("mac")
+            fleet_ok = bool(
+                sl
+                and host_live.get("ok", True)
+                and not host_live.get("error")
+            )
+            if fleet_ok:
+                _apply_live_ok(host_live, sl)
+            elif active_ok:
+                # Recover from multi-poll timeout/offline stamp using active live
+                _apply_live_ok(live if isinstance(live, dict) else {}, live_slice)
             else:
                 row["online"] = False
                 row["live"] = sl
@@ -12661,7 +12691,6 @@ def get_miners_fleet() -> dict:
                 )
             rows.append(row)
             continue
-        match = bool(live_ip and host and host == live_ip)
         if match and live_slice and live_slice.get("ok"):
             row["online"] = True
             row["live"] = live_slice
@@ -14685,6 +14714,9 @@ def publish_live_snapshot(live: dict | None) -> None:
     """
     Update in-process RAM cache and write live_cache.json for other processes
     (UI/API, devices poller mining_work consumers).
+
+    Also merges a successful active snapshot into fleet_live.json so a prior
+    multi-host poll timeout cannot keep the active miner stuck «offline».
     """
     global _cache, _cache_ts
     if not isinstance(live, dict):
@@ -14706,6 +14738,14 @@ def publish_live_snapshot(live: dict | None) -> None:
         tmp.replace(LIVE_CACHE_FILE)
     except Exception as e:
         print(f"[live-cache] write: {e}", flush=True)
+    # Clear sticky offline in fleet_live for this host when live is OK
+    try:
+        if live.get("ok"):
+            hip = _live_host_ip(live) or str(HOST_MINER or "").split(":")[0].strip()
+            if hip:
+                _publish_fleet_live_map({hip: live})
+    except Exception as e:
+        print(f"[live-cache] fleet_live sync: {e}", flush=True)
 
 
 def hydrate_live_from_disk(*, max_age_sec: float | None = None) -> dict | None:
