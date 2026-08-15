@@ -1,6 +1,7 @@
 package miner
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -242,32 +243,56 @@ func SaveDiscovered(dataDir string, f DiscoveredFile) error {
 
 // ─── Managed inventory ─────────────────────────────────────────────────────
 
+// flexString accepts JSON string or number (serve/miners.db mirrors id as int).
+type flexString string
+
+func (f *flexString) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		*f = ""
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*f = flexString(s)
+		return nil
+	}
+	// number / bool → string form
+	*f = flexString(strings.Trim(string(b), `"`))
+	return nil
+}
+
+func (f flexString) String() string { return string(f) }
+
 // ManagedMiner is imported into the system (polling candidate).
 type ManagedMiner struct {
-	ID         string `json:"id"`
-	Vendor     string `json:"vendor"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Password   string `json:"password,omitempty"`
-	Enabled    bool   `json:"enabled"`
-	Role       string `json:"role"` // active | standby
-	Alias        string `json:"alias,omitempty"`
-	Name         string `json:"name,omitempty"`         // display name
-	Cell         string `json:"cell,omitempty"`         // location / rack cell
-	Model        string `json:"model,omitempty"`        // human model label
-	ModelCode    string `json:"model_code,omitempty"`   // e.g. M63_VK28
-	Serial       string `json:"serial,omitempty"`       // factory / customer SN
-	Inventory    string `json:"inventory,omitempty"`    // inventory / asset number
-	Cooling      string `json:"cooling,omitempty"`      // air | hydro | immersion
-	Algo         string `json:"algo,omitempty"`         // sha256 | scrypt | eaglesong | …
-	PoolID       string `json:"pool_id,omitempty"`      // heat pool this miner serves
-	MinerType     string `json:"miner_type,omitempty"`   // raw type from API
-	MAC          string `json:"mac,omitempty"`
-	FW           string `json:"fw_ver,omitempty"`
-	ImportedAt   string `json:"imported_at,omitempty"`
-	Source       string `json:"source,omitempty"` // discovery | manual
-	LastOKTS     string `json:"last_ok_ts,omitempty"`
-	LastError    string `json:"last_error,omitempty"`
+	ID         flexString `json:"id"`
+	Vendor     string     `json:"vendor"`
+	Host       string     `json:"host"`
+	Port       int        `json:"port"`
+	Password   string     `json:"password,omitempty"`
+	Enabled    bool       `json:"enabled"`
+	Role       string     `json:"role"` // active | standby
+	Alias      string     `json:"alias,omitempty"`
+	Name       string     `json:"name,omitempty"`       // display name
+	Cell       string     `json:"cell,omitempty"`       // location / rack cell
+	Model      string     `json:"model,omitempty"`      // human model label
+	ModelCode  string     `json:"model_code,omitempty"` // e.g. M63_VK28
+	Serial     string     `json:"serial,omitempty"`     // factory / customer SN
+	Inventory  string     `json:"inventory,omitempty"`  // inventory / asset number
+	Cooling    string     `json:"cooling,omitempty"`    // air | hydro | immersion
+	Algo       string     `json:"algo,omitempty"`       // sha256 | scrypt | eaglesong | …
+	PoolID     string     `json:"pool_id,omitempty"`    // heat pool this miner serves
+	MinerType  string     `json:"miner_type,omitempty"` // raw type from API
+	MAC        string     `json:"mac,omitempty"`
+	FW         string     `json:"fw_ver,omitempty"`
+	ImportedAt string     `json:"imported_at,omitempty"`
+	Source     string     `json:"source,omitempty"` // discovery | manual
+	LastOKTS   string     `json:"last_ok_ts,omitempty"`
+	LastError  string     `json:"last_error,omitempty"`
 }
 
 type ManagedFile struct {
@@ -277,12 +302,52 @@ type ManagedFile struct {
 
 func LoadManaged(dataDir string) ManagedFile {
 	var f ManagedFile
-	_ = jsonutil.LoadJSON(filepath.Join(dataDir, managedFile), &f)
+	path := filepath.Join(dataDir, managedFile)
+	if err := jsonutil.LoadJSON(path, &f); err != nil {
+		// Fallback: map decode so a single bad field cannot wipe inventory
+		var raw map[string]any
+		if err2 := jsonutil.LoadJSON(path, &raw); err2 == nil {
+			f = managedFromMap(raw)
+		}
+	}
 	if f.Miners == nil {
 		f.Miners = []ManagedMiner{}
 	}
 	f.Version = 1
 	return f
+}
+
+func managedFromMap(raw map[string]any) ManagedFile {
+	out := ManagedFile{Version: 1, Miners: nil}
+	arr, _ := raw["miners"].([]any)
+	for _, x := range arr {
+		m, ok := x.(map[string]any)
+		if !ok {
+			continue
+		}
+		mm := ManagedMiner{
+			Vendor:   str(m["vendor"]),
+			Host:     str(m["host"]),
+			Password: str(m["password"]),
+			Role:     str(m["role"]),
+			Alias:    str(m["alias"]),
+			Name:     str(m["name"]),
+			Model:    str(m["model"]),
+		}
+		mm.ID = flexString(str(m["id"]))
+		if v, ok := asInt(m["port"]); ok {
+			mm.Port = v
+		}
+		if v, ok := m["enabled"].(bool); ok {
+			mm.Enabled = v
+		} else {
+			mm.Enabled = true
+		}
+		if mm.Host != "" {
+			out.Miners = append(out.Miners, mm)
+		}
+	}
+	return out
 }
 
 func SaveManaged(dataDir string, f ManagedFile) error {
@@ -329,6 +394,14 @@ func ActiveManaged(dataDir string) *ManagedMiner {
 		}
 	}
 	return nil
+}
+
+// ActiveID returns the managed id string of the active miner.
+func (m *ManagedMiner) ActiveID() string {
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.ID.String())
 }
 
 // EnsureManagedFromSettings seeds inventory from single-host config if empty.

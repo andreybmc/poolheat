@@ -70,8 +70,25 @@ func Run(s Settings) error {
 
 		live, err := FetchLive(s)
 		if err != nil {
-			log.Printf("[miner-poller] live: %s %v", time.Now().Format(time.RFC3339), err)
+			log.Printf("[miner-poller] live: %s host=%s %v", time.Now().Format(time.RFC3339), hostLabel, err)
+			// Always publish failure for *current* host so a previous ASIC's
+			// ok snapshot (wrong host after inventory change) cannot stick forever.
+			fail := map[string]any{
+				"ok":     false,
+				"host":   hostLabel,
+				"error":  err.Error(),
+				"source": "go-miner-poller",
+				"ts":     time.Now().Format("2006-01-02T15:04:05"),
+			}
+			if err2 := PublishLive(s.DataDir, fail, hostLabel, os.Getpid()); err2 != nil {
+				log.Printf("[miner-poller] live-cache fail write: %v", err2)
+			}
 		} else {
+			if live == nil {
+				live = map[string]any{}
+			}
+			live["host"] = hostLabel
+			live["source"] = "go-miner-poller"
 			if err := PublishLive(s.DataDir, live, hostLabel, os.Getpid()); err != nil {
 				log.Printf("[miner-poller] live-cache: %v", err)
 			}
@@ -81,7 +98,7 @@ func Run(s Settings) error {
 			}
 			mid, mhost := "", s.Host
 			if am := ActiveManaged(s.DataDir); am != nil {
-				mid = strings.TrimSpace(am.ID)
+				mid = strings.TrimSpace(am.ID.String())
 				if am.Host != "" {
 					mhost = am.Host
 				}
@@ -91,8 +108,8 @@ func Run(s Settings) error {
 			}
 			// light log every ~30s
 			if time.Now().Unix()%30 < int64(s.PollIntervalSec) {
-				log.Printf("[miner-poller] ok power=%v th=%.1f work=%s liquid=%v",
-					live["power"], asF(live["hashrate_th"]), work, live["liquid"])
+				log.Printf("[miner-poller] ok host=%s power=%v th=%.1f work=%s liquid=%v",
+					hostLabel, live["power"], asF(live["hashrate_th"]), work, live["liquid"])
 			}
 		}
 

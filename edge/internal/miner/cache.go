@@ -26,9 +26,18 @@ func PublishLive(dataDir string, live map[string]any, host string, pid int) erro
 	if err := writeJSONAtomic(path, payload); err != nil {
 		return err
 	}
-	// Sync fleet_live for recovery (best-effort)
+	// Sync fleet_live for recovery (best-effort). Also publish ok:false so
+	// sticky offline can age out and host key switches (1.10 vs 195) stick.
 	ok, _ := live["ok"].(bool)
 	if !ok {
+		// still merge fail stamp so UI sees current host offline, not stale peer
+		hip := hostIP(host)
+		if hip == "" {
+			hip = hostIP(fmtSprint(live["host"]))
+		}
+		if hip != "" {
+			_ = mergeFleetLiveHost(dataDir, hip, live, now)
+		}
 		return nil
 	}
 	hip := hostIP(host)
