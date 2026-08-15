@@ -7405,18 +7405,24 @@
               <input type="text" id="circuit-edit-drycooler-device" placeholder="device id (optional)" autocomplete="off" />
             </label>
             <div class="row" style="grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:10px">
-              <label class="field" style="margin:0"><span data-i18n="circuit.field_city">City (weather default)</span>
-                <input type="text" id="circuit-edit-city" autocomplete="off" placeholder="Москва" />
-              </label>
+              <div class="ac-wrap" style="margin:0">
+                <label class="field" style="margin:0"><span data-i18n="circuit.field_city">City (weather default)</span>
+                  <input type="text" id="circuit-edit-city" autocomplete="off" spellcheck="false" placeholder="Москва" />
+                </label>
+                <div class="weather-results" id="circuit-city-results" hidden></div>
+              </div>
               <label class="field" style="margin:0"><span>Lat</span>
                 <input type="number" id="circuit-edit-lat" step="0.0001" placeholder="55.75" />
               </label>
               <label class="field" style="margin:0"><span>Lon</span>
                 <input type="number" id="circuit-edit-lon" step="0.0001" placeholder="37.62" />
               </label>
-              <label class="field" style="margin:0"><span>TZ</span>
-                <input type="text" id="circuit-edit-tz" placeholder="Europe/Moscow" autocomplete="off" />
-              </label>
+              <div class="ac-wrap" style="margin:0">
+                <label class="field" style="margin:0"><span data-i18n="field.timezone">Timezone</span>
+                  <input type="text" id="circuit-edit-tz" placeholder="Europe/Moscow" autocomplete="off" spellcheck="false" />
+                </label>
+                <div class="weather-results" id="circuit-tz-results" hidden></div>
+              </div>
             </div>
 
             <div id="circuit-pool-geo" class="stack" style="gap:12px" hidden>
@@ -9288,6 +9294,24 @@
         <div class="card">
           <div class="card-h">
             <div>
+              <h2 data-i18n="mp.vendor_pw_title">Default vendor passwords</h2>
+              <div class="sub" data-i18n="mp.vendor_pw_sub">Used for discovery / SN fetch / empty miner password</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-mp-vendor-pw-save" data-i18n="btn.save">Save</button>
+          </div>
+          <div class="card-b">
+            <div class="stack" id="mp-vendor-pw-list" style="gap:8px">
+              <!-- filled by JS -->
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:10px 0 0;line-height:1.45" data-i18n="mp.vendor_pw_hint">
+              Antminer root/root · Bluestar root/ltc@dog · Goldshell 123456789 · iPollo root/root · Whatsminer admin/admin
+            </p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
               <h2 data-i18n="mp.discovery_title">Network discovery</h2>
               <div class="sub" data-i18n="mp.discovery_sub">Independent of live poll · Whatsminer + Antminer</div>
             </div>
@@ -9385,15 +9409,26 @@
               </select>
             </label>
             <label class="field"><span data-i18n="mp.col.serial">Serial number</span>
-              <input type="text" id="mp-edit-serial" maxlength="96" autocomplete="off" />
+              <div class="mp-sn-row" style="display:flex;gap:6px;align-items:center">
+                <input type="text" id="mp-edit-serial" maxlength="96" autocomplete="off" style="flex:1;min-width:0" />
+                <button
+                  type="button"
+                  class="btn btn-icon"
+                  id="mp-edit-sn-fetch"
+                  data-i18n-title="mp.sn_fetch"
+                  title="Fetch serial from device"
+                  aria-label="Fetch serial from device"
+                  style="flex:0 0 auto;width:2.2rem;height:2.2rem;padding:0;font-size:1rem;line-height:1"
+                >⤓</button>
+              </div>
             </label>
             <label class="field"><span data-i18n="mp.col.inventory">Inventory #</span>
               <input type="text" id="mp-edit-inventory" maxlength="64" autocomplete="off" />
             </label>
-            <label class="field"><span data-i18n="mp.col.factory_hr">Factory hashrate (TH/s)</span>
+            <label class="field"><span id="mp-edit-factory-hr-label" data-i18n="mp.col.factory_hr">Factory hashrate</span>
               <input type="number" id="mp-edit-factory-hr" min="0" step="any" placeholder="100" autocomplete="off" title="Submodel nameplate / design hashrate" />
             </label>
-            <label class="field"><span data-i18n="mp.col.configured_hr">Configured hashrate (TH/s)</span>
+            <label class="field"><span id="mp-edit-configured-hr-label" data-i18n="mp.col.configured_hr">Configured hashrate</span>
               <input type="number" id="mp-edit-configured-hr" min="0" step="any" placeholder="80" autocomplete="off" title="Operating target (e.g. low-power mode)" />
             </label>
             <label class="field"><span data-i18n="mp.col.pool">Heat pool</span>
@@ -10449,7 +10484,10 @@
         "h2.energy_tariff": "Electricity tariff",
         "energy.live_power": "Live power",
         "energy.chart_power": "Avg power W",
-        "energy.chart_full_power": "Full power W",
+        "energy.chart_full_power": "Peak power W",
+        "energy.chart_min_power": "Min power W",
+        "chart.series.avg_power": "Avg power W",
+        "chart.series.min_power": "Min power W",
         "energy.chart_kwh": "kWh",
         "energy.tariff_now": "Tariff now",
         "energy.today": "Today",
@@ -10546,9 +10584,17 @@
         "mp.col.model": "Model",
         "mp.col.model_code": "Code",
         "mp.col.serial": "Serial",
+        "mp.sn_fetch": "Fetch serial from device",
+        "mp.sn_fetch_ok": "Serial fetched",
+        "mp.sn_fetch_fail": "Serial not available for this model/driver",
         "mp.col.inventory": "Inv #",
-        "mp.col.factory_hr": "Factory hashrate (TH/s)",
-        "mp.col.configured_hr": "Configured hashrate (TH/s)",
+        "mp.col.factory_hr": "Factory hashrate",
+        "mp.col.configured_hr": "Configured hashrate",
+        "mp.vendor_pw_title": "Default vendor passwords",
+        "mp.vendor_pw_sub": "Used for discovery / SN fetch / empty miner password",
+        "mp.vendor_pw_hint": "Antminer root/root · Bluestar root/ltc@dog · Goldshell 123456789 · iPollo root/root · Whatsminer admin/admin",
+        "mp.vendor_pw_user": "User",
+        "mp.vendor_pw_pass": "Password",
         "mp.col.cooling": "Cooling",
         "mp.col.algo": "Algorithm",
         "mp.col.pool": "Pool",
@@ -11042,7 +11088,7 @@
         "chart.series.freq": "Freq",
         "chart.series.eff": "EEF J/T",
         "chart.series.kwh": "kWh",
-        "chart.series.full_power": "Full power W",
+        "chart.series.full_power": "Peak power W",
         "btn.reset_defaults": "Defaults",
         "btn.apply": "Apply",
         "btn.cancel": "Cancel",
@@ -11477,7 +11523,10 @@
         "h2.energy_tariff": "Тариф на электроэнергию",
         "energy.live_power": "Мощность сейчас",
         "energy.chart_power": "Средняя мощность W",
-        "energy.chart_full_power": "Полная мощность W",
+        "energy.chart_full_power": "Пиковая мощность W",
+        "energy.chart_min_power": "Мин. мощность W",
+        "chart.series.avg_power": "Средняя мощность W",
+        "chart.series.min_power": "Мин. мощность W",
         "energy.chart_kwh": "кВт·ч",
         "energy.tariff_now": "Тариф сейчас",
         "energy.today": "Сегодня",
@@ -11574,9 +11623,17 @@
         "mp.col.model": "Модель",
         "mp.col.model_code": "Код",
         "mp.col.serial": "Серийный",
+        "mp.sn_fetch": "Получить серийный с устройства",
+        "mp.sn_fetch_ok": "Серийный получен",
+        "mp.sn_fetch_fail": "Серийный недоступен для этой модели/драйвера",
         "mp.col.inventory": "Инв. №",
-        "mp.col.factory_hr": "Заводской хешрейт (TH/s)",
-        "mp.col.configured_hr": "Установленный хешрейт (TH/s)",
+        "mp.col.factory_hr": "Заводской хешрейт",
+        "mp.col.configured_hr": "Установленный хешрейт",
+        "mp.vendor_pw_title": "Дефолтные пароли вендоров",
+        "mp.vendor_pw_sub": "Для discovery / запроса SN / пустого пароля майнера",
+        "mp.vendor_pw_hint": "Antminer root/root · Bluestar root/ltc@dog · Goldshell 123456789 · iPollo root/root · Whatsminer admin/admin",
+        "mp.vendor_pw_user": "Логин",
+        "mp.vendor_pw_pass": "Пароль",
         "mp.col.cooling": "Охлаждение",
         "mp.col.algo": "Алгоритм",
         "mp.col.pool": "Бассейн",
@@ -12070,7 +12127,7 @@
         "chart.series.freq": "Freq",
         "chart.series.eff": "EEF J/T",
         "chart.series.kwh": "кВт·ч",
-        "chart.series.full_power": "Полная мощность W",
+        "chart.series.full_power": "Пиковая мощность W",
         "btn.reset_defaults": "По умолчанию",
         "btn.apply": "Применить",
         "btn.cancel": "Отмена",
@@ -16621,81 +16678,95 @@
         .slice(0, lim);
     }
 
-    function hideTzResults() {
-      const box = document.getElementById("sched-tz-results");
-      if (box) {
+    /**
+     * System-wide TimeZone autocomplete.
+     * @param {HTMLInputElement|string} inputEl
+     * @param {HTMLElement|string} resultsEl
+     * @param {{ onSelect?: (id: string) => void }} [opts]
+     */
+    function bindTimezoneAutocomplete(inputEl, resultsEl, opts) {
+      const inp =
+        typeof inputEl === "string"
+          ? document.getElementById(inputEl)
+          : inputEl;
+      const box =
+        typeof resultsEl === "string"
+          ? document.getElementById(resultsEl)
+          : resultsEl;
+      if (!inp || !box || inp.dataset.tzAcBound) return;
+      inp.dataset.tzAcBound = "1";
+      let timer = null;
+      const hide = () => {
         box.hidden = true;
         box.innerHTML = "";
-      }
-    }
-
-    function showTzResults(q) {
-      const box = document.getElementById("sched-tz-results");
-      const inp = document.getElementById("sched-tz");
-      if (!box || !inp) return;
-      const items = filterTimezones(q, 14);
-      if (!items.length) {
-        box.hidden = false;
-        box.innerHTML =
-          "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
-          (mpIsRu() ? "ничего не найдено" : "nothing found") +
-          "</div>";
-        return;
-      }
-      box.hidden = false;
-      box.innerHTML = "";
-      items.forEach((it) => {
-        const off = tzOffsetLabel(it.id);
-        const b = document.createElement("button");
-        b.type = "button";
-        b.innerHTML =
-          "<span>" +
-          escHtml(it.id) +
-          "</span>" +
-          (off
-            ? "<span class='wr-sub'>" + escHtml(off) +
-              (it.via ? " · " + escHtml(it.via) : "") +
-              "</span>"
-            : it.via
-              ? "<span class='wr-sub'>" + escHtml(it.via) + "</span>"
-              : "");
-        b.addEventListener("mousedown", (ev) => {
-          ev.preventDefault();
-          inp.value = it.id;
-          scheduleCache.timezone = it.id;
-          hideTzResults();
-        });
-        box.appendChild(b);
-      });
-    }
-
-    function scheduleTzSearch() {
-      if (tzSearchTimer) clearTimeout(tzSearchTimer);
-      tzSearchTimer = setTimeout(() => {
-        tzSearchTimer = null;
-        const q = document.getElementById("sched-tz")?.value || "";
-        showTzResults(q);
-      }, 160);
-    }
-
-    document.getElementById("sched-tz")?.addEventListener("input", scheduleTzSearch);
-    document.getElementById("sched-tz")?.addEventListener("focus", () => {
-      showTzResults(document.getElementById("sched-tz")?.value || "");
-    });
-    document.getElementById("sched-tz")?.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") hideTzResults();
-      if (e.key === "Enter") {
-        const box = document.getElementById("sched-tz-results");
-        const first = box && !box.hidden ? box.querySelector("button") : null;
-        if (first) {
-          e.preventDefault();
-          first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      };
+      const show = (q) => {
+        const items = filterTimezones(q, 14);
+        if (!items.length) {
+          box.hidden = false;
+          box.innerHTML =
+            "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+            (mpIsRu() ? "ничего не найдено" : "nothing found") +
+            "</div>";
+          return;
         }
-      }
+        box.hidden = false;
+        box.innerHTML = "";
+        items.forEach((it) => {
+          const off = tzOffsetLabel(it.id);
+          const b = document.createElement("button");
+          b.type = "button";
+          b.innerHTML =
+            "<span>" +
+            escHtml(it.id) +
+            "</span>" +
+            (off
+              ? "<span class='wr-sub'>" +
+                escHtml(off) +
+                (it.via ? " · " + escHtml(it.via) : "") +
+                "</span>"
+              : it.via
+                ? "<span class='wr-sub'>" + escHtml(it.via) + "</span>"
+                : "");
+          b.addEventListener("mousedown", (ev) => {
+            ev.preventDefault();
+            inp.value = it.id;
+            if (opts && typeof opts.onSelect === "function") opts.onSelect(it.id);
+            hide();
+          });
+          box.appendChild(b);
+        });
+      };
+      const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          show(inp.value || "");
+        }, 160);
+      };
+      inp.addEventListener("input", schedule);
+      inp.addEventListener("focus", () => show(inp.value || ""));
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") hide();
+        if (e.key === "Enter") {
+          const first = !box.hidden ? box.querySelector("button") : null;
+          if (first) {
+            e.preventDefault();
+            first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+          }
+        }
+      });
+      inp.addEventListener("blur", () => setTimeout(hide, 180));
+    }
+
+    // Schedule + Circuits TZ fields
+    bindTimezoneAutocomplete("sched-tz", "sched-tz-results", {
+      onSelect: (id) => {
+        if (typeof scheduleCache === "object" && scheduleCache)
+          scheduleCache.timezone = id;
+      },
     });
-    document.getElementById("sched-tz")?.addEventListener("blur", () => {
-      setTimeout(hideTzResults, 180);
-    });
+    bindTimezoneAutocomplete("circuit-edit-tz", "circuit-tz-results");
     document.getElementById("btn-sched-ex-add")?.addEventListener("click", () => {
       if (!scheduleCache.exceptions) scheduleCache.exceptions = [];
       const d = new Date();
@@ -20367,14 +20438,18 @@
       } catch (_) { /* ignore */ }
       const lblK =
         typeof t === "function" ? t("energy.chart_kwh", "kWh") : "kWh";
-      const lblFull =
-        typeof t === "function"
-          ? t("energy.chart_full_power", "Full power W")
-          : "Full power W";
       const lblAvg =
         typeof t === "function"
           ? t("energy.chart_power", "Avg power W")
           : "Avg power W";
+      const lblFull =
+        typeof t === "function"
+          ? t("energy.chart_full_power", "Peak power W")
+          : "Peak power W";
+      const lblMin =
+        typeof t === "function"
+          ? t("energy.chart_min_power", "Min power W")
+          : "Min power W";
       const ch = new Chart(el, {
         type: "bar",
         data: {
@@ -20389,13 +20464,14 @@
               borderWidth: 1,
               borderRadius: 3,
               yAxisID: "y",
-              order: 3,
+              order: 4,
               maxBarThickness: 36,
+              $energyKind: "kwh",
             },
-            // Full (peak) power — visible line on right W axis
+            // Avg power — primary W line (default on)
             {
               type: "line",
-              label: lblFull,
+              label: lblAvg,
               data: [],
               borderColor: "#3ecf8e",
               backgroundColor: "transparent",
@@ -20406,23 +20482,39 @@
               borderWidth: 2,
               fill: false,
               order: 1,
-              $energyKind: "full",
+              $energyKind: "avg",
             },
-            // Avg power: tooltip-only (invisible on plot, hidden from legend)
+            // Peak power — optional
             {
               type: "line",
-              label: lblAvg,
+              label: lblFull,
               data: [],
               borderColor: "#f0c14a",
-              backgroundColor: "#f0c14a",
+              backgroundColor: "transparent",
               yAxisID: "y1",
-              showLine: false,
-              pointRadius: 0,
-              pointHoverRadius: 0,
-              borderWidth: 0,
+              tension: 0.2,
+              pointRadius: 2,
+              pointHoverRadius: 4,
+              borderWidth: 2,
               fill: false,
               order: 2,
-              $energyKind: "avg",
+              $energyKind: "full",
+            },
+            // Min power — optional
+            {
+              type: "line",
+              label: lblMin,
+              data: [],
+              borderColor: "#a78bfa",
+              backgroundColor: "transparent",
+              yAxisID: "y1",
+              tension: 0.2,
+              pointRadius: 2,
+              pointHoverRadius: 4,
+              borderWidth: 2,
+              fill: false,
+              order: 3,
+              $energyKind: "min",
             },
           ],
         },
@@ -20461,7 +20553,6 @@
                   );
                 },
               },
-              // Full power, avg power, then kWh (null-safe — bad itemSort can stack-overflow)
               itemSort: (a, b) => {
                 const rank = (item) => {
                   try {
@@ -20469,10 +20560,11 @@
                       item &&
                       item.dataset &&
                       item.dataset.$energyKind;
-                    if (kind === "full") return 0;
-                    if (kind === "avg") return 1;
+                    if (kind === "avg") return 0;
+                    if (kind === "full") return 1;
+                    if (kind === "min") return 2;
                   } catch (_) { /* ignore */ }
-                  return 2;
+                  return 3;
                 };
                 return rank(a) - rank(b);
               },
@@ -20694,20 +20786,22 @@
       });
     }
 
-    function applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg) {
+    function applyEnergyChartData(ch, pts, labels, kwh, avgW, fullW, minW, lblK, lblAvg, lblFull, lblMin) {
       if (!ch || !ch.data) return false;
-      // destroyed / incomplete chart
-      if (!ch.canvas || !ch.data.datasets || ch.data.datasets.length < 3) {
+      // destroyed / incomplete chart — need 4 datasets (kwh, avg, peak, min)
+      if (!ch.canvas || !ch.data.datasets || ch.data.datasets.length < 4) {
         return false;
       }
       ch.$energyPts = pts;
       ch.data.labels = labels;
       ch.data.datasets[0].label = lblK;
       ch.data.datasets[0].data = kwh;
-      ch.data.datasets[1].label = lblFull;
-      ch.data.datasets[1].data = fullW;
-      ch.data.datasets[2].label = lblAvg;
-      ch.data.datasets[2].data = avgW;
+      ch.data.datasets[1].label = lblAvg;
+      ch.data.datasets[1].data = avgW;
+      ch.data.datasets[2].label = lblFull;
+      ch.data.datasets[2].data = fullW;
+      ch.data.datasets[3].label = lblMin;
+      ch.data.datasets[3].data = minW;
       return true;
     }
 
@@ -20718,38 +20812,44 @@
       const kwh = pts.map((p) =>
         p.kwh != null && Number.isFinite(Number(p.kwh)) ? Number(p.kwh) : 0
       );
-      const fullW = pts.map((p) => {
-        if (p.max_power_w != null && Number.isFinite(Number(p.max_power_w))) {
-          return Number(p.max_power_w);
-        }
-        // older API: fall back to avg so line still shows
-        if (p.avg_power_w != null && Number.isFinite(Number(p.avg_power_w))) {
-          return Number(p.avg_power_w);
-        }
-        return null;
-      });
       const avgW = pts.map((p) =>
         p.avg_power_w != null && Number.isFinite(Number(p.avg_power_w))
           ? Number(p.avg_power_w)
           : null
       );
+      const fullW = pts.map((p) => {
+        if (p.max_power_w != null && Number.isFinite(Number(p.max_power_w))) {
+          return Number(p.max_power_w);
+        }
+        return null;
+      });
+      const minW = pts.map((p) => {
+        if (p.min_power_w != null && Number.isFinite(Number(p.min_power_w))) {
+          return Number(p.min_power_w);
+        }
+        return null;
+      });
       const lblK =
         typeof t === "function" ? t("energy.chart_kwh", "kWh") : "kWh";
-      const lblFull =
-        typeof t === "function"
-          ? t("energy.chart_full_power", "Full power W")
-          : "Full power W";
       const lblAvg =
         typeof t === "function"
           ? t("energy.chart_power", "Avg power W")
           : "Avg power W";
-      // recreate charts if still on old 2-dataset layout or destroyed
+      const lblFull =
+        typeof t === "function"
+          ? t("energy.chart_full_power", "Peak power W")
+          : "Peak power W";
+      const lblMin =
+        typeof t === "function"
+          ? t("energy.chart_min_power", "Min power W")
+          : "Min power W";
+      // recreate charts if still on old 2/3-dataset layout or destroyed
       const badChart = (ch) =>
         !ch ||
         !ch.canvas ||
         !ch.data ||
         !ch.data.datasets ||
-        ch.data.datasets.length < 3;
+        ch.data.datasets.length < 4;
       if (typeof chartEnergy !== "undefined" && chartEnergy && badChart(chartEnergy)) {
         try { chartEnergy.destroy(); } catch (_) {}
         chartEnergy = null;
@@ -20761,7 +20861,21 @@
       const charts2 = energyChartInstances();
       charts2.forEach((ch) => {
         try {
-          if (!applyEnergyChartData(ch, pts, labels, kwh, fullW, avgW, lblK, lblFull, lblAvg)) {
+          if (
+            !applyEnergyChartData(
+              ch,
+              pts,
+              labels,
+              kwh,
+              avgW,
+              fullW,
+              minW,
+              lblK,
+              lblAvg,
+              lblFull,
+              lblMin
+            )
+          ) {
             return;
           }
           // visibility only — do not mutate legend options (Chart.js re-entrancy)
@@ -22486,8 +22600,7 @@
             const datasets = (chart && chart.data && chart.data.datasets) || [];
             datasets.forEach((ds, i) => {
               if (!ds) return;
-              // energy: avg is tooltip-only
-              if (ds.$energyKind === "avg" || ds._legendSkip) return;
+              if (ds._legendSkip) return;
               // membership: series off in settings → not listed
               if (k === "power" && ds._seriesId && !isPowerSeriesOn(ds._seriesId))
                 return;
@@ -22947,18 +23060,35 @@
       return getPowerChartSeriesVis()[id] !== false;
     }
 
-    /** Energy chart series (avg stays tooltip-only, not listed). */
-    const ENERGY_CHART_SERIES_KEY = "poolheat_energy_chart_series_v1";
+    /** Energy chart series: avg power primary; peak/min optional. */
+    const ENERGY_CHART_SERIES_KEY = "poolheat_energy_chart_series_v2";
     const ENERGY_CHART_SERIES = [
       { id: "kwh", labelKey: "chart.series.kwh", label: "kWh", color: "rgba(61, 156, 240, 0.9)" },
       {
-        id: "full_power",
-        labelKey: "chart.series.full_power",
-        label: "Full power W",
+        id: "avg_power",
+        labelKey: "chart.series.avg_power",
+        label: "Avg power W",
         color: "#3ecf8e",
       },
+      {
+        id: "full_power",
+        labelKey: "chart.series.full_power",
+        label: "Peak power W",
+        color: "#f0c14a",
+      },
+      {
+        id: "min_power",
+        labelKey: "chart.series.min_power",
+        label: "Min power W",
+        color: "#a78bfa",
+      },
     ];
-    const ENERGY_CHART_SERIES_DEFAULT_ON = { kwh: true, full_power: true };
+    const ENERGY_CHART_SERIES_DEFAULT_ON = {
+      kwh: true,
+      avg_power: true,
+      full_power: false,
+      min_power: false,
+    };
     let energyChartSeriesVis = null;
 
     function loadEnergyChartSeriesVis() {
@@ -23027,38 +23157,35 @@
 
     function applyEnergyChartSeriesVisibility(ch) {
       if (!ch || !ch.data || !ch.data.datasets) return;
-      const ds0 = ch.data.datasets[0];
-      const ds1 = ch.data.datasets[1];
-      const ds2 = ch.data.datasets[2];
-      if (ds0) {
-        ds0._seriesId = "kwh";
-        ds0.hidden = !isEnergySeriesOn("kwh");
-        // keep create-time label unless empty
-        if (!ds0.label) {
-          ds0.label =
-            typeof t === "function" ? t("chart.series.kwh", "kWh") : "kWh";
-        }
-      }
-      if (ds1) {
-        ds1._seriesId = "full_power";
-        ds1.hidden = !isEnergySeriesOn("full_power");
-        if (!ds1.label) {
-          ds1.label =
+      // datasets: 0=kwh, 1=avg_power, 2=full_power(peak), 3=min_power
+      const map = [
+        { i: 0, id: "kwh", fallback: "kWh" },
+        { i: 1, id: "avg_power", fallback: "Avg power W" },
+        { i: 2, id: "full_power", fallback: "Peak power W" },
+        { i: 3, id: "min_power", fallback: "Min power W" },
+      ];
+      map.forEach(({ i, id, fallback }) => {
+        const ds = ch.data.datasets[i];
+        if (!ds) return;
+        ds._seriesId = id;
+        ds.hidden = !isEnergySeriesOn(id);
+        const cat = ENERGY_CHART_SERIES.find((s) => s.id === id);
+        if (cat) {
+          ds.label =
             typeof t === "function"
-              ? t("chart.series.full_power", "Full power W")
-              : "Full power W";
+              ? t(cat.labelKey, cat.label || fallback)
+              : cat.label || fallback;
+        } else if (!ds.label) {
+          ds.label = fallback;
         }
-      }
-      // avg always tooltip-only (not plotted); keep data for tooltips
-      if (ds2) {
-        ds2._seriesId = "avg";
-        // never hide from Chart meta in a way that re-enters update;
-        // keep showLine/pointRadius fixed, legend filter excludes index 2
-        ds2.showLine = false;
-        ds2.pointRadius = 0;
-        ds2.pointHoverRadius = 0;
-        ds2.borderWidth = 0;
-      }
+        // plotted series: show line + points
+        if (id !== "kwh") {
+          ds.showLine = true;
+          ds.pointRadius = ds.hidden ? 0 : 2.5;
+          ds.pointHoverRadius = 4;
+          ds.borderWidth = 2;
+        }
+      });
       // IMPORTANT: do not reassign legend.labels / filter here —
       // mutating options mid-update caused "Maximum call stack size exceeded".
     }
@@ -25326,6 +25453,72 @@
       await refreshManagedTable();
     }
 
+    const VENDOR_PW_ORDER = [
+      "antminer",
+      "bluestar",
+      "goldshell",
+      "ipollo",
+      "whatsminer",
+    ];
+    const VENDOR_PW_DEFAULTS = {
+      antminer: { user: "root", password: "root" },
+      bluestar: { user: "root", password: "ltc@dog" },
+      goldshell: { user: "", password: "123456789" },
+      ipollo: { user: "root", password: "root" },
+      whatsminer: { user: "admin", password: "admin" },
+    };
+
+    function renderVendorPasswordFields(vp) {
+      const box = document.getElementById("mp-vendor-pw-list");
+      if (!box) return;
+      const src = vp && typeof vp === "object" ? vp : {};
+      box.innerHTML = VENDOR_PW_ORDER.map((vid) => {
+        const row = src[vid] || VENDOR_PW_DEFAULTS[vid] || {};
+        const user = row.user != null ? row.user : (VENDOR_PW_DEFAULTS[vid] || {}).user || "";
+        const pass =
+          row.password != null
+            ? row.password
+            : (VENDOR_PW_DEFAULTS[vid] || {}).password || "";
+        const label = vendorDisplayName(vid);
+        return (
+          '<div class="row" style="grid-template-columns:7rem 1fr 1fr;gap:8px;align-items:end" data-vp-id="' +
+          escapeLogHtml(vid) +
+          '">' +
+          '<div style="font-size:0.82rem;font-weight:550;padding-bottom:8px">' +
+          escapeLogHtml(label) +
+          "</div>" +
+          '<label class="field" style="margin:0"><span data-i18n="mp.vendor_pw_user">User</span>' +
+          '<input type="text" class="mp-vp-user" data-vp="' +
+          escapeLogHtml(vid) +
+          '" value="' +
+          escapeLogHtml(user) +
+          '" autocomplete="off" /></label>' +
+          '<label class="field" style="margin:0"><span data-i18n="mp.vendor_pw_pass">Password</span>' +
+          '<input type="text" class="mp-vp-pass" data-vp="' +
+          escapeLogHtml(vid) +
+          '" value="' +
+          escapeLogHtml(pass) +
+          '" autocomplete="off" /></label>' +
+          "</div>"
+        );
+      }).join("");
+    }
+
+    function collectVendorPasswordsFromUI() {
+      const out = {};
+      VENDOR_PW_ORDER.forEach((vid) => {
+        const u = document.querySelector('.mp-vp-user[data-vp="' + vid + '"]');
+        const p = document.querySelector('.mp-vp-pass[data-vp="' + vid + '"]');
+        out[vid] = {
+          user: u ? String(u.value || "") : (VENDOR_PW_DEFAULTS[vid] || {}).user || "",
+          password: p
+            ? String(p.value || "")
+            : (VENDOR_PW_DEFAULTS[vid] || {}).password || "",
+        };
+      });
+      return out;
+    }
+
     async function loadMinerPollerCfg() {
       const st = document.getElementById("mp-disc-status");
       try {
@@ -25347,6 +25540,7 @@
         if (conc && d.concurrency != null) conc.value = d.concurrency;
         const mp = document.getElementById("mp-max-parallel");
         if (mp && p.max_parallel != null) mp.value = p.max_parallel;
+        renderVendorPasswordFields(c.vendor_passwords || VENDOR_PW_DEFAULTS);
         if (st) {
           st.textContent =
             (d.enabled ? "auto-scan on" : "auto-scan off") +
@@ -25355,6 +25549,7 @@
         }
       } catch (e) {
         if (st) st.textContent = "failed: " + e.message;
+        renderVendorPasswordFields(VENDOR_PW_DEFAULTS);
       }
     }
 
@@ -25364,6 +25559,12 @@
         .split(/\r?\n|,/)
         .map((s) => s.trim())
         .filter(Boolean);
+      const vendor_passwords = collectVendorPasswordsFromUI();
+      const discPasswords = ["admin"];
+      Object.values(vendor_passwords).forEach((row) => {
+        const pw = String((row && row.password) || "").trim();
+        if (pw && discPasswords.indexOf(pw) < 0) discPasswords.push(pw);
+      });
       return {
         version: 1,
         discovery: {
@@ -25373,7 +25574,7 @@
           probe_timeout_ms: Number(document.getElementById("mp-disc-timeout")?.value) || 500,
           concurrency: Number(document.getElementById("mp-disc-conc")?.value) || 48,
           ports: [4028, 80, 4433, 6060],
-          passwords: ["admin"],
+          passwords: discPasswords,
           ignore_ips: [],
         },
         poll: {
@@ -25381,8 +25582,20 @@
           interval_sec: 0,
           per_miner_timeout_sec: 8,
         },
+        vendor_passwords,
       };
     }
+
+    document.getElementById("btn-mp-vendor-pw-save")?.addEventListener("click", async () => {
+      try {
+        await saveMinerPollerCfgPartial();
+        toastSuccess(
+          typeof t === "function" ? t("btn.save", "Save") + " · OK" : "Saved"
+        );
+      } catch (e) {
+        toastError("Vendor passwords: " + (e.message || e));
+      }
+    });
 
     async function saveMinerPollerCfgPartial() {
       const cfg = collectMinerPollerCfgFromUI();
@@ -25766,12 +25979,40 @@
       }, 8000);
     }
 
-    // freeze: online but ~0 HR; lowhash: avg 30m < configured/factory target
-    const FLEET_FREEZE_HR_EPS = 0.01; // TH/s — treat as zero
+    // freeze: online but ~0 HR (unit-aware); lowhash: avg 30m < target
+    // Inventory factory/configured are stored in display units (MH/GH/TH of algo).
+    // live.hashrate_th is always true TH/s (e.g. 283 MH/s → 0.000283 TH/s).
     const FLEET_LOWHASH_RATIO = 0.9; // below 90% of target → lowhash
 
-    function fleetTargetHashrateTh(m) {
+    function fleetHashUnit(m, live) {
+      return String(
+        (live && live.hashrate_unit) ||
+          (m && m.hashrate_unit) ||
+          "TH/s"
+      ).toUpperCase();
+    }
+
+    /** Convert true TH/s → display unit of the miner (MH/GH/TH). */
+    function fleetThToDisplay(th, unitHint) {
+      const n = Number(th);
+      if (!Number.isFinite(n)) return null;
+      const u = String(unitHint || "TH/s").toUpperCase();
+      if (u.indexOf("MH") >= 0) return n * 1e6;
+      if (u.indexOf("GH") >= 0) return n * 1e3;
+      return n;
+    }
+
+    /** Near-zero threshold in display units. */
+    function fleetFreezeEpsDisplay(unitHint) {
+      const u = String(unitHint || "TH/s").toUpperCase();
+      if (u.indexOf("MH") >= 0) return 1.0; // 1 MH/s
+      if (u.indexOf("GH") >= 0) return 0.05; // 0.05 GH/s
+      return 0.01; // 0.01 TH/s
+    }
+
+    function fleetTargetHashrateDisplay(m) {
       // Prefer configured (operating) target; fall back to factory nameplate
+      // Values are in algo display units (MH/s for ethash, TH/s for sha256, …)
       const conf = Number(
         m && (m.configured_hashrate_th != null
           ? m.configured_hashrate_th
@@ -25789,26 +26030,31 @@
 
     function fleetStatusOf(m) {
       // online | offline | freeze | lowhash | error | unknown
-      // freeze example: 172.16.100.195 — ASIC answers on LAN, hashrate_th ≈ 0
       if (m.online === true) {
         const live = m.live || {};
         if (live.error) return "error";
+        const unit = fleetHashUnit(m, live);
+        const eps = fleetFreezeEpsDisplay(unit);
         const rawHr = live.hashrate_th;
         const hrMissing = rawHr == null || rawHr === "";
-        const hr = Number(rawHr);
-        // freeze: on network but not mining (0 HR or no rate while still polled OK)
-        if (hrMissing || !Number.isFinite(hr) || hr <= FLEET_FREEZE_HR_EPS) {
+        const hrDisp = hrMissing ? null : fleetThToDisplay(rawHr, unit);
+        // also trust hashrate_hs when present (H/s)
+        let hsOk = false;
+        const hs = Number(live.hashrate_hs);
+        if (Number.isFinite(hs) && hs > 1e6) hsOk = true; // > 1 MH/s
+        // freeze: on network but not mining
+        if (!hsOk && (hrDisp == null || !Number.isFinite(hrDisp) || hrDisp <= eps)) {
           return "freeze";
         }
-        // lowhash: avg over last ~30 min below inventory target
-        // (needs server history; no live fallback — avoid false yellow on warm-up)
-        const target = fleetTargetHashrateTh(m);
+        // lowhash: avg over last ~30 min below inventory target (same display unit)
+        const target = fleetTargetHashrateDisplay(m);
         if (target != null && target > 0) {
           const avg30 = Number(live.hashrate_th_avg_30m);
+          const avgDisp = fleetThToDisplay(avg30, unit);
           if (
-            Number.isFinite(avg30) &&
-            avg30 > FLEET_FREEZE_HR_EPS &&
-            avg30 < target * FLEET_LOWHASH_RATIO
+            Number.isFinite(avgDisp) &&
+            avgDisp > eps &&
+            avgDisp < target * FLEET_LOWHASH_RATIO
           ) {
             return "lowhash";
           }
@@ -26910,6 +27156,9 @@
         o.textContent = brand ? brand + " " + fam : fam;
         o.dataset.cooling = String(f.cooling || "air");
         o.dataset.algo = String(f.algo || "");
+        o.dataset.hrUnit = String(
+          f.hashrate_unit || algoHashrateUnit(f.algo) || "TH/s"
+        );
         const match = Array.isArray(f.match) && f.match.length ? f.match[0] : fam;
         o.dataset.codeHint = String(match || fam);
         sel.appendChild(o);
@@ -26925,11 +27174,54 @@
       else sel.value = "";
     }
 
+    function algoHashrateUnit(algoId) {
+      const a = String(algoId || "").toLowerCase().replace(/^etchash$/, "ethash");
+      if (a === "ethash" || a === "equihash") return "MH/s";
+      if (a === "scrypt" || a === "x11") return "GH/s";
+      // sha256, eaglesong, kheavyhash, blake2s, handshake, default
+      return "TH/s";
+    }
+
+    function updateMpHashrateUnitLabels() {
+      const algoEl = document.getElementById("mp-edit-algo");
+      const modelSel = document.getElementById("mp-edit-model");
+      let unit = "TH/s";
+      const opt =
+        modelSel && modelSel.selectedIndex >= 0
+          ? modelSel.options[modelSel.selectedIndex]
+          : null;
+      if (opt && opt.dataset && opt.dataset.hrUnit) {
+        unit = opt.dataset.hrUnit;
+      } else if (algoEl && algoEl.value) {
+        unit = algoHashrateUnit(algoEl.value);
+      }
+      const facLbl = document.getElementById("mp-edit-factory-hr-label");
+      const confLbl = document.getElementById("mp-edit-configured-hr-label");
+      const facBase =
+        typeof t === "function"
+          ? t("mp.col.factory_hr", "Factory hashrate")
+          : "Factory hashrate";
+      const confBase =
+        typeof t === "function"
+          ? t("mp.col.configured_hr", "Configured hashrate")
+          : "Configured hashrate";
+      if (facLbl) facLbl.textContent = facBase + " (" + unit + ")";
+      if (confLbl) confLbl.textContent = confBase + " (" + unit + ")";
+      const facIn = document.getElementById("mp-edit-factory-hr");
+      const confIn = document.getElementById("mp-edit-configured-hr");
+      if (facIn) facIn.placeholder = unit.indexOf("MH") >= 0 ? "300" : unit.indexOf("GH") >= 0 ? "16" : "100";
+      if (confIn) confIn.placeholder = unit.indexOf("MH") >= 0 ? "200" : unit.indexOf("GH") >= 0 ? "12" : "80";
+      return unit;
+    }
+
     function applyModelSelectHints() {
       const sel = document.getElementById("mp-edit-model");
       if (!sel) return;
       const opt = sel.options[sel.selectedIndex];
-      if (!opt || !opt.value) return;
+      if (!opt || !opt.value) {
+        updateMpHashrateUnitLabels();
+        return;
+      }
       const cool = opt.dataset.cooling;
       const coolEl = document.getElementById("mp-edit-cooling");
       if (cool && coolEl) coolEl.value = cool;
@@ -26949,6 +27241,7 @@
       if (codeEl && !String(codeEl.value || "").trim() && opt.dataset.codeHint) {
         codeEl.value = opt.dataset.codeHint;
       }
+      updateMpHashrateUnitLabels();
     }
 
     function syncVendorLogoPreview() {
@@ -27216,10 +27509,90 @@
           (m.host || "—") +
           (m.source ? " · " + m.source : "");
       }
+      try {
+        updateMpHashrateUnitLabels();
+      } catch (_) { /* ignore */ }
       const bd = ensureManagedEditPortal();
       if (bd) bd.hidden = false;
       document.getElementById("mp-edit-alias")?.focus();
     }
+
+    async function fetchManagedSerialFromDevice() {
+      const host = (document.getElementById("mp-edit-host")?.value || "").trim();
+      const port = Number(document.getElementById("mp-edit-port")?.value) || 4028;
+      const vendor = (
+        document.getElementById("mp-edit-vendor")?.value || ""
+      ).trim();
+      const password = document.getElementById("mp-edit-password")?.value || "";
+      if (!host) {
+        toastWarn("Host / IP required");
+        return;
+      }
+      const btn = document.getElementById("mp-edit-sn-fetch");
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = "…";
+      }
+      try {
+        const res = await fetch("/api/miner/fetch_serial", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            host,
+            port,
+            vendor,
+            password: password || undefined,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.ok === false) {
+          throw new Error(
+            (body && (body.error || body.message)) ||
+              (typeof t === "function"
+                ? t("mp.sn_fetch_fail", "Serial not available")
+                : "Serial not available")
+          );
+        }
+        const sn = String(body.serial || "").trim();
+        if (!sn) {
+          throw new Error(
+            typeof t === "function"
+              ? t("mp.sn_fetch_fail", "Serial not available")
+              : "Serial not available"
+          );
+        }
+        const inp = document.getElementById("mp-edit-serial");
+        if (inp) inp.value = sn;
+        toastSuccess(
+          typeof t === "function"
+            ? t("mp.sn_fetch_ok", "Serial fetched")
+            : "Serial fetched"
+        );
+      } catch (e) {
+        toastError(
+          (typeof t === "function"
+            ? t("mp.sn_fetch_fail", "Serial not available")
+            : "Serial not available") +
+            ": " +
+            (e.message || e)
+        );
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = "⤓";
+        }
+      }
+    }
+
+    document.getElementById("mp-edit-sn-fetch")?.addEventListener("click", () => {
+      void fetchManagedSerialFromDevice();
+    });
+    document.getElementById("mp-edit-algo")?.addEventListener("change", () => {
+      updateMpHashrateUnitLabels();
+    });
+    document.getElementById("mp-edit-model")?.addEventListener("change", () => {
+      applyModelSelectHints();
+    });
 
     async function saveManagedEditDialog() {
       const id = (document.getElementById("mp-edit-id")?.value || "").trim();
@@ -31069,11 +31442,15 @@
         backdrop
           .querySelector("#btn-wx-widget-cancel")
           ?.addEventListener("click", () => closeWeatherWidgetSettings());
-        const inp = backdrop.querySelector("#wx-widget-search");
-        let tmr = null;
-        inp?.addEventListener("input", () => {
-          if (tmr) clearTimeout(tmr);
-          tmr = setTimeout(() => void searchWeatherForWidgetModal(), 280);
+        // system-wide city autocomplete
+        bindCityAutocomplete("wx-widget-search", "wx-widget-results", {
+          onSelect: (r) => {
+            const bd = document.getElementById("wx-widget-settings-modal");
+            const wid = bd && bd._wxWidgetId;
+            if (!wid) return;
+            void applyWeatherPlaceToWidget(wid, r);
+            closeWeatherWidgetSettings();
+          },
         });
       }
       backdrop._wxWidgetId = widgetId;
@@ -31769,6 +32146,146 @@
       }
     }
 
+    /**
+     * System-wide city autocomplete (Open-Meteo via /api/weather/search).
+     * @param {HTMLInputElement|string} inputEl
+     * @param {HTMLElement|string} resultsEl
+     * @param {{ onSelect?: (r: object) => void, minChars?: number }} [opts]
+     */
+    function bindCityAutocomplete(inputEl, resultsEl, opts) {
+      const inp =
+        typeof inputEl === "string"
+          ? document.getElementById(inputEl)
+          : inputEl;
+      const box =
+        typeof resultsEl === "string"
+          ? document.getElementById(resultsEl)
+          : resultsEl;
+      if (!inp || !box || inp.dataset.cityAcBound) return null;
+      inp.dataset.cityAcBound = "1";
+      const minChars = (opts && opts.minChars) || 2;
+      let timer = null;
+      let seq = 0;
+      const hide = () => {
+        box.hidden = true;
+        box.innerHTML = "";
+      };
+      const search = async (silent) => {
+        const q = (inp.value || "").trim();
+        if (q.length < minChars) {
+          hide();
+          if (!silent) toastWarn("Enter at least 2 characters");
+          return;
+        }
+        const my = ++seq;
+        const lang =
+          (typeof _uiLang !== "undefined" && _uiLang) ||
+          document.documentElement.lang ||
+          "ru";
+        box.hidden = false;
+        box.removeAttribute("hidden");
+        box.innerHTML =
+          "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+          (String(lang).startsWith("ru") ? "поиск…" : "search…") +
+          "</div>";
+        try {
+          const url =
+            "/api/weather/search?q=" +
+            encodeURIComponent(q) +
+            "&count=12&lang=" +
+            encodeURIComponent(String(lang).slice(0, 5));
+          const res = await fetch(url, { cache: "no-store" });
+          const body = await res.json().catch(() => ({}));
+          if (my !== seq) return;
+          if (!res.ok || body.ok === false)
+            throw new Error(body.error || "HTTP " + res.status);
+          const list = body.results || [];
+          if (!list.length) {
+            box.innerHTML =
+              "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+              (String(lang).startsWith("ru")
+                ? "ничего не найдено — попробуйте другое написание"
+                : "nothing found — try another spelling") +
+              "</div>";
+            return;
+          }
+          box.innerHTML = "";
+          list.forEach((r) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            const label = r.label || r.city || "—";
+            const sub =
+              (r.timezone ? r.timezone + " · " : "") +
+              Number(r.latitude).toFixed(3) +
+              ", " +
+              Number(r.longitude).toFixed(3);
+            b.innerHTML =
+              "<span>" +
+              String(label).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
+              "</span>" +
+              "<span class='wr-sub'>" +
+              String(sub).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
+              "</span>";
+            b.addEventListener("mousedown", (ev) => {
+              ev.preventDefault();
+              inp.value = r.city || r.label || "";
+              if (opts && typeof opts.onSelect === "function") opts.onSelect(r);
+              hide();
+            });
+            box.appendChild(b);
+          });
+        } catch (e) {
+          if (my !== seq) return;
+          box.hidden = false;
+          box.innerHTML =
+            "<div style='padding:10px;color:var(--danger);font-size:0.8rem'>" +
+            String(e.message || e).replace(/</g, "&lt;") +
+            "</div>";
+        }
+      };
+      const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          void search(true);
+        }, 280);
+      };
+      inp.addEventListener("input", schedule);
+      inp.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          if (timer) {
+            clearTimeout(timer);
+            timer = null;
+          }
+          void search(false);
+        } else if (e.key === "Escape") {
+          hide();
+        }
+      });
+      inp.addEventListener("blur", () => setTimeout(hide, 180));
+      return { search, hide };
+    }
+
+    // Site weather city
+    const wxCityAc = bindCityAutocomplete("wx-search", "wx-results", {
+      onSelect: (r) => {
+        if (typeof saveWeatherCity === "function") saveWeatherCity(r);
+      },
+    });
+    // Circuits city → fill lat/lon/tz
+    bindCityAutocomplete("circuit-edit-city", "circuit-city-results", {
+      onSelect: (r) => {
+        const lat = document.getElementById("circuit-edit-lat");
+        const lon = document.getElementById("circuit-edit-lon");
+        const tz = document.getElementById("circuit-edit-tz");
+        if (lat && r.latitude != null) lat.value = Number(r.latitude).toFixed(4);
+        if (lon && r.longitude != null)
+          lon.value = Number(r.longitude).toFixed(4);
+        if (tz && r.timezone) tz.value = r.timezone;
+      },
+    });
+
     function hideWxResults() {
       const box = document.getElementById("wx-results");
       if (box) {
@@ -31778,90 +32295,15 @@
     }
 
     async function searchWeatherCities(opts) {
-      const silent = !!(opts && opts.silent);
-      const q = (document.getElementById("wx-search")?.value || "").trim();
-      const box = document.getElementById("wx-results");
-      if (!box) return;
-      if (q.length < 2) {
-        hideWxResults();
-        if (!silent) toastWarn("Enter at least 2 characters");
-        return;
-      }
-      const seq = ++wxSearchSeq;
-      const lang =
-        (typeof _uiLang !== "undefined" && _uiLang) ||
-        (document.documentElement.lang || "ru");
-      box.hidden = false;
-      box.removeAttribute("hidden");
-      box.innerHTML =
-        "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
-        (lang === "ru" ? "поиск…" : "search…") +
-        "</div>";
-      try {
-        const url =
-          "/api/weather/search?q=" +
-          encodeURIComponent(q) +
-          "&count=12&lang=" +
-          encodeURIComponent(String(lang).slice(0, 5));
-        const res = await fetch(url, { cache: "no-store" });
-        const body = await res.json().catch(() => ({}));
-        if (seq !== wxSearchSeq) return; // stale response
-        if (!res.ok || body.ok === false)
-          throw new Error(body.error || "HTTP " + res.status);
-        const list = body.results || [];
-        if (!list.length) {
-          box.innerHTML =
-            "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
-            (lang === "ru"
-              ? "ничего не найдено — попробуйте другое написание"
-              : "nothing found — try another spelling") +
-            "</div>";
-          return;
-        }
-        box.innerHTML = "";
-        list.forEach((r) => {
-          const b = document.createElement("button");
-          b.type = "button";
-          const label = r.label || r.city || "—";
-          const sub =
-            (r.timezone ? r.timezone + " · " : "") +
-            Number(r.latitude).toFixed(3) +
-            ", " +
-            Number(r.longitude).toFixed(3);
-          b.innerHTML =
-            "<span>" +
-            String(label).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
-            "</span>" +
-            "<span class='wr-sub'>" +
-            String(sub).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
-            "</span>";
-          b.addEventListener("mousedown", (ev) => {
-            // mousedown before blur so click registers
-            ev.preventDefault();
-            saveWeatherCity(r);
-            const inp = document.getElementById("wx-search");
-            if (inp) inp.value = r.city || r.label || "";
-            hideWxResults();
-          });
-          box.appendChild(b);
-        });
-      } catch (e) {
-        if (seq !== wxSearchSeq) return;
-        box.hidden = false;
-        box.removeAttribute("hidden");
-        box.innerHTML =
-          "<div style='padding:10px;color:var(--danger);font-size:0.8rem'>" +
-          String(e.message || e).replace(/</g, "&lt;") +
-          "</div>";
+      if (wxCityAc && typeof wxCityAc.search === "function") {
+        return wxCityAc.search(!!(opts && opts.silent));
       }
     }
 
     function scheduleWxSearch() {
-      if (wxSearchTimer) clearTimeout(wxSearchTimer);
-      wxSearchTimer = setTimeout(() => {
-        wxSearchTimer = null;
-        void searchWeatherCities({ silent: true });
-      }, 280);
+      if (wxCityAc && typeof wxCityAc.search === "function") {
+        void wxCityAc.search(true);
+      }
     }
 
     document.getElementById("btn-wx-search")?.addEventListener("click", () => {
@@ -31910,25 +32352,6 @@
       } catch (e) {
         toastError("Weather: " + e.message);
       }
-    });
-    document.getElementById("wx-search")?.addEventListener("input", () => {
-      scheduleWxSearch();
-    });
-    document.getElementById("wx-search")?.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (wxSearchTimer) {
-          clearTimeout(wxSearchTimer);
-          wxSearchTimer = null;
-        }
-        void searchWeatherCities();
-      } else if (e.key === "Escape") {
-        hideWxResults();
-      }
-    });
-    document.getElementById("wx-search")?.addEventListener("blur", () => {
-      // delay so mousedown on result can fire first
-      setTimeout(hideWxResults, 180);
     });
     document.getElementById("btn-wx-refresh")?.addEventListener("click", async () => {
       toastInfo("Updating weather…", 1200);

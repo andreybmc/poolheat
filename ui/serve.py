@@ -11058,6 +11058,23 @@ _DEFAULT_MINER_POLLER_CFG: dict = {
         "interval_sec": 0,
         "per_miner_timeout_sec": 8,
     },
+    # Default credentials per vendor (discovery / SN fetch / empty miner pw).
+    "vendor_passwords": {
+        "antminer": {"user": "root", "password": "root"},
+        "bluestar": {"user": "root", "password": "ltc@dog"},
+        "goldshell": {"user": "", "password": "123456789"},
+        "ipollo": {"user": "root", "password": "root"},
+        "whatsminer": {"user": "admin", "password": "admin"},
+    },
+}
+
+# Stable order for UI / docs
+_VENDOR_PASSWORD_DEFAULTS = {
+    "antminer": {"user": "root", "password": "root"},
+    "bluestar": {"user": "root", "password": "ltc@dog"},
+    "goldshell": {"user": "", "password": "123456789"},
+    "ipollo": {"user": "root", "password": "root"},
+    "whatsminer": {"user": "admin", "password": "admin"},
 }
 
 
@@ -11129,7 +11146,190 @@ def _normalize_miner_poller_cfg(raw: dict | None) -> dict:
         out["poll"]["interval_sec"] = max(0, min(300, iv))
     except (TypeError, ValueError):
         pass
+    # vendor default passwords
+    vp_in = raw.get("vendor_passwords")
+    out["vendor_passwords"] = {
+        k: dict(v) for k, v in _VENDOR_PASSWORD_DEFAULTS.items()
+    }
+    if isinstance(vp_in, dict):
+        for vid, row in vp_in.items():
+            key = str(vid or "").strip().lower()
+            if not key or not isinstance(row, dict):
+                continue
+            base = out["vendor_passwords"].setdefault(
+                key, {"user": "", "password": ""}
+            )
+            if "user" in row and row.get("user") is not None:
+                base["user"] = str(row.get("user") or "")
+            if "password" in row and row.get("password") is not None:
+                base["password"] = str(row.get("password") or "")
+    # discovery password list includes vendor defaults (deduped)
+    disc_pws = list(out["discovery"].get("passwords") or [])
+    for row in out["vendor_passwords"].values():
+        pw = str((row or {}).get("password") or "").strip()
+        if pw and pw not in disc_pws:
+            disc_pws.append(pw)
+    if disc_pws:
+        out["discovery"]["passwords"] = disc_pws
     return out
+
+
+def get_vendor_default_password(vendor: str | None) -> dict:
+    """Return {user, password} defaults for vendor id (case-insensitive)."""
+    cfg = get_miner_poller_cfg()
+    vp = cfg.get("vendor_passwords") if isinstance(cfg, dict) else {}
+    key = str(vendor or "").strip().lower()
+    if isinstance(vp, dict) and key in vp and isinstance(vp[key], dict):
+        return {
+            "user": str(vp[key].get("user") or ""),
+            "password": str(vp[key].get("password") or ""),
+        }
+    if key in _VENDOR_PASSWORD_DEFAULTS:
+        return dict(_VENDOR_PASSWORD_DEFAULTS[key])
+    return {"user": "", "password": ""}
+
+
+def fetch_miner_serial(
+    host: str,
+    port: int = 4028,
+    vendor: str | None = None,
+    password: str | None = None,
+) -> dict:
+    """
+    Best-effort serial number read for managed-miner edit dialog.
+
+    Drivers:
+      whatsminer — get_version / identity minersn
+      ipollo     — LuCI sysinfo.sn
+      antminer   — HTTP /get_sn (6060) or stats
+      goldshell  — HTTP /mcb/setting name is MAC; SN often absent
+    """
+    host = str(host or "").strip()
+    if not host:
+        return {"ok": False, "error": "host required", "supported": False}
+    try:
+        port = int(port or 4028)
+    except (TypeError, ValueError):
+        port = 4028
+    vend = str(vendor or "").strip().lower()
+    # resolve password: explicit → vendor default
+    pw = str(password or "").strip()
+    if not pw:
+        pw = get_vendor_default_password(vend).get("password") or ""
+
+    serial = ""
+    source = ""
+    supported = True
+    err = None
+
+    try:
+        if vend in ("ipollo",) or not vend:
+            try:
+                body: dict = {"ok": True, "host": f"{host}:{port}"}
+                body = _enrich_live_ipollo(host, body, password=pw or "root")
+                sn = str(body.get("serial") or body.get("board_serial") or "").strip()
+                if sn:
+                    serial, source = sn, "ipollo_sysinfo"
+            except Exception as e:
+                if vend == "ipollo":
+                    err = str(e)[:160]
+        if not serial and vend in ("antminer", "bitmain", ""):
+            try:
+                sn = _antminer_6060_slow_get(host, "/get_sn", "get_sn")
+                if sn and str(sn).strip():
+                    serial, source = str(sn).strip(), "antminer_get_sn"
+            except Exception as e:
+                if vend in ("antminer", "bitmain"):
+                    err = str(e)[:160]
+        if not serial and vend in ("whatsminer", "microbt", ""):
+            try:
+                with _asic_target_override(host, port):
+                    # force whatsminer proto for this host briefly
+                    with _ASIC_PROTO_LOCK:
+                        _ASIC_PROTO_CACHE[host] = "whatsminer"
+                    raw = miner_cmd({"cmd": "get_version"}, timeout=5)
+                msg = _extract_miner_payload(raw)
+                sn = str(
+                    msg.get("minersn")
+                    or msg.get("miner_sn")
+                    or msg.get("Miner SN")
+                    or ""
+                ).strip()
+                if not sn and isinstance(raw, dict):
+                    sn = str(raw.get("minersn") or "").strip()
+                if sn:
+                    serial, source = sn, "whatsminer_get_version"
+            except Exception as e:
+                if vend in ("whatsminer", "microbt"):
+                    err = str(e)[:160]
+        if not serial and vend in ("goldshell", "gs", "ckbox", ""):
+            try:
+                setting = _http_json_get(f"http://{host}/mcb/setting", timeout=4.0)
+                status = _http_json_get(f"http://{host}/mcb/status", timeout=4.0)
+                sn = ""
+                if isinstance(setting, dict):
+                    sn = str(
+                        setting.get("sn")
+                        or setting.get("serial")
+                        or setting.get("Serial")
+                        or ""
+                    ).strip()
+                if not sn and isinstance(status, dict):
+                    sn = str(
+                        status.get("sn")
+                        or status.get("serial")
+                        or status.get("hardware")
+                        or ""
+                    ).strip()
+                if sn and ":" not in sn:  # skip MAC-as-name
+                    serial, source = sn, "goldshell_http"
+                elif vend == "goldshell":
+                    supported = False
+                    err = "Goldshell CK-BOX does not expose unit SN over HTTP/CGMiner"
+            except Exception as e:
+                if vend == "goldshell":
+                    err = str(e)[:160]
+        # CGMiner version Description fallback
+        if not serial:
+            try:
+                with _asic_target_override(host, port):
+                    with _ASIC_PROTO_LOCK:
+                        _ASIC_PROTO_CACHE[host] = "cgminer"
+                    raw = miner_cmd({"cmd": "version"}, timeout=4)
+                # some FW put Serial in VERSION
+                ver = raw.get("VERSION") if isinstance(raw, dict) else None
+                if isinstance(ver, list) and ver and isinstance(ver[0], dict):
+                    sn = str(
+                        ver[0].get("Serial")
+                        or ver[0].get("serial")
+                        or ver[0].get("Miner")
+                        or ""
+                    ).strip()
+                    if sn and len(sn) >= 4:
+                        serial, source = sn, "cgminer_version"
+            except Exception:
+                pass
+    except Exception as e:
+        err = str(e)[:200]
+
+    if serial:
+        return {
+            "ok": True,
+            "serial": serial,
+            "source": source,
+            "supported": True,
+            "host": host,
+            "vendor": vend or None,
+        }
+    return {
+        "ok": False,
+        "serial": "",
+        "source": source or None,
+        "supported": supported,
+        "error": err or "serial not available",
+        "host": host,
+        "vendor": vend or None,
+    }
 
 
 def get_miner_poller_cfg() -> dict:
@@ -18883,6 +19083,9 @@ def energy_series(
                              AND delta_kwh IS NOT NULL AND delta_kwh > 0
                         THEN delta_kwh ELSE 0 END) AS pw_w,
                     MAX(power_w) AS pw_max,
+                    MIN(CASE
+                        WHEN power_w IS NOT NULL AND power_w >= 0
+                        THEN power_w ELSE NULL END) AS pw_min,
                     COUNT(*) AS n
                 FROM energy_samples
                 WHERE meter_id = ? AND ts >= ? AND ts <= ?
@@ -18922,6 +19125,16 @@ def energy_series(
                     pw_max = None
                 if pw_max is not None and not math.isfinite(pw_max):
                     pw_max = None
+                try:
+                    pw_min = (
+                        float(r["pw_min"])
+                        if r["pw_min"] is not None
+                        else None
+                    )
+                except (TypeError, ValueError):
+                    pw_min = None
+                if pw_min is not None and not math.isfinite(pw_min):
+                    pw_min = None
                 agg_rows.append(
                     {
                         "first_ts": first_ts,
@@ -18932,6 +19145,7 @@ def energy_series(
                         "pw_wsum": pw_wsum,
                         "pw_w": pw_w,
                         "pw_max": pw_max,
+                        "pw_min": pw_min,
                     }
                 )
         finally:
@@ -18992,6 +19206,9 @@ def energy_series(
         max_w = row["pw_max"]
         if max_w is None and avg_w is not None:
             max_w = avg_w
+        min_w = row.get("pw_min")
+        if min_w is None and avg_w is not None:
+            min_w = avg_w
         points.append(
             {
                 "ts": float(b_start),
@@ -19007,6 +19224,11 @@ def energy_series(
                 "max_power_w": (
                     round(max_w, 1)
                     if max_w is not None and math.isfinite(max_w)
+                    else None
+                ),
+                "min_power_w": (
+                    round(min_w, 1)
+                    if min_w is not None and math.isfinite(min_w)
                     else None
                 ),
                 "samples": n,
@@ -38322,6 +38544,29 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/miner/test":
             self._api_miner_test()
+            return
+        if path in (
+            "/api/miner/fetch_serial",
+            "/api/miner/serial",
+            "/api/miners/fetch_serial",
+        ):
+            try:
+                req = self._read_json_body() or {}
+            except Exception:
+                req = {}
+            if not isinstance(req, dict):
+                req = {}
+            try:
+                result = fetch_miner_serial(
+                    host=str(req.get("host") or "").strip(),
+                    port=int(req.get("port") or 4028),
+                    vendor=str(req.get("vendor") or "").strip() or None,
+                    password=str(req.get("password") or "") or None,
+                )
+                code = 200 if result.get("ok") else 404
+                self._json_response(code, result)
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
             return
         if path == "/api/history/prune":
             with _hist_cfg_lock:
