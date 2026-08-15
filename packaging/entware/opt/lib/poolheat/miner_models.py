@@ -235,6 +235,16 @@ def efficiency_from_power(
 # ── Family profiles (prefix match after normalize, longest first) ────────────
 # id: manufacturer.family_key
 
+# Whatsminer / Antminer stock: chassis-integrated smart PSU (API power + control).
+_PSU_INTEGRATED_SMART = {
+    "type": "integrated",
+    "smart": True,
+    "reports_power": True,
+    "reports_temp": True,
+    "controllable": True,
+    "note": "Built-in smart PSU (power read + power/mode control via miner API)",
+}
+
 _FAMILIES: list[dict[str, Any]] = [
     # ── MicroBT liquid (hydro / immersion-style dual virtual slots) ─────────
     {
@@ -257,6 +267,7 @@ _FAMILIES: list[dict[str, Any]] = [
             "chips_per_board_typical": 264,
         },
         "sensors": {
+            "power": True,
             "liquid_temp": True,
             "env_temp": True,
             "chip_temp": True,  # summary Chip Temp Min/Avg/Max
@@ -264,6 +275,7 @@ _FAMILIES: list[dict[str, Any]] = [
             "board_chip_temp": False,  # per-slot chip min/avg/max from DEVS (often absent)
             "psu_temp": True,
         },
+        "psu": dict(_PSU_INTEGRATED_SMART),
         "efficiency": {"j_per_th": 19.0, "j_per_th_low": 18.0, "j_per_th_high": 21.0},
         "api": {
             "vendor": "whatsminer",
@@ -294,6 +306,7 @@ _FAMILIES: list[dict[str, Any]] = [
             "outlier_mirror_pairs": True,
         },
         "sensors": {
+            "power": True,
             "liquid_temp": True,
             "env_temp": True,
             "chip_temp": True,
@@ -301,6 +314,8 @@ _FAMILIES: list[dict[str, Any]] = [
             "board_chip_temp": False,  # M63 DEVS usually no SM chip min/avg/max
             "psu_temp": True,
         },
+        # Same class as Antminer L9: built-in smart PSU with API control
+        "psu": dict(_PSU_INTEGRATED_SMART),
         "efficiency": {"j_per_th": 19.0, "j_per_th_low": 18.0, "j_per_th_high": 21.0},
         "api": {
             "vendor": "whatsminer",
@@ -871,6 +886,15 @@ def resolve_miner_model(
     if chip_layout.get("style") == "hydro" and "liquid_temp" not in sensors:
         sensors["liquid_temp"] = True
 
+    # PSU: family override → manufacturer default (Whatsminer/Bitmain = integrated smart)
+    psu = dict((fam or {}).get("psu") or {})
+    if not psu:
+        psu = _default_psu_for_manufacturer(str(mfr.get("id") or ""))
+    if psu.get("reports_power") and "power" not in sensors:
+        sensors["power"] = True
+    if psu.get("reports_temp") and "psu_temp" not in sensors:
+        sensors["psu_temp"] = True
+
     cooling = (fam or {}).get("cooling") or (
         "liquid" if chip_layout.get("style") == "hydro" else "air"
     )
@@ -900,6 +924,7 @@ def resolve_miner_model(
         "boards": boards_cfg,
         "chip_layout": chip_layout,
         "sensors": sensors,
+        "psu": psu,
         "efficiency": efficiency,
         "api": api,
         "matched": bool(fam or sku),
@@ -909,6 +934,20 @@ def resolve_miner_model(
         "board_chart_slots": list(boards_cfg.get("chart_slots") or [0, 2]),
         "board_layout_key": (fam or {}).get("family") or ("auto" if not fam else None),
         "board_layout_note": boards_cfg.get("note"),
+    }
+
+
+def _default_psu_for_manufacturer(mfr_id: str) -> dict[str, Any]:
+    """Built-in smart PSU for MicroBT Whatsminer and Bitmain Antminer stock."""
+    mid = str(mfr_id or "").strip().lower()
+    if mid in ("microbt", "whatsminer", "bitmain", "antminer"):
+        return dict(_PSU_INTEGRATED_SMART)
+    return {
+        "type": "external",
+        "smart": False,
+        "reports_power": False,
+        "reports_temp": False,
+        "controllable": False,
     }
 
 
@@ -960,6 +999,8 @@ def list_families(*, manufacturer: str | None = None) -> list[dict[str, Any]]:
                 "boards": fam.get("boards"),
                 "chip_layout": fam.get("chip_layout"),
                 "sensors": fam.get("sensors"),
+                "psu": fam.get("psu")
+                or _default_psu_for_manufacturer(str(fam.get("manufacturer") or "")),
                 "efficiency": fam.get("efficiency"),
                 "api": fam.get("api"),
                 "match": list(fam.get("match") or []),
@@ -1195,6 +1236,220 @@ def estimate_power_from_profile(
     }
 
 
+def normalize_hardware_map(prof: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Canonical per-model hardware map for UI + collectors.
+
+    Prefer explicit ``hardware`` block; fall back to coarse ``sensors`` flags.
+    """
+    if not isinstance(prof, dict):
+        return {}
+    hw = prof.get("hardware") if isinstance(prof.get("hardware"), dict) else {}
+    sens = prof.get("sensors") if isinstance(prof.get("sensors"), dict) else {}
+    poll = prof.get("poll") if isinstance(prof.get("poll"), dict) else {}
+
+    boards = hw.get("hashboards") if isinstance(hw.get("hashboards"), dict) else {}
+    fans = hw.get("fans") if isinstance(hw.get("fans"), dict) else {}
+    temps = hw.get("temps") if isinstance(hw.get("temps"), dict) else {}
+    psu = hw.get("psu") if isinstance(hw.get("psu"), dict) else {}
+    ctrl = hw.get("controller") if isinstance(hw.get("controller"), dict) else {}
+
+    def _count(block: Any, fallback: int = 0) -> int:
+        if isinstance(block, dict):
+            try:
+                return max(0, int(block.get("count") or 0))
+            except (TypeError, ValueError):
+                return fallback
+        return fallback
+
+    hb_count = _count(boards)
+    if not hb_count:
+        try:
+            hb_count = int(sens.get("hashboard_count") or 0)
+        except (TypeError, ValueError):
+            hb_count = 0
+    fan_count = _count(fans)
+    if not fan_count and sens.get("fans"):
+        try:
+            fan_count = int(sens.get("fan_count") or 0)
+        except (TypeError, ValueError):
+            fan_count = 0
+
+    chip_t = temps.get("chip") if isinstance(temps.get("chip"), dict) else {}
+    board_t = temps.get("board") if isinstance(temps.get("board"), dict) else {}
+    env_t = temps.get("env") if isinstance(temps.get("env"), dict) else {}
+    psu_t = temps.get("psu") if isinstance(temps.get("psu"), dict) else {}
+    asc_t = temps.get("asc") if isinstance(temps.get("asc"), dict) else {}
+
+    chip_n = _count(chip_t)
+    if not chip_n and sens.get("chip_temp"):
+        try:
+            chip_n = int(sens.get("temp_chip_count") or 1)
+        except (TypeError, ValueError):
+            chip_n = 1
+    pcb_n = _count(board_t)
+    if not pcb_n and sens.get("pcb_temp"):
+        try:
+            pcb_n = int(sens.get("temp_pcb_count") or hb_count or 0)
+        except (TypeError, ValueError):
+            pcb_n = 0
+
+    psu_type = str(psu.get("type") or "").strip().lower()
+    if not psu_type:
+        # coarse guess from sensors.power / reported
+        pwr = prof.get("power") if isinstance(prof.get("power"), dict) else {}
+        if psu.get("smart") or sens.get("power") or pwr.get("reported"):
+            psu_type = "integrated"
+        else:
+            psu_type = "external"
+    if psu_type not in ("integrated", "external", "external_smart"):
+        psu_type = "external"
+
+    fan_channels = []
+    if isinstance(fans.get("channels"), list):
+        for ch in fans["channels"]:
+            if isinstance(ch, dict):
+                fan_channels.append(dict(ch))
+
+    out: dict[str, Any] = {
+        "profile_id": prof.get("id"),
+        "vendor": prof.get("vendor"),
+        "display_name": prof.get("display_name") or prof.get("display_name_full"),
+        "cooling": prof.get("cooling") or "air",
+        "hashboards": {
+            "count": hb_count or 1,
+            "physical": int(boards.get("physical") or hb_count or 1),
+            "label_prefix": boards.get("label_prefix") or "HB",
+            "index_base": int(boards.get("index_base") if boards.get("index_base") is not None else 0),
+            "serial_keys": list(boards.get("serial_keys") or []),
+            "note": boards.get("note"),
+        },
+        "fans": {
+            "count": fan_count,
+            "smart": bool(fans.get("smart", False)),
+            "channels": fan_channels,
+            "note": fans.get("note"),
+        },
+        "temps": {
+            "chip": {
+                "count": chip_n,
+                "api_keys": list(chip_t.get("api_keys") or []),
+                "unit": chip_t.get("unit") or "C",
+                "placeholder": chip_t.get("placeholder"),
+                "per_board": bool(chip_t.get("per_board", False)),
+                "note": chip_t.get("note"),
+            },
+            "board": {
+                "count": pcb_n,
+                "api_keys": list(board_t.get("api_keys") or []),
+                "unit": board_t.get("unit") or "C",
+                "per_board": bool(board_t.get("per_board", True)),
+                "note": board_t.get("note"),
+            },
+            "env": {
+                "count": _count(env_t) if env_t else (1 if sens.get("env_temp") else 0),
+                "api_keys": list(env_t.get("api_keys") or []) if env_t else [],
+            },
+            "psu": {
+                "count": _count(psu_t) if psu_t else (1 if sens.get("psu_temp") else 0),
+                "api_keys": list(psu_t.get("api_keys") or []) if psu_t else [],
+            },
+            "asc": {
+                "count": _count(asc_t),
+                "api_keys": list(asc_t.get("api_keys") or []) if asc_t else [],
+                "placeholder": asc_t.get("placeholder") if asc_t else None,
+                "note": asc_t.get("note") if asc_t else None,
+            },
+        },
+        "psu": {
+            "type": psu_type,
+            "smart": bool(psu.get("smart", psu_type in ("integrated", "external_smart"))),
+            "reports_power": bool(
+                psu.get("reports_power")
+                if psu.get("reports_power") is not None
+                else sens.get("power")
+            ),
+            "reports_temp": bool(
+                psu.get("reports_temp")
+                if psu.get("reports_temp") is not None
+                else sens.get("psu_temp")
+            ),
+            "controllable": bool(
+                psu.get("controllable")
+                if psu.get("controllable") is not None
+                else psu.get("smart", psu_type in ("integrated", "external_smart"))
+            ),
+            "note": psu.get("note"),
+        },
+        "controller": dict(ctrl) if ctrl else {},
+        "poll": {
+            "sources": list(poll.get("sources") or []),
+            "temps_from": list(poll.get("temps_from") or [])
+            if isinstance(poll.get("temps_from"), list)
+            else ([poll["temps_from"]] if poll.get("temps_from") else []),
+            "fans_from": list(poll.get("fans_from") or [])
+            if isinstance(poll.get("fans_from"), list)
+            else ([poll["fans_from"]] if poll.get("fans_from") else []),
+            "power_from": list(poll.get("power_from") or [])
+            if isinstance(poll.get("power_from"), list)
+            else ([poll["power_from"]] if poll.get("power_from") else []),
+            "ignore_keys": dict(poll.get("ignore_keys") or {})
+            if isinstance(poll.get("ignore_keys"), dict)
+            else {},
+        },
+        # flat flags for quick UI checks
+        "sensors": {
+            "power": bool(sens.get("power") or psu.get("reports_power")),
+            "fans": bool(sens.get("fans") if sens.get("fans") is not None else fan_count > 0),
+            "chip_temp": bool(
+                sens.get("chip_temp") if sens.get("chip_temp") is not None else chip_n > 0
+            ),
+            "pcb_temp": bool(
+                sens.get("pcb_temp") if sens.get("pcb_temp") is not None else pcb_n > 0
+            ),
+            "env_temp": bool(sens.get("env_temp") or _count(env_t)),
+            "psu_temp": bool(sens.get("psu_temp") or psu.get("reports_temp")),
+            "fan_count": fan_count,
+            "temp_chip_count": chip_n,
+            "temp_pcb_count": pcb_n,
+            "hashboard_count": hb_count or 1,
+        },
+    }
+    return out
+
+
+def profile_temp_keys(prof: dict[str, Any] | None) -> list[str]:
+    """API keys to read for chip temps (excluding ignore list / placeholders-only)."""
+    hw = normalize_hardware_map(prof)
+    keys = list((hw.get("temps") or {}).get("chip", {}).get("api_keys") or [])
+    ignore = ((hw.get("poll") or {}).get("ignore_keys") or {}).get("temps") or []
+    ignore_set = {str(x) for x in ignore}
+    return [k for k in keys if k and k not in ignore_set]
+
+
+def profile_fan_keys(prof: dict[str, Any] | None) -> list[str]:
+    """API keys to read for physical fans (ordered)."""
+    hw = normalize_hardware_map(prof)
+    keys: list[str] = []
+    for ch in (hw.get("fans") or {}).get("channels") or []:
+        if not isinstance(ch, dict):
+            continue
+        for k in ch.get("api_keys") or []:
+            if k and k not in keys:
+                keys.append(str(k))
+    ignore = ((hw.get("poll") or {}).get("ignore_keys") or {}).get("fans") or []
+    ignore_set = {str(x) for x in ignore}
+    return [k for k in keys if k not in ignore_set]
+
+
+def profile_hashboard_count(prof: dict[str, Any] | None) -> int:
+    hw = normalize_hardware_map(prof)
+    try:
+        return max(1, int((hw.get("hashboards") or {}).get("count") or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
 def apply_model_profile_to_live(
     live: dict[str, Any],
     *,
@@ -1206,6 +1461,7 @@ def apply_model_profile_to_live(
     Does not overwrite a real metered ``power`` when present and > 0.
     Sets:
       model_display, model_display_full, model_profile_id
+      model_hardware (boards/fans/temps/psu map)
       power (if estimated), power_source, power_estimated
       efficiency_value / efficiency_unit / efficiency_jth (compat when J/TH)
     """
@@ -1221,6 +1477,7 @@ def apply_model_profile_to_live(
     )
     if not prof:
         _apply_algo_when_no_profile(live, str(vend) if vend else None)
+        _stamp_family_psu_to_live(live)
         return live
 
     disp = str(prof.get("display_name") or "").strip()
@@ -1233,6 +1490,37 @@ def apply_model_profile_to_live(
         if not raw_model or _norm_key(raw_model) != _norm_key(disp):
             live["model_name"] = disp_full or disp
         live["model_profile_id"] = prof.get("id")
+
+    # Hardware / sensor map (what the model has vs what we poll)
+    hw_map = normalize_hardware_map(prof)
+    if hw_map:
+        live["model_hardware"] = hw_map
+        live["model_sensors"] = hw_map.get("sensors") or {}
+        # Expected component counts for UI (do not invent readings)
+        try:
+            live["expected_boards"] = int(
+                (hw_map.get("hashboards") or {}).get("count") or 0
+            ) or None
+        except (TypeError, ValueError):
+            pass
+        try:
+            live["expected_fans"] = int((hw_map.get("fans") or {}).get("count") or 0) or None
+        except (TypeError, ValueError):
+            pass
+        try:
+            live["expected_temp_sensors"] = int(
+                ((hw_map.get("temps") or {}).get("chip") or {}).get("count") or 0
+            ) or None
+        except (TypeError, ValueError):
+            pass
+        psu = hw_map.get("psu") or {}
+        live["psu_type"] = psu.get("type")
+        live["psu_smart"] = bool(psu.get("smart"))
+        live["psu_reports_power"] = bool(psu.get("reports_power"))
+        live["psu_controllable"] = bool(psu.get("controllable", psu.get("smart")))
+    # Family fallback for Whatsminer M63 etc. when JSON profile has no hardware.psu
+    if not live.get("psu_type"):
+        _stamp_family_psu_to_live(live)
 
     pwr_cfg = prof.get("power") if isinstance(prof.get("power"), dict) else {}
     reported_flag = pwr_cfg.get("reported")
@@ -1334,7 +1622,113 @@ def apply_model_profile_to_live(
     rated = prof.get("rated") if isinstance(prof.get("rated"), dict) else None
     if rated:
         live["model_rated"] = rated
+
+    # Shape boards[] length to expected physical hashboards when we only have
+    # aggregate temps (e.g. iPollo V1: 1 HB, 2 chip sensors — not 2 boards).
+    _shape_live_boards_to_hardware(live, hw_map)
     return live
+
+
+def _shape_live_boards_to_hardware(
+    live: dict[str, Any], hw_map: dict[str, Any] | None
+) -> None:
+    """Avoid treating N temp sensors as N hashboards when model has 1 HB."""
+    if not isinstance(live, dict) or not isinstance(hw_map, dict):
+        return
+    try:
+        expect = int((hw_map.get("hashboards") or {}).get("count") or 0)
+    except (TypeError, ValueError):
+        return
+    if expect <= 0:
+        return
+    boards = live.get("boards")
+    # If missing boards but we have chip temps and single-HB model, synthesize one.
+    if (not isinstance(boards, list) or not boards) and expect == 1:
+        temps = []
+        for k in ("chip_avg", "chip_max", "chip_min", "temp"):
+            try:
+                v = live.get(k)
+                if v is not None and v != "":
+                    temps.append(float(v))
+            except (TypeError, ValueError):
+                pass
+        chip_temps = live.get("chip_temps")
+        if isinstance(chip_temps, list):
+            for t in chip_temps:
+                try:
+                    temps.append(float(t))
+                except (TypeError, ValueError):
+                    pass
+        prefix = str((hw_map.get("hashboards") or {}).get("label_prefix") or "HB")
+        base = int((hw_map.get("hashboards") or {}).get("index_base") or 0)
+        entry: dict[str, Any] = {
+            "id": f"{prefix}{base if base else 1}",
+            "index": base if base else 1,
+            "name": f"{prefix}{base if base else 1}",
+        }
+        if temps:
+            entry["temp"] = round(sum(temps) / len(temps), 1)
+            entry["temp_max"] = round(max(temps), 1)
+            entry["temp_min"] = round(min(temps), 1)
+        if live.get("hashrate_hs"):
+            try:
+                entry["hashrate_hs"] = float(live["hashrate_hs"])
+            except (TypeError, ValueError):
+                pass
+        live["boards"] = [entry]
+        live["board_count"] = 1
+        return
+    if isinstance(boards, list) and len(boards) > expect:
+        # Too many board slots vs model map — keep first N physical
+        live["boards"] = boards[:expect]
+        live["board_count"] = expect
+
+
+def _stamp_family_psu_to_live(live: dict[str, Any]) -> None:
+    """
+    Stamp PSU class from family profile (Whatsminer M63, Antminer, …).
+
+    M63 / L9 class: integrated smart PSU with API power + control.
+    """
+    if not isinstance(live, dict):
+        return
+    if live.get("psu_type"):
+        return
+    hint = (
+        live.get("miner_type")
+        or live.get("model_code")
+        or live.get("model_name")
+        or (live.get("model") if isinstance(live.get("model"), str) else None)
+    )
+    fam = lookup_family(hint)
+    psu: dict[str, Any] = {}
+    if fam and isinstance(fam.get("psu"), dict):
+        psu = dict(fam["psu"])
+    if not psu:
+        vend = str(live.get("vendor") or live.get("api_vendor") or "").lower()
+        mfr = "microbt" if vend in ("whatsminer", "microbt") else (
+            "bitmain" if vend in ("antminer", "bitmain") else vend
+        )
+        if not mfr and fam:
+            mfr = str(fam.get("manufacturer") or "")
+        psu = _default_psu_for_manufacturer(mfr)
+    if not psu:
+        return
+    live["psu_type"] = psu.get("type")
+    live["psu_smart"] = bool(psu.get("smart"))
+    live["psu_reports_power"] = bool(psu.get("reports_power"))
+    live["psu_controllable"] = bool(psu.get("controllable", psu.get("smart")))
+    # Merge into model_hardware if present
+    mh = live.get("model_hardware")
+    if isinstance(mh, dict):
+        mh["psu"] = {
+            "type": psu.get("type"),
+            "smart": bool(psu.get("smart")),
+            "reports_power": bool(psu.get("reports_power")),
+            "reports_temp": bool(psu.get("reports_temp")),
+            "controllable": bool(psu.get("controllable", psu.get("smart"))),
+            "note": psu.get("note"),
+        }
 
 
 def _apply_algo_when_no_profile(live: dict[str, Any], vendor: str | None) -> None:
@@ -1432,7 +1826,10 @@ def catalog_summary() -> dict[str, Any]:
                 "efficiency": p.get("efficiency"),
                 "power": p.get("power"),
                 "rated": p.get("rated"),
-                "hashrate_unit": p.get("hashrate_unit"),
+                "cooling": p.get("cooling"),
+                "hardware": normalize_hardware_map(p),
+                "sensors": (normalize_hardware_map(p) or {}).get("sensors") or p.get("sensors"),
+                "poll": p.get("poll"),
             }
             for p in profiles
         ],

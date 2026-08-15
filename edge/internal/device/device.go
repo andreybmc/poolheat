@@ -2,9 +2,12 @@ package device
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/andreybmc/poolheat/edge/internal/backend"
@@ -18,6 +21,10 @@ const defaultEnforceCooldownSec = 1.5
 
 // Store holds mutable runtime + deadlines for one process.
 type Store struct {
+	mu sync.Mutex
+	// devMu serializes LAN I/O per device so a hung Tuya cannot block a UI click
+	// on another socket, and UI set is not interleaved with a status probe.
+	devMu map[string]*sync.Mutex
 	// DataDir is POOLHEAT_DATA — used to write policy_events.json (UI Action log).
 	DataDir string
 	// EnforceCooldownSec from devices_config poller (override default).
@@ -46,23 +53,25 @@ func NewStore(byID map[string]state.Runtime, deadlines, syncTS map[string]float6
 		SyncTS:         syncTS,
 		EnforceTS:      map[string]float64{},
 		DesiredTouched: map[string]bool{},
+		devMu:          map[string]*sync.Mutex{},
 	}
 }
 
 func (s *Store) getRT(id string) state.Runtime {
-	if r, ok := s.ByID[id]; ok {
-		return r
-	}
-	return state.Runtime{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getRTLocked(id)
 }
 
 func (s *Store) update(id string, mut func(*state.Runtime)) {
-	r := s.getRT(id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.getRTLocked(id)
 	mut(&r)
 	s.ByID[id] = r
 }
 
-func boolPtr(b bool) *bool { return &b }
+func boolPtr(b bool) *bool    { return &b }
 func strPtr(s string) *string { return &s }
 
 // PollStatus probes device status only (no enforce). Use ApplyPolicy after all probes
@@ -72,7 +81,12 @@ func (s *Store) PollStatus(ctx context.Context, cfg config.DeviceCfg, source str
 	be := cfg.BackendNorm()
 	res, err := backend.Control(ctx, nil, cfg)
 	if err != nil {
-		pretty := err.Error()
+		if errors.Is(err, backend.ErrPreempted) {
+			return err
+		}
+		// Technical detail in log only; UI gets laconic category
+		log.Printf("[devices] %s status fail (%s): %v", cfg.Label(), be, err)
+		pretty := UserFacingError(err, be)
 		s.update(did, func(r *state.Runtime) {
 			r.Online = boolPtr(false)
 			r.LastError = strPtr(pretty)
@@ -185,13 +199,14 @@ func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, s
 		s.update(did, func(r *state.Runtime) {
 			r.DesiredOn = boolPtr(on)
 		})
-		s.DesiredTouched[did] = true
+		s.touchDesired(did)
 		return nil
 	}
 	phys := backend.LogicalToPhysical(on, cfg.Inverted)
 	res, err := backend.Control(ctx, &phys, cfg)
 	if err != nil {
-		pretty := err.Error()
+		log.Printf("[devices] %s set fail (%s) on=%v: %v", cfg.Label(), be, on, err)
+		pretty := UserFacingError(err, be)
 		s.update(did, func(r *state.Runtime) {
 			r.Online = boolPtr(false)
 			r.LastError = strPtr(pretty)
@@ -199,7 +214,7 @@ func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, s
 			// keep desired so next tick still tries to restore
 			r.DesiredOn = boolPtr(on)
 		})
-		s.DesiredTouched[did] = true
+		s.touchDesired(did)
 		return err
 	}
 	reported := on
@@ -224,7 +239,7 @@ func (s *Store) SetLogical(ctx context.Context, cfg config.DeviceCfg, on bool, s
 		}
 		applyLightExtra(r, res.Extra)
 	})
-	s.DesiredTouched[did] = true
+	s.touchDesired(did)
 	if res.Skipped {
 		log.Printf("[devices] set %s: skipped (%s)", cfg.Label(), res.Reason)
 	} else {
@@ -251,7 +266,7 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 		s.update(did, func(r *state.Runtime) {
 			r.DesiredOn = boolPtr(reported)
 		})
-		s.DesiredTouched[did] = true
+		s.touchDesired(did)
 		log.Printf("[devices] enforce seed desired %s = %s", cfg.Label(), onOff(reported))
 		return nil
 	}
@@ -264,10 +279,10 @@ func (s *Store) EnforceDesired(ctx context.Context, cfg config.DeviceCfg, report
 	if cool <= 0 {
 		cool = defaultEnforceCooldownSec
 	}
-	if now-s.EnforceTS[did] < cool {
+	if now-s.getEnforceTS(did) < cool {
 		return nil
 	}
-	s.EnforceTS[did] = now
+	s.setEnforceTS(did, now)
 	driver := backend.DriverLabel(cfg.Backend)
 	who := displayWho(cfg, driver)
 	wantS := onOff(desired)
@@ -352,20 +367,19 @@ func (s *Store) AdoptReported(did string, reported bool) {
 	s.update(did, func(r *state.Runtime) {
 		r.DesiredOn = boolPtr(reported)
 	})
-	s.DesiredTouched[did] = true
+	s.touchDesired(did)
 }
 
-// PollAll: phase1 status all devices, phase2 enforce/adopt with fresh timeouts.
-// Background hold is independent of UI pokes: every tick status → if enforce and
-// reported≠desired → set. UI may also enqueue device_req for set/status.
-func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol config.PollerCfg) (probed, errors, enforced int) {
+// PollAll: phase1 status all devices in parallel, phase2 enforce/adopt.
+// A hung device cannot block others. UI commands take the per-device lock
+// and are skipped here (TryLock) so a click is not queued behind status.
+func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol config.PollerCfg) (probed, errCount, enforced int) {
 	backoff := float64(pol.ErrorBackoffSec)
 	if backoff < 5 {
 		backoff = 5
 	}
 	statusTimeout := pol.StatusTimeout()
 	setTimeout := pol.SetTimeout()
-	// per-tick cooldown from config (UI Advanced → enforce_cooldown_sec)
 	if pol.EnforceCooldownSec > 0 {
 		s.EnforceCooldownSec = float64(pol.EnforceCooldownSec)
 	} else if s.EnforceCooldownSec <= 0 {
@@ -375,11 +389,14 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 
 	type item struct {
 		cfg config.DeviceCfg
-		ok  bool // true = fresh status this tick
+		ok  bool
 	}
-	var batch []item
+	var (
+		todo  []config.DeviceCfg
+		batch []item
+		bmu   sync.Mutex
+	)
 
-	// ── phase 1: status only ───────────────────────────────────────────
 	for _, cfg := range devices {
 		if !cfg.IsEnabled() || cfg.ID == "" {
 			continue
@@ -391,81 +408,135 @@ func (s *Store) PollAll(ctx context.Context, devices []config.DeviceCfg, pol con
 			continue
 		}
 		rt := s.getRT(cfg.ID)
-		// Back off only after status probe failures (not enforce fails)
 		if rt.LastError != nil && rt.LastAction != nil {
 			act := *rt.LastAction
 			if strings.HasSuffix(act, "_fail") && !strings.Contains(act, "enforce") {
-				if now-s.SyncTS[cfg.ID] < backoff {
-					// still allow hold on last known mismatch without new status
+				if now-s.getSyncTS(cfg.ID) < backoff {
 					batch = append(batch, item{cfg: cfg, ok: false})
 					continue
 				}
 			}
 		}
-		cctx, cancel := context.WithTimeout(ctx, statusTimeout)
-		err := s.PollStatus(cctx, cfg, "poll")
-		cancel()
-		if err != nil {
-			errors++
-			s.SyncTS[cfg.ID] = now
-			log.Printf("[devices-poller] status %s: %v", cfg.Label(), err)
-			batch = append(batch, item{cfg: cfg, ok: false})
-			continue
-		}
-		probed++
-		batch = append(batch, item{cfg: cfg, ok: true})
+		todo = append(todo, cfg)
 	}
 
-	// ── phase 2: enforce / adopt ───────────────────────────────────────
-	// adopt only on fresh status; enforce (hold) also on last-known mismatch
-	// when status failed this tick (still try to push desired on the wire).
-	for _, it := range batch {
-		cfg := it.cfg
-		rt := s.getRT(cfg.ID)
-		if rt.LastOn == nil {
-			continue
-		}
-		if !it.ok {
-			// no fresh status: only hold if enforce + known mismatch
-			if !cfg.EnforceDesired || rt.DesiredOn == nil || *rt.DesiredOn == *rt.LastOn {
-				continue
+	workers := pollWorkers(len(todo))
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	var probedN, errN atomic.Int32
+
+	for i := range todo {
+		cfg := todo[i]
+		wg.Add(1)
+		go func(cfg config.DeviceCfg) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				return
 			}
-			log.Printf("[devices-poller] hold (stale status) %s: last=%s desired=%s → restore",
-				cfg.Label(), onOff(*rt.LastOn), onOff(*rt.DesiredOn))
+			if !s.TryLockDevice(cfg.ID) {
+				// UI command in flight — don't contend
+				bmu.Lock()
+				batch = append(batch, item{cfg: cfg, ok: false})
+				bmu.Unlock()
+				return
+			}
+			defer s.UnlockDevice(cfg.ID)
+
+			cctx, cancel := context.WithTimeout(ctx, statusTimeout)
+			err := s.PollStatus(cctx, cfg, "poll")
+			cancel()
+			bmu.Lock()
+			defer bmu.Unlock()
+			if err != nil {
+				if errors.Is(err, backend.ErrPreempted) {
+					batch = append(batch, item{cfg: cfg, ok: false})
+					return
+				}
+				errN.Add(1)
+				s.setSyncTS(cfg.ID, now)
+				log.Printf("[devices-poller] status %s: %v", cfg.Label(), err)
+				batch = append(batch, item{cfg: cfg, ok: false})
+				return
+			}
+			probedN.Add(1)
+			batch = append(batch, item{cfg: cfg, ok: true})
+		}(cfg)
+	}
+	wg.Wait()
+	probed = int(probedN.Load())
+	errCount = int(errN.Load())
+
+	// phase 2 — also parallel; skip devices the UI still holds
+	var wg2 sync.WaitGroup
+	sem2 := make(chan struct{}, workers)
+	var enfN atomic.Int32
+	snap := append([]item(nil), batch...)
+	for i := range snap {
+		it := snap[i]
+		wg2.Add(1)
+		go func(it item) {
+			defer wg2.Done()
+			select {
+			case sem2 <- struct{}{}:
+				defer func() { <-sem2 }()
+			case <-ctx.Done():
+				return
+			}
+			cfg := it.cfg
+			rt := s.getRT(cfg.ID)
+			if rt.LastOn == nil {
+				return
+			}
+			if !s.TryLockDevice(cfg.ID) {
+				return
+			}
+			defer s.UnlockDevice(cfg.ID)
+
+			if !it.ok {
+				if !cfg.EnforceDesired || rt.DesiredOn == nil || *rt.DesiredOn == *rt.LastOn {
+					return
+				}
+				log.Printf("[devices-poller] hold (stale status) %s: last=%s desired=%s → restore",
+					cfg.Label(), onOff(*rt.LastOn), onOff(*rt.DesiredOn))
+				cctx, cancel := context.WithTimeout(ctx, setTimeout)
+				err := s.EnforceDesired(cctx, cfg, *rt.LastOn)
+				cancel()
+				if err != nil {
+					log.Printf("[devices-poller] policy %s: %v", cfg.Label(), err)
+					return
+				}
+				rt2 := s.getRT(cfg.ID)
+				if rt2.LastOn != nil && rt2.DesiredOn != nil && *rt2.LastOn == *rt2.DesiredOn {
+					enfN.Add(1)
+				}
+				return
+			}
+			needRestore := cfg.EnforceDesired && rt.DesiredOn != nil && *rt.DesiredOn != *rt.LastOn
+			if needRestore {
+				log.Printf("[devices-poller] hold mismatch %s: reported=%s desired=%s → restore",
+					cfg.Label(), onOff(*rt.LastOn), onOff(*rt.DesiredOn))
+			}
 			cctx, cancel := context.WithTimeout(ctx, setTimeout)
-			err := s.EnforceDesired(cctx, cfg, *rt.LastOn)
+			err := s.ApplyPolicy(cctx, cfg)
 			cancel()
 			if err != nil {
 				log.Printf("[devices-poller] policy %s: %v", cfg.Label(), err)
-				continue
+				return
 			}
-			rt2 := s.getRT(cfg.ID)
-			if rt2.LastOn != nil && rt2.DesiredOn != nil && *rt2.LastOn == *rt2.DesiredOn {
-				enforced++
+			if needRestore {
+				rt2 := s.getRT(cfg.ID)
+				if rt2.LastOn != nil && rt2.DesiredOn != nil && *rt2.LastOn == *rt2.DesiredOn {
+					enfN.Add(1)
+				}
 			}
-			continue
-		}
-		needRestore := cfg.EnforceDesired && rt.DesiredOn != nil && *rt.DesiredOn != *rt.LastOn
-		if needRestore {
-			log.Printf("[devices-poller] hold mismatch %s: reported=%s desired=%s → restore",
-				cfg.Label(), onOff(*rt.LastOn), onOff(*rt.DesiredOn))
-		}
-		cctx, cancel := context.WithTimeout(ctx, setTimeout)
-		err := s.ApplyPolicy(cctx, cfg)
-		cancel()
-		if err != nil {
-			log.Printf("[devices-poller] policy %s: %v", cfg.Label(), err)
-			// do not mark status backoff — keep retrying hold next tick
-			continue
-		}
-		if needRestore {
-			rt2 := s.getRT(cfg.ID)
-			if rt2.LastOn != nil && rt2.DesiredOn != nil && *rt2.LastOn == *rt2.DesiredOn {
-				enforced++
-			}
-		}
+		}(it)
 	}
-	return probed, errors, enforced
+	wg2.Wait()
+	enforced = int(enfN.Load())
+	return probed, errCount, enforced
 }
 
 // SyncWithMining applies auto_on / auto_off policy per bound miner.
@@ -490,7 +561,7 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		// Unbound → ignore mining auto policy
 		mid := strings.TrimSpace(cfg.MinerID)
 		if mid == "" {
-			delete(s.Deadlines, cfg.ID)
+			s.clearDeadline(cfg.ID)
 			continue
 		}
 		work := strings.ToLower(strings.TrimSpace(workByMiner[mid]))
@@ -510,7 +581,7 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		if rt.LastError != nil && rt.LastAction != nil {
 			act := *rt.LastAction
 			if strings.HasSuffix(act, "_fail") && !strings.Contains(act, "enforce") {
-				if now-s.SyncTS[did] < backoff {
+				if now-s.getSyncTS(did) < backoff {
 					continue
 				}
 			}
@@ -531,8 +602,8 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		_ = globalWork // reserved for future active-id fallback
 
 		if work == "resume" {
-			if _, ok := s.Deadlines[did]; ok {
-				delete(s.Deadlines, did)
+			if _, ok := s.deadlineOf(did); ok {
+				s.clearDeadline(did)
 				log.Printf("[devices] suspend-off cancelled %s (mining resume)", cfg.Label())
 			}
 			if autoOn {
@@ -548,38 +619,38 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 			}
 		} else if work == "suspend" && autoOff {
 			if reported != nil && !*reported {
-				delete(s.Deadlines, did)
+				s.clearDeadline(did)
 				if desired == nil || *desired {
 					s.update(did, func(r *state.Runtime) {
 						r.DesiredOn = boolPtr(false)
 					})
 				}
 			} else {
-				dl, has := s.Deadlines[did]
+				dl, has := s.deadlineOf(did)
 				if !has {
 					if delay <= 0 {
 						t := false
 						want = &t
 						src = "auto_suspend"
 					} else {
-						s.Deadlines[did] = now + delay
+						s.setDeadline(did, now+delay)
 						log.Printf("[devices] suspend-off in %.0fs %s", delay, cfg.Label())
 					}
 				} else if now >= dl {
 					t := false
 					want = &t
 					src = "auto_suspend"
-					delete(s.Deadlines, did)
+					s.clearDeadline(did)
 				}
 			}
 		} else if work == "suspend" && !autoOff {
-			delete(s.Deadlines, did)
+			s.clearDeadline(did)
 		}
 
 		if want == nil {
 			continue
 		}
-		s.SyncTS[did] = now
+		s.setSyncTS(did, now)
 		repS, desS := "?", "?"
 		if reported != nil {
 			repS = onOff(*reported)
@@ -589,9 +660,13 @@ func (s *Store) SyncWithMining(ctx context.Context, devices []config.DeviceCfg, 
 		}
 		log.Printf("[devices] sync %s: work=%s → %s (%s) reported=%s desired=%s",
 			cfg.Label(), work, onOff(*want), src, repS, desS)
+		if !s.TryLockDevice(did) {
+			continue
+		}
 		cctx, cancel := context.WithTimeout(ctx, timeout)
 		err := s.SetLogical(cctx, cfg, *want, src, true)
 		cancel()
+		s.UnlockDevice(did)
 		if err != nil {
 			log.Printf("[devices] sync %s: %v", cfg.Label(), err)
 		}
@@ -604,6 +679,9 @@ func (s *Store) MergeDesiredFromDisk(disk map[string]state.Runtime) {
 	if disk == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.initGuards()
 	for id, diskRT := range disk {
 		if s.DesiredTouched[id] {
 			continue
@@ -611,13 +689,11 @@ func (s *Store) MergeDesiredFromDisk(disk map[string]state.Runtime) {
 		if diskRT.DesiredOn == nil {
 			continue
 		}
-		cur := s.getRT(id)
-		// always take disk desired when UI/API wrote it
+		cur := s.getRTLocked(id)
 		if cur.DesiredOn == nil || *cur.DesiredOn != *diskRT.DesiredOn {
 			cur.DesiredOn = diskRT.DesiredOn
 			s.ByID[id] = cur
 		}
-		// seed last_on only if we never probed
 		if cur.LastOn == nil && diskRT.LastOn != nil {
 			cur.LastOn = diskRT.LastOn
 			s.ByID[id] = cur
@@ -631,13 +707,15 @@ func (s *Store) MergeBeforeSave(disk map[string]state.Runtime) {
 	if disk == nil {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.initGuards()
 	for id, diskRT := range disk {
 		if s.DesiredTouched[id] {
 			continue
 		}
 		cur, ok := s.ByID[id]
 		if !ok {
-			// keep unknown ids from disk
 			s.ByID[id] = diskRT
 			continue
 		}
@@ -650,7 +728,9 @@ func (s *Store) MergeBeforeSave(disk map[string]state.Runtime) {
 
 // ClearTickFlags resets per-tick bookkeeping.
 func (s *Store) ClearTickFlags() {
+	s.mu.Lock()
 	s.DesiredTouched = map[string]bool{}
+	s.mu.Unlock()
 }
 
 func onOff(b bool) string {

@@ -182,8 +182,135 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 	return res
 }
 
-// executeReboot prefers NetPacket :8889 (works with API Switch OFF), then V2.
+// executeReboot — vendor-aware full device reboot.
+//
+//   whatsminer: NetPacket :8889 (cmd 8) → V2 privileged reboot
+//   ipollo:     LuCI /admin/ipollo_system/ipollo_reboot (sysauth) → CGMiner restart nudge
+//   goldshell:  HTTP JWT + GET /mcb/reboot → CGMiner restart nudge
+//   antminer/cgminer/avalon: CGMiner "restart"/"quit" (best-effort full reset)
+//
+// Optional req.Cmd overrides: host|ip, port, vendor|api_vendor, password.
 func executeReboot(s Settings, req WriteRequest, password string) WriteResult {
+	host, port, pw, vendor := writeTarget(s, req, password)
+	// Override Settings for Whatsminer helpers that still read s.Host
+	s.Host, s.Port, s.Password = host, port, pw
+
+	log.Printf("[miner-poller] reboot target host=%s port=%d vendor=%q", host, port, vendor)
+
+	switch vendor {
+	case "ipollo":
+		return executeRebootIpollo(s, req, host, port, pw)
+	case "goldshell":
+		return executeRebootGoldshell(s, req, host, port, pw)
+	case "antminer", "avalon", "cgminer":
+		return executeRebootCGMiner(s, req, host, port, vendor)
+	}
+
+	// Default / whatsminer path
+	return executeRebootWhatsminer(s, req, pw)
+}
+
+func executeRebootIpollo(s Settings, req WriteRequest, host string, port int, password string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
+	var lastErr error
+
+	// 1) LuCI full OS reboot (stock UI button)
+	if resp, err := ipolloLuCIReboot(host, password); err == nil {
+		res.OK = true
+		res.Transport = "ipollo-luci"
+		res.Response = resp
+		return res
+	} else {
+		lastErr = err
+		log.Printf("[miner-poller] ipollo luci reboot %s: %v", host, err)
+	}
+
+	// 2) CGMiner process restart (device stays up; mining restarts — better than nothing)
+	if resp, err := cgminerRestartMining(host, port); err == nil {
+		res.OK = true
+		res.Transport = "cgminer"
+		res.Response = resp
+		if res.Response == nil {
+			res.Response = map[string]any{}
+		}
+		res.Response["note"] = "cgminer restart (LuCI full reboot failed)"
+		res.Response["luci_error"] = fmt.Sprint(lastErr)
+		return res
+	} else {
+		log.Printf("[miner-poller] ipollo cgminer restart %s: %v", host, err)
+		if lastErr == nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("luci: %v; cgminer: %v", lastErr, err)
+		}
+	}
+
+	res.Error = lastErr.Error()
+	res.Transport = "ipollo"
+	return res
+}
+
+func executeRebootGoldshell(s Settings, req WriteRequest, host string, port int, password string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
+	var lastErr error
+
+	// 1) Cloud-box HTTP /mcb/reboot (JWT)
+	if resp, err := goldshellHTTPReboot(host, password); err == nil {
+		res.OK = true
+		res.Transport = "goldshell-http"
+		res.Response = resp
+		return res
+	} else {
+		lastErr = err
+		log.Printf("[miner-poller] goldshell http reboot %s: %v", host, err)
+	}
+
+	// 2) CGMiner on :4028
+	if resp, err := cgminerRestartMining(host, port); err == nil {
+		res.OK = true
+		res.Transport = "cgminer"
+		res.Response = resp
+		if res.Response == nil {
+			res.Response = map[string]any{}
+		}
+		res.Response["note"] = "cgminer restart (HTTP /mcb/reboot failed)"
+		res.Response["http_error"] = fmt.Sprint(lastErr)
+		return res
+	} else {
+		log.Printf("[miner-poller] goldshell cgminer restart %s: %v", host, err)
+		if lastErr == nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("http: %v; cgminer: %v", lastErr, err)
+		}
+	}
+
+	res.Error = lastErr.Error()
+	res.Transport = "goldshell"
+	return res
+}
+
+func executeRebootCGMiner(s Settings, req WriteRequest, host string, port int, vendor string) WriteResult {
+	now := float64(time.Now().UnixNano()) / 1e9
+	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value, Transport: "cgminer"}
+	resp, err := cgminerRestartMining(host, port)
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	res.OK = true
+	res.Response = resp
+	if res.Response == nil {
+		res.Response = map[string]any{}
+	}
+	res.Response["vendor"] = vendor
+	return res
+}
+
+// executeRebootWhatsminer — original NetPacket → V2 path.
+func executeRebootWhatsminer(s Settings, req WriteRequest, password string) WriteResult {
 	now := float64(time.Now().UnixNano()) / 1e9
 	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value}
 	// 1) NetPacket reboot (WMT cmd 8)
@@ -521,13 +648,64 @@ func executeFactoryReset(s Settings, req WriteRequest, password string) WriteRes
 	return res
 }
 
-// executeRestartMining restarts btminer process (not full OS reboot).
+// executeRestartMining restarts the mining process (not always full OS reboot).
+//
+//   whatsminer: V2 restart_btminer / restart_cgminer
+//   ipollo / goldshell / antminer / avalon / cgminer: CGMiner {"command":"restart"}
+//
+// Optional req.Cmd overrides: host|ip, port, vendor|api_vendor, password.
 func executeRestartMining(s Settings, req WriteRequest, password string) WriteResult {
 	now := float64(time.Now().UnixNano()) / 1e9
 	res := WriteResult{ID: req.ID, TS: now, Action: req.Action, Value: req.Value, Transport: "v2"}
+
+	host, port, pw, vendor := writeTarget(s, req, password)
+	s.Host, s.Port, s.Password = host, port, pw
+
+	log.Printf("[miner-poller] restart_mining target host=%s port=%d vendor=%q", host, port, vendor)
+
+	switch vendor {
+	case "ipollo", "goldshell", "antminer", "avalon", "cgminer":
+		resp, err := cgminerRestartMining(host, port)
+		if err != nil {
+			// Goldshell: try HTTP reboot as last resort for "restart" when :4028 down
+			if vendor == "goldshell" {
+				if r2, err2 := goldshellHTTPReboot(host, pw); err2 == nil {
+					res.OK = true
+					res.Transport = "goldshell-http"
+					res.Response = r2
+					if res.Response == nil {
+						res.Response = map[string]any{}
+					}
+					res.Response["note"] = "full reboot via /mcb/reboot (cgminer restart unavailable)"
+					return res
+				}
+			}
+			if vendor == "ipollo" {
+				if r2, err2 := ipolloLuCIReboot(host, pw); err2 == nil {
+					res.OK = true
+					res.Transport = "ipollo-luci"
+					res.Response = r2
+					if res.Response == nil {
+						res.Response = map[string]any{}
+					}
+					res.Response["note"] = "full reboot via LuCI (cgminer restart unavailable)"
+					return res
+				}
+			}
+			res.Error = err.Error()
+			res.Transport = "cgminer"
+			return res
+		}
+		res.OK = true
+		res.Transport = "cgminer"
+		res.Response = resp
+		return res
+	}
+
+	// Whatsminer (default)
 	var lastErr error
 	for _, cmd := range []string{"restart_btminer", "restart_cgminer"} {
-		resp, err := cV2WriteTimeout(s, password, cmd, nil, 25*time.Second)
+		resp, err := cV2WriteTimeout(s, pw, cmd, nil, 25*time.Second)
 		if err != nil {
 			lastErr = err
 			if isLinkDropAfterWrite(err) {

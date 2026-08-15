@@ -3174,132 +3174,208 @@ def _filtration_http(
         return int(resp.status), resp.read().decode("utf-8", errors="replace")
 
 
+def _device_error_category(
+    raw: str | BaseException | None,
+    *,
+    backend: str | None = None,
+) -> str:
+    """
+    Classify device/actuator errors for UI.
+
+    Returns one of: offline | config | unsupported | busy | disabled | policy | unknown
+    Technical details (dial tcp, EOF, …) are never shown in UI — only logged.
+    """
+    text = str(raw or "").strip()
+    low = text.lower()
+    be = str(backend or "").strip().lower()
+    if be:
+        low = f"{be} {low}"
+
+    # Policy / mining gates (keep short policy text via separate path)
+    if (
+        "майнинг" in low
+        or "while mining" in low
+        or "while suspend" in low
+        or "not allowed" in low
+        or "запрещ" in low
+    ):
+        return "policy"
+    if "preempted by ui" in low or "busy" in low:
+        return "busy"
+    if "disabled" in low or "отключ" in low:
+        return "disabled"
+
+    # Support / not implemented
+    unsupported_markers = (
+        "not supported",
+        "unsupported",
+        "not implemented",
+        "не поддержив",
+        "unknown backend",
+        "unknown device",
+        "no backend",
+        "removed from serve",
+        "use devices-poller",
+    )
+    # Connectivity / offline (before config — "status: empty" is offline, not config)
+    offline_markers = (
+        "offline",
+        "офлайн",
+        "не в сети",
+        "недоступ",
+        "unreachable",
+        "no route",
+        "network is unreachable",
+        "connection refused",
+        "connection reset",
+        "reset by peer",
+        "broken pipe",
+        "i/o timeout",
+        "timeout",
+        "timed out",
+        "deadline",
+        "eof",
+        "empty reply",
+        "empty response",
+        "status: empty",
+        "status empty",
+        "closed",
+        "dial ",
+        "dial tcp",
+        "connect:",
+        "noconnection",
+        "not responding",
+        "не отвечает",
+        "name or service not known",
+        "nodename nor servname",
+        "failed to resolve",
+        "no such host",
+        "host is down",
+        "network down",
+        "devices-poller not running",
+        "devices-poller died",
+        "timeout waiting for devices-poller",
+        "signal: killed",
+        "status timeout",
+        "set failed",
+        "status failed",
+        "no switch state",
+        "tinytuya",
+        "tuya dial",
+        "tuya status",
+        "404",
+        "502",
+        "503",
+        "504",
+    )
+    # Configuration (missing/invalid credentials, keys)
+    config_markers = (
+        "not configured",
+        "не настроен",
+        "invalid",
+        "не действитель",
+        "auth mismatch",
+        "unauthorized",
+        "login error",
+        "login_device",
+        "bad email",
+        "bad password",
+        "local_key",
+        "localkey",
+        "devicekey empty",
+        "device_id empty",
+        "deviceid empty",
+        "token empty",
+        "token invalid",
+        "wrong key",
+        "decrypt",
+        "klap",
+        "handshake",
+        "error_code=-1501",
+        "error_code= -1501",
+        "1003",
+        "missing",
+        "required",
+        "credentials",
+        "email/password",
+        "ip empty",
+        "host empty",
+        "key empty",
+        "password empty",
+        "email empty",
+        "config",
+        "конфиг",
+    )
+
+    for m in unsupported_markers:
+        if m in low:
+            return "unsupported"
+    for m in offline_markers:
+        if m in low:
+            return "offline"
+    for m in config_markers:
+        if m in low:
+            return "config"
+    # Default: treat unknown transport noise as offline (safer UX than raw dump)
+    if any(
+        x in low
+        for x in (
+            "tcp",
+            "udp",
+            "socket",
+            "http",
+            "rpc",
+            "lan",
+            "wifi",
+            "net/",
+        )
+    ):
+        return "offline"
+    return "unknown"
+
+
+def _device_ui_error(
+    raw: str | BaseException | None,
+    *,
+    backend: str | None = None,
+    lang: str = "ru",
+) -> str:
+    """
+    Short user-facing device error for UI / last_error.
+
+    Categories only — never expose dial tcp / EOF / stack noise.
+    """
+    en = str(lang or "ru").lower().startswith("en")
+    cat = _device_error_category(raw, backend=backend)
+    if cat == "config":
+        return "configuration error" if en else "ошибка конфигурации"
+    if cat == "unsupported":
+        return "device not supported" if en else "устройство не поддерживается"
+    if cat == "busy":
+        return "busy, retry" if en else "занято, повторите"
+    if cat == "disabled":
+        return "device disabled" if en else "устройство отключено"
+    if cat == "policy":
+        # keep short original policy line if already human (no dial/tcp)
+        text = str(raw or "").strip()
+        low = text.lower()
+        if text and not any(
+            x in low for x in ("dial", "tcp", "eof", "route", "timeout", "connect:")
+        ):
+            return text[:120]
+        return "not allowed" if en else "запрещено"
+    # offline / unknown → laconic offline
+    return "device offline" if en else "устройство офлайн"
+
+
 def _actuator_error_reason(
     exc: BaseException,
     *,
     backend: str | None = None,
     lang: str = "ru",
 ) -> str:
-    """Shared reason line for filtration / device errors (no head)."""
-    en = str(lang or "ru").lower().startswith("en")
-    raw = str(exc or "").strip()
-    low = raw.lower()
-    be = str(backend or "").strip().lower()
-
-    if be in ("ewelink", "sonoff", "sonoff_diy") or "ewelink" in low or "diy" in low:
-        if "device_id empty" in low or "deviceid empty" in low:
-            return (
-                "eWeLink deviceid empty"
-                if en
-                else "eWeLink deviceid пуст"
-            )
-        if "devicekey empty" in low or "devicekey empty (lan" in low:
-            return (
-                "eWeLink devicekey empty"
-                if en
-                else "eWeLink devicekey пуст"
-            )
-        # Connectivity / DIY / LAN / empty reply / timeout → laconic offline
-        if (
-            "closed" in low
-            or "empty reply" in low
-            or "timeout" in low
-            or "timed out" in low
-            or "reset" in low
-            or "unreachable" in low
-            or "not responding" in low
-            or "не отвечает" in low
-            or "offline" in low
-            or "connection refused" in low
-            or "no route" in low
-            or "404" in low
-            or "not found" in low
-            or "set failed" in low
-            or "status failed" in low
-            or "no switch state" in low
-            or "switch state" in low
-        ):
-            return "device offline" if en else "устройство не в сети"
-    if be == "tapo" or "tapo" in low:
-        if (
-            "email/password empty" in low
-            or "email empty" in low
-            or "password empty" in low
-            or ("email" in low and "password" in low and "empty" in low)
-            or "не настроен" in low
-        ):
-            return (
-                "Tapo email/password not configured"
-                if en
-                else "Tapo email/password не настроен"
-            )
-        if (
-            "bad email/password" in low
-            or "auth mismatch" in low
-            or "login error" in low
-            or "login_device" in low
-            or "invalid" in low
-            or "unauthorized" in low
-            or "error_code=-1501" in low
-            or "error_code= -1501" in low
-            or "не действитель" in low
-        ):
-            return (
-                "Tapo email/password invalid"
-                if en
-                else "Tapo email/password не действительны"
-            )
-        if "1003" in low or ("klap" in low and ("handshake" in low or "auth" in low)):
-            return (
-                "Tapo KLAP auth failed (email/password?)"
-                if en
-                else "Tapo KLAP: email/password не действительны"
-            )
-        if "ip empty" in low or ("ip" in low and "empty" in low):
-            return "Tapo IP not configured" if en else "Tapo IP не настроен"
-        if (
-            "timed out" in low
-            or "timeout" in low
-            or "unreachable" in low
-            or "no route" in low
-            or "network is unreachable" in low
-            or "connection refused" in low
-            or "reset by peer" in low
-            or "name or service not known" in low
-            or "nodename nor servname" in low
-            or "failed to resolve" in low
-        ):
-            return (
-                "Tapo device unreachable"
-                if en
-                else "Tapo устройство недоступно"
-            )
-        if "handshake" in low or "decrypt" in low or "1003" in low:
-            return (
-                "Tapo protocol/auth failed (KLAP / password)"
-                if en
-                else "Tapo: ошибка протокола/пароля (KLAP)"
-            )
-        if "server" in low or "cloud" in low or "api.tapo" in low:
-            return (
-                "Tapo server unavailable"
-                if en
-                else "Tapo сервер недоступен"
-            )
-        return (
-            "Tapo device unreachable"
-            if en
-            else "Tapo устройство недоступно"
-        )
-    if "disabled" in low or "отключ" in low:
-        return (
-            "device disabled"
-            if en
-            else "устройство отключено"
-        )
-    if "майнинг" in low or "mining" in low or "suspend" in low:
-        return raw[:120] if raw else ("blocked" if en else "запрещено")
-    return raw[:120] if raw else ("unknown error" if en else "неизвестная ошибка")
+    """Shared reason line for filtration / device errors (no head). UI-safe only."""
+    return _device_ui_error(exc, backend=backend, lang=lang)
 
 
 def _filtration_user_error(
@@ -4072,32 +4148,51 @@ def _filtration_backend_ha_legacy_unused(on: bool | None, cfg: dict) -> dict:
 def _filtration_device_cfg() -> dict | None:
     """
     Resolve legacy filtration_cfg to a multi-device row (poller owns I/O).
-    Prefer alias filtration/filter/filt, else first enabled matching backend+ip.
+
+    Prefer backend+IP from filtration settings. Alias "filter" is only a
+    fallback when it matches that backend — otherwise a Tuya plug named
+    "filter" steals control from the configured Tapo outlet.
     """
     filtr = _filtration_cfg_snapshot()
     be = str(filtr.get("backend") or "").strip().lower()
     ip = str(filtr.get("ip") or "").strip()
     with _devices_cfg_lock:
-        devices = list(_devices_cfg.get("devices") or [])
-    # 1) known aliases
+        devices = [d for d in (_devices_cfg.get("devices") or []) if isinstance(d, dict)]
+
+    def _ok(d: dict) -> bool:
+        return bool(d.get("enabled", True))
+
+    def _be(d: dict) -> str:
+        return str(d.get("backend") or "").strip().lower()
+
+    def _ip(d: dict) -> str:
+        return str(d.get("ip") or "").strip()
+
+    # 1) exact backend + ip (settings)
+    if be and ip:
+        for d in devices:
+            if _ok(d) and _be(d) == be and _ip(d) == ip:
+                return dict(d)
+    # 2) ip only
+    if ip:
+        for d in devices:
+            if _ok(d) and _ip(d) == ip:
+                return dict(d)
+    # 3) alias, but not a different backend than settings
     for alias in ("filtration", "filter", "filt", "pump"):
         for d in devices:
-            if not isinstance(d, dict):
+            if not _ok(d):
                 continue
-            if str(d.get("alias") or "").strip().lower() == alias and d.get("enabled", True):
-                return dict(d)
-    # 2) match backend + ip
-    for d in devices:
-        if not isinstance(d, dict) or not d.get("enabled", True):
-            continue
-        db = str(d.get("backend") or "").strip().lower()
-        dip = str(d.get("ip") or "").strip()
-        if be and db and be != db:
-            continue
-        if ip and dip and ip != dip:
-            continue
-        if be or ip:
+            if str(d.get("alias") or "").strip().lower() != alias:
+                continue
+            if be and _be(d) and _be(d) != be:
+                continue
             return dict(d)
+    # 4) first enabled of the configured backend
+    if be:
+        for d in devices:
+            if _ok(d) and _be(d) == be:
+                return dict(d)
     return None
 
 
@@ -5457,6 +5552,13 @@ def get_devices_cfg(*, redact: bool = True) -> dict:
         else:
             row["auto_off_suspend_in_sec"] = None
             row["auto_off_suspend_pending"] = False
+        # Never expose dial tcp / EOF / etc. in API → UI
+        if row.get("last_error"):
+            row["last_error"] = _device_ui_error(
+                row.get("last_error"),
+                backend=str(row.get("backend") or ""),
+                lang="ru",
+            )
         # Device Shadow aliases for UI / API clarity
         row["reported_on"] = row.get("last_on")
         row["desired"] = row.get("desired_on")
@@ -6116,78 +6218,88 @@ def _device_backend_xiaomi_legacy_unused(on: bool | None, cfg: dict) -> dict:
 
 # ── Tuya / Smart Life LAN (tinytuya + mobile login for local_key) ────────────
 
-def _tuya_ensure_local_key(cfg: dict) -> str:
+def _tuya_persist_key_to_config(
+    store_id: str,
+    *,
+    local_key: str,
+    device_id: str | None = None,
+    ip: str | None = None,
+) -> None:
+    """Write local_key into devices_config.json (poller reads this, not runtime state)."""
+    did = str(store_id or "").strip()
+    key = str(local_key or "").strip()
+    if not did or not key:
+        return
+    try:
+        with _devices_cfg_lock:
+            for d in _devices_cfg.get("devices") or []:
+                if not isinstance(d, dict):
+                    continue
+                if str(d.get("id") or "") != did:
+                    continue
+                d["tuya_local_key"] = key
+                if device_id:
+                    d["device_id"] = str(device_id)
+                if ip and not str(d.get("ip") or "").strip():
+                    d["ip"] = str(ip)
+                break
+            _save_devices_cfg()
+        print(f"[devices] tuya local_key saved to config for {did}", flush=True)
+    except Exception as e:
+        print(f"[devices] tuya local_key persist: {e}", flush=True)
+
+
+def _tuya_ensure_local_key(cfg: dict, *, force: bool = False) -> str:
     """
     Return local_key for device. Refresh via mobile API if missing
-    and email/password present. May update store.
+    (or force=True) and email/password present. Persists into devices_config.
     """
     key = str(cfg.get("tuya_local_key") or "").strip()
-    if key:
+    if key and not force:
         return key
     email = str(cfg.get("email") or "").strip()
     password = str(cfg.get("password") or "")
     if not email or not password:
+        if key:
+            return key
         raise RuntimeError(
             "Tuya: нужен local_key или email/password Smart Life / Tuya Smart"
         )
     try:
-        from tuya_mobile import fetch_devices_with_keys  # type: ignore
+        from tuya_mobile import login_and_find_device  # type: ignore
     except ImportError as e:
         raise RuntimeError(
             "tuya_mobile module missing — reinstall poolheat package"
         ) from e
     dev_id = str(cfg.get("device_id") or "").strip()
-    devices = fetch_devices_with_keys(
+    tip = str(cfg.get("ip") or "").strip()
+    out = login_and_find_device(
         email,
         password,
+        device_id=dev_id or None,
+        ip=tip or None,
         country=str(cfg.get("tuya_country") or "7"),
         region=str(cfg.get("tuya_region") or "eu"),
         ecosystem=str(cfg.get("tuya_ecosystem") or "smartlife"),
     )
-    found = None
-    for d in devices:
-        if not isinstance(d, dict):
-            continue
-        if dev_id and str(d.get("id") or "") == dev_id:
-            found = d
-            break
-    if not found and devices:
-        # single device account — take first with key
-        for d in devices:
-            if d.get("key"):
-                found = d
-                break
+    found = out.get("match") if isinstance(out.get("match"), dict) else None
+    n = int(out.get("device_count") or 0)
     if not found or not found.get("key"):
         raise RuntimeError(
             f"Tuya: local_key не найден для device_id={dev_id or '—'} "
-            f"(аккаунт: {len(devices)} устр.)"
+            f"ip={tip or '—'} (аккаунт: {n} устр.)"
         )
     key = str(found["key"])
-    # Persist into devices_config.json so Go devices-poller can hold state
-    # in the background (runtime state strip drops non-shadow fields).
-    did = str(cfg.get("id") or "")
-    if did:
-        try:
-            with _devices_cfg_lock:
-                for d in _devices_cfg.get("devices") or []:
-                    if not isinstance(d, dict):
-                        continue
-                    if str(d.get("id") or "") != did:
-                        continue
-                    d["tuya_local_key"] = key
-                    if found.get("id"):
-                        d["device_id"] = str(found.get("id"))
-                    break
-            _save_devices_cfg()
-            print(
-                f"[devices] tuya local_key saved to config for {did}",
-                flush=True,
-            )
-        except Exception as e:
-            print(f"[devices] tuya local_key persist: {e}", flush=True)
+    cloud_id = str(found.get("id") or "").strip() or None
+    cloud_ip = str(found.get("ip") or "").strip() or None
+    store_id = str(cfg.get("id") or "").strip()
+    if store_id:
+        _tuya_persist_key_to_config(
+            store_id, local_key=key, device_id=cloud_id, ip=cloud_ip
+        )
     cfg["tuya_local_key"] = key
-    if found.get("id"):
-        cfg["device_id"] = found.get("id")
+    if cloud_id:
+        cfg["device_id"] = cloud_id
     return key
 
 
@@ -6199,7 +6311,7 @@ def _device_control_via_poller(
     cfg: dict,
     *,
     backend_hint: str = "",
-    timeout_sec: float = 15.0,
+    timeout_sec: float = 22.0,
     brightness: int | None = None,
     mode: str | None = None,
 ) -> dict:
@@ -6298,6 +6410,9 @@ def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
     Tuya LAN — only via devices-poller (no tinytuya in serve).
     Status: on=None; set: on=True/False (physical already resolved by caller).
     Optional light fields on cfg: _set_brightness (0–100), _set_mode.
+
+    Ensures local_key is present (cloud auto-fetch when email/password set).
+    On sess/hmac failures, refreshes key once and retries.
     """
     bright = cfg.get("_set_brightness")
     mode = cfg.get("_set_mode")
@@ -6306,13 +6421,52 @@ def _device_backend_tuya(on: bool | None, cfg: dict) -> dict:
     except (TypeError, ValueError):
         bright_i = None
     mode_s = str(mode).strip() if mode else None
-    return _device_control_via_poller(
-        on,
-        cfg,
-        backend_hint="tuya",
-        brightness=bright_i,
-        mode=mode_s or None,
-    )
+
+    # Ensure key before poller (auto-fetch like eWeLink when missing)
+    try:
+        _tuya_ensure_local_key(cfg, force=False)
+    except Exception as e:
+        print(f"[devices] tuya ensure key: {e}", flush=True)
+
+    def _call() -> dict:
+        return _device_control_via_poller(
+            on,
+            cfg,
+            backend_hint="tuya",
+            brightness=bright_i,
+            mode=mode_s or None,
+        )
+
+    try:
+        return _call()
+    except Exception as e:
+        low = str(e).lower()
+        # Stale local_key / wrong session → refresh from cloud once
+        retryable = any(
+            x in low
+            for x in (
+                "sess hmac",
+                "sess resp decrypt",
+                "wrong key",
+                "local_key",
+                "decrypt",
+                "session key",
+            )
+        )
+        email = str(cfg.get("email") or "").strip()
+        password = str(cfg.get("password") or "")
+        if not retryable or not email or not password:
+            raise
+        print(
+            f"[devices] tuya control fail ({e}); refreshing local_key…",
+            flush=True,
+        )
+        try:
+            _tuya_ensure_local_key(cfg, force=True)
+        except Exception as re:
+            print(f"[devices] tuya key refresh fail: {re}", flush=True)
+            raise e from re
+        return _call()
 
 
 def tuya_refresh_device_keys(
@@ -6323,53 +6477,111 @@ def tuya_refresh_device_keys(
     region: str = "eu",
     ecosystem: str = "smartlife",
     device_store_id: str | None = None,
+    target_device_id: str | None = None,
+    target_ip: str | None = None,
+    slim: bool = True,
 ) -> dict:
     """
-    Login to Smart Life / Tuya mobile API and return device list with local_keys.
-    Optionally update stored device local_key when device_store_id given.
-    """
-    from tuya_mobile import fetch_devices_with_keys, ecosystems  # type: ignore
+    Login to Smart Life / Tuya mobile API.
 
-    devices = fetch_devices_with_keys(
+    Default slim=True (eWeLink-style): auto-match one device by
+    device_id / IP / single-device account — no full inventory for UI.
+    """
+    from tuya_mobile import login_and_find_device, ecosystems  # type: ignore
+
+    store_id = str(device_store_id or "").strip()
+    want_id = str(target_device_id or "").strip()
+    want_ip = str(target_ip or "").strip()
+    # Prefer store snapshot when editing an existing device
+    if store_id:
+        cfg = _device_cfg_snapshot(store_id) or {}
+        if not want_id:
+            want_id = str(cfg.get("device_id") or "").strip()
+        if not want_ip:
+            want_ip = str(cfg.get("ip") or "").strip()
+        if not email:
+            email = str(cfg.get("email") or "").strip()
+        if not password:
+            password = str(cfg.get("password") or "")
+
+    out = login_and_find_device(
         email,
         password,
+        device_id=want_id or None,
+        ip=want_ip or None,
         country=country,
         region=region,
         ecosystem=ecosystem,
     )
-    # if editing a device — cache key for matching device_id
-    if device_store_id:
-        cfg = _device_cfg_snapshot(device_store_id)
-        if cfg:
-            want = str(cfg.get("device_id") or "").strip()
-            for d in devices:
-                if want and str(d.get("id") or "") == want and d.get("key"):
-                    def _mut(x, key=d["key"], did=d.get("id")):
-                        x["tuya_local_key"] = key
-                        if did:
-                            x["device_id"] = did
-                    _device_update_in_store(device_store_id, _mut)
-                    break
-    # never return full keys to UI? User needs to pick device — return keys
-    # redacted form for list display optional; for picker we need id/name/key set flag
+    match_raw = out.get("match") if isinstance(out.get("match"), dict) else None
+    match = None
+    if match_raw and match_raw.get("key"):
+        match = {
+            "id": match_raw.get("id"),
+            "device_id": match_raw.get("id"),
+            "key": match_raw.get("key"),
+            "local_key": match_raw.get("key"),
+            "name": match_raw.get("name"),
+            "online": match_raw.get("online"),
+            "product_id": match_raw.get("product_id"),
+            "mac": match_raw.get("mac"),
+            "ip": match_raw.get("ip"),
+            "home": match_raw.get("home"),
+            "key_set": True,
+        }
+        if store_id:
+            _tuya_persist_key_to_config(
+                store_id,
+                local_key=str(match["key"]),
+                device_id=str(match.get("id") or "") or None,
+                ip=str(match.get("ip") or "") or None,
+            )
+            # also stamp runtime so UI sees key_set without reload race
+            def _mut(x, key=match["key"], did=match.get("id")):
+                x["tuya_local_key"] = key
+                if did:
+                    x["device_id"] = did
+
+            try:
+                _device_update_in_store(store_id, _mut)
+            except Exception:
+                pass
+
+    n_dev = int(out.get("device_count") or 0)
+    if slim:
+        return {
+            "ok": True,
+            "slim": True,
+            "device_count": n_dev,
+            "match": match,
+            "ecosystems": ecosystems(),
+        }
+
+    # Full list only when explicitly requested (debug / advanced)
     safe = []
-    for d in devices:
+    for d in out.get("devices") or []:
+        if not isinstance(d, dict):
+            continue
         safe.append(
             {
                 "name": d.get("name"),
                 "id": d.get("id"),
                 "key_set": bool(d.get("key")),
-                "key": d.get("key"),  # needed to store when user picks
+                "key": d.get("key"),
                 "product_id": d.get("product_id"),
                 "home": d.get("home"),
                 "online": d.get("online"),
                 "mac": d.get("mac"),
+                "ip": d.get("ip"),
             }
         )
     return {
         "ok": True,
+        "slim": False,
         "devices": safe,
         "count": len(safe),
+        "device_count": n_dev,
+        "match": match,
         "ecosystems": ecosystems(),
     }
 
@@ -6723,7 +6935,9 @@ def device_poll_status(
             }
         return ret
     except Exception as e:
-        pretty = _device_user_error(e, on=None, backend=be, lang="ru")
+        print(f"[devices] {did} {source} fail ({be}): {e}", flush=True)
+        pretty = _device_ui_error(e, backend=be, lang="ru")
+        pretty_api = _device_user_error(e, on=None, backend=be, lang="ru")
 
         def _mut_err(d):
             d["online"] = False
@@ -6734,7 +6948,7 @@ def device_poll_status(
         return {
             "ok": False,
             "id": did,
-            "error": pretty,
+            "error": pretty_api,
             "backend": be,
             "online": False,
         }
@@ -6980,8 +7194,12 @@ def device_set(
             ret["power"] = power
         return ret
     except Exception as e:
-        # Store RU for UI; return line in requested language for TG/API
-        pretty_store = _device_user_error(e, on=on, backend=be, lang="ru")
+        # Log technical detail; UI/last_error get laconic category only
+        print(
+            f"[devices] {did} set fail ({be}) on={on} source={source}: {e}",
+            flush=True,
+        )
+        pretty_store = _device_ui_error(e, backend=be, lang="ru")
         pretty = _device_user_error(e, on=on, backend=be, lang=error_lang)
 
         def _mut_err(d):
@@ -7527,8 +7745,10 @@ def devices_poll_all_status() -> dict:
                 except FuturesTimeout:
                     def _mut_to(d):
                         d["online"] = False
-                        d["last_error"] = (
-                            f"status timeout after {timeout:.0f}s"
+                        d["last_error"] = _device_ui_error(
+                            f"status timeout after {timeout:.0f}s",
+                            backend=str(cfg.get("backend") or ""),
+                            lang="ru",
                         )
                         d["last_action"] = "poll_fail"
 
@@ -7537,7 +7757,7 @@ def devices_poll_all_status() -> dict:
                     errors += 1
                     print(
                         f"[devices-poller] status timeout "
-                        f"{cfg.get('alias') or did}",
+                        f"{cfg.get('alias') or did} after {timeout:.0f}s",
                         flush=True,
                     )
                     continue
@@ -11070,6 +11290,22 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
     pool_id = str(m.get("pool_id") or m.get("heat_pool_id") or "").strip()
     # reserved for future cloud / multi-site identity (not shown in UI yet)
     global_id = str(m.get("global_id") or "").strip()
+    # Inventory hashrate targets (TH/s): factory = submodel nameplate;
+    # configured = operating target (e.g. low-power mode 80 TH).
+    factory_hr = _parse_optional_th(
+        m.get("factory_hashrate_th")
+        if m.get("factory_hashrate_th") is not None
+        else m.get("factory_th")
+        if m.get("factory_th") is not None
+        else m.get("rated_hashrate_th")
+    )
+    configured_hr = _parse_optional_th(
+        m.get("configured_hashrate_th")
+        if m.get("configured_hashrate_th") is not None
+        else m.get("target_hashrate_th")
+        if m.get("target_hashrate_th") is not None
+        else m.get("configured_th")
+    )
     return {
         "id": mid if mid is not None else 0,  # 0 → allocate on save
         "global_id": global_id[:128],
@@ -11096,6 +11332,8 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         "algo_display": (algo_disp or algo)[:32],
         "hashrate_unit": hr_unit[:16],
         "efficiency_unit": eff_unit[:16],
+        "factory_hashrate_th": factory_hr,
+        "configured_hashrate_th": configured_hr,
         "pool_id": pool_id[:48] if pool_id else "",
         "miner_type": miner_type[:64] or model_code[:64],
         "mac": str(m.get("mac") or "").strip()[:32] or None,
@@ -11105,6 +11343,26 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         "last_ok_ts": m.get("last_ok_ts"),
         "last_error": m.get("last_error"),
     }
+
+
+def _parse_optional_th(raw) -> float | None:
+    """Parse optional hashrate in TH/s; empty / invalid → None."""
+    if raw is None or raw == "":
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(v) or v < 0:
+        return None
+    if v == 0:
+        return 0.0
+    # keep modest precision for inventory fields
+    if v >= 100:
+        return round(v, 2)
+    if v >= 1:
+        return round(v, 3)
+    return round(v, 6)
 
 
 def _normalize_miner_cooling(raw) -> str:
@@ -11194,7 +11452,9 @@ def _ensure_miners_db() -> None:
                     source TEXT,
                     imported_at TEXT,
                     last_ok_ts TEXT,
-                    last_error TEXT
+                    last_error TEXT,
+                    factory_hashrate_th REAL,
+                    configured_hashrate_th REAL
                 );
                 CREATE INDEX IF NOT EXISTS idx_managed_host ON managed_miners(host);
                 CREATE INDEX IF NOT EXISTS idx_managed_role ON managed_miners(role);
@@ -11202,7 +11462,7 @@ def _ensure_miners_db() -> None:
                 """
             )
             conn.commit()
-            # existing DBs created before algo column
+            # existing DBs: soft-migrate missing columns
             cols = {
                 str(r[1])
                 for r in conn.execute("PRAGMA table_info(managed_miners)").fetchall()
@@ -11212,6 +11472,15 @@ def _ensure_miners_db() -> None:
                     "ALTER TABLE managed_miners ADD COLUMN algo TEXT NOT NULL DEFAULT ''"
                 )
                 conn.commit()
+                cols.add("algo")
+            # Factory (submodel nameplate) + configured (operating target) TH/s
+            for col in ("factory_hashrate_th", "configured_hashrate_th"):
+                if col not in cols:
+                    conn.execute(
+                        f"ALTER TABLE managed_miners ADD COLUMN {col} REAL"
+                    )
+                    conn.commit()
+                    cols.add(col)
             _miners_db_ready = True
             do_migrate = True
         finally:
@@ -11306,7 +11575,50 @@ def _live_host_ip(live: dict | None) -> str:
     return h.split(":")[0].strip()
 
 
-def _fleet_live_slice(live: dict | None) -> dict | None:
+# Rolling per-host hashrate samples for fleet lowhash (30 min window).
+_FLEET_HR_HIST_LOCK = threading.Lock()
+_FLEET_HR_HIST: dict[str, list[tuple[float, float]]] = {}
+_FLEET_HR_WINDOW_SEC = 30 * 60
+# Need a few minutes of samples before lowhash is allowed to fire.
+_FLEET_HR_MIN_SPAN_SEC = 5 * 60
+_FLEET_HR_MIN_SAMPLES = 3
+
+
+def _record_fleet_hr_sample(host: str, th: float | None) -> float | None:
+    """
+    Record live TH/s for host and return average over the last 30 minutes.
+    Returns None when there is not enough history yet (span/samples).
+    """
+    h = str(host or "").strip()
+    if not h:
+        return None
+    now = time.time()
+    with _FLEET_HR_HIST_LOCK:
+        hist = _FLEET_HR_HIST.setdefault(h, [])
+        if th is not None:
+            try:
+                v = float(th)
+            except (TypeError, ValueError):
+                v = None
+            if v is not None and math.isfinite(v) and v >= 0:
+                hist.append((now, v))
+        cutoff = now - _FLEET_HR_WINDOW_SEC
+        # drop old samples in place
+        i = 0
+        while i < len(hist) and hist[i][0] < cutoff:
+            i += 1
+        if i:
+            del hist[:i]
+        if len(hist) < _FLEET_HR_MIN_SAMPLES:
+            return None
+        span = hist[-1][0] - hist[0][0]
+        if span < _FLEET_HR_MIN_SPAN_SEC:
+            return None
+        avg = sum(v for _, v in hist) / len(hist)
+        return round(avg, 6) if avg < 1 else round(avg, 3)
+
+
+def _fleet_live_slice(live: dict | None, *, host: str | None = None) -> dict | None:
     """Compact live fields for fleet table rows."""
     if not isinstance(live, dict):
         return None
@@ -11329,6 +11641,18 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         t = float(th) if th is not None else None
     except (TypeError, ValueError):
         t = None
+    # Prefer explicit host arg, else live.host (may be host:port)
+    host_key = str(host or "").strip()
+    if not host_key:
+        raw_h = str(live.get("host") or "").strip()
+        if raw_h:
+            host_key = raw_h.split(":")[0].strip()
+    avg_30m = None
+    if host_key and live.get("ok", True) and not live.get("error"):
+        avg_30m = _record_fleet_hr_sample(host_key, t)
+    elif host_key and t is not None:
+        # still record offline samples as 0? no — only online polls
+        pass
     eff = live.get("efficiency_jth")
     if eff is None and p is not None and t is not None and t > 0:
         eff = round(p / t, 2)
@@ -11415,6 +11739,23 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
             pool_ok = False
             p0 = pools[0] if isinstance(pools[0], dict) else {}
             pool_url = str(p0.get("url") or p0.get("pool") or "")[:80] or None
+    # Per-board PCB / chip temps (Antminer stats, Goldshell tstemp-*, …)
+    boards_pcb = live.get("boards")
+    if not isinstance(boards_pcb, list):
+        boards_pcb = None
+    bca = live.get("board_chip_avg")
+    if not isinstance(bca, list):
+        bca = None
+    bcmx = live.get("board_chip_max")
+    if not isinstance(bcmx, list):
+        bcmx = None
+    bcmn = live.get("board_chip_min")
+    if not isinstance(bcmn, list):
+        bcmn = None
+    bdet = live.get("boards_detail")
+    if not isinstance(bdet, list):
+        bdet = None
+
     return {
         "ok": bool(live.get("ok", True)),
         "power": p,
@@ -11424,7 +11765,14 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         "liquid": live.get("liquid"),
         "chip_avg": live.get("chip_avg"),
         "chip_max": live.get("chip_max"),
+        "chip_min": live.get("chip_min"),
         "env": live.get("env"),
+        "boards": boards_pcb[:8] if boards_pcb else None,
+        "board_chip_avg": bca[:8] if bca else None,
+        "board_chip_max": bcmx[:8] if bcmx else None,
+        "board_chip_min": bcmn[:8] if bcmn else None,
+        "boards_detail": bdet[:8] if bdet else None,
+        "board_count": live.get("board_count"),
         "fan": fan_s,
         "fans": fans_list[:8],
         "psu_fan": psu_fan_i,
@@ -11467,6 +11815,7 @@ def _fleet_live_slice(live: dict | None) -> dict | None:
         "power_estimated": live.get("power_estimated"),
         "efficiency_value": live.get("efficiency_value"),
         "efficiency_unit": live.get("efficiency_unit"),
+        "hashrate_th_avg_30m": avg_30m,
         "error": live.get("error"),
         "ts": live.get("ts"),
     }
@@ -11655,7 +12004,10 @@ def get_miners_fleet() -> dict:
         except Exception:
             live = None
     live_ip = _live_host_ip(live)
-    live_slice = _fleet_live_slice(live) if isinstance(live, dict) else None
+    # One slice for active live_cache (records 30m HR under live_ip when known)
+    live_slice = (
+        _fleet_live_slice(live, host=live_ip) if isinstance(live, dict) else None
+    )
     rows: list[dict] = []
     online_n = 0
     sum_th = 0.0
@@ -11669,7 +12021,7 @@ def get_miners_fleet() -> dict:
         # Prefer per-host fleet live, then active live_cache match
         host_live = fleet_map.get(host) if host else None
         if isinstance(host_live, dict):
-            sl = _fleet_live_slice(host_live)
+            sl = _fleet_live_slice(host_live, host=host)
             if sl and host_live.get("ok", True) and not host_live.get("error"):
                 row["online"] = True
                 row["live"] = sl
@@ -11824,6 +12176,8 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
         "imported_at",
         "last_ok_ts",
         "last_error",
+        "factory_hashrate_th",
+        "configured_hashrate_th",
     )
     with _miners_db_lock:
         conn = _miners_db_connect()
@@ -11861,6 +12215,8 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
                         m.get("imported_at"),
                         m.get("last_ok_ts"),
                         m.get("last_error"),
+                        m.get("factory_hashrate_th"),
+                        m.get("configured_hashrate_th"),
                     ),
                 )
             # keep AUTOINCREMENT sequence ahead of max id
@@ -12157,6 +12513,30 @@ def update_managed(mid: str, fields: dict | None) -> dict:
             raise ValueError("port invalid") from e
     if "enabled" in fields:
         found["enabled"] = bool(fields["enabled"])
+    # Inventory hashrate targets (TH/s)
+    for thr_key, aliases in (
+        (
+            "factory_hashrate_th",
+            ("factory_hashrate_th", "factory_th", "rated_hashrate_th"),
+        ),
+        (
+            "configured_hashrate_th",
+            ("configured_hashrate_th", "target_hashrate_th", "configured_th"),
+        ),
+    ):
+        raw_v = None
+        hit = False
+        for ak in aliases:
+            if ak in fields:
+                raw_v = fields.get(ak)
+                hit = True
+                break
+        if hit:
+            # empty string clears the field
+            if raw_v is None or raw_v == "":
+                found[thr_key] = None
+            else:
+                found[thr_key] = _parse_optional_th(raw_v)
     # resolve vendor id via catalog (Whatsminer / Antminer / Avalon / Goldshell)
     if "vendor" in fields and fields.get("vendor") is not None:
         vinfo = resolve_miner_vendor(str(fields.get("vendor")))
@@ -26007,6 +26387,9 @@ def get_antminer_6060_snapshot(host: str | None = None) -> dict:
 def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> dict:
     """
     Fill model / fans / temps / serial from iPollo LuCI JSON endpoints.
+
+    Sensor channels are model-aware via miner_model_profiles.json:
+    V1 mini = 1 hashboard, 2 chip temps (temp0/temp1), 2 fans (fanspeed0/fanspeed3).
     Non-fatal — returns body unchanged on failure.
     """
     if not host:
@@ -26034,6 +26417,13 @@ def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> d
         sn = str(sysinfo.get("sn") or sysinfo.get("sn0") or "").strip()
         if sn and sn.upper() != "NULL":
             body["serial"] = sn
+        # Per-HB serials when present (V1: sn0 only)
+        for i, key in enumerate(("sn0", "sn1", "sn2")):
+            v = str(sysinfo.get(key) or "").strip()
+            if v and v.upper() != "NULL":
+                body.setdefault("board_serials", {})[key] = v
+                if i == 0 and not body.get("board_serial"):
+                    body["board_serial"] = v
         fw = str(sysinfo.get("fw") or "").strip()
         if fw:
             body["fw_ver"] = fw
@@ -26045,6 +26435,62 @@ def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> d
             pass
         body["vendor"] = "ipollo"
         body["api_vendor"] = "ipollo"
+
+    # Resolve model profile early so temp/fan keys match hardware map
+    prof = None
+    try:
+        if lookup_model_profile is not None:
+            prof = lookup_model_profile(
+                vendor="ipollo",
+                miner_type=body.get("miner_type"),
+                model=body.get("model") if isinstance(body.get("model"), str) else None,
+                model_name=body.get("model_name"),
+            )
+    except Exception:
+        prof = None
+
+    # Defaults for V1 mini when profile missing
+    temp_keys = ["temp0", "temp1"]
+    fan_keys = ["fanspeed0", "fanspeed3"]
+    ignore_temps = {"temp2", "temp3"}
+    ignore_fans = {"fanspeed1", "fanspeed2"}
+    placeholder = -273.2
+    expected_boards = 1
+    try:
+        from miner_models import (  # type: ignore
+            profile_fan_keys,
+            profile_hashboard_count,
+            profile_temp_keys,
+            normalize_hardware_map,
+        )
+
+        if prof:
+            tk = profile_temp_keys(prof)
+            fk = profile_fan_keys(prof)
+            if tk:
+                temp_keys = tk
+            if fk:
+                fan_keys = fk
+            hw = normalize_hardware_map(prof)
+            ph = ((hw.get("temps") or {}).get("chip") or {}).get("placeholder")
+            if ph is not None:
+                try:
+                    placeholder = float(ph)
+                except (TypeError, ValueError):
+                    pass
+            ign = (hw.get("poll") or {}).get("ignore_keys") or {}
+            if isinstance(ign.get("temps"), list):
+                ignore_temps = {str(x) for x in ign["temps"]}
+            if isinstance(ign.get("fans"), list):
+                ignore_fans = {str(x) for x in ign["fans"]}
+            body["model_hardware"] = hw
+            try:
+                expected_boards = int(profile_hashboard_count(prof) or 1)
+            except Exception:
+                expected_boards = 1
+    except Exception:
+        pass
+
     if isinstance(realtime, dict):
         # hashrate string e.g. 240.2572M
         hr = _parse_hashrate_to_hs(
@@ -26062,32 +26508,76 @@ def _enrich_live_ipollo(host: str, body: dict, password: str | None = None) -> d
                 body["hashrate_unit"] = "GH/s"
             elif hr >= 1e12:
                 body["hashrate_unit"] = "TH/s"
-        # temps — ignore absolute zero placeholders (-273)
-        temps = []
-        for k in ("tempasc", "temp0", "temp1", "temp2", "temp3"):
+
+        # Temps: only real sensors from model map (not temp2/temp3 placeholders)
+        temps: list[float] = []
+        temp_readings: list[dict] = []
+        for k in temp_keys:
+            if k in ignore_temps:
+                continue
             try:
                 t = float(realtime.get(k))
             except (TypeError, ValueError):
                 continue
-            if t > -100:
-                temps.append(t)
+            # drop absolute-zero / missing placeholders
+            if t <= placeholder + 1 or t <= -100:
+                continue
+            temps.append(t)
+            temp_readings.append({"id": k, "c": round(t, 1), "source": "luci_realtime"})
+        # Optional aggregate ASC (do not inflate sensor count / boards)
+        try:
+            t_asc = float(realtime.get("tempasc"))
+            if t_asc > -100 and t_asc > placeholder + 1:
+                body["temp_asc"] = round(t_asc, 1)
+        except (TypeError, ValueError):
+            pass
         if temps:
+            body["chip_temps"] = [round(t, 1) for t in temps]
             body["chip_avg"] = round(sum(temps) / len(temps), 1)
             body["chip_max"] = round(max(temps), 1)
             body["chip_min"] = round(min(temps), 1)
-            # temps ≠ extra hashboards (V1 mini is 1× HB). Don't inflate boards[].
-        fans = []
-        for k in ("fanspeed0", "fanspeed1", "fanspeed2", "fanspeed3"):
+            body["temp_sensors"] = temp_readings
+            # Single hashboard: one boards[] entry with both sensors (not N boards)
+            if expected_boards <= 1:
+                body["boards"] = [
+                    {
+                        "id": "HB1",
+                        "index": 1,
+                        "name": "HB1",
+                        "temp": body["chip_avg"],
+                        "temp_max": body["chip_max"],
+                        "temp_min": body["chip_min"],
+                        "temps": [round(t, 1) for t in temps],
+                        "hashrate_hs": body.get("hashrate_hs"),
+                    }
+                ]
+                body["board_count"] = 1
+                body["board_chip_avg"] = [body["chip_avg"]]
+                body["board_chip_max"] = [body["chip_max"]]
+
+        # Fans: only physical channels (V1: fanspeed0 + fanspeed3)
+        fans: list[int] = []
+        fan_readings: list[dict] = []
+        for k in fan_keys:
+            if k in ignore_fans:
+                continue
             try:
                 f = int(float(realtime.get(k) or 0))
             except (TypeError, ValueError):
                 continue
             if f > 0:
                 fans.append(f)
+                fan_readings.append(
+                    {"id": k, "rpm": f, "source": "luci_realtime"}
+                )
         if fans:
             body["fans"] = fans
             body["fan"] = fans[0]
-            body["psu_fan"] = fans[0]
+            # Not PSU fan on iPollo — keep psu_fan unset / alias first chassis fan only
+            body["fan_sensors"] = fan_readings
+            if len(fans) >= 2:
+                body["fan_in"] = fans[0]
+                body["fan_out"] = fans[-1]
         try:
             rej = float(realtime.get("rejected") or 0)
             body["rejected"] = rej
@@ -26365,13 +26855,75 @@ def _devs_row_hashrate_th(d: dict, vendor: str | None = None) -> float | None:
     return None
 
 
+def _temp_plausible(tv: float | None) -> bool:
+    """Reject absolute-zero placeholders and empty 0.0 board slots."""
+    if tv is None:
+        return False
+    try:
+        v = float(tv)
+    except (TypeError, ValueError):
+        return False
+    # 0.0 is almost always "no sensor" on CGMiner/Goldshell/Antminer
+    if v <= 0.05 or v >= 200 or v <= -50:
+        return False
+    return True
+
+
+def _parse_temp_number(val) -> float | None:
+    if val in (None, ""):
+        return None
+    try:
+        if isinstance(val, str):
+            s = val.strip()
+            # "84.0 °C / 69.6 °C" → first number only here
+            m = re.match(r"^[+-]?(\d+(?:\.\d+)?)", s.replace(",", "."))
+            if not m:
+                return None
+            tv = float(m.group(1) if m.lastindex else m.group(0))
+        else:
+            tv = float(val)
+    except (TypeError, ValueError):
+        return None
+    return tv if _temp_plausible(tv) else None
+
+
 def _devs_row_temps(d: dict) -> tuple[float | None, float | None]:
-    """Primary / secondary board temps (e.g. Goldshell 84.0 / 69.6)."""
+    """
+    Primary / secondary board temps from one CGMiner DEVS row.
+
+    pyasic Goldshell: ``tstemp-2`` = PCB (primary), often also tstemp-0/1.
+    Whatsminer/iPollo: ``Temperature`` + ``Chip Temp Avg``.
+    """
     if not isinstance(d, dict):
         return None, None
-    primary = None
-    extras: list[float] = []
-    # "84.0 °C / 69.6 °C" sometimes stuffed in one field
+    # Goldshell (pyasic): hashboards[b_id].temp = board["tstemp-2"]
+    tstemps: list[tuple[int, float]] = []
+    for key, val in d.items():
+        kl = str(key).lower().replace("_", "-")
+        m = re.match(r"^tstemp-?(\d+)$", kl)
+        if not m:
+            continue
+        tv = _parse_temp_number(val)
+        if tv is not None:
+            tstemps.append((int(m.group(1)), tv))
+    if tstemps:
+        tstemps.sort(key=lambda x: x[0])
+        by_i = {i: v for i, v in tstemps}
+        # prefer index 2 (pyasic), else highest index, else first
+        primary = by_i.get(2) or by_i.get(max(by_i)) or tstemps[0][1]
+        secondary = None
+        for i in (1, 0, 3, 4):
+            if i in by_i and abs(by_i[i] - primary) > 0.15:
+                secondary = by_i[i]
+                break
+        if secondary is None:
+            for i, v in tstemps:
+                if abs(v - primary) > 0.15:
+                    secondary = v
+                    break
+        return primary, secondary
+
+    # "84.0 °C / 69.6 °C" in one string field
     for key, val in d.items():
         if not isinstance(val, str) or "/" not in val:
             continue
@@ -26380,14 +26932,16 @@ def _devs_row_temps(d: dict) -> tuple[float | None, float | None]:
         found = re.findall(r"(\d+(?:\.\d+)?)\s*°?\s*C?", val)
         nums = []
         for x in found:
-            try:
-                tv = float(x)
-            except ValueError:
-                continue
-            if -20 < tv < 200:
+            tv = _parse_temp_number(x)
+            if tv is not None:
                 nums.append(tv)
         if len(nums) >= 2:
             return nums[0], nums[1]
+        if len(nums) == 1:
+            return nums[0], None
+
+    primary = None
+    extras: list[float] = []
     for key in (
         "Temperature",
         "temp",
@@ -26404,13 +26958,8 @@ def _devs_row_temps(d: dict) -> tuple[float | None, float | None]:
         "Inlet Temperature",
         "Outlet Temperature",
     ):
-        if d.get(key) in (None, ""):
-            continue
-        try:
-            tv = float(d[key])
-        except (TypeError, ValueError):
-            continue
-        if not (-20 < tv < 200) or tv == 0:
+        tv = _parse_temp_number(d.get(key))
+        if tv is None:
             continue
         if primary is None and key in ("Temperature", "temp", "Temp", "temp1"):
             primary = tv
@@ -26530,32 +27079,148 @@ def _stamp_hashboard_meta(body: dict, devs: list | None = None) -> dict:
             body["board_chip_max"] = list(body["board_chip_avg"])
         if not body.get("board_chip_min"):
             body["board_chip_min"] = list(body["board_chip_avg"])
-    if temps and body.get("chip_avg") in (None, ""):
+    # Prefer DEVS temps when chip_avg missing or bogus 0.0 (Goldshell)
+    need_avg = body.get("chip_avg") in (None, "")
+    try:
+        if not need_avg and not _temp_plausible(float(body.get("chip_avg"))):
+            need_avg = True
+    except (TypeError, ValueError):
+        need_avg = True
+    if temps and need_avg:
         body["chip_avg"] = round(sum(temps) / len(temps), 1)
         body["chip_max"] = round(max(temps), 1)
         body["chip_min"] = round(min(temps), 1)
+    # boards[] from DEVS PCB when still empty
+    if details and (
+        not body.get("boards")
+        or not any(
+            _temp_plausible(x) if x is not None else False
+            for x in (body.get("boards") or [])
+        )
+    ):
+        body["boards"] = [
+            (d.get("temp_c") if isinstance(d, dict) else None) for d in details
+        ]
+        if any(x is not None for x in body["boards"]):
+            body["board_count"] = len(body["boards"])
     if n and not body.get("board_count"):
         body["board_count"] = n
     return body
 
 
+def _antminer_stats_temps(row: dict) -> dict:
+    """
+    Parse Bitmain BMMiner STATS row temps (pyasic bmminer._get_hashboards).
+
+    L9 / S19 style keys (1-based chain index)::
+      temp{i}           — often PCB or sensor 1
+      temp2_{i}         — PCB (pyasic → hashboard.temp)
+      temp{i}           — chip (pyasic → hashboard.chip_temp) when paired with temp2_
+      temp_out_chip_{i} / temp_in_chip_{i}
+      temp_out_pcb_{i}  / temp_in_pcb_{i}
+      temp_max
+    """
+    pcb_by: dict[int, float] = {}
+    chip_by: dict[int, float] = {}
+    loose: list[float] = []
+    temp_max = _parse_temp_number(row.get("temp_max"))
+
+    # Pass 1: pyasic-primary keys (temp2_{i} PCB, temp{i} chip)
+    for key, val in row.items():
+        kl = str(key).lower().strip()
+        if kl in ("temp_num", "temp_target", "tempcontrol"):
+            continue
+        tv = _parse_temp_number(val)
+        if tv is None:
+            continue
+        # temp2_1 → PCB chain 1 (pyasic hashboard.temp)
+        m = re.match(r"^temp2_(\d+)$", kl)
+        if m:
+            idx = int(m.group(1)) - 1
+            if idx >= 0:
+                pcb_by[idx] = tv
+            continue
+        # temp1 / temp2 / temp3 → chip when temp2_* present (pyasic chip_temp)
+        m = re.match(r"^temp(\d+)$", kl)
+        if m:
+            idx = int(m.group(1)) - 1
+            if idx >= 0 and idx not in chip_by:
+                chip_by[idx] = tv
+            continue
+        loose.append(tv)
+
+    # Pass 2: L9-style temp_out_chip_* / temp_out_pcb_* — fill gaps only
+    # (do not overwrite pyasic temp2_* / temp{i})
+    for key, val in row.items():
+        kl = str(key).lower().strip()
+        tv = _parse_temp_number(val)
+        if tv is None:
+            continue
+        m = re.match(r"^temp_(out|in)_(chip|pcb)_(\d+)$", kl)
+        if not m:
+            continue
+        idx = int(m.group(3)) - 1
+        if idx < 0:
+            continue
+        if m.group(2) == "chip":
+            if idx not in chip_by:
+                chip_by[idx] = tv
+        else:
+            if idx not in pcb_by:
+                pcb_by[idx] = tv
+
+    # If we have both temp{i} and temp2_{i}, pyasic: temp=PCB (temp2_), chip=temp{i}
+    # Our chip_by already has temp{i}; pcb_by has temp2_{i}. Good.
+
+    # If only temp{i} without temp2_, treat as PCB (common on some FW)
+    if pcb_by and chip_by:
+        pass
+    elif chip_by and not pcb_by:
+        pcb_by = dict(chip_by)
+        chip_by = {}
+
+    return {
+        "pcb_by": pcb_by,
+        "chip_by": chip_by,
+        "temp_max": temp_max,
+        "loose": loose,
+    }
+
+
 def _cgminer_apply_stats(body: dict) -> dict:
-    """Pull fans / frequency / temps / chain rates from CGMiner/BMMiner ``stats``."""
+    """
+    Pull fans / frequency / temps / chain rates from CGMiner/BMMiner ``stats``.
+
+    Temp mapping follows pyasic:
+      Antminer BMMiner — STATS[1] temp2_{i} (PCB), temp{i} (chip)
+      Avalon — handled via estats separately when present
+    """
     try:
-        stats_raw = miner_cmd({"cmd": "stats"}, timeout=4)
+        stats_raw = miner_cmd({"cmd": "stats"}, timeout=6)
     except Exception as e:
         print(f"[live] stats: {e}")
-        return body
+        # Avalon often needs estats instead
+        try:
+            stats_raw = miner_cmd({"cmd": "estats"}, timeout=6)
+            print("[live] stats failed; using estats", flush=True)
+        except Exception as e2:
+            print(f"[live] estats: {e2}")
+            return body
     if not isinstance(stats_raw, dict) or _asic_status_is_error(stats_raw):
         return body
     rows = stats_raw.get("STATS") or stats_raw.get("stats") or []
     if not isinstance(rows, list):
         return body
     fans: list[int] = []
-    temps: list[float] = []
     board_ths: list[float] = []
     freq = None
     ant_type = None
+    pcb_temps: list[float | None] = []
+    chip_temps: list[float | None] = []
+    all_chip: list[float] = []
+    all_pcb: list[float] = []
+    temp_max_global: float | None = None
+
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -26569,6 +27234,45 @@ def _cgminer_apply_stats(body: dict) -> dict:
             body["model_name"] = body.get("model_name") or t
             if row.get("Miner"):
                 body["fw_ver"] = str(row.get("Miner"))
+        # Avalon MM ID blob sometimes nested as string
+        mm = row.get("MM ID0") or row.get("MMID0")
+        if isinstance(mm, str) and mm.strip().startswith("{"):
+            try:
+                mm = json.loads(mm)
+            except Exception:
+                mm = None
+        if isinstance(mm, dict):
+            # Avalon env
+            env_t = _parse_temp_number(mm.get("Temp") or mm.get("temp"))
+            if env_t is not None and body.get("env") in (None, "", 0, 0.0):
+                body["env"] = env_t
+            # MTmax / Tmax arrays → chip
+            for key in ("MTmax", "Tmax", "TMax", "MTavg", "Tavg", "TAvg"):
+                arr = mm.get(key)
+                if not isinstance(arr, list):
+                    continue
+                for i, x in enumerate(arr):
+                    tv = _parse_temp_number(x)
+                    if tv is None:
+                        continue
+                    while len(chip_temps) <= i:
+                        chip_temps.append(None)
+                    if key in ("MTmax", "Tmax", "TMax"):
+                        chip_temps[i] = tv
+                        all_chip.append(tv)
+                    else:
+                        if chip_temps[i] is None:
+                            chip_temps[i] = tv
+                        all_pcb.append(tv)
+            for key in ("HBITemp", "HBOTemp"):
+                tv = _parse_temp_number(mm.get(key))
+                if tv is None:
+                    continue
+                if key == "HBITemp" and body.get("inlet") in (None, ""):
+                    body["inlet"] = tv
+                if key == "HBOTemp" and body.get("outlet") in (None, ""):
+                    body["outlet"] = tv
+
         # fan0..fanN (Whatsminer/iPollo) and fan1.. (Bitmain)
         for i in range(0, 12):
             for key in (f"fan{i}", f"Fan{i}", f"fan_speed{i}"):
@@ -26579,31 +27283,42 @@ def _cgminer_apply_stats(body: dict) -> dict:
                             fans.append(fv)
                     except (TypeError, ValueError):
                         pass
-        # temps: temp1, temp2_1, temp_max, temp_out_chip_*
-        for key, val in row.items():
-            kl = str(key).lower()
-            if not any(
-                kl.startswith(p)
-                for p in (
-                    "temp",
-                    "temp_in",
-                    "temp_out",
-                    "chip_temp",
-                )
-            ):
-                continue
-            if kl in ("temp_num",):
-                continue
-            try:
-                if isinstance(val, str) and not re.match(
-                    r"^[+-]?\d+(\.\d+)?$", val.strip()
-                ):
+
+        # Structured Antminer chain temps (pyasic)
+        parsed = _antminer_stats_temps(row)
+        if parsed["temp_max"] is not None:
+            temp_max_global = (
+                max(temp_max_global, parsed["temp_max"])
+                if temp_max_global is not None
+                else parsed["temp_max"]
+            )
+        if parsed["pcb_by"] or parsed["chip_by"]:
+            max_i = max(
+                list(parsed["pcb_by"].keys()) + list(parsed["chip_by"].keys()) + [-1]
+            )
+            for i in range(max_i + 1):
+                while len(pcb_temps) <= i:
+                    pcb_temps.append(None)
+                while len(chip_temps) <= i:
+                    chip_temps.append(None)
+                if i in parsed["pcb_by"]:
+                    pcb_temps[i] = parsed["pcb_by"][i]
+                    all_pcb.append(parsed["pcb_by"][i])
+                if i in parsed["chip_by"]:
+                    chip_temps[i] = parsed["chip_by"][i]
+                    all_chip.append(parsed["chip_by"][i])
+        else:
+            # flat fallback (non-Bitmain) — only plausible temps
+            for key, val in row.items():
+                kl = str(key).lower()
+                if not kl.startswith("temp") and "temp" not in kl:
                     continue
-                tv = float(val)
-                if -50 < tv < 200:
-                    temps.append(tv)
-            except (TypeError, ValueError):
-                pass
+                if kl in ("temp_num", "temp_target"):
+                    continue
+                tv = _parse_temp_number(val)
+                if tv is not None:
+                    all_chip.append(tv)
+
         # Bitmain per-chain rate (GH/s like 5.27, or MH/s like 5670)
         for i in range(0, 9):
             found = False
@@ -26639,7 +27354,6 @@ def _cgminer_apply_stats(body: dict) -> dict:
                         # freq1=1300 is MHz, not GHS
                         if key.startswith("freq") and freq > 100:
                             body["freq_avg"] = freq
-                            freq = freq  # MHz
                         break
                     except (TypeError, ValueError):
                         pass
@@ -26654,10 +27368,10 @@ def _cgminer_apply_stats(body: dict) -> dict:
                         body["power_estimated"] = False
                 except (TypeError, ValueError):
                     pass
+
     if fans and not body.get("fans"):
-        # unique preserve order
-        seen = set()
-        uniq = []
+        seen: set[int] = set()
+        uniq: list[int] = []
         for f in fans:
             if f not in seen:
                 seen.add(f)
@@ -26665,20 +27379,82 @@ def _cgminer_apply_stats(body: dict) -> dict:
         body["fans"] = uniq[:8]
         body["fan"] = uniq[0]
         body["psu_fan"] = uniq[0]
-    if temps:
-        if body.get("chip_avg") in (None, ""):
-            body["chip_avg"] = round(sum(temps) / len(temps), 1)
-        if body.get("chip_max") in (None, ""):
-            body["chip_max"] = round(max(temps), 1)
-        if body.get("chip_min") in (None, ""):
-            body["chip_min"] = round(min(temps), 1)
+
+    # Prefer chip sensors for chip_*; PCB for boards[]
+    chip_vals = [t for t in all_chip if _temp_plausible(t)]
+    pcb_vals = [t for t in all_pcb if _temp_plausible(t)]
+    # treat 0.0 chip_avg as missing (Goldshell bug)
+    cur_avg = body.get("chip_avg")
+    try:
+        cur_avg_f = float(cur_avg) if cur_avg not in (None, "") else None
+    except (TypeError, ValueError):
+        cur_avg_f = None
+    need_chip = cur_avg_f is None or not _temp_plausible(cur_avg_f)
+
+    if chip_vals and need_chip:
+        body["chip_avg"] = round(sum(chip_vals) / len(chip_vals), 1)
+        body["chip_max"] = round(
+            max(chip_vals + ([temp_max_global] if temp_max_global else [])), 1
+        )
+        body["chip_min"] = round(min(chip_vals), 1)
+    elif pcb_vals and need_chip:
+        body["chip_avg"] = round(sum(pcb_vals) / len(pcb_vals), 1)
+        body["chip_max"] = round(
+            max(pcb_vals + ([temp_max_global] if temp_max_global else [])), 1
+        )
+        body["chip_min"] = round(min(pcb_vals), 1)
+    elif temp_max_global is not None and need_chip:
+        body["chip_avg"] = temp_max_global
+        body["chip_max"] = temp_max_global
+        body["chip_min"] = temp_max_global
+
+    if temp_max_global is not None:
+        try:
+            cm = float(body.get("chip_max") or 0)
+        except (TypeError, ValueError):
+            cm = 0
+        if temp_max_global > cm:
+            body["chip_max"] = temp_max_global
+
+    # Per-board arrays for UI (PCB as boards[], chip as board_chip_*)
+    n_slots = max(len(pcb_temps), len(chip_temps), len(board_ths), 0)
+    if n_slots > 0:
+        while len(pcb_temps) < n_slots:
+            pcb_temps.append(None)
+        while len(chip_temps) < n_slots:
+            chip_temps.append(None)
+        # boards[] = PCB (or chip if no PCB)
+        boards_out = []
+        bca, bcmn, bcmx = [], [], []
+        for i in range(n_slots):
+            pcb = pcb_temps[i]
+            chip = chip_temps[i]
+            boards_out.append(round(pcb, 1) if pcb is not None else (
+                round(chip, 1) if chip is not None else None
+            ))
+            if chip is not None:
+                bca.append(round(chip, 1))
+                bcmn.append(round(chip, 1))
+                bcmx.append(round(chip, 1))
+            elif pcb is not None:
+                bca.append(round(pcb, 1))
+                bcmn.append(round(pcb, 1))
+                bcmx.append(round(pcb, 1))
+            else:
+                bca.append(None)
+                bcmn.append(None)
+                bcmx.append(None)
+        if any(x is not None for x in boards_out):
+            body["boards"] = boards_out
+            body["board_count"] = len(boards_out)
+        if any(x is not None for x in bca):
+            body["board_chip_avg"] = bca
+            body["board_chip_min"] = bcmn
+            body["board_chip_max"] = bcmx
+
     if board_ths and not body.get("boards_th"):
         body["boards_th"] = board_ths
-        # also set boards temp-like slots for count
-        if not body.get("boards") or body.get("boards") == [None] * len(
-            body.get("boards") or []
-        ):
-            body["boards"] = board_ths
+        if not body.get("board_count"):
             body["board_count"] = len(board_ths)
     if freq is not None and body.get("freq_avg") in (None, "", 0):
         body["freq_avg"] = freq
@@ -26896,21 +27672,31 @@ def _fetch_live_direct() -> dict:
     factory_parts: list[float] = []
     for i in range(n_boards):
         if i < len(devs) and isinstance(devs[i], dict):
+            drow = devs[i]
+            # pyasic-compatible: Goldshell tstemp-2, Whatsminer Temperature, …
+            t_pcb, t_chip = _devs_row_temps(drow)
+            if t_pcb is None:
+                t_pcb = _parse_temp_number(drow.get("Temperature"))
+            boards.append(round(t_pcb, 1) if t_pcb is not None else None)
+            cmin = _f(drow.get("Chip Temp Min"))
+            cmax = _f(drow.get("Chip Temp Max"))
+            cavg = _f(drow.get("Chip Temp Avg"))
+            if t_chip is not None:
+                if cavg is None or not _temp_plausible(cavg):
+                    cavg = t_chip
+                if cmin is None or not _temp_plausible(cmin):
+                    cmin = t_chip
+                if cmax is None or not _temp_plausible(cmax):
+                    cmax = t_chip
+            board_chip_min.append(cmin if _temp_plausible(cmin) else None)
+            board_chip_max.append(cmax if _temp_plausible(cmax) else None)
+            board_chip_avg.append(cavg if _temp_plausible(cavg) else None)
             try:
-                t = float(devs[i].get("Temperature", 0) or 0)
-                # 0.0 often means empty/missing slot — keep as 0 for live API
-                boards.append(t)
-            except (TypeError, ValueError):
-                boards.append(None)
-            board_chip_min.append(_f(devs[i].get("Chip Temp Min")))
-            board_chip_max.append(_f(devs[i].get("Chip Temp Max")))
-            board_chip_avg.append(_f(devs[i].get("Chip Temp Avg")))
-            try:
-                upfreq.append(int(devs[i].get("Upfreq Complete", 0) or 0))
+                upfreq.append(int(drow.get("Upfreq Complete", 0) or 0))
             except (TypeError, ValueError):
                 upfreq.append(0)
             try:
-                fg = float(devs[i].get("Factory GHS") or 0)
+                fg = float(drow.get("Factory GHS") or 0)
                 if fg > 0:
                     factory_parts.append(fg)
             except (TypeError, ValueError):
@@ -37753,9 +38539,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api_tuya_devices_login(self) -> None:
         """
-        POST {email, password, country?, region?, ecosystem?, device_id?}
-        → list of cloud devices with local_key (Smart Life / Tuya mobile API).
-        If device_id (poolheat store id) given, cache key on that device.
+        POST {email, password, country?, region?, ecosystem?, device_id?,
+              tuya_device_id?, ip?, slim?}
+
+        Default slim=true (eWeLink-style): auto-match one cloud device by
+        device_id / IP / single-device account — no full inventory in UI.
+        Persists local_key into devices_config for Go poller.
         """
         try:
             req = self._read_json_body() or {}
@@ -37773,6 +38562,9 @@ class Handler(SimpleHTTPRequestHandler):
                     email = str(cfg.get("email") or "")
             if not email or not password:
                 raise ValueError("email and password required")
+            slim = req.get("slim")
+            if slim is None:
+                slim = True
             out = tuya_refresh_device_keys(
                 email=email,
                 password=password,
@@ -37782,7 +38574,34 @@ class Handler(SimpleHTTPRequestHandler):
                     req.get("ecosystem") or req.get("tuya_ecosystem") or "smartlife"
                 ),
                 device_store_id=store_id or None,
+                target_device_id=str(
+                    req.get("tuya_device_id")
+                    or req.get("target_device_id")
+                    or req.get("cloud_device_id")
+                    or ""
+                ).strip()
+                or None,
+                target_ip=str(req.get("ip") or req.get("tuya_ip") or "").strip() or None,
+                slim=bool(slim),
             )
+            # Remember cloud login like eWeLink
+            try:
+                if email and password:
+                    upsert_cloud_credential(
+                        ecosystem=str(
+                            req.get("ecosystem")
+                            or req.get("tuya_ecosystem")
+                            or "smartlife"
+                        ),
+                        email=email,
+                        password=password,
+                        country=str(
+                            req.get("country") or req.get("tuya_country") or "7"
+                        ),
+                        region=str(req.get("region") or req.get("tuya_region") or "eu"),
+                    )
+            except Exception as ce:
+                print(f"[tuya] cred vault: {ce}", flush=True)
             self._json_response(200, out)
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})

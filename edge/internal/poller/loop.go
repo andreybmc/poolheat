@@ -33,8 +33,12 @@ func Run(dataDir string) error {
 	store := device.NewStore(byID, deadlines, syncTS)
 	store.DataDir = dataDir // policy_events.json (UI Action log) on auto-restore
 
+	// UI device_req is handled on its own loop so a hung status poll cannot
+	// starve a click. Per-device lock keeps I/O safe.
+	go watchDeviceCmds(ctx, dataDir, store)
+
 	// Design: UI writes desired_on; this loop owns status+hold; UI may poke via device_req.
-	log.Printf("[devices-poller] loop start (background hold + device_req IPC)")
+	log.Printf("[devices-poller] loop start (background hold + device_req IPC, parallel poll)")
 	for {
 		if ctx.Err() != nil {
 			break
@@ -77,7 +81,7 @@ func Run(dataDir string) error {
 					if !d.IsEnabled() {
 						continue
 					}
-					rt := store.ByID[d.ID]
+					rt := store.Runtime(d.ID)
 					des := "?"
 					if rt.DesiredOn != nil {
 						if *rt.DesiredOn {
@@ -138,10 +142,11 @@ func Run(dataDir string) error {
 			}
 
 			// persist
-			if err := state.Save(paths.DevicesState(dataDir), store.ByID); err != nil {
+			if err := state.Save(paths.DevicesState(dataDir), store.SnapshotRuntime()); err != nil {
 				log.Printf("[devices-poller] save state: %v", err)
 			}
-			if err := state.SaveDeadlines(paths.Deadlines(dataDir), store.Deadlines, store.SyncTS); err != nil {
+			dl, st := store.SnapshotDeadlines()
+			if err := state.SaveDeadlines(paths.Deadlines(dataDir), dl, st); err != nil {
 				log.Printf("[devices-poller] save deadlines: %v", err)
 			}
 		}()
@@ -185,10 +190,29 @@ func Run(dataDir string) error {
 	}
 
 	// final save
-	_ = state.Save(paths.DevicesState(dataDir), store.ByID)
-	_ = state.SaveDeadlines(paths.Deadlines(dataDir), store.Deadlines, store.SyncTS)
+	_ = state.Save(paths.DevicesState(dataDir), store.SnapshotRuntime())
+	dl, st := store.SnapshotDeadlines()
+	_ = state.SaveDeadlines(paths.Deadlines(dataDir), dl, st)
 	log.Printf("[devices-poller] loop stop")
 	return nil
+}
+
+// watchDeviceCmds picks up UI IPC every 80ms, including during PollAll.
+func watchDeviceCmds(ctx context.Context, dataDir string, store *device.Store) {
+	t := time.NewTicker(80 * time.Millisecond)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			for i := 0; i < 4; i++ {
+				if !ProcessPendingDeviceCmd(ctx, dataDir, store) {
+					break
+				}
+			}
+		}
+	}
 }
 
 func itoa(n int) string {

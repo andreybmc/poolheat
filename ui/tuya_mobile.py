@@ -319,7 +319,7 @@ def fetch_devices_with_keys(
 ) -> list[dict]:
     """
     Login + list devices with local_key.
-    Returns slim list: [{name, id, key, product_id, home}, ...]
+    Returns slim list: [{name, id, key, product_id, home, ip, mac}, ...]
     """
     eco = str(ecosystem or "smartlife").strip().lower()
     if eco in ("smart_life", "sl"):
@@ -338,6 +338,16 @@ def fetch_devices_with_keys(
     devices = api.list_devices()
     slim: list[dict] = []
     for d in devices:
+        # Cloud may expose IP under several keys (often empty when offline)
+        ip = (
+            d.get("ip")
+            or d.get("local_ip")
+            or d.get("localIp")
+            or d.get("ipAddress")
+            or ""
+        )
+        if not ip and isinstance(d.get("ip"), dict):
+            ip = d["ip"].get("ip") or ""
         slim.append(
             {
                 "name": d.get("name"),
@@ -346,12 +356,68 @@ def fetch_devices_with_keys(
                 "product_id": d.get("productId") or d.get("product_id"),
                 "uuid": d.get("uuid"),
                 "mac": d.get("mac") or d.get("macAddress"),
+                "ip": str(ip or "").strip(),
                 "home": d.get("_home"),
                 "online": d.get("isOnline") if "isOnline" in d else d.get("online"),
                 "category": d.get("category"),
             }
         )
     return slim
+
+
+def login_and_find_device(
+    email: str,
+    password: str,
+    *,
+    device_id: str | None = None,
+    ip: str | None = None,
+    country: str = "7",
+    region: str = "eu",
+    ecosystem: str = "smartlife",
+) -> dict:
+    """
+    Cloud login + auto-pick one device for LAN local_key (eWeLink-style).
+
+    Match order:
+      1) exact cloud device_id
+      2) exact LAN IP when cloud reports it
+      3) single device in account that has a key
+      4) single device in account
+    """
+    devices = fetch_devices_with_keys(
+        email,
+        password,
+        country=country,
+        region=region,
+        ecosystem=ecosystem,
+    )
+    match = None
+    did = str(device_id or "").strip()
+    tip = str(ip or "").strip()
+    if did:
+        for d in devices:
+            if str(d.get("id") or "") == did:
+                match = d
+                break
+    if match is None and tip:
+        for d in devices:
+            if str(d.get("ip") or "").strip() == tip:
+                match = d
+                break
+    if match is None:
+        with_key = [d for d in devices if d.get("key")]
+        if len(with_key) == 1:
+            match = with_key[0]
+        elif len(devices) == 1:
+            match = devices[0]
+    return {
+        "ok": True,
+        "devices": devices,
+        "device_count": len(devices),
+        "match": match,
+        "ecosystem": ecosystem,
+        "region": region,
+    }
 
 
 def ecosystems() -> list[dict]:

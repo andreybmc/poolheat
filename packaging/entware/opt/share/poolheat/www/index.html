@@ -2776,7 +2776,10 @@
     }
     .fleet-dot.online { background: #34d399; }
     .fleet-dot.offline { background: #f87171; }
-    .fleet-dot.warn { background: #fbbf24; }
+    /* freeze = online but 0 HR (orange); lowhash = below target 30m (yellow) */
+    .fleet-dot.freeze { background: #fb923c; }
+    .fleet-dot.lowhash { background: #facc15; }
+    .fleet-dot.warn { background: #fb923c; } /* legacy alias → freeze */
     .fleet-dot.error { background: #ef4444; }
     .fleet-toolbar-end { margin-left: auto; }
     .fleet-search {
@@ -2849,8 +2852,14 @@
     .fleet-table td.fleet-id-td.st-unknown::before {
       background: linear-gradient(180deg, #fca5a5 0%, #f87171 45%, #dc2626 100%);
     }
+    /* freeze: orange — online, not hashing */
+    .fleet-table td.fleet-id-td.st-freeze::before,
     .fleet-table td.fleet-id-td.st-warn::before {
-      background: linear-gradient(180deg, #fde68a 0%, #fbbf24 45%, #d97706 100%);
+      background: linear-gradient(180deg, #fdba74 0%, #fb923c 45%, #ea580c 100%);
+    }
+    /* lowhash: yellow — below factory/configured target over ~30 min */
+    .fleet-table td.fleet-id-td.st-lowhash::before {
+      background: linear-gradient(180deg, #fde68a 0%, #facc15 45%, #ca8a04 100%);
     }
     .fleet-table td.fleet-id-td.st-error::before {
       background: linear-gradient(180deg, #fca5a5 0%, #ef4444 50%, #b91c1c 100%);
@@ -8107,10 +8116,15 @@
                 <span data-i18n="fleet.f_offline">Offline</span>
                 <span class="fleet-chip-n" id="fleet-n-offline">0</span>
               </button>
-              <button type="button" class="fleet-chip" data-fleet-f="warn">
-                <span class="fleet-dot warn"></span>
-                <span data-i18n="fleet.f_warn">Warning</span>
-                <span class="fleet-chip-n" id="fleet-n-warn">0</span>
+              <button type="button" class="fleet-chip" data-fleet-f="freeze">
+                <span class="fleet-dot freeze"></span>
+                <span data-i18n="fleet.f_freeze">Freeze</span>
+                <span class="fleet-chip-n" id="fleet-n-freeze">0</span>
+              </button>
+              <button type="button" class="fleet-chip" data-fleet-f="lowhash">
+                <span class="fleet-dot lowhash"></span>
+                <span data-i18n="fleet.f_lowhash">Lowhash</span>
+                <span class="fleet-chip-n" id="fleet-n-lowhash">0</span>
               </button>
               <button type="button" class="fleet-chip" data-fleet-f="error">
                 <span class="fleet-dot error"></span>
@@ -9246,6 +9260,12 @@
             <label class="field"><span data-i18n="mp.col.inventory">Inventory #</span>
               <input type="text" id="mp-edit-inventory" maxlength="64" autocomplete="off" />
             </label>
+            <label class="field"><span data-i18n="mp.col.factory_hr">Factory hashrate (TH/s)</span>
+              <input type="number" id="mp-edit-factory-hr" min="0" step="any" placeholder="100" autocomplete="off" title="Submodel nameplate / design hashrate" />
+            </label>
+            <label class="field"><span data-i18n="mp.col.configured_hr">Configured hashrate (TH/s)</span>
+              <input type="number" id="mp-edit-configured-hr" min="0" step="any" placeholder="80" autocomplete="off" title="Operating target (e.g. low-power mode)" />
+            </label>
             <label class="field"><span data-i18n="mp.col.pool">Heat pool</span>
               <select id="mp-edit-pool">
                 <option value="">— none —</option>
@@ -10187,7 +10207,9 @@
         "fleet.f_online": "Online",
         "fleet.f_offline": "Offline",
         "fleet.f_active": "Active",
-        "fleet.f_warn": "Warning",
+        "fleet.f_freeze": "Freeze",
+        "fleet.f_lowhash": "Lowhash",
+        "fleet.f_warn": "Freeze",
         "fleet.f_error": "Error",
         "fleet.col.cell_ip": "Cell · IP",
         "fleet.col.ip": "IP",
@@ -10209,7 +10231,9 @@
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
         "fleet.status.standby": "Standby",
-        "fleet.status.warn": "Warning",
+        "fleet.status.freeze": "Freeze",
+        "fleet.status.lowhash": "Lowhash",
+        "fleet.status.warn": "Freeze",
         "fleet.status.error": "Error",
         "fleet.make_active": "Make active",
         "fleet.open": "Open",
@@ -10343,6 +10367,8 @@
         "mp.col.model_code": "Code",
         "mp.col.serial": "Serial",
         "mp.col.inventory": "Inv #",
+        "mp.col.factory_hr": "Factory hashrate (TH/s)",
+        "mp.col.configured_hr": "Configured hashrate (TH/s)",
         "mp.col.cooling": "Cooling",
         "mp.col.algo": "Algorithm",
         "mp.col.pool": "Pool",
@@ -11018,6 +11044,8 @@
         "dev.ewelink_fetching": "Getting devicekey…",
         "dev.ewelink_got_key": "devicekey loaded",
         "dev.ewelink_no_match": "No matching device in cloud (check deviceid / IP)",
+        "dev.tuya_got_key": "local_key loaded",
+        "dev.tuya_no_match": "No matching device in cloud (check Device ID / IP)",
         "dev.tuya_fetching": "Getting keys…",
         "filt.url_on": "URL ON",
         "filt.url_off": "URL OFF",
@@ -11157,7 +11185,9 @@
         "fleet.f_online": "Online",
         "fleet.f_offline": "Offline",
         "fleet.f_active": "Active",
-        "fleet.f_warn": "Warning",
+        "fleet.f_freeze": "Завис",
+        "fleet.f_lowhash": "Лоухеш",
+        "fleet.f_warn": "Завис",
         "fleet.f_error": "Error",
         "fleet.col.cell_ip": "Ячейка · IP",
         "fleet.col.ip": "IP",
@@ -11179,7 +11209,9 @@
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
         "fleet.status.standby": "Standby",
-        "fleet.status.warn": "Warning",
+        "fleet.status.freeze": "Завис",
+        "fleet.status.lowhash": "Лоухеш",
+        "fleet.status.warn": "Завис",
         "fleet.status.error": "Error",
         "fleet.make_active": "Сделать active",
         "fleet.open": "Открыть",
@@ -11313,6 +11345,8 @@
         "mp.col.model_code": "Код",
         "mp.col.serial": "Серийный",
         "mp.col.inventory": "Инв. №",
+        "mp.col.factory_hr": "Заводской хешрейт (TH/s)",
+        "mp.col.configured_hr": "Установленный хешрейт (TH/s)",
         "mp.col.cooling": "Охлаждение",
         "mp.col.algo": "Алгоритм",
         "mp.col.pool": "Бассейн",
@@ -11988,6 +12022,8 @@
         "dev.ewelink_fetching": "Получаю devicekey…",
         "dev.ewelink_got_key": "devicekey получен",
         "dev.ewelink_no_match": "Устройство не найдено в облаке (проверьте deviceid / IP)",
+        "dev.tuya_got_key": "local_key получен",
+        "dev.tuya_no_match": "Устройство не найдено в облаке (проверьте Device ID / IP)",
         "dev.tuya_fetching": "Получаю ключи…",
         "dev.tuya_fetch": "Получить ключи",
         "filt.url_on": "URL ON",
@@ -24005,12 +24041,53 @@
       }, 8000);
     }
 
+    // freeze: online but ~0 HR; lowhash: avg 30m < configured/factory target
+    const FLEET_FREEZE_HR_EPS = 0.01; // TH/s — treat as zero
+    const FLEET_LOWHASH_RATIO = 0.9; // below 90% of target → lowhash
+
+    function fleetTargetHashrateTh(m) {
+      // Prefer configured (operating) target; fall back to factory nameplate
+      const conf = Number(
+        m && (m.configured_hashrate_th != null
+          ? m.configured_hashrate_th
+          : m.target_hashrate_th)
+      );
+      if (Number.isFinite(conf) && conf > 0) return conf;
+      const fac = Number(
+        m && (m.factory_hashrate_th != null
+          ? m.factory_hashrate_th
+          : m.factory_th)
+      );
+      if (Number.isFinite(fac) && fac > 0) return fac;
+      return null;
+    }
+
     function fleetStatusOf(m) {
-      // online | offline | warn | error | unknown
+      // online | offline | freeze | lowhash | error | unknown
+      // freeze example: 172.16.100.195 — ASIC answers on LAN, hashrate_th ≈ 0
       if (m.online === true) {
         const live = m.live || {};
-        if (live.pool_ok === false) return "warn";
         if (live.error) return "error";
+        const rawHr = live.hashrate_th;
+        const hrMissing = rawHr == null || rawHr === "";
+        const hr = Number(rawHr);
+        // freeze: on network but not mining (0 HR or no rate while still polled OK)
+        if (hrMissing || !Number.isFinite(hr) || hr <= FLEET_FREEZE_HR_EPS) {
+          return "freeze";
+        }
+        // lowhash: avg over last ~30 min below inventory target
+        // (needs server history; no live fallback — avoid false yellow on warm-up)
+        const target = fleetTargetHashrateTh(m);
+        if (target != null && target > 0) {
+          const avg30 = Number(live.hashrate_th_avg_30m);
+          if (
+            Number.isFinite(avg30) &&
+            avg30 > FLEET_FREEZE_HR_EPS &&
+            avg30 < target * FLEET_LOWHASH_RATIO
+          ) {
+            return "lowhash";
+          }
+        }
         return "online";
       }
       if (m.online === false) return "offline";
@@ -24020,7 +24097,9 @@
     function fleetStatusLabel(st) {
       if (st === "online") return fleetT("fleet.status.online", "Online");
       if (st === "offline") return fleetT("fleet.status.offline", "Offline");
-      if (st === "warn") return fleetT("fleet.status.warn", "Warning");
+      if (st === "freeze" || st === "warn")
+        return fleetT("fleet.status.freeze", "Freeze");
+      if (st === "lowhash") return fleetT("fleet.status.lowhash", "Lowhash");
       if (st === "error") return fleetT("fleet.status.error", "Error");
       return fleetT("fleet.status.standby", "Standby");
     }
@@ -24039,9 +24118,13 @@
     function openFleetCtx(btn, mid) {
       const menu = document.getElementById("fleet-ctx");
       if (!menu || !btn) return;
-      const m = (fleetCache.miners || []).find((x) => x.id === mid);
+      // Reparent out of .view (display:none ancestors break position:fixed)
+      if (menu.parentElement !== document.body) {
+        document.body.appendChild(menu);
+      }
+      const m = findMinerById(fleetCache.miners || [], mid);
       closeFleetCtx();
-      menu.dataset.mid = mid || "";
+      menu.dataset.mid = mid != null ? String(mid) : "";
       // disable Make active if already active
       const actBtn = menu.querySelector('[data-ctx="active"]');
       if (actBtn) {
@@ -24156,13 +24239,15 @@
       let nAll = miners.length;
       let nOnline = 0,
         nOffline = 0,
-        nWarn = 0,
+        nFreeze = 0,
+        nLowhash = 0,
         nError = 0;
       miners.forEach((m) => {
         const st = fleetStatusOf(m);
         if (st === "online") nOnline++;
         else if (st === "offline") nOffline++;
-        else if (st === "warn") nWarn++;
+        else if (st === "freeze" || st === "warn") nFreeze++;
+        else if (st === "lowhash") nLowhash++;
         else if (st === "error") nError++;
         else nOffline++; // unknown counts as offline for filter
       });
@@ -24173,7 +24258,8 @@
       setN("fleet-n-all", nAll);
       setN("fleet-n-online", nOnline);
       setN("fleet-n-offline", nOffline);
-      setN("fleet-n-warn", nWarn);
+      setN("fleet-n-freeze", nFreeze);
+      setN("fleet-n-lowhash", nLowhash);
       setN("fleet-n-error", nError);
 
       const q = (
@@ -24182,7 +24268,8 @@
         .trim()
         .toLowerCase();
       const fbtn = document.querySelector(".fleet-chip.active[data-fleet-f]");
-      const filt = (fbtn && fbtn.getAttribute("data-fleet-f")) || "all";
+      let filt = (fbtn && fbtn.getAttribute("data-fleet-f")) || "all";
+      if (filt === "warn") filt = "freeze"; // legacy chip id
 
       let rows = miners.slice();
       if (filt === "online") rows = rows.filter((m) => fleetStatusOf(m) === "online");
@@ -24191,7 +24278,13 @@
           const st = fleetStatusOf(m);
           return st === "offline" || st === "unknown";
         });
-      else if (filt === "warn") rows = rows.filter((m) => fleetStatusOf(m) === "warn");
+      else if (filt === "freeze")
+        rows = rows.filter((m) => {
+          const st = fleetStatusOf(m);
+          return st === "freeze" || st === "warn";
+        });
+      else if (filt === "lowhash")
+        rows = rows.filter((m) => fleetStatusOf(m) === "lowhash");
       else if (filt === "error") rows = rows.filter((m) => fleetStatusOf(m) === "error");
       if (q) {
         rows = rows.filter((m) => {
@@ -24472,7 +24565,7 @@
           }
         }
         setTxt(".fleet-hr", hr);
-        // Per-board hashrate tip only when 2+ real boards report hashrate
+        // Per-board hashrate tip + factory/configured / 30m avg when known
         const hrEl = tr.querySelector(".fleet-hr");
         if (hrEl) {
           const unit = (live && (live.hashrate_unit || m.hashrate_unit)) || "TH/s";
@@ -24490,21 +24583,41 @@
                 formatBoardCellId(i, Object.assign({}, m, live || {})),
             });
           });
+          const tipBits = [];
           if (pairs.length >= 2) {
-            const tipTitle = fleetT("fleet.tip.hash_title", "Hashrate by board");
-            const totalLbl = fleetT("fleet.tip.hash_total", "Total");
-            let tipBody = pairs
-              .map((p) => p.id + ": " + formatTh(p.n, unit))
-              .join("\n");
+            pairs.forEach((p) => tipBits.push(p.id + ": " + formatTh(p.n, unit)));
             const totalTh =
               live.hashrate_th != null && Number.isFinite(Number(live.hashrate_th))
                 ? Number(live.hashrate_th)
                 : pairs.reduce((s, p) => s + p.n, 0);
-            tipBody += "\n" + totalLbl + ": " + formatTh(totalTh, unit);
+            tipBits.push(
+              fleetT("fleet.tip.hash_total", "Total") +
+                ": " +
+                formatTh(totalTh, unit)
+            );
+          }
+          if (live && live.hashrate_th_avg_30m != null) {
+            tipBits.push(
+              "30m avg: " + formatTh(live.hashrate_th_avg_30m, unit)
+            );
+          }
+          const fac = Number(m.factory_hashrate_th);
+          if (Number.isFinite(fac) && fac > 0) {
+            tipBits.push("factory: " + formatTh(fac, unit));
+          }
+          const conf = Number(m.configured_hashrate_th);
+          if (Number.isFinite(conf) && conf > 0) {
+            tipBits.push("configured: " + formatTh(conf, unit));
+          }
+          if (tipBits.length) {
+            const tipTitle =
+              pairs.length >= 2
+                ? fleetT("fleet.tip.hash_title", "Hashrate by board")
+                : fleetT("fleet.col.hash", "Hashrate");
             hrEl.classList.add("tip");
             hrEl.setAttribute("data-tip-key", "hashrate");
             hrEl.setAttribute("data-tip-title", tipTitle);
-            hrEl.setAttribute("data-tip-body", tipBody);
+            hrEl.setAttribute("data-tip-body", tipBits.join("\n"));
             hrEl.setAttribute("tabindex", "0");
           } else {
             hrEl.classList.remove("tip");
@@ -24600,9 +24713,13 @@
       if (action === "edit") {
         if (typeof openManagedEditDialog === "function") {
           // Seed inventory cache from fleet so dialog works outside Settings
+          // (ids may be number in JSON vs string from data-*; use minerIdEq)
+          const hasMid = (managedMinersCache || []).some((x) =>
+            minerIdEq(x && x.id, mid)
+          );
           if (
-            (!(managedMinersCache || []).length ||
-              !(managedMinersCache || []).some((x) => x.id === mid)) &&
+            (!(managedMinersCache || []).length || !hasMid) &&
+            fleetCache &&
             fleetCache.miners &&
             fleetCache.miners.length
           ) {
@@ -24673,10 +24790,15 @@
     });
 
     document.getElementById("fleet-ctx")?.addEventListener("click", async (ev) => {
-      const t = ev.target;
-      if (!t || !t.getAttribute) return;
-      const action = t.getAttribute("data-ctx");
+      const btn =
+        ev.target && ev.target.closest
+          ? ev.target.closest("[data-ctx]")
+          : null;
+      if (!btn) return;
+      const action = btn.getAttribute("data-ctx");
       if (!action) return;
+      ev.preventDefault();
+      ev.stopPropagation();
       const mid = document.getElementById("fleet-ctx")?.dataset.mid || "";
       closeFleetCtx();
       await fleetDoAction(action, mid);
@@ -25114,12 +25236,22 @@
       if (bd) bd.hidden = true;
     }
 
+    /** Inventory ids are JSON numbers; HTML data-* attrs are strings — never use === raw. */
+    function minerIdEq(a, b) {
+      if (a == null || b == null || a === "" || b === "") return false;
+      return String(a) === String(b);
+    }
+    function findMinerById(list, mid) {
+      if (!Array.isArray(list) || mid == null || mid === "") return null;
+      return list.find((x) => x && minerIdEq(x.id, mid)) || null;
+    }
+
     async function openManagedEditDialog(mid) {
       // Prefer inventory cache; fall back to fleet cache (Miners tab)
       let m =
-        (managedMinersCache || []).find((x) => x.id === mid) ||
+        findMinerById(managedMinersCache, mid) ||
         (typeof fleetCache !== "undefined" && fleetCache.miners
-          ? fleetCache.miners.find((x) => x.id === mid)
+          ? findMinerById(fleetCache.miners, mid)
           : null) ||
         null;
       if (!m) {
@@ -25129,7 +25261,7 @@
           const body = await res.json();
           const list = body.miners || [];
           managedMinersCache = list;
-          m = list.find((x) => x.id === mid) || null;
+          m = findMinerById(list, mid);
         } catch (_) { /* ignore */ }
       }
       if (!m) {
@@ -25138,7 +25270,7 @@
           const res = await fetch("/api/miners/fleet", { cache: "no-store" });
           const body = await res.json();
           const list = body.miners || [];
-          m = list.find((x) => x.id === mid) || null;
+          m = findMinerById(list, mid);
           if (m && list.length) {
             managedMinersCache = list.map((x) => {
               const c = Object.assign({}, x);
@@ -25150,7 +25282,11 @@
         } catch (_) { /* ignore */ }
       }
       if (!m) {
-        toastError("Miner not found");
+        toastError(
+          typeof t === "function"
+            ? t("mp.edit_not_found", "Miner not found")
+            : "Miner not found"
+        );
         return;
       }
       // strip fleet-only fields so form sees inventory shape
@@ -25210,6 +25346,22 @@
       })();
       set("mp-edit-serial", m.serial || "");
       set("mp-edit-inventory", m.inventory || "");
+      set(
+        "mp-edit-factory-hr",
+        m.factory_hashrate_th != null && m.factory_hashrate_th !== ""
+          ? m.factory_hashrate_th
+          : m.factory_th != null
+            ? m.factory_th
+            : ""
+      );
+      set(
+        "mp-edit-configured-hr",
+        m.configured_hashrate_th != null && m.configured_hashrate_th !== ""
+          ? m.configured_hashrate_th
+          : m.target_hashrate_th != null
+            ? m.target_hashrate_th
+            : ""
+      );
       fillHeatPoolSelect(document.getElementById("mp-edit-pool"), m.pool_id || "");
       set("mp-edit-port", m.port != null ? m.port : 4028);
       set("mp-edit-password", "");
@@ -25246,6 +25398,12 @@
         serial: (document.getElementById("mp-edit-serial")?.value || "").trim(),
         inventory: (
           document.getElementById("mp-edit-inventory")?.value || ""
+        ).trim(),
+        factory_hashrate_th: (
+          document.getElementById("mp-edit-factory-hr")?.value || ""
+        ).trim(),
+        configured_hashrate_th: (
+          document.getElementById("mp-edit-configured-hr")?.value || ""
         ).trim(),
         pool_id: (document.getElementById("mp-edit-pool")?.value || "").trim(),
         host: (document.getElementById("mp-edit-host")?.value || "").trim(),
@@ -25649,12 +25807,20 @@
     });
     document.getElementById("mp-managed-body")?.addEventListener("click", async (ev) => {
       const t = ev.target;
-      if (!t || !t.getAttribute) return;
-      const edit = t.getAttribute("data-mp-edit");
-      const act = t.getAttribute("data-mp-active");
-      const rem = t.getAttribute("data-mp-remove");
+      if (!t || !t.closest) return;
+      const editBtn = t.closest("[data-mp-edit]");
+      const actBtn = t.closest("[data-mp-active]");
+      const remBtn = t.closest("[data-mp-remove]");
+      const edit = editBtn && editBtn.getAttribute("data-mp-edit");
+      const act = actBtn && actBtn.getAttribute("data-mp-active");
+      const rem = remBtn && remBtn.getAttribute("data-mp-remove");
       if (edit) {
-        void openManagedEditDialog(edit);
+        ev.preventDefault();
+        try {
+          await openManagedEditDialog(edit);
+        } catch (e) {
+          toastError(e.message || String(e));
+        }
         return;
       }
       if (act) {
@@ -25662,16 +25828,18 @@
           const res = await fetch("/api/miner/managed", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "active", id: act }),
+            body: JSON.stringify({ action: "set_active", id: act }),
           });
           const body = await res.json();
-          if (body.error) throw new Error(body.error);
+          if (!res.ok || body.ok === false || body.error)
+            throw new Error((body && body.error) || "HTTP " + res.status);
           toastSuccess("Active miner updated");
           await loadMinerConfig();
           await refreshManagedTable();
         } catch (e) {
           toastError(e.message);
         }
+        return;
       }
       if (rem) {
         if (!confirm("Remove miner from system inventory?")) return;
@@ -34350,6 +34518,66 @@
       syncDeviceLangToggles();
     }
 
+    /**
+     * Map raw/backend device errors to short UI labels.
+     * Technical dial/EOF/tcp never shown — only offline / config / unsupported.
+     */
+    function deviceUiError(raw, backend) {
+      if (raw == null || raw === "") return "";
+      const text = String(raw).trim();
+      if (!text) return "";
+      const en =
+        typeof _uiLang !== "undefined" && _uiLang === "en" ? true : false;
+      // Already laconic (from server)
+      const knownRu = {
+        "устройство офлайн": true,
+        "ошибка конфигурации": true,
+        "устройство не поддерживается": true,
+        "устройство отключено": true,
+        "занято, повторите": true,
+        "устройство не в сети": true,
+        "устройство недоступно": true,
+      };
+      const knownEn = {
+        "device offline": true,
+        "configuration error": true,
+        "device not supported": true,
+        "device disabled": true,
+        "busy, retry": true,
+      };
+      const low = text.toLowerCase();
+      if (knownRu[text] || knownEn[low]) {
+        if (en) {
+          if (text.indexOf("офлайн") >= 0 || text.indexOf("не в сети") >= 0 || text.indexOf("недоступ") >= 0)
+            return "device offline";
+          if (text.indexOf("конфиг") >= 0) return "configuration error";
+          if (text.indexOf("не поддержив") >= 0) return "device not supported";
+          if (text.indexOf("отключ") >= 0) return "device disabled";
+          if (text.indexOf("занято") >= 0) return "busy, retry";
+        }
+        return text;
+      }
+      const blob = String(backend || "").toLowerCase() + " " + low;
+      const offline =
+        /offline|офлайн|не в сети|недоступ|unreachable|no route|timeout|timed out|deadline|eof|dial |dial tcp|connect:|refused|reset|broken pipe|empty reply|empty response|not responding|не отвечает|tinytuya|tuya dial|tuya status|host is down|no such host|502|503|504/.test(
+          blob
+        );
+      const unsupported =
+        /not supported|unsupported|not implemented|не поддержив|unknown backend/.test(
+          blob
+        );
+      const config =
+        /empty|not configured|не настроен|invalid|не действитель|local_?key|devicekey|deviceid|token|password|email|credentials|klap|handshake|decrypt|auth|config|конфиг|missing|required/.test(
+          blob
+        );
+      if (unsupported)
+        return en ? "device not supported" : "устройство не поддерживается";
+      if (config && !offline)
+        return en ? "configuration error" : "ошибка конфигурации";
+      // default / offline / technical noise
+      return en ? "device offline" : "устройство офлайн";
+    }
+
     function deviceDisplayName(d) {
       if (!d) return "";
       const ui = deviceUiLang();
@@ -34607,9 +34835,10 @@
               String(descRaw).replace(/</g, "&lt;") +
               "</div>"
             : "";
-          const err = d.last_error
+          const errPretty = deviceUiError(d.last_error, d.backend);
+          const err = errPretty
             ? '<div style="font-size:0.72rem;color:var(--danger);margin-top:4px">' +
-              String(d.last_error).replace(/</g, "&lt;").slice(0, 120) +
+              String(errPretty).replace(/</g, "&lt;").slice(0, 80) +
               "</div>"
             : "";
           const powerHtml = formatDevicePowerHtml(d.last_power || d.power);
@@ -35264,7 +35493,8 @@
       const est = document.getElementById("device-editor-status");
       if (est) {
         let s = d.last_on === true ? "ON" : d.last_on === false ? "OFF" : "—";
-        if (d.last_error) s += " · " + String(d.last_error).slice(0, 80);
+        const pe = deviceUiError(d.last_error, d.backend);
+        if (pe) s += " · " + pe;
         est.textContent = s;
       }
       // expand editor from the device row (or a draft "new" row)
@@ -35464,7 +35694,8 @@
                     (Math.abs(w) >= 100 ? w.toFixed(0) : w.toFixed(1)) +
                     " W";
                 }
-                if (d.last_error) s += " · " + String(d.last_error).slice(0, 80);
+                const pe = deviceUiError(d.last_error, d.backend);
+                if (pe) s += " · " + pe;
                 est.textContent = s;
               }
             }
@@ -35790,6 +36021,8 @@
     }
 
     async function tuyaFetchKeysFromEditor() {
+      // eWeLink-style: auto-match one device by device_id / IP / single account
+      // — no full cloud inventory dump in the UI.
       const st = document.getElementById("dev-tuya-status");
       const btn = document.getElementById("btn-tuya-fetch-keys");
       const email = (document.getElementById("dev-tuya-email")?.value || "").trim();
@@ -35798,21 +36031,31 @@
       const country = (document.getElementById("dev-tuya-country")?.value || "7").trim();
       const region = document.getElementById("dev-tuya-region")?.value || "eu";
       const storeId = (document.getElementById("device-id")?.value || "").trim();
+      const wantDid = (document.getElementById("dev-tuya-device-id")?.value || "").trim();
+      const wantIp = (document.getElementById("dev-tuya-ip")?.value || "").trim();
       if (!email) {
         toastWarn("Tuya: email required");
         return;
       }
-      if (st) st.textContent = "logging in…";
+      if (st)
+        st.textContent = t("dev.tuya_fetching", "Получаю ключи…");
       setBtnLoading(btn, true, {
         busyKey: "dev.tuya_fetching",
         busyFb: "Получаю ключи…",
         idleKey: "dev.tuya_fetch",
         idleFb: "Получить ключи",
       });
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const to = setTimeout(() => {
+        try {
+          ctrl && ctrl.abort();
+        } catch (_) { /* ignore */ }
+      }, 45000);
       try {
         const res = await fetch("/api/devices/tuya/login", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: ctrl ? ctrl.signal : undefined,
           body: JSON.stringify({
             email,
             password: password || undefined,
@@ -35820,75 +36063,72 @@
             region,
             ecosystem: eco,
             device_id: storeId || undefined,
+            tuya_device_id: wantDid || undefined,
+            ip: wantIp || undefined,
+            // UI does not need the full account inventory
+            slim: true,
           }),
         });
+        clearTimeout(to);
         const body = await res.json();
-        if (!res.ok || body.ok === false) throw new Error(body.error || "HTTP " + res.status);
+        if (!res.ok || body.ok === false)
+          throw new Error(body.error || "HTTP " + res.status);
+
         // remember login for this ecosystem+country
         try {
           if (email && password) {
-            await fetch("/api/devices/credentials", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ecosystem: eco,
-                email,
-                password,
-                country,
-                region,
-              }),
-            });
             void loadCloudCredentials(eco).then((acc) =>
               fillCredDatalist("dev-tuya-email-list", acc)
             );
           }
         } catch (_) { /* ignore vault errors */ }
-        const list = body.devices || [];
-        if (st) st.textContent = "OK · " + list.length + " devices";
+
+        // Hide legacy multi-device picker (no longer used in slim mode)
         const pick = document.getElementById("dev-tuya-pick");
         if (pick) {
           pick.innerHTML = "";
-          list.forEach((d) => {
-            const o = document.createElement("option");
-            o.value = d.id || "";
-            o.textContent =
-              (d.name || d.id || "?") +
-              (d.key_set ? " · key✓" : " · no key") +
-              (d.home ? " · " + d.home : "");
-            o.dataset.key = d.key || "";
-            o.dataset.product = d.product_id || "";
-            pick.appendChild(o);
-          });
-          pick.style.display = list.length ? "block" : "none";
-          pick.onchange = () => {
-            const opt = pick.selectedOptions[0];
-            if (!opt) return;
-            const idEl = document.getElementById("dev-tuya-device-id");
-            const keyEl = document.getElementById("dev-tuya-local-key");
-            if (idEl) idEl.value = opt.value;
-            if (keyEl && opt.dataset.key) keyEl.value = opt.dataset.key;
-            if (st) st.textContent = "selected · " + (opt.textContent || opt.value);
-          };
-          // auto-select if only one or matches current device_id
-          const curId = (document.getElementById("dev-tuya-device-id")?.value || "").trim();
-          let auto = null;
-          if (list.length === 1) auto = list[0];
-          else if (curId) auto = list.find((x) => x.id === curId) || null;
-          if (auto) {
-            pick.value = auto.id;
-            if (document.getElementById("dev-tuya-device-id"))
-              document.getElementById("dev-tuya-device-id").value = auto.id || "";
-            if (auto.key && document.getElementById("dev-tuya-local-key"))
-              document.getElementById("dev-tuya-local-key").value = auto.key;
-            if (st) st.textContent = "OK · key loaded · " + (auto.name || auto.id);
-          }
+          pick.style.display = "none";
         }
-        toastSuccess("Tuya: " + list.length + " devices");
-        // reload device list if store updated
+
+        const auto = body.match || null;
+        if (!auto || !(auto.key || auto.local_key)) {
+          const n = body.device_count != null ? body.device_count : "?";
+          throw new Error(
+            t(
+              "dev.tuya_no_match",
+              "No matching device in cloud (check Device ID / IP)"
+            ) +
+              (n !== "?" ? " · cloud devices: " + n : "")
+          );
+        }
+        const key = auto.key || auto.local_key || "";
+        const idEl = document.getElementById("dev-tuya-device-id");
+        const keyEl = document.getElementById("dev-tuya-local-key");
+        const ipEl = document.getElementById("dev-tuya-ip");
+        if (idEl && (auto.id || auto.device_id))
+          idEl.value = auto.id || auto.device_id || "";
+        if (keyEl && key) {
+          keyEl.value = key;
+          keyEl.type = "password";
+          keyEl.placeholder = "•••• (saved)";
+        }
+        if (ipEl && auto.ip && !ipEl.value.trim()) ipEl.value = auto.ip;
+        const label =
+          (auto.name || auto.id || auto.device_id || "") +
+          (auto.home ? " · " + auto.home : "");
+        if (st)
+          st.textContent =
+            t("dev.tuya_got_key", "local_key loaded") +
+            (label ? " · " + label : "");
+        toastSuccess(
+          t("dev.tuya_got_key", "local_key loaded") +
+            (auto.name ? " · " + auto.name : "")
+        );
         if (typeof loadDevices === "function") void loadDevices();
       } catch (e) {
+        clearTimeout(to);
         if (st) st.textContent = "error: " + e.message;
-        toastError("Tuya login: " + e.message);
+        toastError("Tuya: " + e.message);
       } finally {
         setBtnLoading(btn, false, {
           idleKey: "dev.tuya_fetch",

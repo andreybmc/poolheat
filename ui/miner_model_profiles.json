@@ -1,6 +1,15 @@
 {
-  "version": 1,
-  "comment": "Per-model ASIC profiles: display names, algo/coin, sensors, efficiency for power estimate when ASIC does not report wall power.",
+  "version": 2,
+  "comment": "Per-model ASIC profiles: display names, algo/coin, hardware map (boards/fans/temps/PSU), sensors we poll, efficiency for power estimate.",
+  "schema": {
+    "hardware": {
+      "hashboards": "count/physical/label_prefix/index_base",
+      "fans": "count + channels[].api_keys (which keys we poll)",
+      "temps": "chip/board/env/psu/asc with count + api_keys + placeholder",
+      "psu": "type=integrated|external|external_smart; smart; reports_power/temp"
+    },
+    "poll": "sources we actually query and which metrics each provides"
+  },
   "models": [
     {
       "id": "goldshell.ck_box",
@@ -43,11 +52,77 @@
         "estimate_from_efficiency": true,
         "note": "CGMiner/HTTP does not expose wall power on CK-BOX"
       },
+      "hardware": {
+        "hashboards": {
+          "count": 1,
+          "physical": 1,
+          "label_prefix": "CPB",
+          "index_base": 0,
+          "note": "Single CPB hashboard"
+        },
+        "fans": {
+          "count": 2,
+          "smart": false,
+          "channels": [
+            { "id": "fan0", "api_keys": ["Fan Speed In", "fanspeed_in", "fan0"], "role": "intake" },
+            { "id": "fan1", "api_keys": ["Fan Speed Out", "fanspeed_out", "fan1"], "role": "exhaust" }
+          ],
+          "note": "Air-cooled box; CGMiner DEVS/summary fan fields"
+        },
+        "temps": {
+          "chip": {
+            "count": 1,
+            "api_keys": ["Temperature", "temp", "tstemp-2"],
+            "unit": "C",
+            "per_board": true,
+            "note": "Chip/board temp via DEVS / tstemp-*"
+          },
+          "board": { "count": 1, "api_keys": ["Temperature"], "unit": "C" },
+          "env": { "count": 0 },
+          "psu": { "count": 0 },
+          "asc": { "count": 0 }
+        },
+        "psu": {
+          "type": "integrated",
+          "smart": false,
+          "reports_power": false,
+          "reports_temp": false,
+          "note": "Internal non-smart PSU; wall power not on API"
+        },
+        "controller": {
+          "os": "linux",
+          "api": ["cgminer", "http_mcb"]
+        }
+      },
+      "poll": {
+        "sources": [
+          {
+            "id": "cgminer",
+            "port": 4028,
+            "cmds": ["summary", "devs", "stats", "pools", "version", "config"],
+            "provides": ["hashrate", "fans", "temps", "pools", "identity"]
+          },
+          {
+            "id": "http_mcb",
+            "port": 80,
+            "paths": ["/mcb/status", "/mcb/setting", "/mcb/pools"],
+            "provides": ["status", "settings", "pools"]
+          }
+        ],
+        "temps_from": ["cgminer"],
+        "fans_from": ["cgminer"],
+        "power_from": null
+      },
       "sensors": {
         "power": false,
         "fans": true,
         "chip_temp": true,
-        "env_temp": false
+        "pcb_temp": true,
+        "env_temp": false,
+        "psu_temp": false,
+        "fan_count": 2,
+        "temp_chip_count": 1,
+        "hashboard_count": 1
       }
     },
     {
@@ -77,12 +152,193 @@
       "power": {
         "reported": false,
         "estimate_from_efficiency": true,
-        "note": "Stock BMMiner often omits wall power on :4028"
+        "note": "Stock BMMiner often omits wall power on :4028; :6060 has miner_power"
+      },
+      "hardware": {
+        "hashboards": {
+          "count": 3,
+          "physical": 3,
+          "label_prefix": "CH",
+          "index_base": 1,
+          "note": "3 chains / hashboards"
+        },
+        "fans": {
+          "count": 4,
+          "smart": false,
+          "channels": [
+            { "id": "fan1", "api_keys": ["fan1", "fan_1"], "role": "intake" },
+            { "id": "fan2", "api_keys": ["fan2", "fan_2"], "role": "intake" },
+            { "id": "fan3", "api_keys": ["fan3", "fan_3"], "role": "exhaust" },
+            { "id": "fan4", "api_keys": ["fan4", "fan_4"], "role": "exhaust" }
+          ],
+          "note": "Typical L9 4-fan chassis; stats fan1..fan4"
+        },
+        "temps": {
+          "chip": {
+            "count": 3,
+            "api_keys": ["temp1", "temp2", "temp3"],
+            "unit": "C",
+            "per_board": true,
+            "note": "Per-chain chip temp in stats"
+          },
+          "board": {
+            "count": 3,
+            "api_keys": ["temp2_1", "temp2_2", "temp2_3"],
+            "unit": "C",
+            "per_board": true,
+            "note": "PCB temps (temp2_*) preferred over temp_out_pcb_*"
+          },
+          "env": { "count": 0 },
+          "psu": { "count": 0 },
+          "asc": { "count": 0 }
+        },
+        "psu": {
+          "type": "integrated",
+          "smart": true,
+          "reports_power": true,
+          "reports_temp": false,
+          "controllable": true,
+          "note": "Built-in smart PSU (like Whatsminer M63); wall power via SearchFreq :6060 /miner_power"
+        },
+        "controller": {
+          "os": "linux",
+          "api": ["bmminer", "antminer_6060"]
+        }
+      },
+      "poll": {
+        "sources": [
+          {
+            "id": "bmminer",
+            "port": 4028,
+            "cmds": ["summary", "stats", "devs", "pools", "version"],
+            "provides": ["hashrate", "temps", "fans", "pools", "identity"]
+          },
+          {
+            "id": "antminer_6060",
+            "port": 6060,
+            "paths": ["/miner_power", "/rate", "/miner_status", "/summary", "/chip_stat"],
+            "provides": ["power", "rate", "status", "chips"]
+          }
+        ],
+        "temps_from": ["bmminer"],
+        "fans_from": ["bmminer"],
+        "power_from": ["antminer_6060"]
       },
       "sensors": {
-        "power": false,
+        "power": true,
         "fans": true,
-        "chip_temp": true
+        "chip_temp": true,
+        "pcb_temp": true,
+        "env_temp": false,
+        "psu_temp": false,
+        "fan_count": 4,
+        "temp_chip_count": 3,
+        "temp_pcb_count": 3,
+        "hashboard_count": 3
+      }
+    },
+    {
+      "id": "whatsminer.m63",
+      "vendor": "whatsminer",
+      "match": [
+        "m63",
+        "m63s",
+        "m63s+",
+        "whatsminer m63",
+        "microbt m63"
+      ],
+      "display_name": "M63",
+      "display_name_full": "Whatsminer M63",
+      "manufacturer": "MicroBT",
+      "algo": "sha256",
+      "coin": "BTC",
+      "cooling": "liquid",
+      "hashrate_unit": "TH/s",
+      "rated": {
+        "note": "Varies by SKU (S/S+/…); use live power from smart PSU"
+      },
+      "efficiency": {
+        "j_per_th": 19.0,
+        "j_per_th_low": 18.0,
+        "j_per_th_high": 21.0,
+        "note": "Typical hydro M63 class ~18–21 J/TH"
+      },
+      "power": {
+        "reported": true,
+        "estimate_from_efficiency": false,
+        "note": "Built-in smart PSU reports wall power via Whatsminer API"
+      },
+      "hardware": {
+        "hashboards": {
+          "count": 4,
+          "physical": 2,
+          "virtual_per_physical": 2,
+          "label_prefix": "SM",
+          "index_base": 0,
+          "note": "2 physical × 2 virtual slots (hydro pairing)"
+        },
+        "fans": {
+          "count": 0,
+          "smart": false,
+          "channels": [],
+          "note": "Liquid-cooled; no chassis fans"
+        },
+        "temps": {
+          "chip": {
+            "count": 1,
+            "api_keys": ["Chip Temp Min", "Chip Temp Avg", "Chip Temp Max"],
+            "unit": "C",
+            "per_board": false
+          },
+          "board": {
+            "count": 4,
+            "api_keys": ["PCB Temp"],
+            "unit": "C",
+            "per_board": true
+          },
+          "env": { "count": 1, "api_keys": ["Env Temp"] },
+          "psu": { "count": 1, "api_keys": ["PSU Temp", "Power Temp"] },
+          "liquid": { "count": 1, "api_keys": ["Inlet Temp", "Outlet Temp", "Liquid Temp"] },
+          "asc": { "count": 0 }
+        },
+        "psu": {
+          "type": "integrated",
+          "smart": true,
+          "reports_power": true,
+          "reports_temp": true,
+          "controllable": true,
+          "note": "Built-in smart PSU with API power read + power/mode control (same class as Antminer L9)"
+        },
+        "controller": {
+          "os": "linux",
+          "api": ["whatsminer_v2", "whatsminer_v3", "luci"]
+        }
+      },
+      "poll": {
+        "sources": [
+          {
+            "id": "whatsminer",
+            "port": 4028,
+            "cmds": ["summary", "devs", "pools", "get_psu", "get_miner_info"],
+            "provides": ["hashrate", "temps", "power", "pools", "identity", "psu"]
+          }
+        ],
+        "temps_from": ["whatsminer"],
+        "fans_from": [],
+        "power_from": ["whatsminer"]
+      },
+      "sensors": {
+        "power": true,
+        "fans": false,
+        "chip_temp": true,
+        "pcb_temp": true,
+        "env_temp": true,
+        "psu_temp": true,
+        "liquid_temp": true,
+        "fan_count": 0,
+        "temp_chip_count": 1,
+        "temp_pcb_count": 4,
+        "hashboard_count": 4
       }
     },
     {
@@ -92,9 +348,11 @@
         "v1 mini",
         "v1mini",
         "v1 mini wifi",
+        "ipollo v1 mini",
         "ipollo v1",
         "ipollo vx",
-        "vx"
+        "vx",
+        "ipollo.chain"
       ],
       "display_name": "V1 mini",
       "display_name_full": "iPollo V1 mini",
@@ -116,10 +374,113 @@
         "estimate_from_efficiency": true,
         "note": "LuCI/cgminer rarely expose wall power"
       },
+      "hardware": {
+        "hashboards": {
+          "count": 1,
+          "physical": 1,
+          "label_prefix": "HB",
+          "index_base": 1,
+          "serial_keys": ["sn0"],
+          "note": "Single hashboard; sn0 = HB serial, unit sn in sysinfo.sn"
+        },
+        "fans": {
+          "count": 2,
+          "smart": false,
+          "channels": [
+            {
+              "id": "fan0",
+              "api_keys": ["fanspeed0"],
+              "pwm_keys": ["fanpwm0", "fanpwm"],
+              "role": "intake",
+              "index": 0
+            },
+            {
+              "id": "fan1",
+              "api_keys": ["fanspeed3"],
+              "pwm_keys": ["fanpwm3"],
+              "role": "exhaust",
+              "index": 3,
+              "note": "Physical fan #2 is exposed as fanspeed3 (slots 1–2 unused)"
+            }
+          ],
+          "note": "2 physical fans; LuCI UI checks fanspeed0 && fanspeed3 for E1 alert"
+        },
+        "temps": {
+          "chip": {
+            "count": 2,
+            "api_keys": ["temp0", "temp1"],
+            "unit": "C",
+            "placeholder": -273.2,
+            "per_board": false,
+            "note": "2 real sensors on the single HB; temp2/temp3 are placeholders (-273.2)"
+          },
+          "board": { "count": 0 },
+          "env": { "count": 0 },
+          "psu": { "count": 0 },
+          "asc": {
+            "count": 1,
+            "api_keys": ["tempasc"],
+            "unit": "C",
+            "placeholder": -273.2,
+            "note": "Aggregate ASC temp (often ≈ temp0); not a 3rd independent sensor"
+          }
+        },
+        "psu": {
+          "type": "external",
+          "smart": false,
+          "reports_power": false,
+          "reports_temp": false,
+          "controllable": false,
+          "note": "External brick / non-smart PSU; no power/temp on API (unlike M63/L9)"
+        },
+        "controller": {
+          "os": "openwrt",
+          "ui": "luci-ipolloeth",
+          "api": ["cgminer", "luci"]
+        }
+      },
+      "poll": {
+        "sources": [
+          {
+            "id": "cgminer",
+            "port": 4028,
+            "cmds": ["summary", "devs", "stats", "pools", "version", "config"],
+            "provides": ["hashrate", "pools", "identity"],
+            "note": "DEVS temps often 0.0 — do not trust for V1"
+          },
+          {
+            "id": "luci_sysinfo",
+            "port": 80,
+            "path": "/cgi-bin/luci/admin/ipollo_main/ipollo_sysinfo",
+            "auth": "luci_sysauth",
+            "provides": ["model", "serial", "fw", "elapsed", "ip"]
+          },
+          {
+            "id": "luci_realtime",
+            "port": 80,
+            "path": "/cgi-bin/luci/admin/ipollo_main/ipollo_realtime",
+            "auth": "luci_sysauth",
+            "provides": ["hashrate", "temps", "fans", "rejected"]
+          }
+        ],
+        "temps_from": ["luci_realtime"],
+        "fans_from": ["luci_realtime"],
+        "power_from": null,
+        "ignore_keys": {
+          "temps": ["temp2", "temp3"],
+          "fans": ["fanspeed1", "fanspeed2"]
+        }
+      },
       "sensors": {
         "power": false,
         "fans": true,
-        "chip_temp": true
+        "chip_temp": true,
+        "pcb_temp": false,
+        "env_temp": false,
+        "psu_temp": false,
+        "fan_count": 2,
+        "temp_chip_count": 2,
+        "hashboard_count": 1
       }
     }
   ]

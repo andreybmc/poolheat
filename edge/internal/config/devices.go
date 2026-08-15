@@ -61,15 +61,15 @@ func NormalizePoller(p *PollerCfg) PollerCfg {
 	return out
 }
 
-// StatusTimeout is the per-device status probe budget.
-// Floor 8s: set_timeout_sec=3 (common in UI) is too short for Tuya/Tapo LAN.
+// StatusTimeout is the per-device *background* status probe budget.
+// Keep it short so a dead Tuya releases the tinytuya slot; UI set uses SetTimeout.
 func (p PollerCfg) StatusTimeout() time.Duration {
 	sec := p.SetTimeoutSec
-	if sec < 8 {
+	if sec <= 0 || sec > 8 {
 		sec = 8
 	}
-	if sec > 60 {
-		sec = 60
+	if sec < 4 {
+		sec = 4
 	}
 	return time.Duration(sec) * time.Second
 }
@@ -106,19 +106,19 @@ func (p PollerCfg) LoopInterval() int {
 
 // DeviceCfg is settings-only (from devices_config.json).
 type DeviceCfg struct {
-	ID        string `json:"id"`
-	Alias     string `json:"alias"`
-	Name      string `json:"name"`
-	NameEN    string `json:"name_en"`
-	NameRU    string `json:"name_ru"`
-	Icon      string `json:"icon"`
-	Enabled   *bool  `json:"enabled"`
-	Backend   string `json:"backend"`
-	IP        string `json:"ip"`
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	DeviceID  string `json:"device_id"`
-	Inverted  bool   `json:"inverted"`
+	ID       string `json:"id"`
+	Alias    string `json:"alias"`
+	Name     string `json:"name"`
+	NameEN   string `json:"name_en"`
+	NameRU   string `json:"name_ru"`
+	Icon     string `json:"icon"`
+	Enabled  *bool  `json:"enabled"`
+	Backend  string `json:"backend"`
+	IP       string `json:"ip"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	DeviceID string `json:"device_id"`
+	Inverted bool   `json:"inverted"`
 
 	// policy
 	AutoOnMining           bool `json:"auto_on_mining"`
@@ -317,34 +317,34 @@ func parsePoller(m map[string]any) PollerCfg {
 
 func parseDevice(m map[string]any) (DeviceCfg, error) {
 	d := DeviceCfg{
-		ID:            str(m["id"]),
-		Alias:         str(m["alias"]),
-		Name:          str(m["name"]),
-		NameEN:        str(m["name_en"]),
-		NameRU:        str(m["name_ru"]),
-		Icon:          str(m["icon"]),
-		Backend:       str(m["backend"]),
-		IP:            str(m["ip"]),
-		Email:         str(m["email"]),
-		Password:      str(m["password"]),
-		DeviceID:      str(m["device_id"]),
-		Inverted:      asBool(m["inverted"], false),
-		AutoOnMining:  asBool(m["auto_on_mining"], false),
-		AutoOffSuspend: asBool(m["auto_off_suspend"], false),
-		EnforceDesired: asBool(m["enforce_desired"], false),
+		ID:                  str(m["id"]),
+		Alias:               str(m["alias"]),
+		Name:                str(m["name"]),
+		NameEN:              str(m["name_en"]),
+		NameRU:              str(m["name_ru"]),
+		Icon:                str(m["icon"]),
+		Backend:             str(m["backend"]),
+		IP:                  str(m["ip"]),
+		Email:               str(m["email"]),
+		Password:            str(m["password"]),
+		DeviceID:            str(m["device_id"]),
+		Inverted:            asBool(m["inverted"], false),
+		AutoOnMining:        asBool(m["auto_on_mining"], false),
+		AutoOffSuspend:      asBool(m["auto_off_suspend"], false),
+		EnforceDesired:      asBool(m["enforce_desired"], false),
 		AllowOffWhileMining: asBool(m["allow_off_while_mining"], false),
 		AllowOnWhileSuspend: asBool(m["allow_on_while_suspend"], false),
-		MinerID:        str(m["miner_id"]),
-		EwelinkPort:   8081,
-		EwelinkMode:   "auto",
-		WebhookMethod: "GET",
-		ShellyGen:     "auto",
-		TuyaEcosystem: "smartlife",
-		TuyaCountry:   "7",
-		TuyaRegion:    "eu",
-		TuyaVersion:   3.4,
-		TuyaSwitchDPS: 1,
-		DeviceKind:    str(m["device_kind"]),
+		MinerID:             str(m["miner_id"]),
+		EwelinkPort:         8081,
+		EwelinkMode:         "auto",
+		WebhookMethod:       "GET",
+		ShellyGen:           "auto",
+		TuyaEcosystem:       "smartlife",
+		TuyaCountry:         "7",
+		TuyaRegion:          "eu",
+		TuyaVersion:         3.4,
+		TuyaSwitchDPS:       1,
+		DeviceKind:          str(m["device_kind"]),
 	}
 	if v, ok := asInt(m["tuya_bright_dps"]); ok {
 		d.TuyaBrightDPS = clamp(v, 0, 255)

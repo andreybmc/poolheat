@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andreybmc/poolheat/edge/internal/backend"
@@ -17,6 +18,9 @@ import (
 	"github.com/andreybmc/poolheat/edge/internal/paths"
 	"github.com/andreybmc/poolheat/edge/internal/state"
 )
+
+// serialize file pickup so the tick loop and the UI watcher never double-read
+var deviceCmdMu sync.Mutex
 
 // File IPC: serve enqueues device_req.json; poller executes via backends (tuya/tapo/…).
 // serve never imports tinytuya.
@@ -58,6 +62,8 @@ type DeviceResult struct {
 // ProcessPendingDeviceCmd handles one device_req.json if present.
 // Returns true if a request was consumed.
 func ProcessPendingDeviceCmd(ctx context.Context, dataDir string, store *device.Store) bool {
+	deviceCmdMu.Lock()
+	defer deviceCmdMu.Unlock()
 	path := filepath.Join(dataDir, deviceReqFile)
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -76,7 +82,7 @@ func ProcessPendingDeviceCmd(ctx context.Context, dataDir string, store *device.
 	}
 	_ = os.Remove(path)
 
-	res := executeDeviceCmd(ctx, dataDir, store, req)
+	res := executeDeviceCmd(backend.WithPriority(ctx), dataDir, store, req)
 	if err := jsonutil.SaveAtomic(filepath.Join(dataDir, deviceResultFile), res); err != nil {
 		log.Printf("[devices-poller] device-result: %v", err)
 	}
@@ -119,8 +125,10 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 		cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
 		if store != nil {
+			store.LockDevice(cfg.ID)
 			err := store.PollStatus(cctx, *cfg, src+":status")
-			rt := store.ByID[cfg.ID]
+			store.UnlockDevice(cfg.ID)
+			rt := store.Runtime(cfg.ID)
 			if err != nil {
 				res.Error = err.Error()
 				if rt.LastOn != nil {
@@ -141,7 +149,7 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 			if rt.LastTelemetry != nil {
 				res.Extra = rt.LastTelemetry
 			}
-			_ = state.Save(paths.DevicesState(dataDir), store.ByID)
+			_ = state.Save(paths.DevicesState(dataDir), store.SnapshotRuntime())
 			return res
 		}
 		br, err := backend.Control(cctx, nil, *cfg)
@@ -162,7 +170,7 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 	}
 
 	// set logical (+ optional light brightness/mode)
-	cctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	cfgCopy := *cfg
 	if req.Brightness != nil {
@@ -184,7 +192,7 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 	if req.On != nil {
 		wantOn = *req.On
 	} else if store != nil {
-		rt := store.ByID[cfg.ID]
+		rt := store.Runtime(cfg.ID)
 		if rt.LastOn != nil {
 			wantOn = *rt.LastOn
 		} else {
@@ -198,8 +206,10 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 	}
 
 	if store != nil {
+		store.LockDevice(cfg.ID)
 		err := store.SetLogical(cctx, cfgCopy, wantOn, src, req.Force || req.Brightness != nil || req.Mode != nil)
-		rt := store.ByID[cfg.ID]
+		store.UnlockDevice(cfg.ID)
+		rt := store.Runtime(cfg.ID)
 		if rt.LastOn != nil {
 			res.On = rt.LastOn
 		}
@@ -214,7 +224,7 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 		if err != nil {
 			res.Error = err.Error()
 			res.OK = false
-			_ = state.Save(paths.DevicesState(dataDir), store.ByID)
+			_ = state.Save(paths.DevicesState(dataDir), store.SnapshotRuntime())
 			return res
 		}
 		res.OK = true
@@ -223,7 +233,7 @@ func executeDeviceCmd(ctx context.Context, dataDir string, store *device.Store, 
 			on := wantOn
 			res.On = &on
 		}
-		_ = state.Save(paths.DevicesState(dataDir), store.ByID)
+		_ = state.Save(paths.DevicesState(dataDir), store.SnapshotRuntime())
 		return res
 	}
 	// no store — direct backend
