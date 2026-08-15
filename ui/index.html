@@ -4023,7 +4023,8 @@
       color: inherit;
       opacity: 0.65;
     }
-    .wx-widget #wx-city {
+    .wx-widget #wx-city,
+    .wx-widget [id^="wx-city"] {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -4045,7 +4046,8 @@
       gap: 2px;
       margin-top: 0;
     }
-    .wx-widget .wx-temp-row #t-outdoor {
+    .wx-widget .wx-temp-row #t-outdoor,
+    .wx-widget .wx-temp-row [id^="t-outdoor"] {
       font-size: 2.05rem;
       font-weight: 300;
       line-height: 1;
@@ -4130,7 +4132,9 @@
       flex-shrink: 0;
     }
     .wx-widget.wx-off .wx-temp-row #t-outdoor,
-    .wx-widget.wx-error .wx-temp-row #t-outdoor {
+    .wx-widget.wx-error .wx-temp-row #t-outdoor,
+    .wx-widget.wx-off .wx-temp-row [id^="t-outdoor"],
+    .wx-widget.wx-error .wx-temp-row [id^="t-outdoor"] {
       color: var(--muted);
       font-size: 1.6rem;
     }
@@ -5920,7 +5924,6 @@
       <button type="button" class="active" data-tab="dash" data-i18n="tab.dash">Overview</button>
       <button type="button" data-tab="miner" data-i18n="tab.miner">Miner</button>
       <button type="button" data-tab="miners" data-i18n="tab.miners">Miners</button>
-      <button type="button" data-tab="map" data-i18n="tab.map">Zone map</button>
       <button type="button" data-tab="circuits" data-i18n="tab.circuits">Circuits</button>
       <button type="button" data-tab="periph" data-i18n="tab.periph">Peripherals</button>
       <button type="button" data-tab="settings" data-i18n="tab.settings">Settings</button>
@@ -7336,16 +7339,205 @@
       </div><!-- /subview-energy -->
     </section>
 
-    <!-- ========== MAP ========== -->
-    <section class="view" id="view-map">
-      <nav class="subtabs" role="tablist" aria-label="Zone map">
-        <button type="button" class="active" data-subtab="heat" data-i18n="sub.map_heat">Heat map</button>
+
+    <!-- ========== CIRCUITS (list · heat map · profiles · schedule) ========== -->
+    <section class="view" id="view-circuits">
+      <nav class="subtabs" role="tablist" aria-label="Circuits">
+        <button type="button" class="active" data-subtab="main" data-i18n="sub.circuits_list">Circuits</button>
+        <button type="button" data-subtab="heat" data-i18n="sub.map_heat">Heat map</button>
         <button type="button" data-subtab="profiles" data-i18n="sub.map_profiles">Mode profiles</button>
         <button type="button" data-subtab="schedule" data-i18n="sub.map_schedule">Schedule</button>
       </nav>
 
-      <!-- Heat map -->
-      <div class="subview active" id="subview-map-heat">
+      <div class="subview active" id="subview-circuits-main">
+      <div class="stack">
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.circuits">Circuits</h2>
+              <div class="sub" data-i18n="sub.circuits">heat utilization · drycooler · miners</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-circuit-add" data-i18n="circuit.add">Add circuit</button>
+          </div>
+          <div class="card-b stack" style="gap:10px">
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.hint">
+              A circuit is a heat sink (house, pool…). Temperature charts bind to a circuit; hashrate/power charts bind to a miner. Optional drycooler flag and device.
+            </p>
+            <div id="circuits-list" class="stack" style="gap:8px"></div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="circuits-status">—</p>
+          </div>
+        </div>
+
+        <div class="card" id="circuit-editor-card" hidden>
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="circuit.editor_title">Edit circuit</h2>
+              <div class="sub" id="circuit-editor-sub">—</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn danger" type="button" id="btn-circuit-delete" data-i18n="btn.delete">Delete</button>
+              <button class="btn primary" type="button" id="btn-circuit-save" data-i18n="btn.save">Save</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <input type="hidden" id="circuit-edit-id" value="" />
+            <div class="row" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:12px">
+              <label class="field" style="margin:0"><span data-i18n="circuit.field_name">Name</span>
+                <input type="text" id="circuit-edit-name" maxlength="64" autocomplete="off" />
+              </label>
+              <label class="field" style="margin:0"><span data-i18n="circuit.field_type">Type</span>
+                <select id="circuit-edit-type">
+                  <option value="house" data-i18n="circuit.type.house">House</option>
+                  <option value="pool" data-i18n="circuit.type.pool">Pool</option>
+                  <option value="dhw" data-i18n="circuit.type.dhw">DHW</option>
+                  <option value="custom" data-i18n="circuit.type.custom">Custom</option>
+                </select>
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="circuit-edit-drycooler" />
+              <span>
+                <span data-i18n="circuit.field_drycooler">Drycooler</span>
+                <span class="desc" data-i18n="circuit.field_drycooler_desc">Heat rejection to air · optional device below</span>
+              </span>
+            </label>
+            <label class="field" id="circuit-drycooler-device-wrap"><span data-i18n="circuit.field_drycooler_device">Drycooler device id</span>
+              <input type="text" id="circuit-edit-drycooler-device" placeholder="device id (optional)" autocomplete="off" />
+            </label>
+            <div class="row" style="grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:10px">
+              <label class="field" style="margin:0"><span data-i18n="circuit.field_city">City (weather default)</span>
+                <input type="text" id="circuit-edit-city" autocomplete="off" placeholder="Москва" />
+              </label>
+              <label class="field" style="margin:0"><span>Lat</span>
+                <input type="number" id="circuit-edit-lat" step="0.0001" placeholder="55.75" />
+              </label>
+              <label class="field" style="margin:0"><span>Lon</span>
+                <input type="number" id="circuit-edit-lon" step="0.0001" placeholder="37.62" />
+              </label>
+              <label class="field" style="margin:0"><span>TZ</span>
+                <input type="text" id="circuit-edit-tz" placeholder="Europe/Moscow" autocomplete="off" />
+              </label>
+            </div>
+
+            <div id="circuit-pool-geo" class="stack" style="gap:12px" hidden>
+              <div style="font-weight:550;font-size:0.85rem" data-i18n="h2.pool_geo">Pool · geometry</div>
+              <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
+                <select id="pool-shape">
+                  <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
+                  <option value="circle" data-i18n="pool.shape.circle">Round</option>
+                  <option value="oval" data-i18n="pool.shape.oval">Oval</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="tip" data-tip-key="pool_water_sensor" data-i18n="pool.water_sensor">Pool water sensor</span>
+                <select id="pool-water-sensor">
+                  <optgroup label="Miner" data-i18n-label="pool.ws.group_miner">
+                    <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
+                    <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
+                    <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
+                    <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
+                    <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
+                  </optgroup>
+                  <optgroup id="pool-ws-sensors-group" label="Sensors" data-i18n-label="pool.ws.group_sensors" hidden></optgroup>
+                </select>
+              </label>
+              <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+                <label class="field" id="pool-length-field">
+                  <span id="pool-length-label" data-i18n="pool.length_m">Length, m</span>
+                  <input type="number" id="pool-length" value="8" min="0.5" max="200" step="0.1" />
+                </label>
+                <label class="field" id="pool-width-field">
+                  <span id="pool-width-label" data-i18n="pool.width_m">Width, m</span>
+                  <input type="number" id="pool-width" value="4" min="0.5" max="200" step="0.1" />
+                </label>
+                <label class="field" id="pool-depth-field">
+                  <span data-i18n="pool.depth_m">Depth, m</span>
+                  <input type="number" id="pool-depth" value="1.5" min="0.3" max="20" step="0.05" />
+                </label>
+                <label class="field" id="pool-flow-field">
+                  <span data-i18n="pool.flow">Flow Q, L/h</span>
+                  <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
+                </label>
+              </div>
+              <div class="grid-3">
+                <div class="metric">
+                  <label data-i18n="pool.metric.surface">Surface S</label>
+                  <div class="val" style="font-size:1.25rem"><span id="pool-surface">—</span> <small>m²</small></div>
+                </div>
+                <div class="metric highlight-accent">
+                  <label data-i18n="pool.metric.volume">Volume V</label>
+                  <div class="val" style="font-size:1.25rem"><span id="pool-volume">—</span> <small>m³</small></div>
+                </div>
+                <div class="metric">
+                  <label data-i18n="pool.metric.cycle">Full cycle</label>
+                  <div class="val" style="font-size:1.15rem"><span id="pool-turnover">—</span> <small>h</small></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="stack" style="gap:8px">
+              <div style="font-weight:550;font-size:0.85rem" data-i18n="circuit.miners_title">Miners on this circuit</div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.miners_hint">
+                ASICs that heat this circuit. Stored on the circuit (miner_ids).
+              </p>
+              <div id="circuit-miners-bind-list" class="stack" style="gap:6px">
+                <div style="color:var(--muted);font-size:0.85rem">—</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-allow-overflow">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.weather">Weather · city</h2>
+              <div class="sub" id="wx-card-sub">—</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-wx-refresh"
+                title="Refresh weather"
+                aria-label="Refresh weather"
+                data-i18n-title="btn.refresh_weather"
+                data-i18n-aria="btn.refresh_weather"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
+              <button class="btn primary" type="button" id="btn-wx-interval-save" data-i18n="btn.save">Save</button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px;overflow:visible">
+            <label class="check">
+              <input type="checkbox" id="wx-enabled" checked />
+              <span data-i18n="wx.show">Show weather
+                <span class="desc" data-i18n="wx.show_desc">Outdoor card · saved with Save</span>
+              </span>
+            </label>
+            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
+              <div class="metric" style="margin:0">
+                <label data-i18n="wx.current_city">Current city</label>
+                <div class="val" style="font-size:1.05rem" id="wx-cfg-city">—</div>
+                <div class="hint" id="wx-cfg-meta">—</div>
+              </div>
+              <label class="field" style="margin:0;align-self:start"><span data-i18n="wx.interval">Refresh interval, min</span>
+                <input type="number" id="wx-interval-min" value="10" min="1" max="1440" step="1" />
+              </label>
+            </div>
+            <div class="ac-wrap">
+              <label class="field" style="margin:0"><span data-i18n="field.city_search">City search</span>
+                <input type="text" id="wx-search" data-i18n-placeholder="wx.city_ph" placeholder="e.g. Moscow / Москва" autocomplete="off" spellcheck="false" />
+              </label>
+              <div class="weather-results" id="wx-results" hidden></div>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted)" id="wx-status">—</p>
+          </div>
+        </div>
+      </div>
+      </div><!-- /subview-circuits-main -->
+
+      <div class="subview" id="subview-circuits-heat">
       <div class="stack">
         <div class="card">
           <div class="card-h">
@@ -7808,10 +8000,9 @@
           </div>
         </div>
       </div>
-      </div><!-- /subview-map-heat -->
+      </div><!-- /subview-circuits-heat -->
 
-      <!-- Mode profiles -->
-      <div class="subview" id="subview-map-profiles">
+      <div class="subview" id="subview-circuits-profiles">
         <div class="stack">
           <div class="card">
             <div class="card-h">
@@ -7894,10 +8085,9 @@
             </div>
           </div>
         </div>
-      </div><!-- /subview-map-profiles -->
+      </div><!-- /subview-circuits-profiles -->
 
-      <!-- Schedule -->
-      <div class="subview" id="subview-map-schedule">
+      <div class="subview" id="subview-circuits-schedule">
         <div class="stack">
           <div class="card card-allow-overflow">
             <div class="card-h">
@@ -7978,184 +8168,8 @@
             </div>
           </div>
         </div>
-      </div><!-- /subview-map-schedule -->
+      </div><!-- /subview-circuits-schedule -->
     </section>
-
-    <!-- ========== CIRCUITS (heat utilization) ========== -->
-    <section class="view" id="view-circuits">
-      <div class="stack">
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.circuits">Circuits</h2>
-              <div class="sub" data-i18n="sub.circuits">heat utilization · drycooler · miners</div>
-            </div>
-            <button class="btn primary" type="button" id="btn-circuit-add" data-i18n="circuit.add">Add circuit</button>
-          </div>
-          <div class="card-b stack" style="gap:10px">
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.hint">
-              A circuit is a heat sink (house, pool…). Temperature charts bind to a circuit; hashrate/power charts bind to a miner. Optional drycooler flag and device.
-            </p>
-            <div id="circuits-list" class="stack" style="gap:8px"></div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="circuits-status">—</p>
-          </div>
-        </div>
-
-        <div class="card" id="circuit-editor-card" hidden>
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="circuit.editor_title">Edit circuit</h2>
-              <div class="sub" id="circuit-editor-sub">—</div>
-            </div>
-            <div class="btn-row" style="gap:8px">
-              <button class="btn danger" type="button" id="btn-circuit-delete" data-i18n="btn.delete">Delete</button>
-              <button class="btn primary" type="button" id="btn-circuit-save" data-i18n="btn.save">Save</button>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <input type="hidden" id="circuit-edit-id" value="" />
-            <div class="row" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:12px">
-              <label class="field" style="margin:0"><span data-i18n="circuit.field_name">Name</span>
-                <input type="text" id="circuit-edit-name" maxlength="64" autocomplete="off" />
-              </label>
-              <label class="field" style="margin:0"><span data-i18n="circuit.field_type">Type</span>
-                <select id="circuit-edit-type">
-                  <option value="house" data-i18n="circuit.type.house">House</option>
-                  <option value="pool" data-i18n="circuit.type.pool">Pool</option>
-                  <option value="dhw" data-i18n="circuit.type.dhw">DHW</option>
-                  <option value="custom" data-i18n="circuit.type.custom">Custom</option>
-                </select>
-              </label>
-            </div>
-            <label class="check">
-              <input type="checkbox" id="circuit-edit-drycooler" />
-              <span>
-                <span data-i18n="circuit.field_drycooler">Drycooler</span>
-                <span class="desc" data-i18n="circuit.field_drycooler_desc">Heat rejection to air · optional device below</span>
-              </span>
-            </label>
-            <label class="field" id="circuit-drycooler-device-wrap"><span data-i18n="circuit.field_drycooler_device">Drycooler device id</span>
-              <input type="text" id="circuit-edit-drycooler-device" placeholder="device id (optional)" autocomplete="off" />
-            </label>
-
-            <div id="circuit-pool-geo" class="stack" style="gap:12px" hidden>
-              <div style="font-weight:550;font-size:0.85rem" data-i18n="h2.pool_geo">Pool · geometry</div>
-              <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
-                <select id="pool-shape">
-                  <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
-                  <option value="circle" data-i18n="pool.shape.circle">Round</option>
-                  <option value="oval" data-i18n="pool.shape.oval">Oval</option>
-                </select>
-              </label>
-              <label class="field">
-                <span class="tip" data-tip-key="pool_water_sensor" data-i18n="pool.water_sensor">Pool water sensor</span>
-                <select id="pool-water-sensor">
-                  <optgroup label="Miner" data-i18n-label="pool.ws.group_miner">
-                    <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
-                    <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
-                    <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
-                    <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
-                    <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
-                  </optgroup>
-                  <optgroup id="pool-ws-sensors-group" label="Sensors" data-i18n-label="pool.ws.group_sensors" hidden></optgroup>
-                </select>
-              </label>
-              <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
-                <label class="field" id="pool-length-field">
-                  <span id="pool-length-label" data-i18n="pool.length_m">Length, m</span>
-                  <input type="number" id="pool-length" value="8" min="0.5" max="200" step="0.1" />
-                </label>
-                <label class="field" id="pool-width-field">
-                  <span id="pool-width-label" data-i18n="pool.width_m">Width, m</span>
-                  <input type="number" id="pool-width" value="4" min="0.5" max="200" step="0.1" />
-                </label>
-                <label class="field" id="pool-depth-field">
-                  <span data-i18n="pool.depth_m">Depth, m</span>
-                  <input type="number" id="pool-depth" value="1.5" min="0.3" max="20" step="0.05" />
-                </label>
-                <label class="field" id="pool-flow-field">
-                  <span data-i18n="pool.flow">Flow Q, L/h</span>
-                  <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
-                </label>
-              </div>
-              <div class="grid-3">
-                <div class="metric">
-                  <label data-i18n="pool.metric.surface">Surface S</label>
-                  <div class="val" style="font-size:1.25rem"><span id="pool-surface">—</span> <small>m²</small></div>
-                </div>
-                <div class="metric highlight-accent">
-                  <label data-i18n="pool.metric.volume">Volume V</label>
-                  <div class="val" style="font-size:1.25rem"><span id="pool-volume">—</span> <small>m³</small></div>
-                </div>
-                <div class="metric">
-                  <label data-i18n="pool.metric.cycle">Full cycle</label>
-                  <div class="val" style="font-size:1.15rem"><span id="pool-turnover">—</span> <small>h</small></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="stack" style="gap:8px">
-              <div style="font-weight:550;font-size:0.85rem" data-i18n="circuit.miners_title">Miners on this circuit</div>
-              <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.miners_hint">
-                ASICs that heat this circuit. Stored on the circuit (miner_ids).
-              </p>
-              <div id="circuit-miners-bind-list" class="stack" style="gap:6px">
-                <div style="color:var(--muted);font-size:0.85rem">—</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card card-allow-overflow">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.weather">Weather · city</h2>
-              <div class="sub" id="wx-card-sub">—</div>
-            </div>
-            <div class="btn-row" style="gap:8px">
-              <button
-                class="btn energy-chart-refresh"
-                type="button"
-                id="btn-wx-refresh"
-                title="Refresh weather"
-                aria-label="Refresh weather"
-                data-i18n-title="btn.refresh_weather"
-                data-i18n-aria="btn.refresh_weather"
-              >
-                <span class="ico-refresh" aria-hidden="true">↻</span>
-              </button>
-              <button class="btn primary" type="button" id="btn-wx-interval-save" data-i18n="btn.save">Save</button>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:12px;overflow:visible">
-            <label class="check">
-              <input type="checkbox" id="wx-enabled" checked />
-              <span data-i18n="wx.show">Show weather
-                <span class="desc" data-i18n="wx.show_desc">Outdoor card · saved with Save</span>
-              </span>
-            </label>
-            <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;align-items:start">
-              <div class="metric" style="margin:0">
-                <label data-i18n="wx.current_city">Current city</label>
-                <div class="val" style="font-size:1.05rem" id="wx-cfg-city">—</div>
-                <div class="hint" id="wx-cfg-meta">—</div>
-              </div>
-              <label class="field" style="margin:0;align-self:start"><span data-i18n="wx.interval">Refresh interval, min</span>
-                <input type="number" id="wx-interval-min" value="10" min="1" max="1440" step="1" />
-              </label>
-            </div>
-            <div class="ac-wrap">
-              <label class="field" style="margin:0"><span data-i18n="field.city_search">City search</span>
-                <input type="text" id="wx-search" data-i18n-placeholder="wx.city_ph" placeholder="e.g. Moscow / Москва" autocomplete="off" spellcheck="false" />
-              </label>
-              <div class="weather-results" id="wx-results" hidden></div>
-            </div>
-            <p style="font-size:0.78rem;color:var(--muted)" id="wx-status">—</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ========== MINERS (managed / unmanaged) ========== -->
     <section class="view" id="view-miners">
       <nav class="subtabs" role="tablist" aria-label="Miners">
@@ -10357,8 +10371,10 @@
         "fleet.cols_title": "Show columns",
         "fleet.direct_open": "Open ASIC web UI (direct LAN)",
         "tab.circuits": "Circuits",
+        "tab.map": "Circuits",
         "h2.circuits": "Circuits",
         "sub.circuits": "heat utilization · drycooler · miners",
+        "sub.circuits_list": "Circuits",
         "circuit.add": "Add circuit",
         "circuit.hint": "A circuit is a heat sink (house, pool…). Temperature charts bind to a circuit; hashrate/power charts bind to a miner. Optional drycooler flag and device.",
         "circuit.empty": "No circuits yet",
@@ -10382,6 +10398,11 @@
         "dash.chart_bind_circuit": "Circuit",
         "dash.chart_bind_miner": "Miner (hashrate · power)",
         "dash.chart_bind_none": "— not set —",
+        "dash.add_weather": "Weather (city)",
+        "dash.weather_settings": "Weather city",
+        "dash.weather_settings_sub": "City for this outdoor card. Default is the first circuit city (or site weather).",
+        "dash.weather_max": "Max weather widgets reached",
+        "circuit.field_city": "City (weather default)",
         "fleet.hint": "Live metrics are shown for the active polled miner. Standby rows show inventory until multi-poll is enabled.",
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
@@ -11378,8 +11399,10 @@
         "fleet.cols_title": "Показать колонки",
         "fleet.direct_open": "Открыть веб-UI ASIC (прямой LAN)",
         "tab.circuits": "Контуры",
+        "tab.map": "Контуры",
         "h2.circuits": "Контуры",
         "sub.circuits": "утилизация тепла · drycooler · майнеры",
+        "sub.circuits_list": "Контуры",
         "circuit.add": "Добавить контур",
         "circuit.hint": "Контур — объект утилизации тепла (дом, бассейн…). График температур привязан к контуру; хешрейт/мощность — к майнеру. Drycooler: флаг + опционально device.",
         "circuit.empty": "Нет контуров",
@@ -11403,6 +11426,11 @@
         "dash.chart_bind_circuit": "Контур",
         "dash.chart_bind_miner": "Майнер (хешрейт · мощность)",
         "dash.chart_bind_none": "— не выбран —",
+        "dash.add_weather": "Погода (город)",
+        "dash.weather_settings": "Город погоды",
+        "dash.weather_settings_sub": "Город для этой карточки. По умолчанию — город первого контура (или погода объекта).",
+        "dash.weather_max": "Достигнут лимит виджетов погоды",
+        "circuit.field_city": "Город (погода по умолчанию)",
         "fleet.hint": "Live-метрики — у active-майнера (poller). Standby показывают inventory, пока нет multi-poll.",
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
@@ -13636,9 +13664,12 @@
       "pools",
       "energy",
       "minerinfo",
-      "map",
+      "map", // alias → circuits heat
       "circuits",
-      "pool", // alias → circuits (legacy #pool)
+      "heat",
+      "profiles",
+      "schedule",
+      "pool", // alias → circuits list
       "periph",
       "sensors",
       "devices",
@@ -13672,12 +13703,16 @@
       zone: "map",
       "zone-map": "map",
       "zone_map": "map",
+      heatmap: "map",
+      "heat-map": "map",
       weather: "circuits",
       bassein: "circuits",
       "pool-geo": "circuits",
       kontur: "circuits",
       circuit: "circuits",
       circuits: "circuits",
+      profiles: "profiles",
+      schedule: "schedule",
       fleet: "miners",
       asics: "miners",
       "miners-managed": "managed",
@@ -13766,20 +13801,33 @@
       return sub;
     }
 
-    function setMapSubtab(subId) {
-      const allowed = { heat: 1, profiles: 1, schedule: 1 };
-      // legacy pool subtab → open Circuits main tab
-      if (subId === "pool") {
-        if (typeof activateTab === "function") activateTab("circuits");
-        return "heat";
-      }
-      const sub = allowed[subId] ? subId : "heat";
-      document.querySelectorAll("#view-map nav.subtabs button").forEach((b) => {
+    function setCircuitsSubtab(subId) {
+      const allowed = { main: 1, heat: 1, profiles: 1, schedule: 1, list: 1 };
+      // legacy aliases
+      if (subId === "pool" || subId === "list") subId = "main";
+      const sub = allowed[subId] ? (subId === "list" ? "main" : subId) : "main";
+      document.querySelectorAll("#view-circuits nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
       });
-      document.querySelectorAll("#view-map .subview").forEach((v) => {
-        v.classList.toggle("active", v.id === "subview-map-" + sub);
+      document.querySelectorAll("#view-circuits .subview").forEach((v) => {
+        v.classList.toggle("active", v.id === "subview-circuits-" + sub);
       });
+      if (sub === "main") {
+        if (typeof loadCircuits === "function") void loadCircuits();
+        if (typeof loadWeatherConfig === "function") {
+          void loadWeatherConfig().then(() => {
+            if (typeof loadWeather === "function") void loadWeather(false);
+          });
+        }
+      }
+      if (sub === "heat") {
+        // zone map load is usually continuous; ensure UI paint
+        if (typeof loadZoneMap === "function") {
+          try {
+            void loadZoneMap();
+          } catch (_) { /* ignore */ }
+        }
+      }
       if (sub === "profiles" && typeof loadModeProfiles === "function") {
         void loadModeProfiles();
       }
@@ -13787,6 +13835,12 @@
         void loadSchedule();
       }
       return sub;
+    }
+
+    /** @deprecated use setCircuitsSubtab */
+    function setMapSubtab(subId) {
+      if (subId === "pool") return setCircuitsSubtab("main");
+      return setCircuitsSubtab(subId === "heat" || subId === "profiles" || subId === "schedule" ? subId : "main");
     }
 
     function setPeriphSubtab(subId) {
@@ -13970,7 +14024,8 @@
       let minerSub = "miner";
       let settingsSub = "main";
       let periphSub = "sensors";
-      let mapSub = "heat";
+      let circuitsSub = "main";
+      let mapSub = "heat"; // legacy name, unused
       if (tabId === "logs") {
         mainTab = "info";
         infoSub = "logs";
@@ -14010,12 +14065,28 @@
         mainTab = "periph";
         periphSub = "sensors";
         tabId = "sensors";
-      } else if (tabId === "pool" || tabId === "circuits") {
-        // legacy #pool → Circuits main tab
+      } else if (
+        tabId === "pool" ||
+        tabId === "circuits" ||
+        tabId === "map" ||
+        tabId === "heat" ||
+        tabId === "profiles" ||
+        tabId === "schedule" ||
+        tabId === "zonemap"
+      ) {
+        // Zone map / heat / profiles / schedule live under Circuits
         mainTab = "circuits";
-        tabId = "circuits";
-      } else if (tabId === "map") {
-        mapSub = "heat";
+        if (tabId === "heat" || tabId === "map" || tabId === "zonemap")
+          circuitsSub = "heat";
+        else if (tabId === "profiles") circuitsSub = "profiles";
+        else if (tabId === "schedule") circuitsSub = "schedule";
+        else circuitsSub = "main"; // pool, circuits
+        tabId =
+          circuitsSub === "main"
+            ? "circuits"
+            : circuitsSub === "heat"
+              ? "map"
+              : circuitsSub;
       } else if (tabId === "info") {
         infoSub = "info";
       } else if (tabId === "miner") {
@@ -14051,7 +14122,7 @@
       if (mainTab === "miner") setMinerSubtab(minerSub);
       if (mainTab === "settings") setSettingsSubtab(settingsSub);
       if (mainTab === "periph") setPeriphSubtab(periphSub);
-      if (mainTab === "map") setMapSubtab(mapSub);
+      if (mainTab === "circuits") setCircuitsSubtab(circuitsSub);
       if (mainTab === "miners") {
         const ms =
           tabId === "unmanaged" || tabId === "miners-unmanaged"
@@ -14116,13 +14187,7 @@
       if (mainTab === "periph" && periphSub === "devices") {
         if (typeof loadDevices === "function") loadDevices();
       }
-      if (mainTab === "circuits") {
-        if (typeof loadCircuits === "function") void loadCircuits();
-        if (typeof loadWeatherConfig === "function") {
-          void loadWeatherConfig().then(() => {
-            if (typeof loadWeather === "function") void loadWeather(false);
-          });
-        }
+      if (mainTab === "circuits" && circuitsSub === "main") {
         if (!(managedMinersCache || []).length) {
           void (async () => {
             try {
@@ -14290,13 +14355,17 @@
         activateTab(s === "devices" ? "devices" : "sensors");
       });
     });
-    document.querySelectorAll("#view-map nav.subtabs button").forEach((btn) => {
+    document.querySelectorAll("#view-circuits nav.subtabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         const s = btn.dataset.subtab;
-        if (!document.getElementById("view-map")?.classList.contains("active")) {
-          activateTab("map");
+        if (!document.getElementById("view-circuits")?.classList.contains("active")) {
+          activateTab("circuits");
         }
-        setMapSubtab(s);
+        // deep-link hashes for heat/profiles/schedule
+        if (s === "heat") activateTab("map", { skipUrl: false });
+        else if (s === "profiles") activateTab("profiles", { skipUrl: false });
+        else if (s === "schedule") activateTab("schedule", { skipUrl: false });
+        else activateTab("circuits", { skipUrl: false });
       });
     });
     document.querySelectorAll("#view-miners nav.subtabs button").forEach((btn) => {
@@ -17231,6 +17300,12 @@
       "boards",
       "heat_balance",
     ];
+    /** Max outdoor weather cards on dashboard (different cities). */
+    const DASH_WEATHER_MAX = 6;
+    function isWeatherWidgetId(id) {
+      const s = String(id || "");
+      return s === "weather" || /^weather_\d+$/.test(s);
+    }
     /** Charts + errors band — reorder only within this zone */
     const DASH_CHART_ORDER = [
       "errors",
@@ -17321,6 +17396,7 @@
             display: getChartDisplayOpts("energy"),
           },
         },
+        weather_widgets: dashboardWeatherWidgets || {},
         chart_sync: !!dashboardChartSync,
       };
     }
@@ -17365,9 +17441,13 @@
         DASH_DEFAULT_ORDER.forEach((id) => {
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
-        order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        order = order.filter(
+          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+        );
         order = normalizeDashZoneOrder(order);
-        hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        hidden = hidden.filter(
+          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+        );
         half = half.filter(
           (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
         );
@@ -17452,6 +17532,26 @@
           );
         } catch (_) { /* ignore */ }
       }
+      if (cfg.weather_widgets && typeof cfg.weather_widgets === "object") {
+        dashboardWeatherWidgets = {};
+        Object.keys(cfg.weather_widgets).forEach((wid) => {
+          const p = cfg.weather_widgets[wid];
+          if (!p || typeof p !== "object") return;
+          if (p.latitude == null || p.longitude == null) return;
+          dashboardWeatherWidgets[wid] = {
+            city: String(p.city || ""),
+            country: String(p.country || ""),
+            admin1: String(p.admin1 || ""),
+            latitude: Number(p.latitude),
+            longitude: Number(p.longitude),
+            timezone: String(p.timezone || "auto"),
+          };
+        });
+      }
+      // ensure DOM for extra weather cards from layout/config
+      try {
+        ensureAllWeatherWidgetDoms();
+      } catch (_) { /* ignore */ }
     }
 
     function collectLocalDashboardMigrateBlob() {
@@ -17697,6 +17797,10 @@
       const dry = document.getElementById("circuit-edit-drycooler");
       if (dry) dry.checked = !!c.drycooler;
       set("circuit-edit-drycooler-device", c.drycooler_device_id || "");
+      set("circuit-edit-city", c.city || "");
+      set("circuit-edit-lat", c.latitude != null ? c.latitude : "");
+      set("circuit-edit-lon", c.longitude != null ? c.longitude : "");
+      set("circuit-edit-tz", c.timezone || "");
       const sub = document.getElementById("circuit-editor-sub");
       if (sub) sub.textContent = String(c.id);
       const geo = document.getElementById("circuit-pool-geo");
@@ -17792,6 +17896,11 @@
           pool_geometry = null;
         }
       }
+      const city = (document.getElementById("circuit-edit-city")?.value || "").trim();
+      const lat = parseFloat(document.getElementById("circuit-edit-lat")?.value);
+      const lon = parseFloat(document.getElementById("circuit-edit-lon")?.value);
+      const timezone = (document.getElementById("circuit-edit-tz")?.value || "").trim();
+      const hasPlace = Number.isFinite(lat) && Number.isFinite(lon);
       return {
         id: id || undefined,
         name,
@@ -17801,6 +17910,12 @@
         drycooler_device_id: dryDev || null,
         miner_ids,
         pool_geometry,
+        city: hasPlace ? city || null : null,
+        latitude: hasPlace ? lat : null,
+        longitude: hasPlace ? lon : null,
+        timezone: hasPlace ? timezone || "auto" : null,
+        country: null,
+        admin1: null,
       };
     }
 
@@ -17971,7 +18086,7 @@
     }
 
     function isDashWidgetId(id) {
-      return !!(id && DASH_WIDGET_ORDER.indexOf(id) >= 0);
+      return !!(id && (DASH_WIDGET_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)));
     }
 
     function isDashChartZoneId(id) {
@@ -17994,7 +18109,10 @@
       const widgets = [];
       const charts = [];
       (orderIn || []).forEach((id) => {
-        if (!id || DASH_DEFAULT_ORDER.indexOf(id) < 0) return;
+        if (!id) return;
+        const known =
+          DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id);
+        if (!known) return;
         if (isDashChartZoneId(id)) {
           if (!seenC[id]) {
             seenC[id] = 1;
@@ -18018,10 +18136,22 @@
     }
 
     function dashWidgetTitle(id) {
+      if (isWeatherWidgetId(id)) {
+        const place = (dashboardWeatherWidgets && dashboardWeatherWidgets[id]) || null;
+        const city = place && place.city ? String(place.city) : "";
+        const base =
+          typeof t === "function"
+            ? t("dash.widget.weather", "Weather")
+            : "Weather";
+        return city ? base + " · " + city : base;
+      }
       return typeof t === "function"
         ? t("dash.widget." + id, id)
         : id;
     }
+
+    /** @type {Record<string, {city:string,country?:string,admin1?:string,latitude:number,longitude:number,timezone?:string}>} */
+    let dashboardWeatherWidgets = {};
 
     /** Migrate old single «history» widget → chart_temps + chart_power */
     function migrateDashHistoryWidget(order, hidden) {
@@ -18067,9 +18197,13 @@
         DASH_DEFAULT_ORDER.forEach((id) => {
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
-        order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        order = order.filter(
+          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+        );
         order = normalizeDashZoneOrder(order);
-        hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        hidden = hidden.filter(
+          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+        );
         half = half.filter(
           (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
         );
@@ -18229,21 +18363,26 @@
       if (!item) return;
       const id = item.getAttribute("data-dash-id") || "";
       const chartKind = dashChartSettingsKind(id);
+      const isWx = isWeatherWidgetId(id);
       let tools = item.querySelector(".dash-item-tools");
       if (!tools) {
         tools = document.createElement("div");
         tools.className = "dash-item-tools";
         let html =
           '<span class="dash-grip" title="Drag" aria-hidden="true"></span>';
-        if (chartKind) {
+        if (chartKind || isWx) {
           html +=
             '<button type="button" class="dash-settings-btn' +
             (DASH_RESIZABLE[id] ? " is-with-width" : "") +
             '" title="' +
-            (typeof t === "function"
-              ? t("dash.chart_series", "Chart series")
-              : "Chart series") +
-            '" aria-label="Chart series">' +
+            (isWx
+              ? typeof t === "function"
+                ? t("dash.weather_settings", "Weather city")
+                : "Weather city"
+              : typeof t === "function"
+                ? t("dash.chart_series", "Chart series")
+                : "Chart series") +
+            '" aria-label="Settings">' +
             dashGearIconHtml() +
             "</button>";
         }
@@ -18271,6 +18410,7 @@
         });
         const sbtn = tools.querySelector(".dash-settings-btn");
         if (sbtn && chartKind) bindDashChartSettingsBtn(sbtn, chartKind);
+        if (sbtn && isWx) bindWeatherWidgetSettingsBtn(sbtn, id);
         item.appendChild(tools);
       } else {
         if (DASH_RESIZABLE[id] && !tools.querySelector(".dash-width-btn")) {
@@ -18283,7 +18423,7 @@
           if (hideBtn) tools.insertBefore(wbtn, hideBtn);
           else tools.appendChild(wbtn);
         }
-        if (chartKind && !tools.querySelector(".dash-settings-btn")) {
+        if ((chartKind || isWx) && !tools.querySelector(".dash-settings-btn")) {
           const wbtn = tools.querySelector(".dash-width-btn");
           const hideBtn = tools.querySelector(".dash-hide-btn");
           const sbtn = document.createElement("button");
@@ -18291,12 +18431,16 @@
           sbtn.className =
             "dash-settings-btn" + (wbtn ? " is-with-width" : "");
           sbtn.innerHTML = dashGearIconHtml();
-          sbtn.title =
-            typeof t === "function"
+          sbtn.title = isWx
+            ? typeof t === "function"
+              ? t("dash.weather_settings", "Weather city")
+              : "Weather city"
+            : typeof t === "function"
               ? t("dash.chart_series", "Chart series")
               : "Chart series";
-          sbtn.setAttribute("aria-label", "Chart series");
-          bindDashChartSettingsBtn(sbtn, chartKind);
+          sbtn.setAttribute("aria-label", "Settings");
+          if (chartKind) bindDashChartSettingsBtn(sbtn, chartKind);
+          if (isWx) bindWeatherWidgetSettingsBtn(sbtn, id);
           const before = wbtn || hideBtn;
           if (before) tools.insertBefore(sbtn, before);
           else tools.appendChild(sbtn);
@@ -18439,6 +18583,9 @@
     function applyDashLayout() {
       const board = document.getElementById("dash-board");
       if (!board) return;
+      try {
+        ensureAllWeatherWidgetDoms();
+      } catch (_) { /* ignore */ }
       flattenDashChartPacks(board);
       const items = {};
       board.querySelectorAll(".dash-item[data-dash-id]").forEach((el) => {
@@ -18506,7 +18653,21 @@
 
     function hideDashWidget(id) {
       id = String(id || "");
-      if (!id || DASH_DEFAULT_ORDER.indexOf(id) < 0) return;
+      if (!id) return;
+      if (DASH_DEFAULT_ORDER.indexOf(id) < 0 && !isWeatherWidgetId(id)) return;
+      // extra weather cards: remove entirely (not just hide)
+      if (isWeatherWidgetId(id) && id !== "weather") {
+        dashLayout.order = (dashLayout.order || []).filter((x) => x !== id);
+        dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
+        if (dashboardWeatherWidgets) delete dashboardWeatherWidgets[id];
+        const board = document.getElementById("dash-board");
+        const el = board && board.querySelector('.dash-item[data-dash-id="' + id + '"]');
+        if (el) el.remove();
+        saveDashLayout();
+        applyDashLayout();
+        if (dashEditMode) renderDashAddMenu();
+        return;
+      }
       if (dashLayout.hidden.indexOf(id) < 0) dashLayout.hidden.push(id);
       // keep id in order (position preserved when re-shown)
       if (dashLayout.order.indexOf(id) < 0) dashLayout.order.push(id);
@@ -18517,7 +18678,9 @@
 
     function showDashWidget(id) {
       id = String(id || "");
-      if (!id || DASH_DEFAULT_ORDER.indexOf(id) < 0) return;
+      if (!id) return;
+      if (DASH_DEFAULT_ORDER.indexOf(id) < 0 && !isWeatherWidgetId(id)) return;
+      if (isWeatherWidgetId(id)) ensureWeatherWidgetDom(id);
       dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
       if (dashLayout.order.indexOf(id) < 0) dashLayout.order.push(id);
       saveDashLayout();
@@ -18578,12 +18741,16 @@
       // DOM order (including layout-hidden); normalize so zones stay separate
       const ids = Array.from(board.querySelectorAll(".dash-item[data-dash-id]"))
         .map((el) => el.getAttribute("data-dash-id"))
-        .filter((id) => id && DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        .filter(
+          (id) =>
+            id &&
+            (DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id))
+        );
       dashLayout.order = normalizeDashZoneOrder(ids);
       // never drop hidden / half flags here
       if (!Array.isArray(dashLayout.hidden)) dashLayout.hidden = [];
       dashLayout.hidden = dashLayout.hidden.filter(
-        (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0
+        (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
       );
       if (!Array.isArray(dashLayout.half)) dashLayout.half = [];
       dashLayout.half = dashLayout.half.filter(
@@ -18596,39 +18763,76 @@
       const addBtn = document.getElementById("btn-dash-add");
       if (!addBtn) return;
       const n = (dashLayout.hidden || []).length;
-      if (dashEditMode && n > 0) {
+      const canAddWx = countWeatherWidgets() < DASH_WEATHER_MAX;
+      if (dashEditMode && (n > 0 || canAddWx)) {
         addBtn.hidden = false;
         addBtn.title =
-          (typeof t === "function" ? t("dash.add_block", "Show hidden block") : "Add") +
-          " (" + n + ")";
+          typeof t === "function"
+            ? t("dash.add_block", "Show hidden block")
+            : "Add";
       } else {
         addBtn.hidden = true;
         hideDashAddMenu();
       }
     }
 
+    function nextWeatherWidgetId() {
+      const used = new Set(
+        (dashLayout.order || [])
+          .concat(Object.keys(dashboardWeatherWidgets || {}))
+          .filter(isWeatherWidgetId)
+      );
+      if (!used.has("weather")) return "weather";
+      for (let i = 2; i <= DASH_WEATHER_MAX; i++) {
+        const id = "weather_" + i;
+        if (!used.has(id)) return id;
+      }
+      return null;
+    }
+
+    function countWeatherWidgets() {
+      const ids = new Set();
+      (dashLayout.order || []).forEach((id) => {
+        if (isWeatherWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      Object.keys(dashboardWeatherWidgets || {}).forEach((id) => {
+        if (isWeatherWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      if (!ids.size) ids.add("weather");
+      return ids.size;
+    }
+
     function renderDashAddMenu() {
       const menu = document.getElementById("dash-add-menu");
       if (!menu) return;
       const hidden = dashLayout.hidden || [];
-      if (!hidden.length) {
+      const bits = [];
+      if (countWeatherWidgets() < DASH_WEATHER_MAX) {
+        bits.push(
+          '<button type="button" data-add-weather="1">+ ' +
+            (typeof t === "function"
+              ? t("dash.add_weather", "Weather (city)")
+              : "Weather (city)") +
+            "</button>"
+        );
+      }
+      hidden.forEach((id) => {
+        bits.push(
+          '<button type="button" data-show-id="' +
+            id +
+            '">+ ' +
+            dashWidgetTitle(id) +
+            "</button>"
+        );
+      });
+      if (!bits.length) {
         menu.innerHTML =
           '<div class="dash-add-empty">' +
           (typeof t === "function" ? t("dash.no_hidden", "No hidden blocks") : "No hidden blocks") +
           "</div>";
         return;
       }
-      menu.innerHTML = hidden
-        .map((id) => {
-          return (
-            '<button type="button" data-show-id="' +
-            id +
-            '">+ ' +
-            dashWidgetTitle(id) +
-            "</button>"
-          );
-        })
-        .join("");
+      menu.innerHTML = bits.join("");
       menu.querySelectorAll("button[data-show-id]").forEach((btn) => {
         const onPick = (e) => {
           e.preventDefault();
@@ -18639,7 +18843,16 @@
           if (!(dashLayout.hidden || []).length) hideDashAddMenu();
           else renderDashAddMenu();
         };
-        // mousedown so we don't lose the action to document click / drag
+        btn.addEventListener("mousedown", onPick);
+        btn.addEventListener("click", onPick);
+      });
+      menu.querySelectorAll("button[data-add-weather]").forEach((btn) => {
+        const onPick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void addWeatherWidget();
+          hideDashAddMenu();
+        };
         btn.addEventListener("mousedown", onPick);
         btn.addEventListener("click", onPick);
       });
@@ -30681,21 +30894,399 @@
       card.setAttribute("data-wx-theme", theme || "cloud");
     }
 
-    function renderWeatherDash(w) {
-      const card = document.getElementById("card-weather");
-      const cityEl = document.getElementById("wx-city");
-      const tEl = document.getElementById("t-outdoor");
-      const condEl = document.getElementById("wx-cond");
-      const feelsEl = document.getElementById("wx-feels");
-      const iconEl = document.getElementById("wx-icon");
-      const rhWrap = document.getElementById("wx-meta-rh");
-      const windWrap = document.getElementById("wx-meta-wind");
-      const pressWrap = document.getElementById("wx-meta-pressure");
-      const srcWrap = document.getElementById("wx-meta-src");
-      const rhEl = document.getElementById("wx-rh");
-      const windEl = document.getElementById("wx-wind");
-      const pressEl = document.getElementById("wx-pressure");
-      const srcEl = document.getElementById("wx-src-label");
+    function wxDomId(widgetId, baseId) {
+      if (!widgetId || widgetId === "weather") return baseId;
+      return baseId + "--" + widgetId;
+    }
+
+    function wxQ(widgetId, baseId) {
+      return document.getElementById(wxDomId(widgetId, baseId));
+    }
+
+    function defaultWeatherPlace() {
+      const circuits = (circuitsCache && circuitsCache.circuits) || [];
+      for (let i = 0; i < circuits.length; i++) {
+        const c = circuits[i];
+        if (
+          c &&
+          c.latitude != null &&
+          c.longitude != null &&
+          Number.isFinite(Number(c.latitude)) &&
+          Number.isFinite(Number(c.longitude))
+        ) {
+          return {
+            city: String(c.city || c.name || ""),
+            country: String(c.country || ""),
+            admin1: String(c.admin1 || ""),
+            latitude: Number(c.latitude),
+            longitude: Number(c.longitude),
+            timezone: String(c.timezone || "auto"),
+          };
+        }
+      }
+      if (
+        weatherCfg &&
+        weatherCfg.latitude != null &&
+        weatherCfg.longitude != null
+      ) {
+        return {
+          city: String(weatherCfg.city || ""),
+          country: String(weatherCfg.country || ""),
+          admin1: String(weatherCfg.admin1 || ""),
+          latitude: Number(weatherCfg.latitude),
+          longitude: Number(weatherCfg.longitude),
+          timezone: String(weatherCfg.timezone || "auto"),
+        };
+      }
+      return {
+        city: "Москва",
+        country: "RU",
+        admin1: "",
+        latitude: 55.7558,
+        longitude: 37.6173,
+        timezone: "Europe/Moscow",
+      };
+    }
+
+    function ensureWeatherWidgetDom(widgetId) {
+      const board = document.getElementById("dash-board");
+      if (!board) return null;
+      widgetId = String(widgetId || "weather");
+      let item = board.querySelector('.dash-item[data-dash-id="' + widgetId + '"]');
+      if (item) return item;
+      const proto = board.querySelector('.dash-item[data-dash-id="weather"]');
+      if (!proto) return null;
+      if (widgetId === "weather") return proto;
+      item = proto.cloneNode(true);
+      item.setAttribute("data-dash-id", widgetId);
+      // rewrite ids so multi-instance queries work
+      item.querySelectorAll("[id]").forEach((el) => {
+        const oid = el.getAttribute("id");
+        if (!oid) return;
+        // strip prior suffix if re-cloned from already-suffixed (shouldn't)
+        const base = oid.replace(/--weather(_\d+)?$/, "");
+        el.setAttribute("id", base + "--" + widgetId);
+      });
+      const card = item.querySelector(".temp-card, .wx-widget");
+      if (card) {
+        card.id = "card-weather--" + widgetId;
+      }
+      board.appendChild(item);
+      ensureDashItemTools(item);
+      return item;
+    }
+
+    function ensureAllWeatherWidgetDoms() {
+      const ids = new Set(["weather"]);
+      (dashLayout.order || []).forEach((id) => {
+        if (isWeatherWidgetId(id)) ids.add(id);
+      });
+      Object.keys(dashboardWeatherWidgets || {}).forEach((id) => {
+        if (isWeatherWidgetId(id)) ids.add(id);
+      });
+      ids.forEach((id) => ensureWeatherWidgetDom(id));
+    }
+
+    function bindWeatherWidgetSettingsBtn(sbtn, widgetId) {
+      if (!sbtn || sbtn._wxSettingsBound) return;
+      sbtn._wxSettingsBound = true;
+      sbtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openWeatherWidgetSettings(widgetId);
+      });
+      sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    }
+
+    async function addWeatherWidget() {
+      const id = nextWeatherWidgetId();
+      if (!id) {
+        if (typeof toastWarn === "function")
+          toastWarn(
+            typeof t === "function"
+              ? t("dash.weather_max", "Max weather widgets reached")
+              : "Max weather widgets"
+          );
+        return;
+      }
+      if (!dashboardWeatherWidgets) dashboardWeatherWidgets = {};
+      if (!dashboardWeatherWidgets[id]) {
+        dashboardWeatherWidgets[id] = defaultWeatherPlace();
+      }
+      ensureWeatherWidgetDom(id);
+      dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
+      if ((dashLayout.order || []).indexOf(id) < 0) {
+        // insert after last weather widget in widgets zone
+        const order = dashLayout.order || [];
+        let lastWx = -1;
+        order.forEach((x, i) => {
+          if (isWeatherWidgetId(x)) lastWx = i;
+        });
+        if (lastWx >= 0) order.splice(lastWx + 1, 0, id);
+        else {
+          const wi = order.indexOf("weather");
+          if (wi >= 0) order.splice(wi + 1, 0, id);
+          else order.unshift(id);
+        }
+        dashLayout.order = order;
+      }
+      saveDashLayout();
+      applyDashLayout();
+      await loadWeatherForWidget(id, true);
+      openWeatherWidgetSettings(id);
+    }
+
+    function openWeatherWidgetSettings(widgetId) {
+      widgetId = String(widgetId || "weather");
+      let backdrop = document.getElementById("wx-widget-settings-modal");
+      if (!backdrop) {
+        backdrop = document.createElement("div");
+        backdrop.id = "wx-widget-settings-modal";
+        backdrop.className = "chart-series-modal-backdrop";
+        backdrop.hidden = true;
+        backdrop.innerHTML =
+          '<div class="chart-series-modal" role="dialog" aria-modal="true">' +
+          '<h3 id="wx-widget-settings-title">' +
+          (typeof t === "function"
+            ? t("dash.weather_settings", "Weather city")
+            : "Weather city") +
+          "</h3>" +
+          '<p class="sub" data-i18n="dash.weather_settings_sub">City for this outdoor card. Default is the first circuit city (or site weather).</p>' +
+          '<div class="ac-wrap" style="margin-top:8px">' +
+          '<label class="field" style="margin:0"><span data-i18n="field.city_search">City search</span>' +
+          '<input type="text" id="wx-widget-search" autocomplete="off" spellcheck="false" placeholder="Moscow / Москва" />' +
+          "</label>" +
+          '<div class="weather-results" id="wx-widget-results" hidden></div>' +
+          "</div>" +
+          '<p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0" id="wx-widget-current">—</p>' +
+          '<div class="modal-actions">' +
+          '<button type="button" class="btn" id="btn-wx-widget-cancel" data-i18n="btn.cancel">Cancel</button>' +
+          "</div></div>";
+        document.body.appendChild(backdrop);
+        backdrop.addEventListener("click", (e) => {
+          if (e.target === backdrop) closeWeatherWidgetSettings();
+        });
+        backdrop
+          .querySelector("#btn-wx-widget-cancel")
+          ?.addEventListener("click", () => closeWeatherWidgetSettings());
+        const inp = backdrop.querySelector("#wx-widget-search");
+        let tmr = null;
+        inp?.addEventListener("input", () => {
+          if (tmr) clearTimeout(tmr);
+          tmr = setTimeout(() => void searchWeatherForWidgetModal(), 280);
+        });
+      }
+      backdrop._wxWidgetId = widgetId;
+      const place =
+        (dashboardWeatherWidgets && dashboardWeatherWidgets[widgetId]) ||
+        defaultWeatherPlace();
+      const cur = document.getElementById("wx-widget-current");
+      if (cur) {
+        cur.textContent =
+          (place.city || "—") +
+          (place.latitude != null
+            ? " · " +
+              Number(place.latitude).toFixed(3) +
+              ", " +
+              Number(place.longitude).toFixed(3)
+            : "");
+      }
+      const inp = document.getElementById("wx-widget-search");
+      if (inp) inp.value = place.city || "";
+      const box = document.getElementById("wx-widget-results");
+      if (box) {
+        box.hidden = true;
+        box.innerHTML = "";
+      }
+      const title = document.getElementById("wx-widget-settings-title");
+      if (title) {
+        title.textContent =
+          (typeof t === "function"
+            ? t("dash.weather_settings", "Weather city")
+            : "Weather city") +
+          (widgetId !== "weather" ? " · " + widgetId : "");
+      }
+      backdrop.hidden = false;
+    }
+
+    function closeWeatherWidgetSettings() {
+      const backdrop = document.getElementById("wx-widget-settings-modal");
+      if (backdrop) backdrop.hidden = true;
+    }
+
+    async function searchWeatherForWidgetModal() {
+      const backdrop = document.getElementById("wx-widget-settings-modal");
+      const widgetId = backdrop && backdrop._wxWidgetId;
+      const q = (document.getElementById("wx-widget-search")?.value || "").trim();
+      const box = document.getElementById("wx-widget-results");
+      if (!box || !widgetId) return;
+      if (q.length < 2) {
+        box.hidden = true;
+        box.innerHTML = "";
+        return;
+      }
+      const lang =
+        (typeof _uiLang !== "undefined" && _uiLang) ||
+        (document.documentElement.lang || "ru");
+      box.hidden = false;
+      box.innerHTML =
+        "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+        (lang === "ru" ? "поиск…" : "search…") +
+        "</div>";
+      try {
+        const url =
+          "/api/weather/search?q=" +
+          encodeURIComponent(q) +
+          "&count=12&lang=" +
+          encodeURIComponent(String(lang).slice(0, 5));
+        const res = await fetch(url, { cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.ok === false)
+          throw new Error(body.error || "HTTP " + res.status);
+        const list = body.results || [];
+        if (!list.length) {
+          box.innerHTML =
+            "<div style='padding:10px;color:var(--muted);font-size:0.8rem'>" +
+            (lang === "ru" ? "ничего не найдено" : "nothing found") +
+            "</div>";
+          return;
+        }
+        box.innerHTML = "";
+        list.forEach((r) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          const label = r.label || r.city || "—";
+          const sub =
+            (r.timezone ? r.timezone + " · " : "") +
+            Number(r.latitude).toFixed(3) +
+            ", " +
+            Number(r.longitude).toFixed(3);
+          b.innerHTML =
+            "<span>" +
+            String(label).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
+            "</span>" +
+            "<span class='wr-sub'>" +
+            String(sub).replace(/&/g, "&amp;").replace(/</g, "&lt;") +
+            "</span>";
+          b.addEventListener("mousedown", (ev) => {
+            ev.preventDefault();
+            void applyWeatherPlaceToWidget(widgetId, r);
+            closeWeatherWidgetSettings();
+          });
+          box.appendChild(b);
+        });
+      } catch (e) {
+        box.innerHTML =
+          "<div style='padding:10px;color:var(--danger);font-size:0.8rem'>" +
+          String(e.message || e).replace(/</g, "&lt;") +
+          "</div>";
+      }
+    }
+
+    async function applyWeatherPlaceToWidget(widgetId, place) {
+      if (!dashboardWeatherWidgets) dashboardWeatherWidgets = {};
+      dashboardWeatherWidgets[widgetId] = {
+        city: String(place.city || place.label || ""),
+        country: String(place.country || ""),
+        admin1: String(place.admin1 || ""),
+        latitude: Number(place.latitude),
+        longitude: Number(place.longitude),
+        timezone: String(place.timezone || "auto"),
+      };
+      ensureWeatherWidgetDom(widgetId);
+      scheduleSaveDashboardConfig();
+      await loadWeatherForWidget(widgetId, true);
+      if (typeof toastSuccess === "function") {
+        toastSuccess(
+          (typeof t === "function" ? t("dash.widget.weather", "Weather") : "Weather") +
+            ": " +
+            (dashboardWeatherWidgets[widgetId].city || "")
+        );
+      }
+    }
+
+    async function loadWeatherForWidget(widgetId, force) {
+      widgetId = String(widgetId || "weather");
+      ensureWeatherWidgetDom(widgetId);
+      let place = dashboardWeatherWidgets && dashboardWeatherWidgets[widgetId];
+      if (!place || place.latitude == null) {
+        place = defaultWeatherPlace();
+        if (!dashboardWeatherWidgets) dashboardWeatherWidgets = {};
+        dashboardWeatherWidgets[widgetId] = place;
+      }
+      const qs =
+        "lat=" +
+        encodeURIComponent(place.latitude) +
+        "&lon=" +
+        encodeURIComponent(place.longitude) +
+        "&city=" +
+        encodeURIComponent(place.city || "") +
+        "&timezone=" +
+        encodeURIComponent(place.timezone || "auto") +
+        (force ? "&force=1" : "");
+      try {
+        const res = await fetch("/api/weather?" + qs, { cache: "no-store" });
+        const body = await res.json();
+        renderWeatherDash(body, widgetId);
+        // primary card still feeds heat-loss outdoor temp
+        if (widgetId === "weather") {
+          weatherData = body;
+          if (typeof updateHeatLoss === "function") updateHeatLoss();
+        }
+        return body;
+      } catch (e) {
+        renderWeatherDash(
+          {
+            ok: false,
+            enabled: true,
+            error: e.message,
+            city: place.city,
+          },
+          widgetId
+        );
+        return null;
+      }
+    }
+
+    async function loadAllWeatherWidgets(force) {
+      ensureAllWeatherWidgetDoms();
+      const ids = new Set(["weather"]);
+      (dashLayout.order || []).forEach((id) => {
+        if (isWeatherWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      Object.keys(dashboardWeatherWidgets || {}).forEach((id) => {
+        if (isWeatherWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      // seed default place for primary weather if empty
+      if (!dashboardWeatherWidgets.weather) {
+        dashboardWeatherWidgets.weather = defaultWeatherPlace();
+      }
+      await Promise.all(
+        Array.from(ids).map((id) => loadWeatherForWidget(id, !!force))
+      );
+    }
+
+    function renderWeatherDash(w, widgetId) {
+      widgetId = widgetId || "weather";
+      ensureWeatherWidgetDom(widgetId);
+      const card =
+        wxQ(widgetId, "card-weather") ||
+        document.querySelector(
+          '.dash-item[data-dash-id="' + widgetId + '"] .temp-card'
+        );
+      const cityEl = wxQ(widgetId, "wx-city");
+      const tEl = wxQ(widgetId, "t-outdoor");
+      const condEl = wxQ(widgetId, "wx-cond");
+      const feelsEl = wxQ(widgetId, "wx-feels");
+      const iconEl = wxQ(widgetId, "wx-icon");
+      const rhWrap = wxQ(widgetId, "wx-meta-rh");
+      const windWrap = wxQ(widgetId, "wx-meta-wind");
+      const pressWrap = wxQ(widgetId, "wx-meta-pressure");
+      const srcWrap = wxQ(widgetId, "wx-meta-src");
+      const rhEl = wxQ(widgetId, "wx-rh");
+      const windEl = wxQ(widgetId, "wx-wind");
+      const pressEl = wxQ(widgetId, "wx-pressure");
+      const srcEl = wxQ(widgetId, "wx-src-label");
       if (!cityEl || !tEl) return;
 
       const showMeta = (el, on) => {
@@ -30715,7 +31306,7 @@
         const offLine = formatWxNowLine(w || { enabled: false });
         showMeta(srcWrap, !!offLine);
         if (srcEl) srcEl.textContent = offLine;
-        updateHeatLoss();
+        if (widgetId === "weather") updateHeatLoss();
         return;
       }
 
@@ -30790,7 +31381,7 @@
         showMeta(srcWrap, !!errLine);
         if (srcEl) srcEl.textContent = errLine;
       }
-      updateHeatLoss();
+      if (widgetId === "weather") updateHeatLoss();
     }
 
     /**
@@ -31086,14 +31677,30 @@
 
     async function loadWeather(force) {
       try {
-        const res = await fetch("/api/weather" + (force ? "?force=1" : ""), { cache: "no-store" });
-        const body = await res.json();
-        weatherData = body;
-        renderWeatherDash(body);
-        if (weatherCfg) renderWeatherSettings(weatherCfg, body);
-        return body;
+        // multi-widget outdoor cards (each may have its own city)
+        if (typeof loadAllWeatherWidgets === "function") {
+          await loadAllWeatherWidgets(!!force);
+        } else {
+          const res = await fetch(
+            "/api/weather" + (force ? "?force=1" : ""),
+            { cache: "no-store" }
+          );
+          const body = await res.json();
+          weatherData = body;
+          renderWeatherDash(body, "weather");
+        }
+        if (weatherCfg) renderWeatherSettings(weatherCfg, weatherData);
+        return weatherData;
       } catch (e) {
-        renderWeatherDash({ ok: false, enabled: true, error: e.message, city: weatherCfg && weatherCfg.city });
+        renderWeatherDash(
+          {
+            ok: false,
+            enabled: true,
+            error: e.message,
+            city: weatherCfg && weatherCfg.city,
+          },
+          "weather"
+        );
         return null;
       }
     }

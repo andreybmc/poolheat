@@ -14374,6 +14374,9 @@ WEATHER_PRESETS: list[dict] = []
 _weather_cfg_lock = threading.Lock()
 _weather_cfg: dict = dict(DEFAULT_WEATHER_CFG)
 _weather_cache_lock = threading.Lock()
+# Per-location cache: key "lat,lon" → (ts, body)
+_weather_cache_map: dict[str, tuple[float, dict]] = {}
+# Legacy single-slot (last global config fetch)
 _weather_cache: dict | None = None
 _weather_cache_ts = 0.0
 WEATHER_CACHE_TTL_DEFAULT = 600.0  # 10 min
@@ -16018,30 +16021,66 @@ def weather_search_cities(
     return []
 
 
+def _weather_loc_key(lat: float, lon: float) -> str:
+    return f"{round(float(lat), 4)},{round(float(lon), 4)}"
+
+
 def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> dict:
-    """Current outdoor weather for configured city (Open-Meteo)."""
-    global _weather_cache, _weather_cache_ts
+    """Current outdoor weather for configured city (Open-Meteo).
+
+    ``cfg`` may be the global weather config or an ad-hoc place
+    ``{city, latitude, longitude, timezone, enabled?}`` for multi-widget dashboards.
+    """
+    global _weather_cache, _weather_cache_ts, _weather_cache_map
     with _weather_cfg_lock:
-        c = dict(cfg or _weather_cfg)
+        base = dict(_weather_cfg)
+    c = dict(base)
+    if isinstance(cfg, dict):
+        c.update(cfg)
 
     if not c.get("enabled", True):
         return {"ok": True, "enabled": False, "city": c.get("city"), "temp_c": None}
 
     now = time.time()
     ttl = float(_weather_refresh_sec(c))
+    try:
+        lat = float(c["latitude"])
+        lon = float(c["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return {
+            "ok": False,
+            "enabled": True,
+            "error": "latitude/longitude required",
+            "city": c.get("city"),
+            "temp_c": None,
+        }
+    cache_key = _weather_loc_key(lat, lon)
     with _weather_cache_lock:
+        hit = _weather_cache_map.get(cache_key)
+        if (
+            not force
+            and hit is not None
+            and (now - float(hit[0])) < ttl
+            and isinstance(hit[1], dict)
+            and hit[1].get("ok")
+        ):
+            out = dict(hit[1])
+            out["cached"] = True
+            out["refresh_interval_sec"] = int(ttl)
+            return out
+        # legacy single-slot fallback for global default location
         if (
             not force
             and _weather_cache is not None
             and (now - _weather_cache_ts) < ttl
             and _weather_cache.get("ok")
+            and abs(float(_weather_cache.get("latitude") or 0) - lat) < 1e-4
+            and abs(float(_weather_cache.get("longitude") or 0) - lon) < 1e-4
         ):
             out = dict(_weather_cache)
             out["refresh_interval_sec"] = int(ttl)
             return out
 
-    lat = float(c["latitude"])
-    lon = float(c["longitude"])
     tz = c.get("timezone") or "auto"
     url = (
         "https://api.open-meteo.com/v1/forecast?"
@@ -16099,6 +16138,8 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             "cached": False,
         }
         with _weather_cache_lock:
+            _weather_cache_map[cache_key] = (now, dict(body))
+            # keep legacy single-slot for default/global consumers
             _weather_cache = dict(body)
             _weather_cache["cached"] = True
             _weather_cache_ts = now
@@ -16157,6 +16198,22 @@ def _coerce_circuit(raw: dict | None) -> dict | None:
             pool_geometry = _coerce_pool_geometry(geom)
         elif isinstance(raw.get("config"), dict):
             pool_geometry = _coerce_pool_geometry(raw.get("config"))
+    # optional weather place for this circuit (default city for dash widgets)
+    city = str(raw.get("city") or "").strip()[:80] or None
+    country = str(raw.get("country") or "").strip()[:8] or None
+    admin1 = str(raw.get("admin1") or "").strip()[:64] or None
+    timezone = str(raw.get("timezone") or "").strip()[:64] or None
+    lat = lon = None
+    try:
+        if raw.get("latitude") not in (None, ""):
+            lat = float(raw.get("latitude"))
+        if raw.get("longitude") not in (None, ""):
+            lon = float(raw.get("longitude"))
+    except (TypeError, ValueError):
+        lat = lon = None
+    if lat is None or lon is None:
+        city = country = admin1 = timezone = None
+        lat = lon = None
     return {
         "id": cid,
         "name": name,
@@ -16166,6 +16223,12 @@ def _coerce_circuit(raw: dict | None) -> dict | None:
         "drycooler_device_id": drycooler_device_id,
         "miner_ids": miner_ids,
         "pool_geometry": pool_geometry,
+        "city": city,
+        "country": country,
+        "admin1": admin1,
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": timezone,
         "updated_ts": raw.get("updated_ts")
         or datetime.now().isoformat(timespec="seconds"),
     }
@@ -16389,6 +16452,8 @@ def _default_dashboard_cfg() -> dict:
                 "display": {},
             },
         },
+        # Per weather widget place: { "weather": {city,lat,lon,...}, "weather_2": {...} }
+        "weather_widgets": {},
         "chart_sync": True,
         "updated_ts": None,
     }
@@ -16426,6 +16491,30 @@ def _normalize_dashboard_cfg(raw: dict | None) -> dict:
                 dst[key] = dict(val)
     if "chart_sync" in raw:
         base["chart_sync"] = bool(raw.get("chart_sync"))
+    ww = raw.get("weather_widgets")
+    if isinstance(ww, dict):
+        out_ww: dict = {}
+        for wid, place in ww.items():
+            sid = str(wid or "").strip()
+            if not sid.startswith("weather"):
+                continue
+            if not isinstance(place, dict):
+                continue
+            try:
+                plat = float(place.get("latitude"))
+                plon = float(place.get("longitude"))
+            except (TypeError, ValueError):
+                continue
+            out_ww[sid] = {
+                "city": str(place.get("city") or "").strip()[:80],
+                "country": str(place.get("country") or "").strip()[:8],
+                "admin1": str(place.get("admin1") or "").strip()[:64],
+                "latitude": plat,
+                "longitude": plon,
+                "timezone": str(place.get("timezone") or "auto").strip()[:64]
+                or "auto",
+            }
+        base["weather_widgets"] = out_ww
     if raw.get("updated_ts"):
         base["updated_ts"] = raw.get("updated_ts")
     return base
@@ -16489,6 +16578,33 @@ def save_dashboard_cfg(req: dict) -> dict:
                         dst[key] = dict(src[key])
         if "chart_sync" in req:
             cur["chart_sync"] = bool(req.get("chart_sync"))
+        if "weather_widgets" in req and isinstance(req.get("weather_widgets"), dict):
+            # merge / replace per-id places
+            ww = dict(cur.get("weather_widgets") or {})
+            for wid, place in (req.get("weather_widgets") or {}).items():
+                sid = str(wid or "").strip()
+                if not sid.startswith("weather"):
+                    continue
+                if place is None:
+                    ww.pop(sid, None)
+                    continue
+                if not isinstance(place, dict):
+                    continue
+                try:
+                    plat = float(place.get("latitude"))
+                    plon = float(place.get("longitude"))
+                except (TypeError, ValueError):
+                    continue
+                ww[sid] = {
+                    "city": str(place.get("city") or "").strip()[:80],
+                    "country": str(place.get("country") or "").strip()[:8],
+                    "admin1": str(place.get("admin1") or "").strip()[:64],
+                    "latitude": plat,
+                    "longitude": plon,
+                    "timezone": str(place.get("timezone") or "auto").strip()[:64]
+                    or "auto",
+                }
+            cur["weather_widgets"] = ww
         # allow top-level migrate blob: full charts/layout already handled
         cur["updated_ts"] = datetime.now().isoformat(timespec="seconds")
         cur["version"] = 1
@@ -39438,7 +39554,25 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_weather_get(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
         force = (qs.get("force", ["0"])[0] or "0") in ("1", "true", "yes")
-        body = fetch_weather_current(force=force)
+        # Ad-hoc place for multi weather widgets: ?lat=&lon=&city=&timezone=
+        lat_s = (qs.get("lat") or qs.get("latitude") or [None])[0]
+        lon_s = (qs.get("lon") or qs.get("longitude") or [None])[0]
+        cfg = None
+        if lat_s not in (None, "") and lon_s not in (None, ""):
+            try:
+                cfg = {
+                    "enabled": True,
+                    "city": (qs.get("city") or [""])[0] or "",
+                    "country": (qs.get("country") or [""])[0] or "",
+                    "admin1": (qs.get("admin1") or [""])[0] or "",
+                    "latitude": float(lat_s),
+                    "longitude": float(lon_s),
+                    "timezone": (qs.get("timezone") or qs.get("tz") or ["auto"])[0]
+                    or "auto",
+                }
+            except (TypeError, ValueError):
+                cfg = None
+        body = fetch_weather_current(cfg, force=force)
         code = 200 if body.get("ok") or body.get("stale") else 502
         self._json_response(code, body)
 
