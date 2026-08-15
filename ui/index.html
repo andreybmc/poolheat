@@ -25985,11 +25985,22 @@
     const FLEET_LOWHASH_RATIO = 0.9; // below 90% of target → lowhash
 
     function fleetHashUnit(m, live) {
-      return String(
+      const raw =
         (live && live.hashrate_unit) ||
-          (m && m.hashrate_unit) ||
-          "TH/s"
-      ).toUpperCase();
+        (m && m.hashrate_unit) ||
+        "";
+      if (raw) return String(raw).toUpperCase();
+      // Fallback from algo when inventory/live unit not filled yet
+      const algo = String(
+        (m && (m.algo || m.algorithm)) ||
+          (live && (live.algo || live.algorithm)) ||
+          ""
+      )
+        .toLowerCase()
+        .replace(/^etchash$/, "ethash");
+      if (algo === "ethash" || algo === "equihash") return "MH/S";
+      if (algo === "scrypt" || algo === "x11") return "GH/S";
+      return "TH/S";
     }
 
     /** Convert true TH/s → display unit of the miner (MH/GH/TH). */

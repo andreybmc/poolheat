@@ -19209,6 +19209,24 @@ def energy_series(
         min_w = row.get("pw_min")
         if min_w is None and avg_w is not None:
             min_w = avg_w
+        # Keep avg within [min, max] when sample extremes exist (energy-derived
+        # avg can slightly overshoot sparse buckets).
+        if (
+            avg_w is not None
+            and max_w is not None
+            and math.isfinite(avg_w)
+            and math.isfinite(max_w)
+            and avg_w > max_w
+        ):
+            avg_w = max_w
+        if (
+            avg_w is not None
+            and min_w is not None
+            and math.isfinite(avg_w)
+            and math.isfinite(min_w)
+            and avg_w < min_w
+        ):
+            avg_w = min_w
         points.append(
             {
                 "ts": float(b_start),
