@@ -2864,6 +2864,29 @@
       background: linear-gradient(180deg, #fdba74 0%, #fb923c 45%, #ea580c 100%);
     }
     /* lowhash: yellow — below factory/configured target over ~30 min */
+    .fleet-pool-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-size: 0.72rem;
+      line-height: 1.3;
+      min-width: 7.5rem;
+    }
+    .fleet-pool-line {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 14rem;
+    }
+    .fleet-pool-line.fleet-pool-empty {
+      color: var(--dim);
+    }
+    .fleet-pool-n {
+      display: inline-block;
+      min-width: 0.85rem;
+      color: var(--dim);
+      font-variant-numeric: tabular-nums;
+    }
     .fleet-table td.fleet-id-td.st-lowhash::before {
       background: linear-gradient(180deg, #fde68a 0%, #facc15 45%, #ca8a04 100%);
     }
@@ -26096,6 +26119,80 @@
       }
     }
 
+    /**
+     * Always 3 pool slots for fleet: configured URL or "—".
+     * live.pools from server is already padded; fallback to single pool_url.
+     */
+    function fleetPoolsThree(live) {
+      const slots = [];
+      const raw = live && Array.isArray(live.pools) ? live.pools : null;
+      if (raw && raw.length) {
+        for (let i = 0; i < 3; i++) {
+          const p = raw[i] && typeof raw[i] === "object" ? raw[i] : {};
+          const url = String(p.url || p.URL || "").trim();
+          slots.push({
+            slot: i,
+            url: url || null,
+            user: p.user || p.User || null,
+            status: p.status || p.Status || null,
+            ok: p.ok,
+          });
+        }
+        return slots;
+      }
+      // legacy single pool_url
+      const one = live && live.pool_url ? String(live.pool_url).trim() : "";
+      for (let i = 0; i < 3; i++) {
+        if (i === 0 && one) {
+          slots.push({
+            slot: 0,
+            url: one,
+            user: null,
+            status: null,
+            ok: live.pool_ok,
+          });
+        } else {
+          slots.push({ slot: i, url: null, user: null, status: null, ok: null });
+        }
+      }
+      return slots;
+    }
+
+    function fleetPoolsHtml(live) {
+      const slots = fleetPoolsThree(live);
+      const lines = slots.map((p, i) => {
+        const n = i + 1;
+        if (!p.url) {
+          return (
+            '<div class="fleet-pool-line fleet-pool-empty">' +
+            '<span class="fleet-pool-n">' +
+            n +
+            "</span> —</div>"
+          );
+        }
+        let dot = "var(--dim)";
+        if (p.ok === true) dot = "#34d399";
+        else if (p.ok === false) dot = "#f87171";
+        const short = shortPoolUrl(p.url);
+        const title = escapeLogHtml(
+          p.url + (p.user ? " · " + p.user : "") + (p.status ? " · " + p.status : "")
+        );
+        return (
+          '<div class="fleet-pool-line" title="' +
+          title +
+          '">' +
+          '<span class="fleet-pool-n">' +
+          n +
+          '</span> <span style="color:' +
+          dot +
+          '">●</span> ' +
+          escapeLogHtml(short) +
+          "</div>"
+        );
+      });
+      return '<div class="fleet-pool-list">' + lines.join("") + "</div>";
+    }
+
     async function refreshFleetTable(opts) {
       opts = opts || {};
       const tbody = document.getElementById("fleet-body");
@@ -26679,19 +26776,7 @@
         }
         const mode = live && live.work ? String(live.work) : "—";
         const elapsed = live ? formatElapsedSec(live.elapsed) : "—";
-        let poolTitle = "";
-        let poolText = "—";
-        let poolDot = "var(--dim)";
-        if (live && live.pool_url) {
-          poolTitle = live.pool_url;
-          poolText = shortPoolUrl(live.pool_url);
-          poolDot =
-            live.pool_ok === true
-              ? "#34d399"
-              : live.pool_ok === false
-                ? "#f87171"
-                : "var(--dim)";
-        }
+        const poolHtml = fleetPoolsHtml(live);
         const vendorName =
           m.vendor_name ||
           (typeof vendorDisplayName === "function"
@@ -26741,7 +26826,7 @@
             '<span class="fleet-sub fleet-fans"></span></div></td>' +
             '<td data-fleet-col="mode" class="fleet-mode"></td>' +
             '<td data-fleet-col="elapsed" class="fleet-num fleet-elapsed"></td>' +
-            '<td data-fleet-col="pool" class="fleet-pool"><span class="fleet-muted">—</span></td>' +
+            '<td data-fleet-col="pool" class="fleet-pool"></td>' +
             '<td data-fleet-col="vendor" class="fleet-vendor"></td>' +
             '<td data-fleet-col="menu" class="fleet-col-menu">' +
             '<button type="button" class="fleet-menu-btn" data-fleet-menu="' +
@@ -26875,20 +26960,8 @@
         setTxt(".fleet-elapsed", elapsed);
 
         const poolTd = tr.querySelector(".fleet-pool");
-        if (poolTd) {
-          if (poolTitle) {
-            const want =
-              '<span title="' +
-              escapeLogHtml(poolTitle) +
-              '"><span style="color:' +
-              poolDot +
-              '">●</span> ' +
-              escapeLogHtml(poolText) +
-              "</span>";
-            if (poolTd.innerHTML !== want) poolTd.innerHTML = want;
-          } else if (!poolTd.querySelector(".fleet-muted")) {
-            poolTd.innerHTML = '<span class="fleet-muted">—</span>';
-          }
+        if (poolTd && poolTd.innerHTML !== poolHtml) {
+          poolTd.innerHTML = poolHtml;
         }
 
         const img = tr.querySelector(".mp-vendor-logo");

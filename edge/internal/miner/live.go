@@ -86,6 +86,14 @@ func FetchLive(s Settings) (map[string]any, error) {
 		log.Printf("[miner-poller] devs: %v", err)
 	}
 
+	// Pools (up to 3 stratum slots) — fleet shows all configured / empty as "—"
+	poolsLive := []map[string]any{}
+	if pRaw, err := c.Read("pools", nil); err == nil {
+		poolsLive = extractPools(pRaw)
+	} else {
+		log.Printf("[miner-poller] pools: %v", err)
+	}
+
 	// PSU optional
 	var psuTemp, psuFan, psuPin, psuVin, psuIin *float64
 	var psuModel any
@@ -267,8 +275,28 @@ func FetchLive(s Settings) (map[string]any, error) {
 		),
 		"miner_errors": []any{},
 		"miner_events": []any{},
+		"pools":        poolsLive,
 		"dry_run":      s.DryRun,
 		"source":       "go-miner-poller",
+	}
+	// Legacy single-pool fields (first non-empty)
+	if len(poolsLive) > 0 {
+		for _, p0 := range poolsLive {
+			u, _ := p0["url"].(string)
+			if u == "" {
+				continue
+			}
+			body["pool_url"] = u
+			st, _ := p0["status"].(string)
+			stl := strings.ToLower(st)
+			if strings.Contains(stl, "alive") || strings.Contains(stl, "active") {
+				body["pool_ok"] = true
+				break
+			}
+			if body["pool_ok"] == nil {
+				body["pool_ok"] = false
+			}
+		}
 	}
 
 	// Temperature sensors catalog (UI panel "Temperature sensors")
@@ -799,6 +827,61 @@ func extractDevs(raw map[string]any) []map[string]any {
 		}
 	}
 	return out
+}
+
+// extractPools normalizes Whatsminer/CGMiner POOLS[] into compact fleet rows.
+func extractPools(raw map[string]any) []map[string]any {
+	out := []map[string]any{}
+	if raw == nil {
+		return out
+	}
+	tryList := func(v any) {
+		if arr, ok := v.([]any); ok {
+			for _, item := range arr {
+				if m, ok := item.(map[string]any); ok {
+					out = append(out, m)
+				}
+			}
+		}
+	}
+	tryList(raw["POOLS"])
+	if len(out) == 0 {
+		tryList(raw["pools"])
+	}
+	if len(out) == 0 {
+		if msg, ok := raw["Msg"].(map[string]any); ok {
+			tryList(msg["POOLS"])
+			if len(out) == 0 {
+				tryList(msg["pools"])
+			}
+		}
+	}
+	// compact to url/user/status/priority (max 3 kept by serve fleet slice)
+	compact := make([]map[string]any, 0, len(out))
+	for _, p := range out {
+		url := firstNonEmpty(p["URL"], p["url"], p["Stratum URL"], p["pool"])
+		user := firstNonEmpty(p["User"], p["user"])
+		status := firstNonEmpty(p["Status"], p["status"])
+		prio := firstNonEmpty(p["Priority"], p["priority"], p["POOL"])
+		row := map[string]any{}
+		if url != nil {
+			row["url"] = fmt.Sprint(url)
+		}
+		if user != nil {
+			row["user"] = fmt.Sprint(user)
+		}
+		if status != nil {
+			row["status"] = fmt.Sprint(status)
+		}
+		if prio != nil {
+			row["priority"] = prio
+		}
+		if sa, ok := p["Stratum Active"]; ok {
+			row["stratum"] = sa
+		}
+		compact = append(compact, row)
+	}
+	return compact
 }
 
 func asF(v any) float64 {

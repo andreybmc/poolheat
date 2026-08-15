@@ -11978,6 +11978,77 @@ def _record_fleet_hr_sample(host: str, th: float | None) -> float | None:
         return round(avg, 6) if avg < 1 else round(avg, 3)
 
 
+def _fleet_pools_three(pools: list | None) -> list[dict]:
+    """
+    Normalize miner pool list to exactly 3 slots for fleet UI.
+
+    Empty / missing slots → url=None (UI shows "—").
+    Status alive/active → ok=True; dead/disabled → ok=False; unknown → None.
+    """
+    raw: list = list(pools) if isinstance(pools, list) else []
+    # sort by priority/index when present so slot 0 is primary
+    def _key(p: dict) -> int:
+        for k in ("priority", "Priority", "POOL", "index", "Index"):
+            if p.get(k) not in (None, ""):
+                try:
+                    return int(float(p[k]))
+                except (TypeError, ValueError):
+                    pass
+        return 99
+
+    ordered = sorted(
+        [p for p in raw if isinstance(p, dict)],
+        key=_key,
+    )
+    out: list[dict] = []
+    for i in range(3):
+        p = ordered[i] if i < len(ordered) else {}
+        url = str(
+            p.get("url")
+            or p.get("URL")
+            or p.get("Stratum URL")
+            or p.get("pool")
+            or ""
+        ).strip()
+        # treat placeholder empties as unset
+        if url in ("", "none", "None", "null", "-", "—"):
+            url = ""
+        user = str(p.get("user") or p.get("User") or "").strip() or None
+        status = str(
+            p.get("status") or p.get("Status") or p.get("stratum") or ""
+        ).strip()
+        st_l = status.lower()
+        ok = None
+        if url:
+            if any(
+                x in st_l
+                for x in ("alive", "active", "true", "1", "connected", "working")
+            ):
+                ok = True
+            elif any(
+                x in st_l
+                for x in ("dead", "disc", "reject", "disable", "false", "0", "offline")
+            ):
+                ok = False
+            # stratum active flag
+            sa = p.get("stratum")
+            if sa is True or str(sa).lower() in ("true", "1", "yes"):
+                ok = True
+            if sa is False or str(sa).lower() in ("false", "0", "no"):
+                if ok is not False:
+                    ok = False
+        out.append(
+            {
+                "slot": i,
+                "url": url[:120] if url else None,
+                "user": (user[:64] if user else None),
+                "status": status[:32] if status else None,
+                "ok": ok,
+            }
+        )
+    return out
+
+
 def _fleet_live_slice(live: dict | None, *, host: str | None = None) -> dict | None:
     """Compact live fields for fleet table rows."""
     if not isinstance(live, dict):
@@ -12081,24 +12152,22 @@ def _fleet_live_slice(live: dict | None, *, host: str | None = None) -> dict | N
     )
     if work is None and live.get("mineroff"):
         work = "sleep"
-    pools = live.get("pools") if isinstance(live.get("pools"), list) else None
+    pools_raw = live.get("pools") if isinstance(live.get("pools"), list) else None
+    pools_slots = _fleet_pools_three(pools_raw)
     pool_ok = None
     pool_url = None
-    if pools:
-        # first active-looking pool
-        for p0 in pools:
-            if not isinstance(p0, dict):
-                continue
-            st = str(p0.get("status") or p0.get("stratum") or "").lower()
-            if "dead" in st or "disc" in st:
-                continue
-            pool_url = str(p0.get("url") or p0.get("pool") or "")[:80] or None
+    # first configured / active pool for legacy single-line consumers
+    for p0 in pools_slots:
+        if not p0.get("url"):
+            continue
+        if pool_url is None:
+            pool_url = p0.get("url")
+        if p0.get("ok") is True:
             pool_ok = True
+            pool_url = p0.get("url")
             break
         if pool_ok is None:
             pool_ok = False
-            p0 = pools[0] if isinstance(pools[0], dict) else {}
-            pool_url = str(p0.get("url") or p0.get("pool") or "")[:80] or None
     # Per-board PCB / chip temps (Antminer stats, Goldshell tstemp-*, …)
     boards_pcb = live.get("boards")
     if not isinstance(boards_pcb, list):
@@ -12143,6 +12212,8 @@ def _fleet_live_slice(live: dict | None, *, host: str | None = None) -> dict | N
         "freq_avg": live.get("freq_avg"),
         "pool_ok": pool_ok,
         "pool_url": pool_url,
+        # Always 3 slots for fleet UI (empty → url null → "—")
+        "pools": pools_slots,
         "miner_type": live.get("miner_type"),
         "vendor": live.get("vendor") or live.get("api_vendor"),
         "hashrate_hs": live.get("hashrate_hs"),
