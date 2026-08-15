@@ -26313,12 +26313,59 @@
       return '<div class="fleet-pool-list">' + lines.join("") + "</div>";
     }
 
+    /**
+     * fetch + JSON with human errors (never "Unexpected token '<'…").
+     * HTML body usually means SPA/404/502 or serve restart during OTA.
+     */
+    async function fetchJsonApi(url, opts) {
+      opts = opts || {};
+      const res = await fetch(url, Object.assign({ cache: "no-store" }, opts));
+      const ctype = String(res.headers.get("content-type") || "").toLowerCase();
+      const text = await res.text();
+      const head = (text || "").replace(/^\uFEFF/, "").trim().slice(0, 80);
+      const looksHtml =
+        ctype.indexOf("html") >= 0 ||
+        /^<!doctype\s+html/i.test(head) ||
+        /^<html[\s>]/i.test(head) ||
+        /^<\s*head[\s>]/i.test(head);
+      if (looksHtml || (head && head.charAt(0) === "<" && head.indexOf("{") < 0)) {
+        const hint =
+          res.status === 502 || res.status === 503
+            ? "server restarting — retry in a few seconds"
+            : res.status === 404
+              ? "API path not found (wrong URL or old package)"
+              : "server returned HTML instead of JSON";
+        throw new Error(hint + " (HTTP " + res.status + ")");
+      }
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch (e) {
+        throw new Error(
+          "bad JSON from " +
+            url +
+            " (HTTP " +
+            res.status +
+            "): " +
+            (head || String(e.message || e)).slice(0, 60)
+        );
+      }
+      if (!res.ok) {
+        const err =
+          (body && (body.error || body.message)) || "HTTP " + res.status;
+        throw new Error(String(err));
+      }
+      return body;
+    }
+
     async function refreshFleetTable(opts) {
       opts = opts || {};
       const tbody = document.getElementById("fleet-body");
       try {
         if (!(minerVendorsCache.vendors || []).length && typeof loadMinerVendors === "function") {
-          await loadMinerVendors();
+          try {
+            await loadMinerVendors();
+          } catch (_) { /* non-fatal */ }
         }
         // Keep topology flag fresh for cell column visibility
         if (typeof loadSiteConfig === "function") {
@@ -26326,10 +26373,9 @@
             await loadSiteConfig();
           } catch (_) { /* ignore */ }
         }
-        const res = await fetch("/api/miners/fleet", { cache: "no-store" });
-        const body = await res.json();
-        if (!res.ok || body.ok === false) {
-          throw new Error((body && body.error) || "HTTP " + res.status);
+        const body = await fetchJsonApi("/api/miners/fleet");
+        if (body && body.ok === false) {
+          throw new Error((body && body.error) || "fleet error");
         }
         fleetCache = {
           miners: Array.isArray(body.miners) ? body.miners : [],
@@ -26347,14 +26393,25 @@
           );
         }
       } catch (e) {
-        if (tbody) {
+        const msg = e && e.message ? e.message : String(e);
+        // Soft auto-refresh: keep last good table (don't flash red HTML-parse noise)
+        if (opts.manual) {
+          if (tbody) {
+            tbody.innerHTML =
+              '<tr><td colspan="12" style="color:var(--warn)">' +
+              escapeLogHtml(msg) +
+              "</td></tr>";
+          }
+          if (typeof toastError === "function") toastError(msg);
+        } else if (!(fleetCache.miners || []).length && tbody) {
           tbody.innerHTML =
-            '<tr><td colspan="12" style="color:var(--warn)">error: ' +
-            escapeLogHtml(e.message || String(e)) +
+            '<tr><td colspan="12" style="color:var(--dim)">' +
+            escapeLogHtml(msg) +
             "</td></tr>";
-        }
-        if (opts.manual && typeof toastError === "function") {
-          toastError(e.message || String(e));
+        } else {
+          try {
+            console.warn("[fleet] refresh:", msg);
+          } catch (_) { /* ignore */ }
         }
       }
       // soft poll while tab open

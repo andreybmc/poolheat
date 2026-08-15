@@ -12274,15 +12274,35 @@ def _load_fleet_live_map(*, max_age_sec: float = 120.0) -> dict[str, dict]:
             live = entry.get("live") if isinstance(entry.get("live"), dict) else entry
             # Keep ok:false stamps so UI can show offline (not "unknown")
             if isinstance(live, dict):
-                out[str(host).strip()] = live
+                hk = _fleet_host_key(host)
+                if hk:
+                    out[hk] = live
     except Exception:
         pass
     return out
 
 
-# Keep last-good fleet row this long when a poll returns timeout/offline.
-# High-latency remotes (e.g. giant → 192.168.1.10) often miss one cycle but stay up.
-_FLEET_STICKY_OK_SEC = 120.0
+# Keep last-good fleet row when polls return timeout/offline.
+# High-latency remotes + Whatsminer "over max connect" (Go poller + fleet
+# poll racing on :4028) need several consecutive fails before UI goes offline.
+_FLEET_STICKY_OK_SEC = 300.0
+_FLEET_STICKY_FAILS = 3  # consecutive fail stamps before dropping last-good
+
+
+def _fleet_host_key(host: str | None) -> str:
+    """Normalize inventory / live host to bare IPv4/hostname (no :port)."""
+    h = str(host or "").strip()
+    if not h:
+        return ""
+    if "://" in h:
+        h = h.split("://", 1)[-1]
+    h = h.split("/")[0].strip()
+    # IPv4:port or name:port — strip trailing :digits
+    if h.count(":") == 1:
+        left, right = h.rsplit(":", 1)
+        if right.isdigit():
+            h = left.strip()
+    return h
 
 
 def _fleet_live_is_ok(live: dict | None) -> bool:
@@ -12300,8 +12320,8 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
     Write fleet_live.json. Merge with previous hosts so a partial poll
     (timeout / crash mid-cycle) does not wipe other miners' live rows.
 
-    Also: do not let a single timeout stamp permanently offline a host that
-    had a fresh ok snapshot (sticky last-good for ~2 min).
+    Sticky last-good: require several consecutive fails (or age > sticky window)
+    before an offline stamp replaces a healthy snapshot.
     """
     try:
         now = time.time()
@@ -12316,7 +12336,7 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
                         if not isinstance(entry, dict):
                             continue
                         ts = float(entry.get("ts") or prev.get("ts") or 0)
-                        if ts > 0 and (now - ts) > 300.0:
+                        if ts > 0 and (now - ts) > 600.0:
                             continue
                         live = (
                             entry.get("live")
@@ -12324,17 +12344,21 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
                             else entry
                         )
                         if isinstance(live, dict):
-                            merged[str(h).strip()] = {
+                            hk = _fleet_host_key(h)
+                            if not hk:
+                                continue
+                            merged[hk] = {
                                 "ts": ts or now,
                                 "live": live,
-                                "host": str(h).strip(),
+                                "host": hk,
+                                "fail_count": int(entry.get("fail_count") or 0),
                             }
         except Exception:
             pass
         for h, live in (by_host or {}).items():
             if not isinstance(live, dict):
                 continue
-            hh = str(h).strip()
+            hh = _fleet_host_key(h)
             if not hh:
                 continue
             new_fail = live.get("ok") is False or bool(live.get("error"))
@@ -12350,21 +12374,22 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
                     prev_live.get("sticky_online")
                 )
                 age = (now - prev_ts) if prev_ts > 0 else 1e9
-                if prev_ok and age < _FLEET_STICKY_OK_SEC:
-                    # Keep last-good telemetry; mark soft so UI can still show online
+                fails = int(prev_entry.get("fail_count") or 0) + 1
+                # Keep last-good until N consecutive fails OR sticky window expires
+                if prev_ok and age < _FLEET_STICKY_OK_SEC and fails < _FLEET_STICKY_FAILS:
                     sticky = dict(prev_live)
                     sticky["ok"] = True
                     sticky["sticky_online"] = True
                     sticky["last_poll_error"] = str(live.get("error") or "poll fail")[
                         :200
                     ]
-                    # do not keep hard error that would force offline in get_miners_fleet
                     sticky.pop("error", None)
                     merged[hh] = {
                         "ts": prev_ts or now,
                         "live": sticky,
                         "host": hh,
                         "fail_ts": now,
+                        "fail_count": fails,
                     }
                     continue
             # successful poll or sticky expired → write new stamp
@@ -12372,7 +12397,22 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
                 live = dict(live)
                 live.pop("sticky_online", None)
                 live.pop("last_poll_error", None)
-            merged[hh] = {"ts": now, "live": live, "host": hh}
+                merged[hh] = {
+                    "ts": now,
+                    "live": live,
+                    "host": hh,
+                    "fail_count": 0,
+                }
+            else:
+                merged[hh] = {
+                    "ts": now,
+                    "live": live,
+                    "host": hh,
+                    "fail_count": int(
+                        (prev_entry or {}).get("fail_count") or 0
+                    )
+                    + 1,
+                }
         payload = {"ts": now, "miners": merged}
         FLEET_LIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = FLEET_LIVE_FILE.with_suffix(".json.tmp")
@@ -12386,14 +12426,37 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
     """
     Poll a single managed miner for fleet_live. Always returns (host, live)
     — never raises. Hard timeout so one dead/slow host cannot block the fleet.
+
+    Active host with a fresh live_cache (Go miner-poller) is reused — a second
+    TCP session to Whatsminer often hits "over max connect" and stamps offline
+    even though the miner is up (classic 192.168.1.10 sticky offline).
     """
-    host = str(m.get("host") or "").strip()
+    host = _fleet_host_key(m.get("host") if isinstance(m, dict) else "")
     if not host:
         return "", {}
     try:
         port = int(m.get("port") or 4028)
     except (TypeError, ValueError):
         port = 4028
+
+    # Reuse fresh live_cache when this is the active ASIC host
+    try:
+        active_ip = _fleet_host_key(HOST_MINER)
+        if host and active_ip and host == active_ip:
+            cached = hydrate_live_from_disk(max_age_sec=90.0)
+            if isinstance(cached, dict) and cached.get("ok"):
+                hip = _fleet_host_key(_live_host_ip(cached) or cached.get("host"))
+                if not hip or hip == host:
+                    out = dict(cached)
+                    out.setdefault("host", f"{host}:{port}")
+                    out["ok"] = True
+                    out.pop("error", None)
+                    out.pop("sticky_online", None)
+                    out["source"] = out.get("source") or "live_cache"
+                    return host, out
+    except Exception:
+        pass
+
     vendor_hint = str(m.get("vendor") or m.get("api_vendor") or "").lower()
     if vendor_hint in (
         "ipollo",
@@ -12659,8 +12722,9 @@ def get_miners_fleet() -> dict:
     _seed_managed_from_active()
     managed = get_miners_managed()
     miners_in = list(managed.get("miners") or [])
-    fleet_map = _load_fleet_live_map(max_age_sec=120.0)
-    live = hydrate_live_from_disk(max_age_sec=120.0)
+    # 3 min: sticky last-good + slow remote polls
+    fleet_map = _load_fleet_live_map(max_age_sec=180.0)
+    live = hydrate_live_from_disk(max_age_sec=180.0)
     if not isinstance(live, dict):
         try:
             with _cache_lock:
@@ -12668,10 +12732,17 @@ def get_miners_fleet() -> dict:
                     live = dict(_cache)
         except Exception:
             live = None
-    live_ip = _live_host_ip(live)
+    live_ip = _fleet_host_key(_live_host_ip(live) or (HOST_MINER if live else ""))
     # One slice for active live_cache (records 30m HR under live_ip when known)
     live_slice = (
         _fleet_live_slice(live, host=live_ip) if isinstance(live, dict) else None
+    )
+    # Also accept live_cache ok even when fleet map has a fail stamp
+    active_live_ok = bool(
+        isinstance(live, dict)
+        and live.get("ok")
+        and not live.get("error")
+        and live_ip
     )
     rows: list[dict] = []
     online_n = 0
@@ -12681,7 +12752,7 @@ def get_miners_fleet() -> dict:
         if not isinstance(m, dict):
             continue
         row = dict(m)
-        host = str(m.get("host") or "").strip()
+        host = _fleet_host_key(m.get("host"))
         role = str(m.get("role") or "standby")
         # Prefer per-host fleet live, then active live_cache match.
         # Important: multi-host poll can stamp ok:false (timeout) while the Go
@@ -12690,7 +12761,10 @@ def get_miners_fleet() -> dict:
         host_live = fleet_map.get(host) if host else None
         match = bool(live_ip and host and host == live_ip)
         active_ok = bool(
-            match and isinstance(live_slice, dict) and live_slice.get("ok")
+            match
+            and active_live_ok
+            and isinstance(live_slice, dict)
+            and (live_slice.get("ok") is not False)
         )
 
         def _apply_live_ok(src_live: dict, sl: dict | None) -> None:
