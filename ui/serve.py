@@ -14558,12 +14558,15 @@ DEFAULT_HISTORY_CFG = {
 # Open-Meteo — no API key. City is chosen via geocoding search in UI.
 DEFAULT_WEATHER_CFG = {
     "enabled": True,
-    "city": "Москва",
+    # Canonical English name (Open-Meteo language=en); UI localizes via place_id
+    "city": "Moscow",
     "country": "RU",
     "admin1": "",
     "latitude": 55.7558,
     "longitude": 37.6173,
     "timezone": "Europe/Moscow",
+    # Open-Meteo geocoding place id (for i18n name lookup)
+    "place_id": 524901,
     # how often to re-fetch Open-Meteo (server cache TTL + UI poll)
     "refresh_interval_sec": 600,
 }
@@ -16179,6 +16182,11 @@ def weather_search_cities(
                 lon = float(r["longitude"])
             except (KeyError, TypeError, ValueError):
                 continue
+            pid = r.get("id")
+            try:
+                pid_i = int(pid) if pid is not None else None
+            except (TypeError, ValueError):
+                pid_i = None
             out.append(
                 {
                     "city": r.get("name") or q,
@@ -16187,6 +16195,8 @@ def weather_search_cities(
                     "latitude": lat,
                     "longitude": lon,
                     "timezone": r.get("timezone") or "auto",
+                    "place_id": pid_i,
+                    "id": pid_i,  # alias for clients
                     "label": ", ".join(
                         x
                         for x in [
@@ -16221,15 +16231,161 @@ def weather_search_cities(
     return []
 
 
+# place_id → {lang: {city, country, admin1, ...}} short TTL cache
+_weather_place_cache: dict[str, tuple[float, dict]] = {}
+_weather_place_cache_lock = threading.Lock()
+_WEATHER_PLACE_TTL = 7 * 24 * 3600.0  # 7 days — names rarely change
+
+
+def weather_place_by_id(place_id: int | str, language: str = "en") -> dict | None:
+    """
+    Open-Meteo geocoding get-by-id. Returns localized name fields.
+    language: en | ru | …
+    """
+    try:
+        pid = int(place_id)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    lang = (language or "en").strip().lower()[:5] or "en"
+    cache_key = f"{pid}:{lang}"
+    now = time.time()
+    with _weather_place_cache_lock:
+        hit = _weather_place_cache.get(cache_key)
+        if hit and (now - float(hit[0])) < _WEATHER_PLACE_TTL:
+            return dict(hit[1])
+    url = (
+        "https://geocoding-api.open-meteo.com/v1/get?"
+        + urllib.parse.urlencode({"id": pid, "language": lang})
+    )
+    try:
+        data = _http_get_json(url)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data.get("name"):
+        return None
+    try:
+        lat = float(data["latitude"])
+        lon = float(data["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    out = {
+        "ok": True,
+        "place_id": pid,
+        "city": str(data.get("name") or ""),
+        "country": str(data.get("country_code") or data.get("country") or ""),
+        "admin1": str(data.get("admin1") or ""),
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": str(data.get("timezone") or "auto"),
+        "language": lang,
+        "label": ", ".join(
+            x
+            for x in [
+                data.get("name"),
+                data.get("admin1"),
+                data.get("country_code") or data.get("country"),
+            ]
+            if x
+        ),
+    }
+    with _weather_place_cache_lock:
+        _weather_place_cache[cache_key] = (now, dict(out))
+        # bound memory
+        if len(_weather_place_cache) > 512:
+            items = sorted(
+                _weather_place_cache.items(), key=lambda kv: float(kv[1][0])
+            )
+            for k, _ in items[:64]:
+                _weather_place_cache.pop(k, None)
+    return out
+
+
+def weather_canonicalize_place(
+    *,
+    city: str | None = None,
+    country: str | None = None,
+    admin1: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    timezone: str | None = None,
+    place_id: int | str | None = None,
+) -> dict:
+    """
+    Normalize a weather place for storage:
+      city / country / admin1 always English (language=en)
+      place_id kept for UI localization on language switch
+    """
+    pid = None
+    try:
+        if place_id is not None and str(place_id).strip() != "":
+            pid = int(place_id)
+    except (TypeError, ValueError):
+        pid = None
+    en = weather_place_by_id(pid, "en") if pid else None
+    if en and en.get("city"):
+        return {
+            "city": en["city"],
+            "country": en.get("country") or (country or ""),
+            "admin1": en.get("admin1") or "",
+            "latitude": float(en.get("latitude") if en.get("latitude") is not None else latitude),
+            "longitude": float(
+                en.get("longitude") if en.get("longitude") is not None else longitude
+            ),
+            "timezone": en.get("timezone") or timezone or "auto",
+            "place_id": pid,
+        }
+    # No place_id / lookup failed — keep coordinates; prefer ASCII-looking city
+    # or leave as-is (legacy Cyrillic configs still work until re-picked)
+    try:
+        lat_f = float(latitude) if latitude is not None else None
+        lon_f = float(longitude) if longitude is not None else None
+    except (TypeError, ValueError):
+        lat_f, lon_f = None, None
+    return {
+        "city": str(city or "").strip() or "—",
+        "country": str(country or "").strip(),
+        "admin1": str(admin1 or "").strip(),
+        "latitude": lat_f,
+        "longitude": lon_f,
+        "timezone": str(timezone or "auto").strip() or "auto",
+        "place_id": pid,
+    }
+
+
+def weather_localized_city(
+    *,
+    place_id: int | str | None,
+    language: str,
+    fallback: str | None = None,
+) -> str:
+    """Localized city name for UI; falls back to stored English/legacy name."""
+    lang = (language or "en").strip().lower()[:5] or "en"
+    if place_id is not None and str(place_id).strip() != "":
+        row = weather_place_by_id(place_id, lang)
+        if row and row.get("city"):
+            return str(row["city"])
+        if lang != "en":
+            row_en = weather_place_by_id(place_id, "en")
+            if row_en and row_en.get("city"):
+                return str(row_en["city"])
+    return str(fallback or "—")
+
+
 def _weather_loc_key(lat: float, lon: float) -> str:
     return f"{round(float(lat), 4)},{round(float(lon), 4)}"
 
 
-def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> dict:
+def fetch_weather_current(
+    cfg: dict | None = None, *, force: bool = False, language: str | None = None
+) -> dict:
     """Current outdoor weather for configured city (Open-Meteo).
 
     ``cfg`` may be the global weather config or an ad-hoc place
-    ``{city, latitude, longitude, timezone, enabled?}`` for multi-widget dashboards.
+    ``{city, latitude, longitude, timezone, place_id?, enabled?}`` for multi-widget dashboards.
+
+    ``city`` in storage is English; response adds ``city_display`` for UI language.
     """
     global _weather_cache, _weather_cache_ts, _weather_cache_map
     with _weather_cfg_lock:
@@ -16237,9 +16393,21 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
     c = dict(base)
     if isinstance(cfg, dict):
         c.update(cfg)
+    lang = (language or "en").strip().lower()[:5] or "en"
+    city_en = c.get("city")
+    city_disp = weather_localized_city(
+        place_id=c.get("place_id"), language=lang, fallback=city_en
+    )
 
     if not c.get("enabled", True):
-        return {"ok": True, "enabled": False, "city": c.get("city"), "temp_c": None}
+        return {
+            "ok": True,
+            "enabled": False,
+            "city": city_en,
+            "city_display": city_disp,
+            "place_id": c.get("place_id"),
+            "temp_c": None,
+        }
 
     now = time.time()
     ttl = float(_weather_refresh_sec(c))
@@ -16255,6 +16423,25 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             "temp_c": None,
         }
     cache_key = _weather_loc_key(lat, lon)
+
+    def _stamp_city_i18n(out: dict) -> dict:
+        out = dict(out)
+        out["city"] = city_en or out.get("city")
+        out["city_display"] = city_disp
+        out["place_id"] = c.get("place_id") or out.get("place_id")
+        out["language"] = lang
+        # WMO text for UI lang
+        code_i = out.get("weather_code")
+        try:
+            code_i = int(code_i) if code_i is not None else None
+        except (TypeError, ValueError):
+            code_i = None
+        if lang.startswith("en"):
+            out["weather_text"] = out.get("weather_text_en") or _wmo_text(code_i, "en")
+        else:
+            out["weather_text"] = _wmo_text(code_i, "ru")
+        return out
+
     with _weather_cache_lock:
         hit = _weather_cache_map.get(cache_key)
         if (
@@ -16264,7 +16451,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             and isinstance(hit[1], dict)
             and hit[1].get("ok")
         ):
-            out = dict(hit[1])
+            out = _stamp_city_i18n(hit[1])
             out["cached"] = True
             out["refresh_interval_sec"] = int(ttl)
             return out
@@ -16277,7 +16464,7 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             and abs(float(_weather_cache.get("latitude") or 0) - lat) < 1e-4
             and abs(float(_weather_cache.get("longitude") or 0) - lon) < 1e-4
         ):
-            out = dict(_weather_cache)
+            out = _stamp_city_i18n(_weather_cache)
             out["refresh_interval_sec"] = int(ttl)
             return out
 
@@ -16317,7 +16504,9 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
         body = {
             "ok": True,
             "enabled": True,
-            "city": c.get("city"),
+            "city": city_en,  # English canonical
+            "city_display": city_disp,  # UI language
+            "place_id": c.get("place_id"),
             "country": c.get("country"),
             "admin1": c.get("admin1"),
             "latitude": lat,
@@ -16336,11 +16525,16 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             "refresh_interval_sec": int(ttl),
             "source": "open-meteo",
             "cached": False,
+            "language": lang,
         }
+        # Cache meteo payload without language-specific city_display
+        cache_body = dict(body)
+        cache_body.pop("city_display", None)
+        cache_body.pop("language", None)
         with _weather_cache_lock:
-            _weather_cache_map[cache_key] = (now, dict(body))
+            _weather_cache_map[cache_key] = (now, dict(cache_body))
             # keep legacy single-slot for default/global consumers
-            _weather_cache = dict(body)
+            _weather_cache = dict(cache_body)
             _weather_cache["cached"] = True
             _weather_cache_ts = now
         body["cached"] = False
@@ -16352,11 +16546,15 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
             stale = dict(stale)
             stale["stale"] = True
             stale["error"] = str(e)
+            stale["city_display"] = city_disp
+            stale["place_id"] = c.get("place_id")
             return stale
         return {
             "ok": False,
             "enabled": True,
-            "city": c.get("city"),
+            "city": city_en,
+            "city_display": city_disp,
+            "place_id": c.get("place_id"),
             "error": str(e),
             "temp_c": None,
         }
@@ -27859,7 +28057,16 @@ def _devs_row_hashrate_th(d: dict, vendor: str | None = None) -> float | None:
     """Normalize one CGMiner DEVS row hashrate to TH/s."""
     if not isinstance(d, dict):
         return None
-    for key in ("GHS 5s", "GHS av", "GHS 30m", "RT HASHRATE", "HS RT"):
+    for key in (
+        "GHS 5s",
+        "GHS av",
+        "GHS 30m",
+        "RT HASHRATE",
+        "HS RT",
+        "MHS rolling",
+        "MHS 20s",
+        "MHS U",
+    ):
         if d.get(key) not in (None, ""):
             try:
                 raw = d[key]
@@ -27877,13 +28084,23 @@ def _devs_row_hashrate_th(d: dict, vendor: str | None = None) -> float | None:
                 v = float(raw)
                 if v <= 0:
                     continue
+                kl = str(key).upper()
                 # bare GHS field is GH/s
-                if str(key).upper().startswith("GHS") or v < 50_000:
-                    return v / 1000.0
-                return v / 1e6
+                if kl.startswith("GHS") or (kl.startswith("MHS") is False and v < 50_000):
+                    if kl.startswith("GHS"):
+                        return v / 1000.0
+                # large MHS-style counts (Goldshell ckbminer ~1e6 = ~1 TH)
+                if v >= 1e5:
+                    return v / 1e6
+                if kl.startswith("MHS"):
+                    vend = str(vendor or "").lower()
+                    if vend in ("goldshell", "cgminer", "ckbminer") and v >= 20:
+                        return v / 1000.0  # often GH stuffed into MHS
+                    return v / 1e6
+                return v / 1000.0
             except (TypeError, ValueError):
                 continue
-    for key in ("MHS 5s", "MHS av", "MHS 1m", "MHS 5m"):
+    for key in ("MHS 5s", "MHS av", "MHS 1m", "MHS 5m", "MHS rolling", "MHS 20s"):
         if d.get(key) not in (None, ""):
             try:
                 v = float(d[key])
@@ -27891,15 +28108,76 @@ def _devs_row_hashrate_th(d: dict, vendor: str | None = None) -> float | None:
                 continue
             if v <= 0:
                 continue
-            # Whatsminer-scale raw megahashes
+            # Whatsminer / Goldshell ckbminer: large raw MHS count → TH
             if v >= 1e5:
                 return v / 1e6
             # Goldshell UI shows GH/s but DEVS often puts 1124.45 in MHS
             vend = str(vendor or "").lower()
-            if vend in ("goldshell", "cgminer") and v >= 20:
+            if vend in ("goldshell", "cgminer", "ckbminer") and v >= 20:
                 return v / 1000.0
             return v / 1e6
     return None
+
+
+def _fill_hashrate_from_devs(body: dict, devs: list | None) -> dict:
+    """
+    If SUMMARY left hashrate empty (Goldshell HTTP-only path, broken stats JSON,
+    ckbminer SUMMARY without MHS keys), fill from DEVS / boards_th so fleet
+    does not mark a hashing box as freeze.
+    """
+    if not isinstance(body, dict):
+        return body
+    try:
+        cur = float(body.get("hashrate_th")) if body.get("hashrate_th") not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        cur = 0.0
+    if cur > 1e-9:
+        return body
+    vendor = str(body.get("vendor") or body.get("api_vendor") or "").lower()
+    ths: list[float] = []
+    # prefer already-stamped boards_th
+    raw_th = body.get("boards_th")
+    if isinstance(raw_th, (list, tuple)):
+        for x in raw_th:
+            try:
+                v = float(x)
+                if v > 0:
+                    ths.append(v)
+            except (TypeError, ValueError):
+                continue
+    if not ths and isinstance(devs, list):
+        for d in devs:
+            th = _devs_row_hashrate_th(d if isinstance(d, dict) else {}, vendor)
+            if th is not None and th > 0:
+                ths.append(th)
+    if not ths and isinstance(body.get("boards_detail"), list):
+        for b in body["boards_detail"]:
+            if not isinstance(b, dict):
+                continue
+            try:
+                v = float(b.get("hashrate_th"))
+                if v > 0:
+                    ths.append(v)
+            except (TypeError, ValueError):
+                continue
+    if not ths:
+        return body
+    total = sum(ths)
+    if total <= 0:
+        return body
+    body["hashrate_th"] = round(total, 6) if total < 1 else round(total, 4)
+    body["hashrate_hs"] = float(total) * 1e12
+    if not body.get("boards_th"):
+        body["boards_th"] = [round(x, 6) if x < 1 else round(x, 4) for x in ths[:8]]
+    # unit: prefer algo/profile later; set a sane default by magnitude
+    if not body.get("hashrate_unit") or body.get("hashrate_unit") in ("H/s", "h/s"):
+        if total >= 0.1:
+            body["hashrate_unit"] = "TH/s"
+        elif total >= 0.0001:
+            body["hashrate_unit"] = "GH/s"
+        else:
+            body["hashrate_unit"] = "MH/s"
+    return body
 
 
 def _temp_plausible(tv: float | None) -> bool:
@@ -28996,16 +29274,25 @@ def _fetch_live_direct() -> dict:
         "freq_avg": summary.get("freq_avg"),
         "hashrate_th": hashrate_th,
         "hashrate_hs": hashrate_hs,
+        # Prefer algo/model unit later (apply_model_profile). Magnitude heuristic only.
         "hashrate_unit": (
             "TH/s"
-            if hashrate_th is not None and hashrate_th >= 0.1
+            if hashrate_th is not None and hashrate_th >= 0.05
             else (
                 "GH/s"
-                if hashrate_hs is not None and 1e8 <= hashrate_hs < 1e12
+                if hashrate_th is not None and hashrate_th >= 5e-5
                 else (
                     "MH/s"
-                    if hashrate_hs is not None and hashrate_hs >= 1e5
-                    else "H/s"
+                    if hashrate_th is not None and hashrate_th > 0
+                    else (
+                        "GH/s"
+                        if hashrate_hs is not None and 1e8 <= float(hashrate_hs or 0) < 1e11
+                        else (
+                            "MH/s"
+                            if hashrate_hs is not None and float(hashrate_hs or 0) >= 1e5
+                            else "H/s"
+                        )
+                    )
                 )
             )
         ),
@@ -29137,6 +29424,12 @@ def _fetch_live_direct() -> dict:
         )
     except Exception as e:
         print(f"[live] hashboard meta: {e}")
+    # Hashrate fallback: SUMMARY empty / goldshell HTTP-only / CGMiner quirks
+    # → sum DEVS boards_th or re-read DEVS MHS (CK-BOX, Mini-DOGE, …)
+    try:
+        body = _fill_hashrate_from_devs(body, devs if isinstance(devs, list) else None)
+    except Exception as e:
+        print(f"[live] hashrate from devs: {e}")
     # Model profile: trade name + power estimate when ASIC omits wall power
     try:
         if apply_model_profile_to_live is not None:
@@ -37565,6 +37858,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/weather/search":
             self._api_weather_search()
             return
+        if path == "/api/weather/place":
+            self._api_weather_place()
+            return
         if path == "/api/weather/presets":
             self._json_response(200, {"ok": True, "presets": WEATHER_PRESETS})
             return
@@ -39889,12 +40185,20 @@ class Handler(SimpleHTTPRequestHandler):
     def _api_weather_get(self) -> None:
         qs = parse_qs(urlparse(self.path).query)
         force = (qs.get("force", ["0"])[0] or "0") in ("1", "true", "yes")
-        # Ad-hoc place for multi weather widgets: ?lat=&lon=&city=&timezone=
+        lang = (qs.get("lang") or qs.get("language") or ["en"])[0] or "en"
+        # Ad-hoc place for multi weather widgets: ?lat=&lon=&city=&timezone=&place_id=
         lat_s = (qs.get("lat") or qs.get("latitude") or [None])[0]
         lon_s = (qs.get("lon") or qs.get("longitude") or [None])[0]
         cfg = None
         if lat_s not in (None, "") and lon_s not in (None, ""):
             try:
+                pid_raw = (qs.get("place_id") or qs.get("id") or [None])[0]
+                pid = None
+                if pid_raw not in (None, ""):
+                    try:
+                        pid = int(pid_raw)
+                    except (TypeError, ValueError):
+                        pid = None
                 cfg = {
                     "enabled": True,
                     "city": (qs.get("city") or [""])[0] or "",
@@ -39904,17 +40208,26 @@ class Handler(SimpleHTTPRequestHandler):
                     "longitude": float(lon_s),
                     "timezone": (qs.get("timezone") or qs.get("tz") or ["auto"])[0]
                     or "auto",
+                    "place_id": pid,
                 }
             except (TypeError, ValueError):
                 cfg = None
-        body = fetch_weather_current(cfg, force=force)
+        body = fetch_weather_current(cfg, force=force, language=str(lang))
         code = 200 if body.get("ok") or body.get("stale") else 502
         self._json_response(code, body)
 
     def _api_weather_config_get(self) -> None:
+        qs = parse_qs(urlparse(self.path).query)
+        lang = (qs.get("lang") or qs.get("language") or ["en"])[0] or "en"
         with _weather_cfg_lock:
             cfg = dict(_weather_cfg)
-        self._json_response(200, {"ok": True, "config": cfg, "presets": WEATHER_PRESETS})
+        cfg_out = dict(cfg)
+        cfg_out["city_display"] = weather_localized_city(
+            place_id=cfg.get("place_id"),
+            language=str(lang),
+            fallback=cfg.get("city"),
+        )
+        self._json_response(200, {"ok": True, "config": cfg_out, "presets": WEATHER_PRESETS})
 
     def _api_energy_summary(self) -> None:
         try:
@@ -39985,16 +40298,38 @@ class Handler(SimpleHTTPRequestHandler):
         global _weather_cache, _weather_cache_ts
         try:
             req = self._read_json_body()
+            if not isinstance(req, dict):
+                req = {}
+            # When coordinates / place change — store English canonical name
+            place_keys = (
+                "city",
+                "country",
+                "admin1",
+                "latitude",
+                "longitude",
+                "timezone",
+                "place_id",
+                "id",
+            )
+            if any(k in req for k in place_keys):
+                with _weather_cfg_lock:
+                    base = dict(_weather_cfg)
+                canon = weather_canonicalize_place(
+                    city=req.get("city", base.get("city")),
+                    country=req.get("country", base.get("country")),
+                    admin1=req.get("admin1", base.get("admin1")),
+                    latitude=req.get("latitude", base.get("latitude")),
+                    longitude=req.get("longitude", base.get("longitude")),
+                    timezone=req.get("timezone", base.get("timezone")),
+                    place_id=req.get("place_id", req.get("id", base.get("place_id"))),
+                )
+                with _weather_cfg_lock:
+                    for k, v in canon.items():
+                        if v is not None:
+                            _weather_cfg[k] = v
             with _weather_cfg_lock:
                 if "enabled" in req:
                     _weather_cfg["enabled"] = bool(req["enabled"])
-                for key in ("city", "country", "admin1", "timezone"):
-                    if key in req and req[key] is not None:
-                        _weather_cfg[key] = str(req[key])
-                if "latitude" in req:
-                    _weather_cfg["latitude"] = float(req["latitude"])
-                if "longitude" in req:
-                    _weather_cfg["longitude"] = float(req["longitude"])
                 if "refresh_interval_sec" in req and req["refresh_interval_sec"] is not None:
                     _weather_cfg["refresh_interval_sec"] = _weather_refresh_sec(
                         {"refresh_interval_sec": req["refresh_interval_sec"]}
@@ -40004,8 +40339,13 @@ class Handler(SimpleHTTPRequestHandler):
             with _weather_cache_lock:
                 _weather_cache = None
                 _weather_cache_ts = 0.0
-            weather = fetch_weather_current(cfg, force=True)
-            self._json_response(200, {"ok": True, "config": cfg, "weather": weather})
+            # lang from request for immediate display
+            lang = str(req.get("lang") or req.get("language") or "en")
+            weather = fetch_weather_current(cfg, force=True, language=lang)
+            # config for UI also shows localized city_display
+            cfg_out = dict(cfg)
+            cfg_out["city_display"] = weather.get("city_display") or cfg.get("city")
+            self._json_response(200, {"ok": True, "config": cfg_out, "weather": weather})
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})
 
@@ -40022,6 +40362,22 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(200, {"ok": True, "query": q, "results": results})
         except Exception as e:
             self._json_response(502, {"ok": False, "error": str(e), "results": []})
+
+    def _api_weather_place(self) -> None:
+        """GET /api/weather/place?id=524901&lang=ru — localized place name."""
+        qs = parse_qs(urlparse(self.path).query)
+        pid = (qs.get("id") or qs.get("place_id") or [""])[0]
+        lang = (qs.get("lang") or qs.get("language") or ["en"])[0]
+        try:
+            row = weather_place_by_id(pid, language=str(lang or "en"))
+            if not row:
+                self._json_response(
+                    404, {"ok": False, "error": "place not found", "place_id": pid}
+                )
+                return
+            self._json_response(200, row)
+        except Exception as e:
+            self._json_response(502, {"ok": False, "error": str(e)})
 
     def _api_telegram_config_post(self) -> None:
         global _tg_cfg

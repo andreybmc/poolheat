@@ -952,6 +952,13 @@
     .card-b { padding: 16px; }
 
     .stack { display: flex; flex-direction: column; gap: 16px; }
+    /* type-specific circuit panels — .stack {display:flex} must not unhide [hidden] */
+    .circuit-type-panel[hidden],
+    #circuit-pool-geo[hidden],
+    #circuit-house-params[hidden],
+    #circuit-dhw-params[hidden] {
+      display: none !important;
+    }
 
     /* —— metrics —— */
     .metric {
@@ -7374,7 +7381,8 @@
               <h2 data-i18n="circuit.editor_title">Edit circuit</h2>
               <div class="sub" id="circuit-editor-sub">—</div>
             </div>
-            <div class="btn-row" style="gap:8px">
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn ghost" type="button" id="btn-circuit-close" data-i18n="btn.close">Close</button>
               <button class="btn danger" type="button" id="btn-circuit-delete" data-i18n="btn.delete">Delete</button>
               <button class="btn primary" type="button" id="btn-circuit-save" data-i18n="btn.save">Save</button>
             </div>
@@ -7425,8 +7433,26 @@
               </div>
             </div>
 
-            <div id="circuit-pool-geo" class="stack" style="gap:12px" hidden>
+            <!-- Type-specific params: only one panel visible at a time -->
+            <div id="circuit-house-params" class="circuit-type-panel stack" style="gap:8px" hidden>
+              <div style="font-weight:550;font-size:0.85rem" data-i18n="circuit.house_params_title">House · heat</div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.house_params_hint">
+                Space heating circuit. Pool geometry does not apply. Zone map / profiles control setpoints.
+              </p>
+            </div>
+
+            <div id="circuit-dhw-params" class="circuit-type-panel stack" style="gap:8px" hidden>
+              <div style="font-weight:550;font-size:0.85rem" data-i18n="circuit.dhw_params_title">DHW · hot water</div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.dhw_params_hint">
+                Domestic hot water circuit. Different thermal model than pool or house heating.
+              </p>
+            </div>
+
+            <div id="circuit-pool-geo" class="circuit-type-panel stack" style="gap:12px" hidden>
               <div style="font-weight:550;font-size:0.85rem" data-i18n="h2.pool_geo">Pool · geometry</div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.pool_params_hint">
+                Pool-only: shape, volume, circulation. Not used for house or DHW.
+              </p>
               <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
                 <select id="pool-shape">
                   <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
@@ -10414,7 +10440,9 @@
         "circuit.hint": "A circuit is a heat sink (house, pool…). Temperature charts bind to a circuit; hashrate/power charts bind to a miner. Optional drycooler flag and device.",
         "circuit.empty": "No circuits yet",
         "circuit.saved": "Circuits saved",
+        "circuit.edit": "Edit",
         "circuit.editor_title": "Edit circuit",
+        "btn.close": "Close",
         "circuit.field_name": "Name",
         "circuit.field_type": "Type",
         "circuit.field_drycooler": "Drycooler",
@@ -10428,6 +10456,11 @@
         "circuit.remove_confirm": "Remove this circuit?",
         "circuit.type.house": "House",
         "circuit.type.pool": "Pool",
+        "circuit.house_params_title": "House · heat",
+        "circuit.house_params_hint": "Space heating circuit. Pool geometry does not apply. Zone map / profiles control setpoints.",
+        "circuit.dhw_params_title": "DHW · hot water",
+        "circuit.dhw_params_hint": "Domestic hot water circuit. Different thermal model than pool or house heating.",
+        "circuit.pool_params_hint": "Pool-only: shape, volume, circulation. Not used for house or DHW.",
         "circuit.type.dhw": "DHW",
         "circuit.type.custom": "Custom",
         "dash.chart_bind_circuit": "Circuit",
@@ -11453,7 +11486,9 @@
         "circuit.hint": "Контур — объект утилизации тепла (дом, бассейн…). График температур привязан к контуру; хешрейт/мощность — к майнеру. Drycooler: флаг + опционально device.",
         "circuit.empty": "Нет контуров",
         "circuit.saved": "Контуры сохранены",
+        "circuit.edit": "Редактировать",
         "circuit.editor_title": "Редактирование контура",
+        "btn.close": "Закрыть",
         "circuit.field_name": "Имя",
         "circuit.field_type": "Тип",
         "circuit.field_drycooler": "Drycooler",
@@ -11469,6 +11504,11 @@
         "circuit.type.pool": "Бассейн",
         "circuit.type.dhw": "ГВС",
         "circuit.type.custom": "Другое",
+        "circuit.house_params_title": "Дом · отопление",
+        "circuit.house_params_hint": "Контур отопления помещения. Геометрия бассейна не применяется. Уставки — карта зон / профили.",
+        "circuit.dhw_params_title": "ГВС · горячая вода",
+        "circuit.dhw_params_hint": "Контур ГВС. Другая тепловая модель, чем у бассейна или отопления дома.",
+        "circuit.pool_params_hint": "Только бассейн: форма, объём, циркуляция. Не для дома и ГВС.",
         "dash.chart_bind_circuit": "Контур",
         "dash.chart_bind_miner": "Майнер (хешрейт · мощность)",
         "dash.chart_bind_none": "— не выбран —",
@@ -12613,9 +12653,19 @@
       try {
         if (typeof syncPoolShapeUI === "function") syncPoolShapeUI();
       } catch (_) {}
-      // weather widget condition text / feels-like follow language
+      // weather: re-fetch so city_display + condition text match UI language
       try {
-        if (typeof renderWeatherDash === "function" && typeof weatherData !== "undefined" && weatherData) {
+        if (typeof loadWeatherConfig === "function") {
+          void loadWeatherConfig().then(() => {
+            if (typeof loadWeather === "function") return loadWeather(false);
+          });
+        } else if (typeof loadAllWeatherWidgets === "function") {
+          void loadAllWeatherWidgets(false);
+        } else if (
+          typeof renderWeatherDash === "function" &&
+          typeof weatherData !== "undefined" &&
+          weatherData
+        ) {
           renderWeatherDash(weatherData);
         }
       } catch (_) {}
@@ -17795,7 +17845,40 @@
             .replace(/"/g, "&quot;");
     }
 
-    function renderCircuitsSettings() {
+    /** When true, editor card is open for selectedCircuitId */
+    let circuitEditorOpen = false;
+
+    function closeCircuitEditor() {
+      circuitEditorOpen = false;
+      const card = document.getElementById("circuit-editor-card");
+      if (card) card.hidden = true;
+      // re-render list highlight only (no auto-open)
+      renderCircuitsListOnly();
+    }
+
+    function openCircuitEditor(cid) {
+      const c = (circuitsCache.circuits || []).find(
+        (x) => String(x.id) === String(cid)
+      );
+      if (!c) {
+        circuitEditorOpen = false;
+        const card = document.getElementById("circuit-editor-card");
+        if (card) card.hidden = true;
+        return;
+      }
+      selectedCircuitId = c.id;
+      circuitEditorOpen = true;
+      fillCircuitEditor(c.id);
+      renderCircuitsListOnly();
+      // scroll editor into view
+      try {
+        document
+          .getElementById("circuit-editor-card")
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (_) { /* ignore */ }
+    }
+
+    function renderCircuitsListOnly() {
       const list = document.getElementById("circuits-list");
       if (!list) return;
       const circuits = circuitsCache.circuits || [];
@@ -17808,12 +17891,8 @@
           "</p>";
         return;
       }
-      if (
-        !selectedCircuitId ||
-        !circuits.some((c) => String(c.id) === String(selectedCircuitId))
-      ) {
-        selectedCircuitId = circuits[0] && circuits[0].id;
-      }
+      const editL =
+        typeof t === "function" ? t("circuit.edit", "Edit") : "Edit";
       list.innerHTML = circuits
         .map((c) => {
           const id = escCirc(String(c.id || ""));
@@ -17821,12 +17900,17 @@
           const type = String(c.type || "house");
           const dry = !!c.drycooler;
           const nMiners = (c.miner_ids || []).length;
-          const sel =
-            String(c.id) === String(selectedCircuitId) ? " border-color:var(--accent,#6366f1);background:rgba(99,102,241,0.08)" : "";
+          const editing =
+            circuitEditorOpen &&
+            String(c.id) === String(selectedCircuitId);
+          const sel = editing
+            ? " border-color:var(--accent,#6366f1);background:rgba(99,102,241,0.08)"
+            : "";
+          const city = c.city ? " · " + escCirc(String(c.city)) : "";
           return (
-            '<button type="button" class="row" data-circuit-select="' +
+            '<div class="row" data-circuit-row="' +
             id +
-            '" style="display:flex;width:100%;text-align:left;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:inherit;cursor:pointer' +
+            '" style="display:flex;width:100%;text-align:left;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:inherit' +
             sel +
             '">' +
             '<div style="flex:1;min-width:8rem">' +
@@ -17839,11 +17923,39 @@
             " · " +
             nMiners +
             " ASIC" +
-            "</div></div></button>"
+            city +
+            "</div></div>" +
+            '<button type="button" class="btn" data-circuit-edit="' +
+            id +
+            '" style="flex:0 0 auto">' +
+            escCirc(editL) +
+            "</button></div>"
           );
         })
         .join("");
-      fillCircuitEditor(selectedCircuitId);
+    }
+
+    function renderCircuitsSettings() {
+      const list = document.getElementById("circuits-list");
+      if (!list) return;
+      const circuits = circuitsCache.circuits || [];
+      // Drop selection if circuit was deleted
+      if (
+        selectedCircuitId &&
+        !circuits.some((c) => String(c.id) === String(selectedCircuitId))
+      ) {
+        selectedCircuitId = null;
+        circuitEditorOpen = false;
+      }
+      renderCircuitsListOnly();
+      // Only keep editor open if user explicitly opened it
+      if (circuitEditorOpen && selectedCircuitId) {
+        fillCircuitEditor(selectedCircuitId);
+      } else {
+        const card = document.getElementById("circuit-editor-card");
+        if (card) card.hidden = true;
+        circuitEditorOpen = false;
+      }
     }
 
     function fillCircuitEditor(cid) {
@@ -17852,7 +17964,7 @@
         (x) => String(x.id) === String(cid)
       );
       if (!card) return;
-      if (!c) {
+      if (!c || !circuitEditorOpen) {
         card.hidden = true;
         return;
       }
@@ -17874,9 +17986,9 @@
       set("circuit-edit-tz", c.timezone || "");
       const sub = document.getElementById("circuit-editor-sub");
       if (sub) sub.textContent = String(c.id);
-      const geo = document.getElementById("circuit-pool-geo");
-      if (geo) geo.hidden = String(c.type) !== "pool";
-      if (String(c.type) === "pool") {
+      const ctype = String(c.type || "house");
+      syncCircuitTypePanels(ctype);
+      if (ctype === "pool") {
         const g = c.pool_geometry || {};
         const shapeEl = document.getElementById("pool-shape");
         if (shapeEl && g.shape) shapeEl.value = g.shape;
@@ -17896,6 +18008,17 @@
       const dryWrap = document.getElementById("circuit-drycooler-device-wrap");
       if (dryWrap) dryWrap.hidden = !(dry && dry.checked);
       renderCircuitMinersBind();
+    }
+
+    /** Show only the parameter block for this circuit type (house / pool / dhw). */
+    function syncCircuitTypePanels(type) {
+      const t0 = String(type || "house").toLowerCase();
+      const house = document.getElementById("circuit-house-params");
+      const dhw = document.getElementById("circuit-dhw-params");
+      const pool = document.getElementById("circuit-pool-geo");
+      if (house) house.hidden = t0 !== "house" && t0 !== "custom";
+      if (dhw) dhw.hidden = t0 !== "dhw";
+      if (pool) pool.hidden = t0 !== "pool";
     }
 
     function renderCircuitMinersBind() {
@@ -17959,6 +18082,7 @@
         const mid = inp.getAttribute("data-mid");
         if (mid) miner_ids.push(mid);
       });
+      // Pool geometry only for type=pool; never attach house/dhw with pool params
       let pool_geometry = null;
       if (type === "pool" && typeof collectPoolGeometryFromUI === "function") {
         try {
@@ -17966,6 +18090,8 @@
         } catch (_) {
           pool_geometry = null;
         }
+      } else {
+        pool_geometry = null;
       }
       const city = (document.getElementById("circuit-edit-city")?.value || "").trim();
       const lat = parseFloat(document.getElementById("circuit-edit-lat")?.value);
@@ -18048,6 +18174,7 @@
       const addBtn = document.getElementById("btn-circuit-add");
       const saveBtn = document.getElementById("btn-circuit-save");
       const delBtn = document.getElementById("btn-circuit-delete");
+      const closeBtn = document.getElementById("btn-circuit-close");
       const typeEl = document.getElementById("circuit-edit-type");
       const dryEl = document.getElementById("circuit-edit-drycooler");
       if (addBtn && !addBtn._bound) {
@@ -18068,8 +18195,7 @@
             });
             const created = (body.circuits || []).slice(-1)[0];
             if (created) {
-              selectedCircuitId = created.id;
-              renderCircuitsSettings();
+              openCircuitEditor(created.id);
             }
           } catch (e) {
             if (typeof toastError === "function")
@@ -18080,11 +18206,22 @@
       if (saveBtn && !saveBtn._bound) {
         saveBtn._bound = true;
         saveBtn.addEventListener("click", () => {
-          void saveCircuitEditor().catch((e) => {
-            if (typeof toastError === "function")
-              toastError(e.message || String(e));
-          });
+          void saveCircuitEditor()
+            .then(() => {
+              // stay in editor after save so user can continue; re-fill from cache
+              if (selectedCircuitId && circuitEditorOpen) {
+                openCircuitEditor(selectedCircuitId);
+              }
+            })
+            .catch((e) => {
+              if (typeof toastError === "function")
+                toastError(e.message || String(e));
+            });
         });
+      }
+      if (closeBtn && !closeBtn._bound) {
+        closeBtn._bound = true;
+        closeBtn.addEventListener("click", () => closeCircuitEditor());
       }
       if (delBtn && !delBtn._bound) {
         delBtn._bound = true;
@@ -18102,6 +18239,9 @@
           try {
             await circuitApi({ action: "remove", id });
             selectedCircuitId = null;
+            circuitEditorOpen = false;
+            const card = document.getElementById("circuit-editor-card");
+            if (card) card.hidden = true;
             if (typeof toastSuccess === "function")
               toastSuccess(
                 typeof t === "function" ? t("circuit.saved", "Circuits saved") : "Saved"
@@ -18115,8 +18255,7 @@
       if (typeEl && !typeEl._bound) {
         typeEl._bound = true;
         typeEl.addEventListener("change", () => {
-          const geo = document.getElementById("circuit-pool-geo");
-          if (geo) geo.hidden = typeEl.value !== "pool";
+          syncCircuitTypePanels(typeEl.value);
         });
       }
       if (dryEl && !dryEl._bound) {
@@ -18129,10 +18268,16 @@
       if (list && !list._bound) {
         list._bound = true;
         list.addEventListener("click", (ev) => {
-          const btn = ev.target && ev.target.closest && ev.target.closest("[data-circuit-select]");
-          if (!btn) return;
-          selectedCircuitId = btn.getAttribute("data-circuit-select");
-          renderCircuitsSettings();
+          const editBtn =
+            ev.target &&
+            ev.target.closest &&
+            ev.target.closest("[data-circuit-edit]");
+          if (editBtn) {
+            ev.preventDefault();
+            const id = editBtn.getAttribute("data-circuit-edit");
+            if (id) openCircuitEditor(id);
+            return;
+          }
         });
       }
       // pool geometry live calc (shared ids)
@@ -19168,7 +19313,8 @@
       bindDashSortable();
       const editBtn = document.getElementById("btn-dash-edit");
       const addBtn = document.getElementById("btn-dash-add");
-      editBtn?.addEventListener("click", () => {
+      editBtn?.addEventListener("click", (e) => {
+        e.stopPropagation();
         setDashEditMode(!dashEditMode);
       });
       addBtn?.addEventListener("click", (e) => {
@@ -19182,6 +19328,31 @@
         if (wrap && wrap.contains(e.target)) return;
         hideDashAddMenu();
       });
+      // Exit layout edit when clicking outside dashboard work area
+      // (page margins left/right, nav, other tabs — not widgets themselves)
+      if (!window.__dashEditOutsideBound) {
+        window.__dashEditOutsideBound = true;
+        document.addEventListener(
+          "pointerdown",
+          (e) => {
+            if (typeof dashEditMode === "undefined" || !dashEditMode) return;
+            const t = e.target;
+            if (!t || !t.closest) return;
+            // stay in edit: board widgets, toolbar, add menu, dialogs/modals
+            if (
+              t.closest(
+                "#dash-board, .dash-toolbar-wrap, #dash-add-menu, " +
+                  ".chart-series-modal, .mp-edit-backdrop, [role='dialog'], " +
+                  "#wx-widget-settings-modal, .modal, .toast-host, .toasts"
+              )
+            ) {
+              return;
+            }
+            setDashEditMode(false);
+          },
+          true
+        );
+      }
       // reflow chart pack (column vs row) when window width crosses breakpoints
       if (!window.__dashPackResizeBound) {
         window.__dashPackResizeBound = true;
@@ -26039,6 +26210,43 @@
       return null;
     }
 
+    /** Effective hashrate in true TH/s from live slice (top-level + boards_th). */
+    function fleetEffectiveHashrateTh(live) {
+      if (!live || typeof live !== "object") return null;
+      let th = Number(live.hashrate_th);
+      if (Number.isFinite(th) && th > 1e-12) return th;
+      // sum per-board rates (Goldshell CK-BOX often has boards_th when summary empty)
+      if (Array.isArray(live.boards_th) && live.boards_th.length) {
+        let s = 0;
+        let n = 0;
+        live.boards_th.forEach((x) => {
+          const v = Number(x);
+          if (Number.isFinite(v) && v > 0) {
+            s += v;
+            n += 1;
+          }
+        });
+        if (n && s > 0) return s;
+      }
+      if (Array.isArray(live.boards_detail)) {
+        let s = 0;
+        let n = 0;
+        live.boards_detail.forEach((b) => {
+          if (!b || typeof b !== "object") return;
+          const v = Number(b.hashrate_th);
+          if (Number.isFinite(v) && v > 0) {
+            s += v;
+            n += 1;
+          }
+        });
+        if (n && s > 0) return s;
+      }
+      // hashrate_hs (H/s) → TH
+      const hs = Number(live.hashrate_hs);
+      if (Number.isFinite(hs) && hs > 0) return hs / 1e12;
+      return null;
+    }
+
     function fleetStatusOf(m) {
       // online | offline | freeze | lowhash | error | unknown
       if (m.online === true) {
@@ -26046,28 +26254,41 @@
         if (live.error) return "error";
         const unit = fleetHashUnit(m, live);
         const eps = fleetFreezeEpsDisplay(unit);
-        const rawHr = live.hashrate_th;
-        const hrMissing = rawHr == null || rawHr === "";
-        const hrDisp = hrMissing ? null : fleetThToDisplay(rawHr, unit);
-        // also trust hashrate_hs when present (H/s)
-        let hsOk = false;
+        const th = fleetEffectiveHashrateTh(live);
+        const hrDisp = th != null ? fleetThToDisplay(th, unit) : null;
+        // Absolute TH floor: anything above ~0.1 MH/s is hashing (covers ethash + CK-BOX)
+        const thOk = Number.isFinite(th) && th > 1e-7;
         const hs = Number(live.hashrate_hs);
-        if (Number.isFinite(hs) && hs > 1e6) hsOk = true; // > 1 MH/s
-        // freeze: on network but not mining
-        if (!hsOk && (hrDisp == null || !Number.isFinite(hrDisp) || hrDisp <= eps)) {
-          return "freeze";
+        const hsOk = Number.isFinite(hs) && hs > 1e5; // > 0.1 MH/s
+        // Soft evidence: resume + fans or chip temp (poll path lost rate but miner is hot)
+        const work = String(live.work || live.work_measured || "").toLowerCase();
+        const working = work === "resume" || work === "mining" || work === "alive";
+        const fans = Array.isArray(live.fans) ? live.fans : [];
+        const fanOk = fans.some((f) => Number(f) > 100);
+        const tempOk =
+          (live.chip_avg != null && Number(live.chip_avg) > 20) ||
+          (live.temp != null && Number(live.temp) > 20);
+        const softMining = working && (fanOk || tempOk);
+        // freeze: online but no hashrate evidence at all
+        if (!thOk && !hsOk && !softMining) {
+          // missing HR with no soft signal
+          if (hrDisp == null || !Number.isFinite(hrDisp) || hrDisp <= eps) {
+            return "freeze";
+          }
         }
-        // lowhash: avg over last ~30 min below inventory target (same display unit)
-        const target = fleetTargetHashrateDisplay(m);
-        if (target != null && target > 0) {
-          const avg30 = Number(live.hashrate_th_avg_30m);
-          const avgDisp = fleetThToDisplay(avg30, unit);
-          if (
-            Number.isFinite(avgDisp) &&
-            avgDisp > eps &&
-            avgDisp < target * FLEET_LOWHASH_RATIO
-          ) {
-            return "lowhash";
+        if (thOk || hsOk) {
+          // lowhash: avg over last ~30 min below inventory target (same display unit)
+          const target = fleetTargetHashrateDisplay(m);
+          if (target != null && target > 0) {
+            const avg30 = Number(live.hashrate_th_avg_30m);
+            const avgDisp = fleetThToDisplay(avg30, unit);
+            if (
+              Number.isFinite(avgDisp) &&
+              avgDisp > eps &&
+              avgDisp < target * FLEET_LOWHASH_RATIO
+            ) {
+              return "lowhash";
+            }
           }
         }
         return "online";
@@ -31305,6 +31526,7 @@
             latitude: Number(c.latitude),
             longitude: Number(c.longitude),
             timezone: String(c.timezone || "auto"),
+            place_id: c.place_id != null ? c.place_id : null,
           };
         }
       }
@@ -31320,15 +31542,17 @@
           latitude: Number(weatherCfg.latitude),
           longitude: Number(weatherCfg.longitude),
           timezone: String(weatherCfg.timezone || "auto"),
+          place_id: weatherCfg.place_id != null ? weatherCfg.place_id : null,
         };
       }
       return {
-        city: "Москва",
+        city: "Moscow",
         country: "RU",
         admin1: "",
         latitude: 55.7558,
         longitude: 37.6173,
         timezone: "Europe/Moscow",
+        place_id: 524901,
       };
     }
 
@@ -31573,22 +31797,40 @@
 
     async function applyWeatherPlaceToWidget(widgetId, place) {
       if (!dashboardWeatherWidgets) dashboardWeatherWidgets = {};
+      const canon = await canonicalizeWeatherPlace(place);
       dashboardWeatherWidgets[widgetId] = {
-        city: String(place.city || place.label || ""),
-        country: String(place.country || ""),
-        admin1: String(place.admin1 || ""),
-        latitude: Number(place.latitude),
-        longitude: Number(place.longitude),
-        timezone: String(place.timezone || "auto"),
+        city: String(canon.city || place.city || place.label || ""),
+        country: String(canon.country || place.country || ""),
+        admin1: String(canon.admin1 || ""),
+        latitude: Number(canon.latitude != null ? canon.latitude : place.latitude),
+        longitude: Number(
+          canon.longitude != null ? canon.longitude : place.longitude
+        ),
+        timezone: String(canon.timezone || place.timezone || "auto"),
+        place_id:
+          canon.place_id != null
+            ? canon.place_id
+            : place.place_id != null
+              ? place.place_id
+              : place.id != null
+                ? place.id
+                : null,
       };
       ensureWeatherWidgetDom(widgetId);
       scheduleSaveDashboardConfig();
       await loadWeatherForWidget(widgetId, true);
       if (typeof toastSuccess === "function") {
+        const w =
+          window.weatherWidgetDataCache &&
+          window.weatherWidgetDataCache[widgetId];
+        const shown =
+          (w && (w.city_display || w.city)) ||
+          dashboardWeatherWidgets[widgetId].city ||
+          "";
         toastSuccess(
           (typeof t === "function" ? t("dash.widget.weather", "Weather") : "Weather") +
             ": " +
-            (dashboardWeatherWidgets[widgetId].city || "")
+            shown
         );
       }
     }
@@ -31602,6 +31844,9 @@
         if (!dashboardWeatherWidgets) dashboardWeatherWidgets = {};
         dashboardWeatherWidgets[widgetId] = place;
       }
+      const lang =
+        (typeof getUiLang === "function" ? getUiLang() : null) ||
+        (typeof _uiLang !== "undefined" ? _uiLang : "en");
       const qs =
         "lat=" +
         encodeURIComponent(place.latitude) +
@@ -31611,10 +31856,17 @@
         encodeURIComponent(place.city || "") +
         "&timezone=" +
         encodeURIComponent(place.timezone || "auto") +
+        (place.place_id != null
+          ? "&place_id=" + encodeURIComponent(place.place_id)
+          : "") +
+        "&lang=" +
+        encodeURIComponent(lang) +
         (force ? "&force=1" : "");
       try {
         const res = await fetch("/api/weather?" + qs, { cache: "no-store" });
         const body = await res.json();
+        if (!window.weatherWidgetDataCache) window.weatherWidgetDataCache = {};
+        window.weatherWidgetDataCache[widgetId] = body;
         renderWeatherDash(body, widgetId);
         // primary card still feeds heat-loss outdoor temp
         if (widgetId === "weather") {
@@ -31698,7 +31950,7 @@
         return;
       }
 
-      cityEl.textContent = w.city || "—";
+      cityEl.textContent = w.city_display || w.city || "—";
       if (w.ok || w.stale) {
         tEl.textContent = fmtWxTemp(w.temp_c);
         const info = wxKindFromCode(w.weather_code, w.is_day !== false);
@@ -32025,7 +32277,7 @@
         if (!window.__wxIntervalDirty) intEl.value = mins;
       }
       if (city && cfg) {
-        city.textContent = cfg.city || "—";
+        city.textContent = cfg.city_display || cfg.city || "—";
       }
       if (meta && cfg) {
         const parts = [];
@@ -32047,7 +32299,13 @@
 
     async function loadWeatherConfig() {
       try {
-        const res = await fetch("/api/weather/config");
+        const lang =
+          (typeof getUiLang === "function" ? getUiLang() : null) ||
+          (typeof _uiLang !== "undefined" ? _uiLang : "en");
+        const res = await fetch(
+          "/api/weather/config?lang=" + encodeURIComponent(lang),
+          { cache: "no-store" }
+        );
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "config fail");
         weatherCfg = body.config;
@@ -32061,6 +32319,40 @@
         if (sub) sub.textContent = "config: " + e.message;
         return null;
       }
+    }
+
+    /** Resolve place to English canonical city + place_id for storage. */
+    async function canonicalizeWeatherPlace(place) {
+      if (!place || typeof place !== "object") return place;
+      const pid = place.place_id != null ? place.place_id : place.id;
+      if (pid == null || pid === "") {
+        return Object.assign({}, place);
+      }
+      try {
+        const res = await fetch(
+          "/api/weather/place?id=" +
+            encodeURIComponent(pid) +
+            "&lang=en",
+          { cache: "no-store" }
+        );
+        const body = await res.json().catch(() => ({}));
+        if (body && body.ok !== false && body.city) {
+          return {
+            city: String(body.city),
+            country: String(body.country || place.country || ""),
+            admin1: String(body.admin1 || ""),
+            latitude: Number(
+              body.latitude != null ? body.latitude : place.latitude
+            ),
+            longitude: Number(
+              body.longitude != null ? body.longitude : place.longitude
+            ),
+            timezone: String(body.timezone || place.timezone || "auto"),
+            place_id: Number(pid),
+          };
+        }
+      } catch (_) { /* keep original */ }
+      return Object.assign({}, place, { place_id: Number(pid) || pid });
     }
 
     async function loadWeather(force) {
@@ -32118,17 +32410,23 @@
     }
 
     async function saveWeatherCity(place, extra) {
+      const canon = await canonicalizeWeatherPlace(place);
+      const lang =
+        (typeof getUiLang === "function" ? getUiLang() : null) ||
+        (typeof _uiLang !== "undefined" ? _uiLang : "en");
       const payload = {
         enabled: document.getElementById("wx-enabled")
           ? document.getElementById("wx-enabled").checked
           : true,
-        city: place.city,
-        country: place.country || "",
-        admin1: place.admin1 || "",
-        latitude: place.latitude,
-        longitude: place.longitude,
-        timezone: place.timezone || "auto",
+        city: canon.city,
+        country: canon.country || "",
+        admin1: canon.admin1 || "",
+        latitude: canon.latitude,
+        longitude: canon.longitude,
+        timezone: canon.timezone || "auto",
+        place_id: canon.place_id != null ? canon.place_id : undefined,
         refresh_interval_sec: weatherIntervalSecFromUI(),
+        lang: lang,
       };
       if (extra) Object.assign(payload, extra);
       try {
@@ -32148,10 +32446,17 @@
         scheduleWeatherRefresh();
         const box = document.getElementById("wx-results");
         if (box) { box.hidden = true; box.innerHTML = ""; }
-        toastSuccess("City: " + (body.config.city || "") +
-          (body.weather && body.weather.temp_c != null
-            ? " · " + fmtWxTemp(body.weather.temp_c) + " °C"
-            : ""));
+        const shown =
+          (body.config && (body.config.city_display || body.config.city)) ||
+          (body.weather && (body.weather.city_display || body.weather.city)) ||
+          "";
+        toastSuccess(
+          "City: " +
+            shown +
+            (body.weather && body.weather.temp_c != null
+              ? " · " + fmtWxTemp(body.weather.temp_c) + " °C"
+              : "")
+        );
       } catch (e) {
         toastError("Weather: " + e.message);
       }
@@ -32329,6 +32634,9 @@
         return;
       }
       try {
+        const lang =
+          (typeof getUiLang === "function" ? getUiLang() : null) ||
+          (typeof _uiLang !== "undefined" ? _uiLang : "en");
         const res = await fetch("/api/weather/config", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -32342,7 +32650,9 @@
             latitude: weatherCfg.latitude,
             longitude: weatherCfg.longitude,
             timezone: weatherCfg.timezone || "auto",
+            place_id: weatherCfg.place_id,
             refresh_interval_sec: weatherIntervalSecFromUI(),
+            lang: lang,
           }),
         });
         const body = await res.json();
