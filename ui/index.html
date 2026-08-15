@@ -8182,6 +8182,7 @@
             <button type="button" class="fleet-ctx-item" data-ctx="open" data-i18n="fleet.open">Open</button>
             <button type="button" class="fleet-ctx-item" data-ctx="edit" data-i18n="fleet.edit">Edit</button>
             <button type="button" class="fleet-ctx-item" data-ctx="active" data-i18n="fleet.make_active">Make active</button>
+            <button type="button" class="fleet-ctx-item" data-ctx="reboot" data-i18n="fleet.reboot">Reboot</button>
             <div class="fleet-ctx-sep"></div>
             <button type="button" class="fleet-ctx-item danger" data-ctx="remove" data-i18n="fleet.remove">Remove</button>
           </div>
@@ -10238,6 +10239,10 @@
         "fleet.make_active": "Make active",
         "fleet.open": "Open",
         "fleet.edit": "Edit",
+        "fleet.reboot": "Reboot",
+        "fleet.reboot_confirm": "Reboot {name}?\n\nFull device reboot · offline for several minutes.",
+        "fleet.reboot_sent": "Reboot sent · offline…",
+        "fleet.reboot_fail": "Reboot failed",
         "fleet.remove": "Remove",
         "fleet.remove_confirm": "Remove miner from inventory?",
         "fleet.empty": "No miners in inventory — import under Settings → Miner-poller",
@@ -11216,6 +11221,10 @@
         "fleet.make_active": "Сделать active",
         "fleet.open": "Открыть",
         "fleet.edit": "Редактировать",
+        "fleet.reboot": "Перезагрузить",
+        "fleet.reboot_confirm": "Перезагрузить {name}?\n\nПолный reboot устройства · offline несколько минут.",
+        "fleet.reboot_sent": "Reboot отправлен · offline…",
+        "fleet.reboot_fail": "Ошибка reboot",
         "fleet.remove": "Удалить",
         "fleet.remove_confirm": "Удалить майнер из inventory?",
         "fleet.empty": "Нет майнеров — импорт: Настройки → Miner-poller",
@@ -24748,6 +24757,76 @@
           await fleetDoAction("active", mid);
         }
         activateTab("miner");
+        return;
+      }
+      if (action === "reboot") {
+        const m =
+          findMinerById(fleetCache.miners || [], mid) ||
+          findMinerById(managedMinersCache || [], mid);
+        if (!m || !m.host) {
+          if (typeof toastError === "function")
+            toastError(
+              fleetT("fleet.reboot_fail", "Reboot failed") + ": no host"
+            );
+          return;
+        }
+        const label =
+          (m.alias && String(m.alias).trim()) ||
+          (m.name && String(m.name).trim()) ||
+          m.host ||
+          String(mid);
+        const conf = fleetT(
+          "fleet.reboot_confirm",
+          "Reboot {name}?\n\nFull device reboot · offline for several minutes."
+        ).replace(/\{name\}/g, label);
+        if (!confirm(conf)) return;
+        try {
+          const payload = {
+            action: "reboot",
+            value: {
+              host: m.host,
+              port: m.port != null ? Number(m.port) || 4028 : 4028,
+              vendor: m.vendor || m.api_vendor || "",
+              id: mid,
+            },
+          };
+          const res = await fetch("/api/set", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const body = await res.json();
+          if (!res.ok || (body && body.ok === false)) {
+            throw new Error((body && body.error) || "HTTP " + res.status);
+          }
+          if (typeof toastWarn === "function") {
+            toastWarn(
+              fleetT("fleet.reboot_sent", "Reboot sent · offline…"),
+              5000
+            );
+          } else if (typeof toastSuccess === "function") {
+            toastSuccess(fleetT("fleet.reboot_sent", "Reboot sent · offline…"));
+          }
+          if (typeof appendActionLog === "function") {
+            appendActionLog(
+              "warn",
+              "REBOOT " + label + " (" + m.host + ")" +
+                (body && body.transport ? " · " + body.transport : "")
+            );
+          }
+          // soft refresh after a moment — miner may already be dropping offline
+          setTimeout(() => {
+            if (typeof refreshFleetTable === "function") void refreshFleetTable();
+          }, 2000);
+        } catch (e) {
+          if (typeof toastError === "function") {
+            toastError(
+              fleetT("fleet.reboot_fail", "Reboot failed") +
+                ": " +
+                (e.message || String(e))
+            );
+          }
+        }
         return;
       }
       if (action === "remove") {

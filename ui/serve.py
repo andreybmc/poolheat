@@ -45,7 +45,11 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FuturesTimeout,
+    as_completed,
+)
 from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11841,8 +11845,8 @@ def _load_fleet_live_map(*, max_age_sec: float = 120.0) -> dict[str, dict]:
             if ts > 0 and (now - ts) > float(max_age_sec):
                 continue
             live = entry.get("live") if isinstance(entry.get("live"), dict) else entry
-            if isinstance(live, dict) and live.get("ok") is not False:
-                # allow ok:false offline stamps too
+            # Keep ok:false stamps so UI can show offline (not "unknown")
+            if isinstance(live, dict):
                 out[str(host).strip()] = live
     except Exception:
         pass
@@ -11850,19 +11854,46 @@ def _load_fleet_live_map(*, max_age_sec: float = 120.0) -> dict[str, dict]:
 
 
 def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
+    """
+    Write fleet_live.json. Merge with previous hosts so a partial poll
+    (timeout / crash mid-cycle) does not wipe other miners' live rows.
+    """
     try:
-        payload = {
-            "ts": time.time(),
-            "miners": {
-                h: {
-                    "ts": time.time(),
-                    "live": live,
-                    "host": h,
-                }
-                for h, live in (by_host or {}).items()
-                if isinstance(live, dict)
-            },
-        }
+        now = time.time()
+        merged: dict[str, dict] = {}
+        # keep previous non-stale entries as base
+        try:
+            if FLEET_LIVE_FILE.is_file():
+                prev = json.loads(FLEET_LIVE_FILE.read_text(encoding="utf-8"))
+                old = prev.get("miners") if isinstance(prev, dict) else None
+                if isinstance(old, dict):
+                    for h, entry in old.items():
+                        if not isinstance(entry, dict):
+                            continue
+                        ts = float(entry.get("ts") or prev.get("ts") or 0)
+                        if ts > 0 and (now - ts) > 300.0:
+                            continue
+                        live = (
+                            entry.get("live")
+                            if isinstance(entry.get("live"), dict)
+                            else entry
+                        )
+                        if isinstance(live, dict):
+                            merged[str(h).strip()] = {
+                                "ts": ts or now,
+                                "live": live,
+                                "host": str(h).strip(),
+                            }
+        except Exception:
+            pass
+        for h, live in (by_host or {}).items():
+            if not isinstance(live, dict):
+                continue
+            hh = str(h).strip()
+            if not hh:
+                continue
+            merged[hh] = {"ts": now, "live": live, "host": hh}
+        payload = {"ts": now, "miners": merged}
         FLEET_LIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
         tmp = FLEET_LIVE_FILE.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -11871,10 +11902,96 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
         print(f"[fleet-live] write: {e}", flush=True)
 
 
+def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict]:
+    """
+    Poll a single managed miner for fleet_live. Always returns (host, live)
+    — never raises. Hard timeout so one dead/slow host cannot block the fleet.
+    """
+    host = str(m.get("host") or "").strip()
+    if not host:
+        return "", {}
+    try:
+        port = int(m.get("port") or 4028)
+    except (TypeError, ValueError):
+        port = 4028
+    vendor_hint = str(m.get("vendor") or m.get("api_vendor") or "").lower()
+    if vendor_hint in (
+        "ipollo",
+        "antminer",
+        "bitmain",
+        "goldshell",
+        "avalon",
+        "cgminer",
+    ):
+        with _ASIC_PROTO_LOCK:
+            _ASIC_PROTO_CACHE[host] = "cgminer"
+    elif vendor_hint in ("whatsminer", "microbt"):
+        with _ASIC_PROTO_LOCK:
+            _ASIC_PROTO_CACHE[host] = "whatsminer"
+
+    def _do_fetch() -> dict:
+        with _asic_target_override(host, port):
+            live = _fetch_live_direct()
+        if isinstance(live, dict):
+            live.setdefault("host", f"{host}:{port}")
+            return live
+        raise RuntimeError("empty live")
+
+    # Isolate hang: ThreadPool result timeout (remote VPN latency OK up to timeout)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_do_fetch)
+            live = fut.result(timeout=max(5.0, float(timeout)))
+        if isinstance(live, dict):
+            return host, live
+    except FuturesTimeout:
+        err = f"poll timeout ({timeout:.0f}s)"
+        print(f"[fleet-live] {host}:{port}: {err}", flush=True)
+        return host, {
+            "ok": False,
+            "host": f"{host}:{port}",
+            "error": err,
+            "vendor": m.get("vendor"),
+            "ts": datetime.now().isoformat(timespec="seconds"),
+        }
+    except Exception as e:
+        # Goldshell cloud-box: HTTP /mcb/* when :4028 refused
+        live_http = None
+        try:
+            live_http = _fetch_live_goldshell_http(host, port)
+        except Exception:
+            live_http = None
+        if isinstance(live_http, dict) and live_http.get("ok"):
+            print(
+                f"[fleet-live] {host}: tcp failed ({e}); using goldshell HTTP",
+                flush=True,
+            )
+            return host, live_http
+        err = str(e)[:200]
+        print(f"[fleet-live] {host}:{port}: {err}", flush=True)
+        return host, {
+            "ok": False,
+            "host": f"{host}:{port}",
+            "error": err,
+            "vendor": m.get("vendor"),
+            "ts": datetime.now().isoformat(timespec="seconds"),
+        }
+    return host, {
+        "ok": False,
+        "host": f"{host}:{port}",
+        "error": "empty live",
+        "vendor": m.get("vendor"),
+        "ts": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def _poll_managed_fleet_live() -> None:
     """
     Poll every enabled managed miner (Whatsminer / iPollo / Goldshell / …)
     and write fleet_live.json. Active host also refreshes via normal path.
+
+    Parallel + per-host timeout so one unreachable ASIC (or high-latency
+    remote like 192.168.1.10) cannot starve the rest of the fleet.
 
     Called from:
       • Python --miner-poller live loop
@@ -11892,59 +12009,86 @@ def _poll_managed_fleet_live() -> None:
     ]
     if not miners:
         return
+
+    # poll config (optional)
+    try:
+        pcfg = get_miner_poller_cfg().get("poll") or {}
+    except Exception:
+        pcfg = {}
+    try:
+        max_par = int(pcfg.get("max_parallel") or 4)
+    except (TypeError, ValueError):
+        max_par = 4
+    max_par = max(1, min(12, max_par))
+    try:
+        per_to = float(pcfg.get("per_miner_timeout_sec") or 12)
+    except (TypeError, ValueError):
+        per_to = 12.0
+    # high-latency remote sites: at least 12s, cap 30s
+    per_to = max(8.0, min(30.0, per_to))
+
     by_host: dict[str, dict] = {}
-    for m in miners:
-        host = str(m.get("host") or "").strip()
-        if not host:
-            continue
+    workers = min(max_par, len(miners))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {
+            pool.submit(_poll_one_managed_host, m, timeout=per_to): m
+            for m in miners
+        }
         try:
-            port = int(m.get("port") or 4028)
-        except (TypeError, ValueError):
-            port = 4028
-        # Seed protocol cache from inventory so first poll after restart
-        # does not send Whatsminer {cmd:…} to CGMiner/iPollo/Antminer.
-        vendor_hint = str(m.get("vendor") or m.get("api_vendor") or "").lower()
-        if vendor_hint in (
-            "ipollo",
-            "antminer",
-            "bitmain",
-            "goldshell",
-            "avalon",
-            "cgminer",
-        ):
-            with _ASIC_PROTO_LOCK:
-                _ASIC_PROTO_CACHE[host] = "cgminer"
-        elif vendor_hint in ("whatsminer", "microbt"):
-            with _ASIC_PROTO_LOCK:
-                _ASIC_PROTO_CACHE[host] = "whatsminer"
-        try:
-            with _asic_target_override(host, port):
-                live = _fetch_live_direct()
-            if isinstance(live, dict):
-                live.setdefault("host", f"{host}:{port}")
-                by_host[host] = live
-        except Exception as e:
-            # Goldshell (and any cloud-box): fall back to HTTP /mcb/* when :4028 refused
-            live_http = None
-            try:
-                live_http = _fetch_live_goldshell_http(host, port)
-            except Exception:
-                live_http = None
-            if isinstance(live_http, dict) and live_http.get("ok"):
-                by_host[host] = live_http
-                print(
-                    f"[fleet-live] {host}: cgminer failed ({e}); using goldshell HTTP",
-                    flush=True,
-                )
-            else:
+            for fut in as_completed(
+                futs,
+                timeout=per_to
+                * max(2, (len(miners) + workers - 1) // workers),
+            ):
+                m = futs[fut]
+                host = str((m or {}).get("host") or "").strip()
+                try:
+                    h, live = fut.result(timeout=0.1)
+                    if h and isinstance(live, dict):
+                        by_host[h] = live
+                except FuturesTimeout:
+                    print(f"[fleet-live] {host}: result timeout", flush=True)
+                    if host:
+                        by_host[host] = {
+                            "ok": False,
+                            "host": host,
+                            "error": f"poll timeout ({per_to:.0f}s)",
+                            "vendor": (m or {}).get("vendor"),
+                            "ts": datetime.now().isoformat(timespec="seconds"),
+                        }
+                except Exception as e:
+                    print(f"[fleet-live] {host}: {e}", flush=True)
+                    if host:
+                        by_host[host] = {
+                            "ok": False,
+                            "host": host,
+                            "error": str(e)[:200],
+                            "vendor": (m or {}).get("vendor"),
+                            "ts": datetime.now().isoformat(timespec="seconds"),
+                        }
+        except FuturesTimeout:
+            # overall barrier timed out — collect finished, stamp unfinished
+            for fut, m in futs.items():
+                host = str((m or {}).get("host") or "").strip()
+                if not host or host in by_host:
+                    continue
+                if fut.done():
+                    try:
+                        h, live = fut.result(timeout=0)
+                        if h and isinstance(live, dict):
+                            by_host[h] = live
+                            continue
+                    except Exception:
+                        pass
                 by_host[host] = {
                     "ok": False,
-                    "host": f"{host}:{port}",
-                    "error": str(e)[:200],
-                    "vendor": m.get("vendor"),
+                    "host": host,
+                    "error": f"poll timeout ({per_to:.0f}s)",
+                    "vendor": (m or {}).get("vendor"),
                     "ts": datetime.now().isoformat(timespec="seconds"),
                 }
-                print(f"[fleet-live] {host}:{port}: {e}", flush=True)
+                print(f"[fleet-live] {host}: overall timeout", flush=True)
+
     if by_host:
         _publish_fleet_live_map(by_host)
         # Merge per-miner work for device binding (devices-poller reads by_miner)
@@ -28620,11 +28764,32 @@ def apply_set(action: str, value, password: str) -> dict:
     action = (action or "").strip().lower()
     password = password or DEFAULT_API_PASSWORD
 
-    # No write if ASIC is offline (recent live read failed)
-    if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True):
-        raise RuntimeError(
-            "ASIC offline · write skipped (read недоступен — команда не отправлялась)"
+    # Optional multi-miner target (fleet context menu): value={host,vendor,port,…}
+    target_host = None
+    if isinstance(value, dict):
+        target_host = str(value.get("host") or value.get("ip") or "").strip() or None
+
+    # No write if active ASIC is offline — except targeted reboot/restart by host
+    # (iPollo/Goldshell may still accept LuCI/HTTP reboot when :4028 is down).
+    _skip_online_gate = bool(
+        target_host
+        and action
+        in (
+            "reboot",
+            "reboot_asic",
+            "system_reboot",
+            "restart",
+            "restart_miner",
+            "restart_btminer",
+            "btminer_restart",
+            "restart_cgminer",
         )
+    )
+    if not _skip_online_gate:
+        if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True):
+            raise RuntimeError(
+                "ASIC offline · write skipped (read недоступен — команда не отправлялась)"
+            )
 
     if action == "mode":
         v = str(value).strip().lower()
@@ -28823,12 +28988,41 @@ def apply_set(action: str, value, password: str) -> dict:
             out["power_limit_set"] = float(watts)
         return out
 
-    # Full device reboot (Whatsminer privileged "reboot" · LuCI fallback)
+    # Full device reboot (Whatsminer / iPollo LuCI / Goldshell HTTP / CGMiner)
     if action in ("reboot", "reboot_asic", "system_reboot"):
-        resp = miner_write_cmd({"cmd": "reboot"}, password)
+        cmd: dict = {"cmd": "reboot"}
+        pw = password
+        if isinstance(value, dict):
+            for k in ("host", "ip", "vendor", "api_vendor", "port", "id"):
+                if value.get(k) not in (None, ""):
+                    cmd[k if k != "api_vendor" else "vendor"] = value.get(k)
+            # Resolve inventory password / vendor for targeted host
+            th = str(value.get("host") or value.get("ip") or "").strip()
+            if th:
+                try:
+                    for m in get_miners_managed().get("miners") or []:
+                        if not isinstance(m, dict):
+                            continue
+                        mh = str(m.get("host") or "").strip()
+                        if mh != th:
+                            continue
+                        if m.get("password") not in (None, ""):
+                            pw = str(m.get("password"))
+                            cmd["password"] = pw
+                        if not cmd.get("vendor") and m.get("vendor"):
+                            cmd["vendor"] = m.get("vendor")
+                        if cmd.get("port") in (None, "") and m.get("port"):
+                            cmd["port"] = m.get("port")
+                        break
+                except Exception:
+                    pass
+            if value.get("password") not in (None, ""):
+                pw = str(value.get("password"))
+                cmd["password"] = pw
+        resp = miner_write_cmd(cmd, pw)
         out = _record_write(
             "reboot",
-            "asic",
+            cmd.get("host") or "asic",
             resp,
             warning="ASIC rebooting — offline for several minutes",
         )
@@ -28836,12 +29030,34 @@ def apply_set(action: str, value, password: str) -> dict:
             out["transport"] = resp.get("transport")
         return out
 
-    # Restart mining process only (btminer), not full OS reboot
+    # Restart mining process only (btminer / cgminer), not full OS reboot
     if action in ("restart", "restart_miner", "restart_btminer", "btminer_restart"):
-        resp = miner_write_cmd({"cmd": "restart_btminer"}, password)
+        cmd = {"cmd": "restart_btminer"}
+        pw = password
+        if isinstance(value, dict):
+            for k in ("host", "ip", "vendor", "port", "id"):
+                if value.get(k) not in (None, ""):
+                    cmd[k] = value.get(k)
+            th = str(value.get("host") or value.get("ip") or "").strip()
+            if th:
+                try:
+                    for m in get_miners_managed().get("miners") or []:
+                        if not isinstance(m, dict):
+                            continue
+                        if str(m.get("host") or "").strip() != th:
+                            continue
+                        if m.get("password") not in (None, ""):
+                            pw = str(m.get("password"))
+                            cmd["password"] = pw
+                        if not cmd.get("vendor") and m.get("vendor"):
+                            cmd["vendor"] = m.get("vendor")
+                        break
+                except Exception:
+                    pass
+        resp = miner_write_cmd(cmd, pw)
         out = _record_write(
             "restart_miner",
-            "btminer",
+            cmd.get("host") or "btminer",
             resp,
             warning="btminer restarting — hash rate rebuilds after upfreq",
         )
