@@ -2781,7 +2781,6 @@
     .fleet-dot.lowhash { background: #facc15; }
     .fleet-dot.warn { background: #fb923c; } /* legacy alias → freeze */
     .fleet-dot.error { background: #ef4444; }
-    .fleet-toolbar-end { margin-left: auto; }
     .fleet-search {
       min-width: 140px;
       max-width: 240px;
@@ -3007,6 +3006,19 @@
       font-size: 0.75rem;
       color: var(--dim);
     }
+    /* Direct browser→ASIC reachability: dashed IP link opens web UI in new tab */
+    .fleet-id-meta a.cell-ip-link {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.75rem;
+      color: #a5b4fc;
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(165, 180, 252, 0.75);
+      cursor: pointer;
+    }
+    .fleet-id-meta a.cell-ip-link:hover {
+      color: #c7d2fe;
+      border-bottom-color: #c7d2fe;
+    }
     .fleet-id-meta .cell-role {
       font-size: 0.68rem;
       color: #a5b4fc;
@@ -3015,7 +3027,76 @@
     .fleet-name-cell .nm { font-weight: 550; }
     .fleet-name-cell .sub { font-size: 0.72rem; color: var(--dim); }
     .fleet-model-cell { display: flex; flex-direction: column; gap: 1px; }
+    .fleet-model-cell .md { font-weight: 550; }
+    .fleet-model-cell .nm {
+      font-size: 0.75rem;
+      color: var(--text);
+      opacity: 0.9;
+    }
     .fleet-model-cell .sub { font-size: 0.72rem; color: var(--dim); }
+    .fleet-table .is-col-hidden { display: none !important; }
+    .fleet-toolbar-end {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .fleet-cols-wrap { position: relative; flex: 0 0 auto; }
+    .fleet-cols-btn {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: 8px;
+      border: 1px solid var(--border, rgba(255,255,255,0.1));
+      background: rgba(0,0,0,0.2);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 0.95rem;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .fleet-cols-btn:hover,
+    .fleet-cols-btn.open {
+      color: var(--text);
+      background: rgba(255,255,255,0.06);
+      border-color: rgba(99, 102, 241, 0.35);
+    }
+    .fleet-cols-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 6px);
+      z-index: 40;
+      min-width: 200px;
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      background: var(--card, #1a1d27);
+      box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .fleet-cols-menu[hidden] { display: none !important; }
+    .fleet-cols-menu label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .fleet-cols-menu label:hover { background: rgba(255,255,255,0.05); }
+    .fleet-cols-menu label.is-locked {
+      opacity: 0.55;
+      cursor: default;
+    }
+    .fleet-cols-menu label.is-locked:hover { background: transparent; }
+    .fleet-cols-menu input { accent-color: #6366f1; }
     .fleet-num { font-variant-numeric: tabular-nums; font-weight: 550; }
     .fleet-muted { color: var(--dim); }
     .fleet-col-menu { width: 36px; }
@@ -5840,6 +5921,7 @@
       <button type="button" data-tab="miner" data-i18n="tab.miner">Miner</button>
       <button type="button" data-tab="miners" data-i18n="tab.miners">Miners</button>
       <button type="button" data-tab="map" data-i18n="tab.map">Zone map</button>
+      <button type="button" data-tab="circuits" data-i18n="tab.circuits">Circuits</button>
       <button type="button" data-tab="periph" data-i18n="tab.periph">Peripherals</button>
       <button type="button" data-tab="settings" data-i18n="tab.settings">Settings</button>
       <button type="button" data-tab="info" data-i18n="tab.info">Info</button>
@@ -7260,7 +7342,6 @@
         <button type="button" class="active" data-subtab="heat" data-i18n="sub.map_heat">Heat map</button>
         <button type="button" data-subtab="profiles" data-i18n="sub.map_profiles">Mode profiles</button>
         <button type="button" data-subtab="schedule" data-i18n="sub.map_schedule">Schedule</button>
-        <button type="button" data-subtab="pool" data-i18n="sub.map_pool">Pool</button>
       </nav>
 
       <!-- Heat map -->
@@ -7269,8 +7350,8 @@
         <div class="card">
           <div class="card-h">
             <div>
-              <h2 data-i18n="h2.zone_map">Zone map · pool heating</h2>
-              <div class="sub">Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat · safety separate</div>
+              <h2 data-i18n="h2.zone_map">Zone map · heat policy</h2>
+              <div class="sub">Z0 High · Z1 Normal · Z2 Reduced · Z3 No heat · safety separate · per circuit later</div>
             </div>
             <button class="btn primary" type="button" id="btn-save-map" data-i18n="btn.save_map">Save map</button>
           </div>
@@ -7898,125 +7979,129 @@
           </div>
         </div>
       </div><!-- /subview-map-schedule -->
+    </section>
 
-      <!-- Pool (was top-level tab; now under Zone map) -->
-      <div class="subview" id="subview-map-pool">
+    <!-- ========== CIRCUITS (heat utilization) ========== -->
+    <section class="view" id="view-circuits">
       <div class="stack">
         <div class="card">
           <div class="card-h">
             <div>
-              <h2 data-i18n="h2.heat_pools">Pools</h2>
-              <div class="sub" data-i18n="sub.heat_pools">create · edit geometry · bind miners for heating</div>
+              <h2 data-i18n="h2.circuits">Circuits</h2>
+              <div class="sub" data-i18n="sub.circuits">heat utilization · drycooler · miners</div>
             </div>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-heat-pool-new" data-i18n="btn.new_pool">+ New pool</button>
-              <button class="btn danger" type="button" id="btn-heat-pool-delete" data-i18n="btn.delete">Delete</button>
+            <button class="btn primary" type="button" id="btn-circuit-add" data-i18n="circuit.add">Add circuit</button>
+          </div>
+          <div class="card-b stack" style="gap:10px">
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.hint">
+              A circuit is a heat sink (house, pool…). Temperature charts bind to a circuit; hashrate/power charts bind to a miner. Optional drycooler flag and device.
+            </p>
+            <div id="circuits-list" class="stack" style="gap:8px"></div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="circuits-status">—</p>
+          </div>
+        </div>
+
+        <div class="card" id="circuit-editor-card" hidden>
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="circuit.editor_title">Edit circuit</h2>
+              <div class="sub" id="circuit-editor-sub">—</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button class="btn danger" type="button" id="btn-circuit-delete" data-i18n="btn.delete">Delete</button>
+              <button class="btn primary" type="button" id="btn-circuit-save" data-i18n="btn.save">Save</button>
             </div>
           </div>
           <div class="card-b stack" style="gap:12px">
-            <div class="row" style="grid-template-columns:1fr auto auto;gap:10px;align-items:end">
-              <label class="field" style="margin:0"><span data-i18n="field.heat_pool">Pool</span>
-                <select id="heat-pool-select">
-                  <option value="">—</option>
+            <input type="hidden" id="circuit-edit-id" value="" />
+            <div class="row" style="grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:12px">
+              <label class="field" style="margin:0"><span data-i18n="circuit.field_name">Name</span>
+                <input type="text" id="circuit-edit-name" maxlength="64" autocomplete="off" />
+              </label>
+              <label class="field" style="margin:0"><span data-i18n="circuit.field_type">Type</span>
+                <select id="circuit-edit-type">
+                  <option value="house" data-i18n="circuit.type.house">House</option>
+                  <option value="pool" data-i18n="circuit.type.pool">Pool</option>
+                  <option value="dhw" data-i18n="circuit.type.dhw">DHW</option>
+                  <option value="custom" data-i18n="circuit.type.custom">Custom</option>
                 </select>
               </label>
-              <button class="btn primary" type="button" id="btn-heat-pool-activate" data-i18n="btn.activate_pool" title="Use this pool for live heat model">
-                Set active
-              </button>
-              <button class="btn ghost" type="button" id="btn-heat-pool-rename" data-i18n="btn.rename">Rename</button>
             </div>
-            <p id="heat-pool-meta" style="font-size:0.75rem;color:var(--dim);margin:0">—</p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.pool_geo">Pool · geometry</h2>
-              <div class="sub" data-i18n="sub.pool_geo">shape · volume and surface calculated automatically</div>
-            </div>
-            <button class="btn primary" type="button" id="btn-pool-save" data-i18n="btn.save">Save</button>
-          </div>
-          <div class="card-b stack" style="gap:14px">
-            <label class="field"><span data-i18n="field.pool_name">Name</span>
-              <input type="text" id="pool-name" maxlength="64" placeholder="Main pool" autocomplete="off" />
-            </label>
-            <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
-              <select id="pool-shape">
-                <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
-                <option value="circle" data-i18n="pool.shape.circle">Round</option>
-                <option value="oval" data-i18n="pool.shape.oval">Oval</option>
-              </select>
-            </label>
-            <label class="field">
-              <span class="tip" data-tip-key="pool_water_sensor" data-i18n="pool.water_sensor">Pool water sensor</span>
-              <select id="pool-water-sensor">
-                <optgroup label="Miner" data-i18n-label="pool.ws.group_miner">
-                  <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
-                  <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
-                  <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
-                  <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
-                  <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
-                </optgroup>
-                <!-- virtual sensors from Peripherals → Sensors filled by JS -->
-                <optgroup id="pool-ws-sensors-group" label="Sensors" data-i18n-label="pool.ws.group_sensors" hidden></optgroup>
-              </select>
-              <span class="hint" style="font-size:0.72rem;color:var(--dim);display:block;margin-top:4px" data-i18n="pool.ws.hint">
-                Water °C source for heat/cool model — miner live fields or Peripherals → Sensors
+            <label class="check">
+              <input type="checkbox" id="circuit-edit-drycooler" />
+              <span>
+                <span data-i18n="circuit.field_drycooler">Drycooler</span>
+                <span class="desc" data-i18n="circuit.field_drycooler_desc">Heat rejection to air · optional device below</span>
               </span>
             </label>
-            <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
-              <label class="field" id="pool-length-field">
-                <span class="tip" data-tip-key="pool_geometry" id="pool-length-label" data-i18n="pool.length_m">Length, m</span>
-                <input type="number" id="pool-length" value="8" min="0.5" max="200" step="0.1" />
-              </label>
-              <label class="field" id="pool-width-field">
-                <span id="pool-width-label" data-i18n="pool.width_m">Width, m</span>
-                <input type="number" id="pool-width" value="4" min="0.5" max="200" step="0.1" />
-              </label>
-              <label class="field" id="pool-depth-field">
-                <span data-i18n="pool.depth_m">Depth, m</span>
-                <input type="number" id="pool-depth" value="1.5" min="0.3" max="20" step="0.05" />
-              </label>
-              <label class="field" id="pool-flow-field">
-                <span class="tip" data-tip-key="pool_flow" data-i18n="pool.flow">Flow Q, L/h</span>
-                <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
-              </label>
-            </div>
-            <div class="grid-3">
-              <div class="metric">
-                <label data-i18n="pool.metric.surface">Surface S</label>
-                <div class="val" style="font-size:1.25rem"><span id="pool-surface">—</span> <small>m²</small></div>
-                <div class="hint" id="pool-formula-s" data-i18n="pool.hint.surface">water surface area</div>
-              </div>
-              <div class="metric highlight-accent">
-                <label data-i18n="pool.metric.volume">Volume V</label>
-                <div class="val" style="font-size:1.25rem"><span id="pool-volume">—</span> <small>m³</small></div>
-                <div class="hint" id="pool-formula-v">V = L × W × D</div>
-              </div>
-              <div class="metric">
-                <label data-i18n="pool.metric.cycle">Full cycle</label>
-                <div class="val" style="font-size:1.15rem"><span id="pool-turnover">—</span> <small>h</small></div>
-                <div class="hint">T = V × 1000 / Q</div>
-              </div>
-            </div>
-          </div>
-        </div>
+            <label class="field" id="circuit-drycooler-device-wrap"><span data-i18n="circuit.field_drycooler_device">Drycooler device id</span>
+              <input type="text" id="circuit-edit-drycooler-device" placeholder="device id (optional)" autocomplete="off" />
+            </label>
 
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.pool_miners">Miners on this pool</h2>
-              <div class="sub" data-i18n="sub.pool_miners">ASICs bound for heating · hydro / immersion</div>
+            <div id="circuit-pool-geo" class="stack" style="gap:12px" hidden>
+              <div style="font-weight:550;font-size:0.85rem" data-i18n="h2.pool_geo">Pool · geometry</div>
+              <label class="field"><span class="tip" data-tip-key="pool_geometry" data-i18n="pool.type">Pool type</span>
+                <select id="pool-shape">
+                  <option value="rect" data-i18n="pool.shape.rect">Rectangular</option>
+                  <option value="circle" data-i18n="pool.shape.circle">Round</option>
+                  <option value="oval" data-i18n="pool.shape.oval">Oval</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="tip" data-tip-key="pool_water_sensor" data-i18n="pool.water_sensor">Pool water sensor</span>
+                <select id="pool-water-sensor">
+                  <optgroup label="Miner" data-i18n-label="pool.ws.group_miner">
+                    <option value="liquid" data-i18n="pool.ws.liquid">liquid — ASIC liquid_temp (coolant)</option>
+                    <option value="env" data-i18n="pool.ws.env">env — Env Temp (ambient)</option>
+                    <option value="chip_avg" data-i18n="pool.ws.chip_avg">chip avg — average across chips</option>
+                    <option value="chip_max" data-i18n="pool.ws.chip_max">chip max — max across chips</option>
+                    <option value="board_max" data-i18n="pool.ws.board_max">board max — max PCB</option>
+                  </optgroup>
+                  <optgroup id="pool-ws-sensors-group" label="Sensors" data-i18n-label="pool.ws.group_sensors" hidden></optgroup>
+                </select>
+              </label>
+              <div class="row" id="pool-dims-row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+                <label class="field" id="pool-length-field">
+                  <span id="pool-length-label" data-i18n="pool.length_m">Length, m</span>
+                  <input type="number" id="pool-length" value="8" min="0.5" max="200" step="0.1" />
+                </label>
+                <label class="field" id="pool-width-field">
+                  <span id="pool-width-label" data-i18n="pool.width_m">Width, m</span>
+                  <input type="number" id="pool-width" value="4" min="0.5" max="200" step="0.1" />
+                </label>
+                <label class="field" id="pool-depth-field">
+                  <span data-i18n="pool.depth_m">Depth, m</span>
+                  <input type="number" id="pool-depth" value="1.5" min="0.3" max="20" step="0.05" />
+                </label>
+                <label class="field" id="pool-flow-field">
+                  <span data-i18n="pool.flow">Flow Q, L/h</span>
+                  <input type="number" id="pool-flow" value="12000" min="0" max="500000" step="100" />
+                </label>
+              </div>
+              <div class="grid-3">
+                <div class="metric">
+                  <label data-i18n="pool.metric.surface">Surface S</label>
+                  <div class="val" style="font-size:1.25rem"><span id="pool-surface">—</span> <small>m²</small></div>
+                </div>
+                <div class="metric highlight-accent">
+                  <label data-i18n="pool.metric.volume">Volume V</label>
+                  <div class="val" style="font-size:1.25rem"><span id="pool-volume">—</span> <small>m³</small></div>
+                </div>
+                <div class="metric">
+                  <label data-i18n="pool.metric.cycle">Full cycle</label>
+                  <div class="val" style="font-size:1.15rem"><span id="pool-turnover">—</span> <small>h</small></div>
+                </div>
+              </div>
             </div>
-            <button class="btn primary" type="button" id="btn-pool-miners-save" data-i18n="btn.save">Save binding</button>
-          </div>
-          <div class="card-b stack" style="gap:10px">
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="hint.pool_miners">
-              Select managed miners that heat this pool. Binding is stored on the miner (pool_id).
-            </p>
-            <div id="pool-miners-bind-list" class="stack" style="gap:6px">
-              <div style="color:var(--muted);font-size:0.85rem">—</div>
+
+            <div class="stack" style="gap:8px">
+              <div style="font-weight:550;font-size:0.85rem" data-i18n="circuit.miners_title">Miners on this circuit</div>
+              <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="circuit.miners_hint">
+                ASICs that heat this circuit. Stored on the circuit (miner_ids).
+              </p>
+              <div id="circuit-miners-bind-list" class="stack" style="gap:6px">
+                <div style="color:var(--muted);font-size:0.85rem">—</div>
+              </div>
             </div>
           </div>
         </div>
@@ -8069,7 +8154,6 @@
           </div>
         </div>
       </div>
-      </div><!-- /subview-map-pool -->
     </section>
 
     <!-- ========== MINERS (managed / unmanaged) ========== -->
@@ -8133,28 +8217,31 @@
               </button>
               <div class="fleet-toolbar-end">
                 <input type="search" id="fleet-filter" class="fleet-search" placeholder="Search name / IP / model…" data-i18n-placeholder="fleet.search" autocomplete="off" />
+                <div class="fleet-cols-wrap">
+                  <button type="button" id="fleet-cols-btn" class="fleet-cols-btn" aria-haspopup="true" aria-expanded="false" title="Columns" data-i18n-title="fleet.cols_btn">▦</button>
+                  <div id="fleet-cols-menu" class="fleet-cols-menu" hidden role="menu" aria-label="Columns"></div>
+                </div>
               </div>
             </div>
             <div class="fleet-table-wrap">
               <table class="err-table fleet-table" id="fleet-table">
                 <thead>
                   <tr>
-                    <th data-i18n="fleet.col.cell_ip">Cell · IP</th>
-                    <th data-i18n="fleet.col.name">Name</th>
-                    <th data-i18n="fleet.col.model">Model</th>
-                    <th data-i18n="fleet.col.hash">Hashrate</th>
-                    <th data-i18n="fleet.col.power_eff">Power · eff</th>
-                    <th data-i18n="fleet.col.temp">Temp</th>
-                    <th data-i18n="fleet.col.boards_fans">Boards · Fans</th>
-                    <th data-i18n="fleet.col.mode">Mode</th>
-                    <th data-i18n="fleet.col.elapsed">Elapsed</th>
-                    <th data-i18n="fleet.col.pool">Pool</th>
-                    <th data-i18n="fleet.col.vendor">Vendor</th>
-                    <th class="fleet-col-menu"></th>
+                    <th data-fleet-col="cell_ip" data-i18n="fleet.col.cell_ip">Cell · IP</th>
+                    <th data-fleet-col="model" data-i18n="fleet.col.model">Model</th>
+                    <th data-fleet-col="hash" data-i18n="fleet.col.hash">Hashrate</th>
+                    <th data-fleet-col="power_eff" data-i18n="fleet.col.power_eff">Power · eff</th>
+                    <th data-fleet-col="temp" data-i18n="fleet.col.temp">Temp</th>
+                    <th data-fleet-col="boards_fans" data-i18n="fleet.col.boards_fans">Boards · Fans</th>
+                    <th data-fleet-col="mode" data-i18n="fleet.col.mode">Mode</th>
+                    <th data-fleet-col="elapsed" data-i18n="fleet.col.elapsed">Elapsed</th>
+                    <th data-fleet-col="pool" data-i18n="fleet.col.pool">Pool</th>
+                    <th data-fleet-col="vendor" data-i18n="fleet.col.vendor">Vendor</th>
+                    <th data-fleet-col="menu" class="fleet-col-menu"></th>
                   </tr>
                 </thead>
                 <tbody id="fleet-body">
-                  <tr><td colspan="12" style="color:var(--muted)">—</td></tr>
+                  <tr><td colspan="11" style="color:var(--muted)">—</td></tr>
                 </tbody>
               </table>
             </div>
@@ -8917,6 +9004,28 @@
             <p style="font-size:0.75rem;color:var(--dim);margin:10px 0 0" id="ui-lang-status">—</p>
           </div>
         </div>
+        <div class="card" id="panel-site-topology">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.site_topology">Site topology</h2>
+              <div class="sub" data-i18n="sub.site_topology">miner cells · platforms · placement</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-site-topology-save" data-i18n="btn.save">Save</button>
+          </div>
+          <div class="card-b stack" style="gap:10px">
+            <label class="check">
+              <input type="checkbox" id="site-topology-enabled" />
+              <span>
+                <span data-i18n="site.topology_enable">Enable topology</span>
+                <span class="desc" data-i18n="site.topology_enable_desc">When off, miner cells are hidden. When on, cells come from the layout — ASICs can only be moved into free cells (no free-text).</span>
+              </span>
+            </label>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="site.topology_stub">
+              Layout editor is not implemented yet. Topology is off by default.
+            </p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0" id="site-topology-status">—</p>
+          </div>
+        </div>
         <div class="card" id="panel-config-backup">
           <div class="card-h">
             <div>
@@ -9219,8 +9328,14 @@
             <label class="field"><span data-i18n="mp.col.name">Name</span>
               <input type="text" id="mp-edit-name" maxlength="64" autocomplete="off" />
             </label>
-            <label class="field"><span data-i18n="mp.col.cell">Cell / location</span>
-              <input type="text" id="mp-edit-cell" maxlength="64" placeholder="A1 · rack 2" autocomplete="off" />
+            <label class="field" id="mp-edit-cell-wrap" hidden>
+              <span data-i18n="mp.col.cell">Cell</span>
+              <select id="mp-edit-cell" title="Move ASIC into a free cell (topology)">
+                <option value="">—</option>
+              </select>
+              <span class="desc" style="font-size:0.72rem;color:var(--dim);margin-top:4px;display:block" data-i18n="mp.cell_hint">
+                From topology · move only · free cells
+              </span>
             </label>
             <label class="field"><span data-i18n="mp.vendor">Vendor</span>
               <div class="mp-edit-vendor-row">
@@ -10214,6 +10329,16 @@
         "fleet.f_error": "Error",
         "fleet.col.cell_ip": "Cell · IP",
         "fleet.col.ip": "IP",
+        "h2.site_topology": "Site topology",
+        "sub.site_topology": "miner cells · platforms · placement",
+        "site.topology_enable": "Enable topology",
+        "site.topology_enable_desc": "When off, miner cells are hidden. When on, cells come from the layout — ASICs can only be moved into free cells (no free-text).",
+        "site.topology_stub": "Layout editor is not implemented yet. Topology is off by default.",
+        "site.topology_saved": "Site settings saved",
+        "mp.cell_hint": "From topology · move only · free cells",
+        "mp.cell_none": "— no cell —",
+        "mp.cell_current": "current",
+        "mp.cell_free": "free",
         "fleet.col.status": "Status",
         "fleet.col.name": "Name",
         "fleet.col.model": "Model",
@@ -10228,6 +10353,35 @@
         "fleet.col.elapsed": "Elapsed",
         "fleet.col.pool": "Pool",
         "fleet.col.vendor": "Vendor",
+        "fleet.cols_btn": "Columns",
+        "fleet.cols_title": "Show columns",
+        "fleet.direct_open": "Open ASIC web UI (direct LAN)",
+        "tab.circuits": "Circuits",
+        "h2.circuits": "Circuits",
+        "sub.circuits": "heat utilization · drycooler · miners",
+        "circuit.add": "Add circuit",
+        "circuit.hint": "A circuit is a heat sink (house, pool…). Temperature charts bind to a circuit; hashrate/power charts bind to a miner. Optional drycooler flag and device.",
+        "circuit.empty": "No circuits yet",
+        "circuit.saved": "Circuits saved",
+        "circuit.editor_title": "Edit circuit",
+        "circuit.field_name": "Name",
+        "circuit.field_type": "Type",
+        "circuit.field_drycooler": "Drycooler",
+        "circuit.field_drycooler_desc": "Heat rejection to air · optional device below",
+        "circuit.field_drycooler_device": "Drycooler device id",
+        "circuit.miners_title": "Miners on this circuit",
+        "circuit.miners_hint": "ASICs that heat this circuit. Stored on the circuit (miner_ids).",
+        "circuit.no_miners": "No managed miners — import under Settings → Miner-poller",
+        "circuit.new_name": "New circuit",
+        "circuit.name_empty": "Name is empty",
+        "circuit.remove_confirm": "Remove this circuit?",
+        "circuit.type.house": "House",
+        "circuit.type.pool": "Pool",
+        "circuit.type.dhw": "DHW",
+        "circuit.type.custom": "Custom",
+        "dash.chart_bind_circuit": "Circuit",
+        "dash.chart_bind_miner": "Miner (hashrate · power)",
+        "dash.chart_bind_none": "— not set —",
         "fleet.hint": "Live metrics are shown for the active polled miner. Standby rows show inventory until multi-poll is enabled.",
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
@@ -11196,6 +11350,16 @@
         "fleet.f_error": "Error",
         "fleet.col.cell_ip": "Ячейка · IP",
         "fleet.col.ip": "IP",
+        "h2.site_topology": "Топология объекта",
+        "sub.site_topology": "ячейки майнеров · платформы · размещение",
+        "site.topology_enable": "Включить топологию",
+        "site.topology_enable_desc": "Выкл. — ячейки не показываются. Вкл. — ячейка из раскладки, ASIC только перемещается в свободные ячейки (без ручного ввода).",
+        "site.topology_stub": "Редактор раскладки пока не реализован. По умолчанию топология выключена.",
+        "site.topology_saved": "Настройки объекта сохранены",
+        "mp.cell_hint": "Из топологии · только перемещение · свободные ячейки",
+        "mp.cell_none": "— без ячейки —",
+        "mp.cell_current": "текущая",
+        "mp.cell_free": "свободна",
         "fleet.col.status": "Статус",
         "fleet.col.name": "Имя",
         "fleet.col.model": "Модель",
@@ -11210,6 +11374,35 @@
         "fleet.col.elapsed": "Uptime",
         "fleet.col.pool": "Пул",
         "fleet.col.vendor": "Вендор",
+        "fleet.cols_btn": "Колонки",
+        "fleet.cols_title": "Показать колонки",
+        "fleet.direct_open": "Открыть веб-UI ASIC (прямой LAN)",
+        "tab.circuits": "Контуры",
+        "h2.circuits": "Контуры",
+        "sub.circuits": "утилизация тепла · drycooler · майнеры",
+        "circuit.add": "Добавить контур",
+        "circuit.hint": "Контур — объект утилизации тепла (дом, бассейн…). График температур привязан к контуру; хешрейт/мощность — к майнеру. Drycooler: флаг + опционально device.",
+        "circuit.empty": "Нет контуров",
+        "circuit.saved": "Контуры сохранены",
+        "circuit.editor_title": "Редактирование контура",
+        "circuit.field_name": "Имя",
+        "circuit.field_type": "Тип",
+        "circuit.field_drycooler": "Drycooler",
+        "circuit.field_drycooler_desc": "Сброс тепла в воздух · device ниже по желанию",
+        "circuit.field_drycooler_device": "ID device drycooler",
+        "circuit.miners_title": "Майнеры на контуре",
+        "circuit.miners_hint": "ASIC, которые греют этот контур. Хранятся в miner_ids контура.",
+        "circuit.no_miners": "Нет managed-майнеров — импорт: Настройки → Miner-poller",
+        "circuit.new_name": "Новый контур",
+        "circuit.name_empty": "Имя пустое",
+        "circuit.remove_confirm": "Удалить этот контур?",
+        "circuit.type.house": "Дом",
+        "circuit.type.pool": "Бассейн",
+        "circuit.type.dhw": "ГВС",
+        "circuit.type.custom": "Другое",
+        "dash.chart_bind_circuit": "Контур",
+        "dash.chart_bind_miner": "Майнер (хешрейт · мощность)",
+        "dash.chart_bind_none": "— не выбран —",
         "fleet.hint": "Live-метрики — у active-майнера (poller). Standby показывают inventory, пока нет multi-poll.",
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
@@ -12958,10 +13151,477 @@
     let selectedHeatPoolId = null;
     let minerModelsCache = { families: [], manufacturers: [] };
     let fleetCache = { miners: [], summary: {} };
+    /** Site facility: topology_enabled default false → hide miner cells */
+    let siteConfigCache = { topology_enabled: false };
     let fleetTimer = null;
     let fleetPage = 1;
     let fleetPageSize = 10;
     let unmanagedCache = { miners: [], updated_ts: null };
+
+    /* —— Fleet column visibility (localStorage) ——
+       First column (cell_ip) and menu are always on; others toggleable. */
+    const FLEET_COLS_KEY = "poolheat_fleet_cols_v1";
+    const FLEET_COL_DEFS = [
+      { id: "cell_ip", i18n: "fleet.col.cell_ip", fallback: "Cell · IP", locked: true },
+      { id: "model", i18n: "fleet.col.model", fallback: "Model" },
+      { id: "hash", i18n: "fleet.col.hash", fallback: "Hashrate" },
+      { id: "power_eff", i18n: "fleet.col.power_eff", fallback: "Power · eff" },
+      { id: "temp", i18n: "fleet.col.temp", fallback: "Temp" },
+      { id: "boards_fans", i18n: "fleet.col.boards_fans", fallback: "Boards · Fans" },
+      { id: "mode", i18n: "fleet.col.mode", fallback: "Mode" },
+      { id: "elapsed", i18n: "fleet.col.elapsed", fallback: "Elapsed" },
+      { id: "pool", i18n: "fleet.col.pool", fallback: "Pool" },
+      { id: "vendor", i18n: "fleet.col.vendor", fallback: "Vendor" },
+      { id: "menu", i18n: "", fallback: "⋮", locked: true },
+    ];
+    /** @type {Record<string, boolean>} */
+    let fleetColPrefs = {};
+
+    function defaultFleetColPrefs() {
+      const o = {};
+      FLEET_COL_DEFS.forEach((d) => {
+        o[d.id] = true;
+      });
+      return o;
+    }
+
+    function loadFleetColPrefs() {
+      const base = defaultFleetColPrefs();
+      try {
+        const raw = localStorage.getItem(FLEET_COLS_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            FLEET_COL_DEFS.forEach((d) => {
+              if (d.locked) {
+                base[d.id] = true;
+              } else if (typeof j[d.id] === "boolean") {
+                base[d.id] = j[d.id];
+              }
+            });
+          }
+        }
+      } catch (_) { /* ignore */ }
+      // first column always on
+      base.cell_ip = true;
+      base.menu = true;
+      fleetColPrefs = base;
+      return fleetColPrefs;
+    }
+
+    function saveFleetColPrefs() {
+      try {
+        const out = {};
+        FLEET_COL_DEFS.forEach((d) => {
+          if (d.locked) return;
+          out[d.id] = fleetColPrefs[d.id] !== false;
+        });
+        localStorage.setItem(FLEET_COLS_KEY, JSON.stringify(out));
+      } catch (_) { /* ignore */ }
+    }
+
+    function isFleetColVisible(id) {
+      if (id === "cell_ip" || id === "menu") return true;
+      return fleetColPrefs[id] !== false;
+    }
+
+    function fleetVisibleColCount() {
+      return FLEET_COL_DEFS.filter((d) => isFleetColVisible(d.id)).length;
+    }
+
+    function applyFleetColVisibility() {
+      const table = document.getElementById("fleet-table");
+      if (!table) return;
+      FLEET_COL_DEFS.forEach((d) => {
+        const show = isFleetColVisible(d.id);
+        table.querySelectorAll('[data-fleet-col="' + d.id + '"]').forEach((el) => {
+          el.classList.toggle("is-col-hidden", !show);
+        });
+      });
+    }
+
+    function renderFleetColsMenu() {
+      const menu = document.getElementById("fleet-cols-menu");
+      if (!menu) return;
+      const btn = document.getElementById("fleet-cols-btn");
+      if (btn) {
+        const title = fleetT("fleet.cols_btn", "Columns");
+        btn.title = title;
+        btn.setAttribute("aria-label", title);
+      }
+      menu.setAttribute("aria-label", fleetT("fleet.cols_title", "Show columns"));
+      menu.innerHTML = "";
+      FLEET_COL_DEFS.forEach((d) => {
+        if (d.id === "menu") return; // no checkbox for ⋮
+        const lab = document.createElement("label");
+        if (d.locked) lab.className = "is-locked";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = isFleetColVisible(d.id);
+        cb.disabled = !!d.locked;
+        cb.setAttribute("data-fleet-col-toggle", d.id);
+        const span = document.createElement("span");
+        // header label follows topology for first col
+        let labelText = d.fallback;
+        if (d.id === "cell_ip") {
+          labelText = siteTopologyEnabled()
+            ? fleetT("fleet.col.cell_ip", "Cell · IP")
+            : fleetT("fleet.col.ip", "IP");
+        } else if (d.i18n) {
+          labelText = fleetT(d.i18n, d.fallback);
+        }
+        span.textContent = labelText;
+        lab.appendChild(cb);
+        lab.appendChild(span);
+        menu.appendChild(lab);
+      });
+    }
+
+    function closeFleetColsMenu() {
+      const menu = document.getElementById("fleet-cols-menu");
+      const btn = document.getElementById("fleet-cols-btn");
+      if (menu) menu.hidden = true;
+      if (btn) {
+        btn.classList.remove("open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    }
+
+    function initFleetColsUi() {
+      loadFleetColPrefs();
+      applyFleetColVisibility();
+      renderFleetColsMenu();
+      const btn = document.getElementById("fleet-cols-btn");
+      const menu = document.getElementById("fleet-cols-menu");
+      if (!btn || !menu || btn._fleetColsBound) return;
+      btn._fleetColsBound = true;
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const open = menu.hidden;
+        if (open) {
+          renderFleetColsMenu();
+          menu.hidden = false;
+          btn.classList.add("open");
+          btn.setAttribute("aria-expanded", "true");
+        } else {
+          closeFleetColsMenu();
+        }
+      });
+      menu.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const t = ev.target;
+        if (!t || t.tagName !== "INPUT") return;
+        const id = t.getAttribute("data-fleet-col-toggle");
+        if (!id || id === "cell_ip" || id === "menu") {
+          t.checked = true;
+          return;
+        }
+        fleetColPrefs[id] = !!t.checked;
+        // keep at least one data column besides cell_ip/menu
+        const anyOther = FLEET_COL_DEFS.some(
+          (d) => !d.locked && d.id !== "menu" && fleetColPrefs[d.id] !== false
+        );
+        if (!anyOther) {
+          fleetColPrefs[id] = true;
+          t.checked = true;
+        }
+        saveFleetColPrefs();
+        applyFleetColVisibility();
+      });
+      document.addEventListener("click", (ev) => {
+        if (!menu.hidden && !menu.contains(ev.target) && ev.target !== btn) {
+          closeFleetColsMenu();
+        }
+      });
+    }
+
+    /* —— Non-blocking browser→ASIC direct reachability ——
+       Probes from the user's browser (not the router). If the host answers
+       HTTP, IP becomes a dashed link opening the ASIC web UI in a new tab. */
+    const DIRECT_REACH_TTL_OK_MS = 120000;
+    const DIRECT_REACH_TTL_FAIL_MS = 45000;
+    const DIRECT_PROBE_TIMEOUT_MS = 1400;
+    const DIRECT_PROBE_MAX = 3;
+    /** @type {Map<string, { status: string, ts: number, url: string }>} */
+    const directReachCache = new Map();
+    /** @type {string[]} */
+    let directProbeQueue = [];
+    let directProbeActive = 0;
+    /** @type {Set<string>} */
+    const directProbeQueued = new Set();
+
+    function asicWebUrl(host) {
+      const h = String(host || "")
+        .trim()
+        .replace(/^\[|\]$/g, "");
+      if (!h || h === "—" || h === "-") return "";
+      // Web UI is HTTP :80 — not the cgminer API port (4028)
+      return "http://" + h + "/";
+    }
+
+    function getDirectReach(host) {
+      if (!host) return null;
+      const e = directReachCache.get(host);
+      if (!e) return null;
+      const ttl =
+        e.status === "ok" ? DIRECT_REACH_TTL_OK_MS : DIRECT_REACH_TTL_FAIL_MS;
+      if (Date.now() - e.ts > ttl) return null;
+      return e;
+    }
+
+    function scheduleDirectProbe(host) {
+      const h = String(host || "").trim();
+      if (!h || h === "—" || h === "-") return;
+      const cur = getDirectReach(h);
+      if (cur && (cur.status === "ok" || cur.status === "fail" || cur.status === "pending"))
+        return;
+      if (directProbeQueued.has(h)) return;
+      directReachCache.set(h, {
+        status: "pending",
+        ts: Date.now(),
+        url: asicWebUrl(h),
+      });
+      directProbeQueued.add(h);
+      directProbeQueue.push(h);
+      pumpDirectProbes();
+    }
+
+    function pumpDirectProbes() {
+      while (directProbeActive < DIRECT_PROBE_MAX && directProbeQueue.length) {
+        const host = directProbeQueue.shift();
+        directProbeQueued.delete(host);
+        directProbeActive++;
+        // fire-and-forget — never await in render path
+        void probeDirectHost(host)
+          .then((ok) => {
+            directReachCache.set(host, {
+              status: ok ? "ok" : "fail",
+              ts: Date.now(),
+              url: asicWebUrl(host),
+            });
+            if (ok) paintDirectReachLinks(host);
+          })
+          .catch(() => {
+            directReachCache.set(host, {
+              status: "fail",
+              ts: Date.now(),
+              url: asicWebUrl(host),
+            });
+          })
+          .finally(() => {
+            directProbeActive--;
+            pumpDirectProbes();
+          });
+      }
+    }
+
+    /**
+     * Browser-side probe: fetch no-cors succeeds (opaque) when TCP+HTTP answers.
+     * Does not block UI — short abort timeout, limited concurrency.
+     */
+    async function probeDirectHost(host) {
+      const url = asicWebUrl(host);
+      if (!url) return false;
+      // Mixed content: HTTPS page → HTTP ASIC is blocked; treat as unreachable
+      try {
+        if (
+          typeof location !== "undefined" &&
+          location.protocol === "https:" &&
+          url.indexOf("http:") === 0
+        ) {
+          return false;
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => {
+          try {
+            ctrl.abort();
+          } catch (_) { /* ignore */ }
+        }, DIRECT_PROBE_TIMEOUT_MS);
+        try {
+          await fetch(url, {
+            method: "GET",
+            mode: "no-cors",
+            cache: "no-store",
+            credentials: "omit",
+            redirect: "follow",
+            signal: ctrl.signal,
+          });
+          // Opaque response ⇒ network path worked (host answered something)
+          clearTimeout(timer);
+          return true;
+        } catch (_) {
+          clearTimeout(timer);
+          return false;
+        }
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function paintCellIpEl(el, host, ipLine) {
+      if (!el) return;
+      const h = String(host || "").trim();
+      const line = ipLine != null ? String(ipLine) : h || "—";
+      const reach = h ? getDirectReach(h) : null;
+      const openTitle = fleetT("fleet.direct_open", "Open ASIC web UI (direct LAN)");
+      if (reach && reach.status === "ok" && reach.url) {
+        if (el.tagName === "A") {
+          if (el.textContent !== line) el.textContent = line;
+          if (el.getAttribute("href") !== reach.url) el.setAttribute("href", reach.url);
+          el.setAttribute("data-host", h);
+          el.title = openTitle;
+          el.className = "cell-ip cell-ip-link";
+        } else {
+          const a = document.createElement("a");
+          a.className = "cell-ip cell-ip-link";
+          a.href = reach.url;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.textContent = line;
+          a.setAttribute("data-host", h);
+          a.title = openTitle;
+          el.replaceWith(a);
+        }
+      } else {
+        if (el.tagName === "A") {
+          const sp = document.createElement("span");
+          sp.className = "cell-ip";
+          sp.textContent = line;
+          if (h) sp.setAttribute("data-host", h);
+          el.replaceWith(sp);
+        } else {
+          if (el.textContent !== line) el.textContent = line;
+          el.className = "cell-ip";
+          if (h) el.setAttribute("data-host", h);
+          else el.removeAttribute("data-host");
+          el.removeAttribute("title");
+        }
+        if (h) scheduleDirectProbe(h);
+      }
+    }
+
+    function paintDirectReachLinks(host) {
+      const h = String(host || "").trim();
+      if (!h) return;
+      const reach = getDirectReach(h);
+      if (!reach || reach.status !== "ok") return;
+      document.querySelectorAll("#fleet-body .cell-ip[data-host]").forEach((el) => {
+        if (el.getAttribute("data-host") !== h) return;
+        const line = el.textContent || h;
+        paintCellIpEl(el, h, line);
+      });
+    }
+
+    function siteTopologyEnabled() {
+      return !!(siteConfigCache && siteConfigCache.topology_enabled);
+    }
+
+    async function loadSiteConfig() {
+      try {
+        const res = await fetch("/api/site/config", { cache: "no-store" });
+        const body = await res.json();
+        if (res.ok && body && body.ok !== false) {
+          siteConfigCache = {
+            topology_enabled: !!body.topology_enabled,
+            topology: body.topology || null,
+          };
+        }
+      } catch (_) {
+        siteConfigCache = { topology_enabled: false };
+      }
+      applySiteTopologyUi();
+      return siteConfigCache;
+    }
+
+    function applySiteTopologyUi() {
+      const on = siteTopologyEnabled();
+      // Settings checkbox
+      const cb = document.getElementById("site-topology-enabled");
+      if (cb && cb !== document.activeElement) cb.checked = on;
+      // Fleet column header: Cell · IP vs IP
+      const th = document.querySelector("#fleet-table thead th[data-i18n='fleet.col.cell_ip'], #fleet-table thead th[data-i18n='fleet.col.ip'], #fleet-table thead th[data-fleet-col='cell_ip']");
+      if (th) {
+        if (on) {
+          th.setAttribute("data-i18n", "fleet.col.cell_ip");
+          th.textContent =
+            typeof t === "function"
+              ? t("fleet.col.cell_ip", "Cell · IP")
+              : "Cell · IP";
+        } else {
+          th.setAttribute("data-i18n", "fleet.col.ip");
+          th.textContent =
+            typeof t === "function" ? t("fleet.col.ip", "IP") : "IP";
+        }
+      }
+      // Edit dialog cell field
+      const wrap = document.getElementById("mp-edit-cell-wrap");
+      if (wrap) wrap.hidden = !on;
+      // Refresh column picker labels (Cell·IP vs IP)
+      if (typeof renderFleetColsMenu === "function") {
+        try {
+          renderFleetColsMenu();
+        } catch (_) { /* ignore */ }
+      }
+    }
+
+    async function fillMinerCellSelect(sel, miner, currentCell) {
+      if (!sel) return;
+      const noneLbl =
+        typeof t === "function"
+          ? t("mp.cell_none", "— no cell —")
+          : "— no cell —";
+      const freeLbl =
+        typeof t === "function" ? t("mp.cell_free", "free") : "free";
+      const curLbl =
+        typeof t === "function"
+          ? t("mp.cell_current", "current")
+          : "current";
+      sel.innerHTML = "";
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = noneLbl;
+      sel.appendChild(empty);
+      if (!siteTopologyEnabled()) {
+        sel.value = "";
+        return;
+      }
+      let free = [];
+      let occupied = [];
+      try {
+        const q =
+          miner && miner.id != null
+            ? "?miner_id=" + encodeURIComponent(String(miner.id))
+            : "";
+        const res = await fetch("/api/site/cells" + q, { cache: "no-store" });
+        const body = await res.json();
+        if (res.ok && body) {
+          free = Array.isArray(body.free) ? body.free : [];
+          occupied = Array.isArray(body.occupied) ? body.occupied : [];
+        }
+      } catch (_) { /* ignore */ }
+      const cur = String(currentCell || "").trim();
+      // current cell first if set
+      if (cur) {
+        const o = document.createElement("option");
+        o.value = cur;
+        o.textContent = cur + " · " + curLbl;
+        sel.appendChild(o);
+      }
+      free.forEach((c) => {
+        const id = String((c && (c.id || c.cell)) || "").trim();
+        if (!id || id === cur) return;
+        const o = document.createElement("option");
+        o.value = id;
+        const label = (c && (c.label || c.name)) || id;
+        o.textContent = label + " · " + freeLbl;
+        sel.appendChild(o);
+      });
+      // If topology on but no free slots and no current — keep only "none"
+      sel.value = cur || "";
+    }
 
     /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
     /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings,
@@ -12977,7 +13637,8 @@
       "energy",
       "minerinfo",
       "map",
-      "pool",
+      "circuits",
+      "pool", // alias → circuits (legacy #pool)
       "periph",
       "sensors",
       "devices",
@@ -13011,9 +13672,12 @@
       zone: "map",
       "zone-map": "map",
       "zone_map": "map",
-      weather: "pool",
-      bassein: "pool",
-      "pool-geo": "pool",
+      weather: "circuits",
+      bassein: "circuits",
+      "pool-geo": "circuits",
+      kontur: "circuits",
+      circuit: "circuits",
+      circuits: "circuits",
       fleet: "miners",
       asics: "miners",
       "miners-managed": "managed",
@@ -13103,7 +13767,12 @@
     }
 
     function setMapSubtab(subId) {
-      const allowed = { heat: 1, profiles: 1, schedule: 1, pool: 1 };
+      const allowed = { heat: 1, profiles: 1, schedule: 1 };
+      // legacy pool subtab → open Circuits main tab
+      if (subId === "pool") {
+        if (typeof activateTab === "function") activateTab("circuits");
+        return "heat";
+      }
       const sub = allowed[subId] ? subId : "heat";
       document.querySelectorAll("#view-map nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
@@ -13116,14 +13785,6 @@
       }
       if (sub === "schedule" && typeof loadSchedule === "function") {
         void loadSchedule();
-      }
-      if (sub === "pool") {
-        if (typeof loadPoolConfig === "function") void loadPoolConfig();
-        if (typeof loadWeatherConfig === "function") {
-          void loadWeatherConfig().then(() => {
-            if (typeof loadWeather === "function") void loadWeather(false);
-          });
-        }
       }
       return sub;
     }
@@ -13349,10 +14010,10 @@
         mainTab = "periph";
         periphSub = "sensors";
         tabId = "sensors";
-      } else if (tabId === "pool") {
-        // Pool is a Zone map subtab (deep-link #pool still works)
-        mainTab = "map";
-        mapSub = "pool";
+      } else if (tabId === "pool" || tabId === "circuits") {
+        // legacy #pool → Circuits main tab
+        mainTab = "circuits";
+        tabId = "circuits";
       } else if (tabId === "map") {
         mapSub = "heat";
       } else if (tabId === "info") {
@@ -13454,6 +14115,27 @@
       }
       if (mainTab === "periph" && periphSub === "devices") {
         if (typeof loadDevices === "function") loadDevices();
+      }
+      if (mainTab === "circuits") {
+        if (typeof loadCircuits === "function") void loadCircuits();
+        if (typeof loadWeatherConfig === "function") {
+          void loadWeatherConfig().then(() => {
+            if (typeof loadWeather === "function") void loadWeather(false);
+          });
+        }
+        if (!(managedMinersCache || []).length) {
+          void (async () => {
+            try {
+              const r = await fetch("/api/miner/managed", { cache: "no-store" });
+              const b = await r.json();
+              if (r.ok && Array.isArray(b.miners)) managedMinersCache = b.miners;
+              if (typeof renderCircuitMinersBind === "function")
+                renderCircuitMinersBind();
+            } catch (_) { /* ignore */ }
+          })();
+        } else if (typeof renderCircuitMinersBind === "function") {
+          renderCircuitMinersBind();
+        }
       }
       if (!opts.skipUrl) {
         // #chips / #pools / #logs / #advanced keep deep-link hashes
@@ -13611,15 +14293,10 @@
     document.querySelectorAll("#view-map nav.subtabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         const s = btn.dataset.subtab;
-        if (s === "pool") {
-          activateTab("pool");
-        } else {
-          // keep URL on #map; switch subview in place
-          if (!document.getElementById("view-map")?.classList.contains("active")) {
-            activateTab("map");
-          }
-          setMapSubtab(s);
+        if (!document.getElementById("view-map")?.classList.contains("active")) {
+          activateTab("map");
         }
+        setMapSubtab(s);
       });
     });
     document.querySelectorAll("#view-miners nav.subtabs button").forEach((btn) => {
@@ -13639,6 +14316,7 @@
       fleetPage = 1;
       if (typeof renderFleetTable === "function") renderFleetTable();
     });
+    if (typeof initFleetColsUi === "function") initFleetColsUi();
     document.querySelectorAll("#fleet-status-bar [data-fleet-f]").forEach((btn) => {
       btn.addEventListener("click", () => {
         document
@@ -16594,6 +17272,704 @@
     let dashEditMode = false;
     let dashSortBound = false;
 
+    /* ── Dashboard config on router (not browser) ──
+       layout + chart series/display/bands + circuit/miner bindings.
+       localStorage is only used once to migrate old browser prefs. */
+    let dashboardCfgLoaded = false;
+    let dashboardCfgSaveTimer = null;
+    let dashboardChartSync = true;
+    /** @type {{ temps: {circuit_id:?string}, power: {miner_id:?string}, energy: {miner_id:?string} }} */
+    let dashboardChartBind = {
+      temps: { circuit_id: null },
+      power: { miner_id: null },
+      energy: { miner_id: null },
+    };
+    /** @type {{ circuits: array }} */
+    let circuitsCache = { circuits: [] };
+
+    function scheduleSaveDashboardConfig() {
+      if (dashboardCfgSaveTimer) clearTimeout(dashboardCfgSaveTimer);
+      dashboardCfgSaveTimer = setTimeout(() => {
+        dashboardCfgSaveTimer = null;
+        void persistDashboardConfig();
+      }, 450);
+    }
+
+    function buildDashboardConfigPayload() {
+      return {
+        layout: {
+          order: (dashLayout && dashLayout.order) || [],
+          hidden: (dashLayout && dashLayout.hidden) || [],
+          half: (dashLayout && dashLayout.half) || [],
+        },
+        charts: {
+          temps: {
+            circuit_id: dashboardChartBind.temps.circuit_id || null,
+            series: getTempChartSeriesVis(),
+            display: getChartDisplayOpts("temps"),
+            status_bands: getChartStatusBandsVis("temps"),
+          },
+          power: {
+            miner_id: dashboardChartBind.power.miner_id || null,
+            series: getPowerChartSeriesVis(),
+            display: getChartDisplayOpts("power"),
+            status_bands: getChartStatusBandsVis("power"),
+          },
+          energy: {
+            miner_id: dashboardChartBind.energy.miner_id || null,
+            series: getEnergyChartSeriesVis(),
+            display: getChartDisplayOpts("energy"),
+          },
+        },
+        chart_sync: !!dashboardChartSync,
+      };
+    }
+
+    async function persistDashboardConfig() {
+      try {
+        const payload = buildDashboardConfigPayload();
+        const res = await fetch("/api/dashboard/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+      } catch (e) {
+        console.warn("[dashboard] save failed", e);
+      }
+    }
+
+    function applyDashboardConfigObject(cfg) {
+      if (!cfg || typeof cfg !== "object") return;
+      // layout
+      if (cfg.layout && typeof cfg.layout === "object") {
+        let order = Array.isArray(cfg.layout.order)
+          ? cfg.layout.order.map(String)
+          : [];
+        let hidden = Array.isArray(cfg.layout.hidden)
+          ? cfg.layout.hidden.map(String)
+          : [];
+        let half = Array.isArray(cfg.layout.half)
+          ? cfg.layout.half.map(String)
+          : [];
+        if (!order.length) order = DASH_DEFAULT_ORDER.slice();
+        ({ order, hidden } = migrateDashHistoryWidget(order, hidden));
+        if (half.indexOf("history") >= 0) {
+          half = half.filter((id) => id !== "history");
+          if (half.indexOf("chart_temps") < 0) half.push("chart_temps");
+          if (half.indexOf("chart_power") < 0) half.push("chart_power");
+        }
+        DASH_DEFAULT_ORDER.forEach((id) => {
+          if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
+        });
+        order = order.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        order = normalizeDashZoneOrder(order);
+        hidden = hidden.filter((id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0);
+        half = half.filter(
+          (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
+        );
+        dashLayout = { order, hidden, half };
+      }
+      // charts
+      const charts = cfg.charts && typeof cfg.charts === "object" ? cfg.charts : {};
+      const temps = charts.temps || {};
+      const power = charts.power || {};
+      const energy = charts.energy || {};
+      dashboardChartBind.temps.circuit_id =
+        temps.circuit_id != null && String(temps.circuit_id).trim()
+          ? String(temps.circuit_id).trim()
+          : null;
+      dashboardChartBind.power.miner_id =
+        power.miner_id != null && String(power.miner_id).trim()
+          ? String(power.miner_id).trim()
+          : null;
+      dashboardChartBind.energy.miner_id =
+        energy.miner_id != null && String(energy.miner_id).trim()
+          ? String(energy.miner_id).trim()
+          : null;
+      if (temps.series && typeof temps.series === "object") {
+        tempChartSeriesVis = Object.assign(
+          {},
+          TEMP_CHART_SERIES_DEFAULT_ON || {},
+          temps.series
+        );
+      }
+      if (power.series && typeof power.series === "object") {
+        powerChartSeriesVis = Object.assign(
+          {},
+          POWER_CHART_SERIES_DEFAULT_ON || {},
+          power.series
+        );
+      }
+      if (energy.series && typeof energy.series === "object") {
+        energyChartSeriesVis = Object.assign(
+          {},
+          ENERGY_CHART_SERIES_DEFAULT_ON || {},
+          energy.series
+        );
+      }
+      if (!chartDisplayOpts) {
+        chartDisplayOpts = {
+          temps: _normalizeChartDisplay(null),
+          power: _normalizeChartDisplay(null),
+          energy: _normalizeChartDisplay(null),
+        };
+      }
+      if (temps.display) chartDisplayOpts.temps = _normalizeChartDisplay(temps.display);
+      if (power.display) chartDisplayOpts.power = _normalizeChartDisplay(power.display);
+      if (energy.display)
+        chartDisplayOpts.energy = _normalizeChartDisplay(energy.display);
+      if (!chartStatusBandsVis) {
+        chartStatusBandsVis = {
+          temps: Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON),
+          power: Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON),
+          energy: Object.assign({}, CHART_STATUS_BANDS_DEFAULT_ON),
+        };
+      }
+      if (temps.status_bands && typeof temps.status_bands === "object") {
+        chartStatusBandsVis.temps = Object.assign(
+          {},
+          CHART_STATUS_BANDS_DEFAULT_ON,
+          temps.status_bands
+        );
+      }
+      if (power.status_bands && typeof power.status_bands === "object") {
+        chartStatusBandsVis.power = Object.assign(
+          {},
+          CHART_STATUS_BANDS_DEFAULT_ON,
+          power.status_bands
+        );
+      }
+      if (typeof cfg.chart_sync === "boolean") {
+        dashboardChartSync = cfg.chart_sync;
+        try {
+          localStorage.setItem(
+            "poolheat_chart_sync_v1",
+            cfg.chart_sync ? "1" : "0"
+          );
+        } catch (_) { /* ignore */ }
+      }
+    }
+
+    function collectLocalDashboardMigrateBlob() {
+      // one-shot import of browser prefs when server is empty
+      const blob = {
+        layout: null,
+        charts: { temps: {}, power: {}, energy: {} },
+        chart_sync: true,
+      };
+      try {
+        const raw = localStorage.getItem(DASH_LAYOUT_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            blob.layout = {
+              order: Array.isArray(j.order) ? j.order : [],
+              hidden: Array.isArray(j.hidden) ? j.hidden : [],
+              half: Array.isArray(j.half) ? j.half : [],
+            };
+          }
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        const raw = localStorage.getItem(TEMP_CHART_SERIES_KEY);
+        if (raw) blob.charts.temps.series = JSON.parse(raw);
+      } catch (_) { /* ignore */ }
+      try {
+        const raw = localStorage.getItem(POWER_CHART_SERIES_KEY);
+        if (raw) blob.charts.power.series = JSON.parse(raw);
+      } catch (_) { /* ignore */ }
+      try {
+        const raw = localStorage.getItem(ENERGY_CHART_SERIES_KEY);
+        if (raw) blob.charts.energy.series = JSON.parse(raw);
+      } catch (_) { /* ignore */ }
+      try {
+        const raw = localStorage.getItem(CHART_DISPLAY_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            if (j.temps) blob.charts.temps.display = j.temps;
+            if (j.power) blob.charts.power.display = j.power;
+            if (j.energy) blob.charts.energy.display = j.energy;
+          }
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        const raw = localStorage.getItem(CHART_STATUS_BANDS_KEY);
+        if (raw) {
+          const j = JSON.parse(raw);
+          if (j && typeof j === "object") {
+            if (j.temps) blob.charts.temps.status_bands = j.temps;
+            if (j.power) blob.charts.power.status_bands = j.power;
+          }
+        }
+      } catch (_) { /* ignore */ }
+      try {
+        const v = localStorage.getItem(CHART_SYNC_KEY);
+        if (v === "0" || v === "1") blob.chart_sync = v === "1";
+      } catch (_) { /* ignore */ }
+      return blob;
+    }
+
+    function dashboardServerLooksEmpty(cfg) {
+      if (!cfg || typeof cfg !== "object") return true;
+      const lay = cfg.layout || {};
+      const hasLayout =
+        (Array.isArray(lay.order) && lay.order.length > 0) ||
+        (Array.isArray(lay.hidden) && lay.hidden.length > 0);
+      const charts = cfg.charts || {};
+      const hasSeries = ["temps", "power", "energy"].some((k) => {
+        const s = charts[k] && charts[k].series;
+        return s && typeof s === "object" && Object.keys(s).length > 0;
+      });
+      const hasBind =
+        (charts.temps && charts.temps.circuit_id) ||
+        (charts.power && charts.power.miner_id) ||
+        (charts.energy && charts.energy.miner_id);
+      return !hasLayout && !hasSeries && !hasBind && !cfg.updated_ts;
+    }
+
+    async function loadDashboardConfigFromServer() {
+      try {
+        const res = await fetch("/api/dashboard/config", { cache: "no-store" });
+        const body = await res.json();
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        if (dashboardServerLooksEmpty(body)) {
+          const mig = collectLocalDashboardMigrateBlob();
+          const hasLocal =
+            (mig.layout &&
+              ((mig.layout.order && mig.layout.order.length) ||
+                (mig.layout.hidden && mig.layout.hidden.length))) ||
+            Object.keys(mig.charts.temps.series || {}).length ||
+            Object.keys(mig.charts.power.series || {}).length;
+          if (hasLocal) {
+            const saveRes = await fetch("/api/dashboard/config", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(mig),
+            });
+            const saved = await saveRes.json();
+            if (saveRes.ok && saved && saved.ok !== false) {
+              applyDashboardConfigObject(saved);
+              dashboardCfgLoaded = true;
+              try {
+                if (typeof applyDashLayout === "function") applyDashLayout();
+              } catch (_) { /* ignore */ }
+              return saved;
+            }
+          }
+        }
+        applyDashboardConfigObject(body);
+        dashboardCfgLoaded = true;
+        try {
+          if (typeof applyDashLayout === "function") applyDashLayout();
+        } catch (_) { /* ignore */ }
+        return body;
+      } catch (e) {
+        console.warn("[dashboard] load failed, using local fallback", e);
+        // offline fallback: keep previous localStorage loaders
+        try {
+          loadDashLayoutFromLocalOnly();
+        } catch (_) { /* ignore */ }
+        dashboardCfgLoaded = false;
+        return null;
+      }
+    }
+
+    async function loadCircuits() {
+      try {
+        const res = await fetch("/api/circuits", { cache: "no-store" });
+        const body = await res.json();
+        if (!res.ok || body.ok === false) {
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        }
+        circuitsCache = {
+          circuits: Array.isArray(body.circuits) ? body.circuits : [],
+        };
+        try {
+          renderCircuitsSettings();
+        } catch (_) { /* ignore */ }
+        return circuitsCache;
+      } catch (e) {
+        console.warn("[circuits] load failed", e);
+        circuitsCache = { circuits: [] };
+        return circuitsCache;
+      }
+    }
+
+    let selectedCircuitId = null;
+
+    function circuitTypeLabel(type) {
+      const map = {
+        house: typeof t === "function" ? t("circuit.type.house", "House") : "House",
+        pool: typeof t === "function" ? t("circuit.type.pool", "Pool") : "Pool",
+        dhw: typeof t === "function" ? t("circuit.type.dhw", "DHW") : "DHW",
+        custom:
+          typeof t === "function" ? t("circuit.type.custom", "Custom") : "Custom",
+      };
+      return map[type] || type || "—";
+    }
+
+    function escCirc(s) {
+      return typeof escapeLogHtml === "function"
+        ? escapeLogHtml(s)
+        : String(s || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    function renderCircuitsSettings() {
+      const list = document.getElementById("circuits-list");
+      if (!list) return;
+      const circuits = circuitsCache.circuits || [];
+      if (!circuits.length) {
+        list.innerHTML =
+          '<p style="color:var(--dim);font-size:0.8rem;margin:0">' +
+          (typeof t === "function"
+            ? t("circuit.empty", "No circuits yet")
+            : "No circuits yet") +
+          "</p>";
+        return;
+      }
+      if (
+        !selectedCircuitId ||
+        !circuits.some((c) => String(c.id) === String(selectedCircuitId))
+      ) {
+        selectedCircuitId = circuits[0] && circuits[0].id;
+      }
+      list.innerHTML = circuits
+        .map((c) => {
+          const id = escCirc(String(c.id || ""));
+          const name = escCirc(String(c.name || c.id || ""));
+          const type = String(c.type || "house");
+          const dry = !!c.drycooler;
+          const nMiners = (c.miner_ids || []).length;
+          const sel =
+            String(c.id) === String(selectedCircuitId) ? " border-color:var(--accent,#6366f1);background:rgba(99,102,241,0.08)" : "";
+          return (
+            '<button type="button" class="row" data-circuit-select="' +
+            id +
+            '" style="display:flex;width:100%;text-align:left;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:transparent;color:inherit;cursor:pointer' +
+            sel +
+            '">' +
+            '<div style="flex:1;min-width:8rem">' +
+            '<div style="font-weight:550">' +
+            name +
+            "</div>" +
+            '<div style="font-size:0.72rem;color:var(--dim)">' +
+            escCirc(circuitTypeLabel(type)) +
+            (dry ? " · drycooler" : "") +
+            " · " +
+            nMiners +
+            " ASIC" +
+            "</div></div></button>"
+          );
+        })
+        .join("");
+      fillCircuitEditor(selectedCircuitId);
+    }
+
+    function fillCircuitEditor(cid) {
+      const card = document.getElementById("circuit-editor-card");
+      const c = (circuitsCache.circuits || []).find(
+        (x) => String(x.id) === String(cid)
+      );
+      if (!card) return;
+      if (!c) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      selectedCircuitId = c.id;
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        if (el) el.value = v != null ? v : "";
+      };
+      set("circuit-edit-id", c.id);
+      set("circuit-edit-name", c.name || "");
+      set("circuit-edit-type", c.type || "house");
+      const dry = document.getElementById("circuit-edit-drycooler");
+      if (dry) dry.checked = !!c.drycooler;
+      set("circuit-edit-drycooler-device", c.drycooler_device_id || "");
+      const sub = document.getElementById("circuit-editor-sub");
+      if (sub) sub.textContent = String(c.id);
+      const geo = document.getElementById("circuit-pool-geo");
+      if (geo) geo.hidden = String(c.type) !== "pool";
+      if (String(c.type) === "pool") {
+        const g = c.pool_geometry || {};
+        const shapeEl = document.getElementById("pool-shape");
+        if (shapeEl && g.shape) shapeEl.value = g.shape;
+        set("pool-length", g.length_m != null ? g.length_m : 8);
+        set("pool-width", g.width_m != null ? g.width_m : 4);
+        set("pool-depth", g.depth_m != null ? g.depth_m : 1.5);
+        if (g.flow_m3h != null && Number.isFinite(Number(g.flow_m3h))) {
+          set("pool-flow", Math.round(Number(g.flow_m3h) * 1000));
+        }
+        set("pool-water-sensor", g.water_sensor || "liquid");
+        if (typeof recalcPoolLocal === "function") {
+          try {
+            recalcPoolLocal();
+          } catch (_) { /* ignore */ }
+        }
+      }
+      const dryWrap = document.getElementById("circuit-drycooler-device-wrap");
+      if (dryWrap) dryWrap.hidden = !(dry && dry.checked);
+      renderCircuitMinersBind();
+    }
+
+    function renderCircuitMinersBind() {
+      const box = document.getElementById("circuit-miners-bind-list");
+      if (!box) return;
+      const c = (circuitsCache.circuits || []).find(
+        (x) => String(x.id) === String(selectedCircuitId)
+      );
+      const miners = managedMinersCache || [];
+      if (!c) {
+        box.innerHTML =
+          '<div style="color:var(--muted);font-size:0.85rem">—</div>';
+        return;
+      }
+      if (!miners.length) {
+        box.innerHTML =
+          '<div style="color:var(--muted);font-size:0.85rem">' +
+          (typeof t === "function"
+            ? t("circuit.no_miners", "No managed miners — import under Settings → Miner-poller")
+            : "No managed miners") +
+          "</div>";
+        return;
+      }
+      const bound = new Set((c.miner_ids || []).map(String));
+      box.innerHTML = miners
+        .map((m) => {
+          const mid = String(m.id);
+          const checked = bound.has(mid) ? " checked" : "";
+          const label =
+            (m.alias && String(m.alias).trim()) ||
+            (m.name && String(m.name).trim()) ||
+            m.host ||
+            mid;
+          return (
+            '<label class="check" style="margin:0">' +
+            '<input type="checkbox" class="circuit-bind-cb" data-mid="' +
+            escCirc(mid) +
+            '"' +
+            checked +
+            " />" +
+            "<span>" +
+            escCirc(label) +
+            (m.host ? " · " + escCirc(m.host) : "") +
+            "</span></label>"
+          );
+        })
+        .join("");
+    }
+
+    function collectCircuitFromEditor() {
+      const id = (document.getElementById("circuit-edit-id")?.value || "").trim();
+      const name = (document.getElementById("circuit-edit-name")?.value || "").trim();
+      const type = (document.getElementById("circuit-edit-type")?.value || "house").trim();
+      const dry = !!document.getElementById("circuit-edit-drycooler")?.checked;
+      let dryDev = (
+        document.getElementById("circuit-edit-drycooler-device")?.value || ""
+      ).trim();
+      if (!dry) dryDev = "";
+      const miner_ids = [];
+      document.querySelectorAll(".circuit-bind-cb:checked").forEach((inp) => {
+        const mid = inp.getAttribute("data-mid");
+        if (mid) miner_ids.push(mid);
+      });
+      let pool_geometry = null;
+      if (type === "pool" && typeof collectPoolGeometryFromUI === "function") {
+        try {
+          pool_geometry = collectPoolGeometryFromUI();
+        } catch (_) {
+          pool_geometry = null;
+        }
+      }
+      return {
+        id: id || undefined,
+        name,
+        type,
+        enabled: true,
+        drycooler: dry,
+        drycooler_device_id: dryDev || null,
+        miner_ids,
+        pool_geometry,
+      };
+    }
+
+    async function circuitApi(payload) {
+      const res = await fetch("/api/circuits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json();
+      if (!res.ok || body.ok === false) {
+        throw new Error((body && body.error) || "HTTP " + res.status);
+      }
+      circuitsCache = {
+        circuits: Array.isArray(body.circuits) ? body.circuits : [],
+      };
+      renderCircuitsSettings();
+      const st = document.getElementById("circuits-status");
+      if (st) {
+        st.textContent =
+          typeof t === "function"
+            ? t("circuit.saved", "Circuits saved")
+            : "Circuits saved";
+      }
+      return body;
+    }
+
+    async function saveCircuitEditor() {
+      const c = collectCircuitFromEditor();
+      if (!c.name) {
+        if (typeof toastWarn === "function")
+          toastWarn(
+            typeof t === "function"
+              ? t("circuit.name_empty", "Name is empty")
+              : "Name is empty"
+          );
+        return;
+      }
+      const action = c.id ? "update" : "create";
+      await circuitApi({ action, circuit: c });
+      // keep legacy heat model in sync for pool-type geometry
+      if (c.type === "pool" && c.pool_geometry) {
+        try {
+          await fetch("/api/pool/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ config: c.pool_geometry }),
+          });
+        } catch (_) { /* ignore */ }
+      }
+      if (typeof toastSuccess === "function")
+        toastSuccess(
+          typeof t === "function" ? t("circuit.saved", "Circuits saved") : "Saved"
+        );
+    }
+
+    function initCircuitsUi() {
+      const list = document.getElementById("circuits-list");
+      const addBtn = document.getElementById("btn-circuit-add");
+      const saveBtn = document.getElementById("btn-circuit-save");
+      const delBtn = document.getElementById("btn-circuit-delete");
+      const typeEl = document.getElementById("circuit-edit-type");
+      const dryEl = document.getElementById("circuit-edit-drycooler");
+      if (addBtn && !addBtn._bound) {
+        addBtn._bound = true;
+        addBtn.addEventListener("click", async () => {
+          try {
+            const body = await circuitApi({
+              action: "create",
+              circuit: {
+                name:
+                  typeof t === "function"
+                    ? t("circuit.new_name", "New circuit")
+                    : "New circuit",
+                type: "house",
+                drycooler: false,
+                miner_ids: [],
+              },
+            });
+            const created = (body.circuits || []).slice(-1)[0];
+            if (created) {
+              selectedCircuitId = created.id;
+              renderCircuitsSettings();
+            }
+          } catch (e) {
+            if (typeof toastError === "function")
+              toastError(e.message || String(e));
+          }
+        });
+      }
+      if (saveBtn && !saveBtn._bound) {
+        saveBtn._bound = true;
+        saveBtn.addEventListener("click", () => {
+          void saveCircuitEditor().catch((e) => {
+            if (typeof toastError === "function")
+              toastError(e.message || String(e));
+          });
+        });
+      }
+      if (delBtn && !delBtn._bound) {
+        delBtn._bound = true;
+        delBtn.addEventListener("click", async () => {
+          const id = (document.getElementById("circuit-edit-id")?.value || "").trim();
+          if (!id) return;
+          if (
+            !confirm(
+              typeof t === "function"
+                ? t("circuit.remove_confirm", "Remove this circuit?")
+                : "Remove this circuit?"
+            )
+          )
+            return;
+          try {
+            await circuitApi({ action: "remove", id });
+            selectedCircuitId = null;
+            if (typeof toastSuccess === "function")
+              toastSuccess(
+                typeof t === "function" ? t("circuit.saved", "Circuits saved") : "Saved"
+              );
+          } catch (e) {
+            if (typeof toastError === "function")
+              toastError(e.message || String(e));
+          }
+        });
+      }
+      if (typeEl && !typeEl._bound) {
+        typeEl._bound = true;
+        typeEl.addEventListener("change", () => {
+          const geo = document.getElementById("circuit-pool-geo");
+          if (geo) geo.hidden = typeEl.value !== "pool";
+        });
+      }
+      if (dryEl && !dryEl._bound) {
+        dryEl._bound = true;
+        dryEl.addEventListener("change", () => {
+          const w = document.getElementById("circuit-drycooler-device-wrap");
+          if (w) w.hidden = !dryEl.checked;
+        });
+      }
+      if (list && !list._bound) {
+        list._bound = true;
+        list.addEventListener("click", (ev) => {
+          const btn = ev.target && ev.target.closest && ev.target.closest("[data-circuit-select]");
+          if (!btn) return;
+          selectedCircuitId = btn.getAttribute("data-circuit-select");
+          renderCircuitsSettings();
+        });
+      }
+      // pool geometry live calc (shared ids)
+      ["pool-length", "pool-width", "pool-depth", "pool-flow", "pool-shape"].forEach(
+        (id) => {
+          document.getElementById(id)?.addEventListener("input", () => {
+            if (typeof recalcPoolLocal === "function") {
+              try {
+                recalcPoolLocal();
+              } catch (_) { /* ignore */ }
+            }
+          });
+          document.getElementById(id)?.addEventListener("change", () => {
+            if (typeof recalcPoolLocal === "function") {
+              try {
+                recalcPoolLocal();
+              } catch (_) { /* ignore */ }
+            }
+          });
+        }
+      );
+    }
+
     function isDashWidgetId(id) {
       return !!(id && DASH_WIDGET_ORDER.indexOf(id) >= 0);
     }
@@ -16673,7 +18049,7 @@
       };
     }
 
-    function loadDashLayout() {
+    function loadDashLayoutFromLocalOnly() {
       try {
         const raw = localStorage.getItem(DASH_LAYOUT_KEY);
         if (!raw) return;
@@ -16683,13 +18059,11 @@
         let hidden = Array.isArray(j.hidden) ? j.hidden.map(String) : [];
         let half = Array.isArray(j.half) ? j.half.map(String) : [];
         ({ order, hidden } = migrateDashHistoryWidget(order, hidden));
-        // migrate half: history → chart_temps + chart_power
         if (half.indexOf("history") >= 0) {
           half = half.filter((id) => id !== "history");
           if (half.indexOf("chart_temps") < 0) half.push("chart_temps");
           if (half.indexOf("chart_power") < 0) half.push("chart_power");
         }
-        // merge unknown new widgets at end
         DASH_DEFAULT_ORDER.forEach((id) => {
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
@@ -16700,11 +18074,12 @@
           (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
         );
         dashLayout = { order, hidden, half };
-        // persist migration (zone-split order) so old interleaved layouts stick
-        try {
-          saveDashLayout();
-        } catch (_) { /* ignore */ }
       } catch (_) { /* ignore */ }
+    }
+
+    function loadDashLayout() {
+      // Prefer router config; local only as offline fallback before server load
+      if (!dashboardCfgLoaded) loadDashLayoutFromLocalOnly();
     }
 
     function dashLayoutIsHalf(id) {
@@ -16784,9 +18159,11 @@
     }
 
     function saveDashLayout() {
+      // mirror to localStorage as cache only; source of truth = router
       try {
         localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashLayout));
       } catch (_) { /* ignore */ }
+      scheduleSaveDashboardConfig();
     }
 
     function dashLayoutIsHidden(id) {
@@ -20871,6 +22248,8 @@
       try {
         localStorage.setItem(CHART_DISPLAY_KEY, JSON.stringify(chartDisplayOpts));
       } catch (_) { /* ignore */ }
+      if (typeof scheduleSaveDashboardConfig === "function")
+        scheduleSaveDashboardConfig();
       return chartDisplayOpts[k];
     }
 
@@ -21274,6 +22653,8 @@
           JSON.stringify(chartStatusBandsVis)
         );
       } catch (_) { /* ignore */ }
+      if (typeof scheduleSaveDashboardConfig === "function")
+        scheduleSaveDashboardConfig();
       return chartStatusBandsVis;
     }
 
@@ -21339,6 +22720,8 @@
           JSON.stringify(powerChartSeriesVis)
         );
       } catch (_) { /* ignore */ }
+      if (typeof scheduleSaveDashboardConfig === "function")
+        scheduleSaveDashboardConfig();
       return powerChartSeriesVis;
     }
 
@@ -21394,6 +22777,8 @@
           JSON.stringify(energyChartSeriesVis)
         );
       } catch (_) { /* ignore */ }
+      if (typeof scheduleSaveDashboardConfig === "function")
+        scheduleSaveDashboardConfig();
       return energyChartSeriesVis;
     }
 
@@ -21512,6 +22897,8 @@
           JSON.stringify(tempChartSeriesVis)
         );
       } catch (_) { /* ignore */ }
+      if (typeof scheduleSaveDashboardConfig === "function")
+        scheduleSaveDashboardConfig();
       return tempChartSeriesVis;
     }
 
@@ -21609,6 +22996,10 @@
           'aria-labelledby="chart-series-settings-title">' +
           '<h3 id="chart-series-settings-title">Chart series</h3>' +
           '<p class="sub" id="chart-series-settings-sub"></p>' +
+          '<label class="field chart-series-bind" id="chart-series-bind-wrap" style="margin:0 0 10px">' +
+          '<span id="chart-series-bind-label">Source</span>' +
+          '<select id="chart-series-bind-select" style="width:100%;margin-top:4px;padding:8px 10px"></select>' +
+          "</label>" +
           '<div class="chart-series-list" id="chart-series-settings-list"></div>' +
           '<div class="modal-actions">' +
           '<button type="button" class="btn" id="btn-chart-series-defaults" data-i18n="btn.reset_defaults">Defaults</button>' +
@@ -21667,6 +23058,14 @@
                 );
               }
               return;
+            }
+            // circuit / miner binding (stored on router)
+            const bindSel = document.getElementById("chart-series-bind-select");
+            if (bindSel && !bindSel.disabled) {
+              const v = (bindSel.value || "").trim() || null;
+              if (k === "temps") dashboardChartBind.temps.circuit_id = v;
+              else if (k === "power") dashboardChartBind.power.miner_id = v;
+              else if (k === "energy") dashboardChartBind.energy.miner_id = v;
             }
             if (k === "temps") saveTempChartSeriesVis(next);
             else if (k === "power") savePowerChartSeriesVis(next);
@@ -21742,6 +23141,27 @@
           });
       }
       backdrop._chartKind = meta.kind;
+      // ensure circuits / miners lists for bind select
+      try {
+        if (
+          meta.kind === "temps" &&
+          !(circuitsCache.circuits && circuitsCache.circuits.length)
+        ) {
+          await loadCircuits();
+        }
+        if (
+          (meta.kind === "power" || meta.kind === "energy") &&
+          typeof refreshManagedTable === "function" &&
+          !(managedMinersCache || []).length
+        ) {
+          try {
+            const r = await fetch("/api/miner/managed", { cache: "no-store" });
+            const b = await r.json();
+            if (r.ok && Array.isArray(b.miners)) managedMinersCache = b.miners;
+          } catch (_) { /* ignore */ }
+        }
+      } catch (_) { /* ignore */ }
+      fillChartBindSelect(meta.kind);
       fillChartSeriesList(meta.kind, meta.getVis(), getChartStatusBandsVis(meta.kind));
       try {
         if (typeof applyI18n === "function") applyI18n(backdrop);
@@ -21766,6 +23186,80 @@
       };
       document.addEventListener("keydown", onKey);
       backdrop._escHandler = onKey;
+    }
+
+    function fillChartBindSelect(kind) {
+      const wrap = document.getElementById("chart-series-bind-wrap");
+      const lab = document.getElementById("chart-series-bind-label");
+      const sel = document.getElementById("chart-series-bind-select");
+      if (!wrap || !sel) return;
+      const k = kind || "temps";
+      sel.innerHTML = "";
+      if (k === "temps") {
+        wrap.hidden = false;
+        if (lab) {
+          lab.textContent =
+            typeof t === "function"
+              ? t("dash.chart_bind_circuit", "Circuit")
+              : "Circuit";
+        }
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent =
+          typeof t === "function"
+            ? t("dash.chart_bind_none", "— not set —")
+            : "— not set —";
+        sel.appendChild(opt0);
+        (circuitsCache.circuits || []).forEach((c) => {
+          if (!c || !c.id) return;
+          const o = document.createElement("option");
+          o.value = String(c.id);
+          const typeLab = c.type ? " · " + c.type : "";
+          o.textContent = (c.name || c.id) + typeLab;
+          sel.appendChild(o);
+        });
+        sel.value = dashboardChartBind.temps.circuit_id || "";
+      } else if (k === "power" || k === "energy") {
+        wrap.hidden = false;
+        if (lab) {
+          lab.textContent =
+            typeof t === "function"
+              ? t("dash.chart_bind_miner", "Miner (hashrate · power)")
+              : "Miner (hashrate · power)";
+        }
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent =
+          typeof t === "function"
+            ? t("dash.chart_bind_none", "— not set —")
+            : "— not set —";
+        sel.appendChild(opt0);
+        const miners =
+          (managedMinersCache && managedMinersCache.length
+            ? managedMinersCache
+            : null) ||
+          (fleetCache && fleetCache.miners) ||
+          [];
+        miners.forEach((m) => {
+          if (!m || m.id == null) return;
+          const o = document.createElement("option");
+          o.value = String(m.id);
+          const name =
+            (m.alias && String(m.alias).trim()) ||
+            (m.name && String(m.name).trim()) ||
+            m.host ||
+            String(m.id);
+          o.textContent = name + (m.host ? " · " + m.host : "");
+          sel.appendChild(o);
+        });
+        const cur =
+          k === "energy"
+            ? dashboardChartBind.energy.miner_id
+            : dashboardChartBind.power.miner_id;
+        sel.value = cur || "";
+      } else {
+        wrap.hidden = true;
+      }
     }
 
     function fillChartSeriesList(kind, vis, bandsVis) {
@@ -22074,12 +23568,15 @@
 
     function setChartsSync(on, { fromUi } = {}) {
       on = !!on;
+      dashboardChartSync = on;
       document.querySelectorAll("input.chart-sync").forEach((inp) => {
         inp.checked = on;
       });
       try {
         localStorage.setItem(CHART_SYNC_KEY, on ? "1" : "0");
       } catch (_) { /* ignore */ }
+      if (typeof scheduleSaveDashboardConfig === "function")
+        scheduleSaveDashboardConfig();
       if (on) {
         // align power to temps window when enabling sync
         viewByKey.power = { ...viewByKey.temps };
@@ -24009,6 +25506,12 @@
         if (!(minerVendorsCache.vendors || []).length && typeof loadMinerVendors === "function") {
           await loadMinerVendors();
         }
+        // Keep topology flag fresh for cell column visibility
+        if (typeof loadSiteConfig === "function") {
+          try {
+            await loadSiteConfig();
+          } catch (_) { /* ignore */ }
+        }
         const res = await fetch("/api/miners/fleet", { cache: "no-store" });
         const body = await res.json();
         if (!res.ok || body.ok === false) {
@@ -24325,9 +25828,12 @@
       if (fleetPage < 1) fleetPage = 1;
       updateFleetPager(totalFiltered);
 
+      const colSpan = fleetVisibleColCount() || 11;
       if (!rows.length) {
         tbody.innerHTML =
-          '<tr><td colspan="12" style="color:var(--muted)">' +
+          '<tr><td colspan="' +
+          colSpan +
+          '" style="color:var(--muted)">' +
           escapeLogHtml(
             miners.length
               ? "—"
@@ -24337,6 +25843,7 @@
                 )
           ) +
           "</td></tr>";
+        applyFleetColVisibility();
         return;
       }
 
@@ -24354,16 +25861,16 @@
         const id = m.id || "";
         const live = m.live || null;
         const st = fleetStatusOf(m);
-        const cellTitle =
-          (m.cell && String(m.cell).trim()) ||
-          m.alias ||
-          m.name ||
-          m.vendor_name ||
-          "—";
-        const ipLine =
-          (m.host || "—") +
-          (m.port && Number(m.port) !== 4028 ? ":" + m.port : "");
-        const name = m.alias || m.name || "—";
+        // Cell only when site topology is on; otherwise first col is IP only.
+        const topoOn = siteTopologyEnabled();
+        const cellTitle = topoOn
+          ? (m.cell && String(m.cell).trim()) || "—"
+          : "";
+        // IP display without API port (4028); web UI is :80
+        const hostOnly = (m.host && String(m.host).trim()) || "";
+        const ipLine = hostOnly || "—";
+        const nameRaw = (m.alias || m.name || "").trim();
+        const name = nameRaw || "";
         // Prefer trade/display name from model profile (CK-BOX, V1 mini, …)
         const model =
           m.model_display ||
@@ -24515,29 +26022,37 @@
           m.role === "active" ? '<span class="cell-role">★ active</span>' : "";
 
         let tr = byId.get(id);
-        // rebuild if missing or old column layout (pre power·eff / boards·fans)
-        if (!tr || !tr.querySelector(".fleet-pw-eff") || !tr.querySelector(".fleet-boards-fans")) {
+        // rebuild if missing or old layout (name column / pre name-in-model)
+        if (
+          !tr ||
+          tr.getAttribute("data-fleet-layout") !== "v2" ||
+          !tr.querySelector(".fleet-pw-eff") ||
+          !tr.querySelector(".fleet-boards-fans") ||
+          !tr.querySelector(".fleet-model-cell .nm")
+        ) {
           tr = document.createElement("tr");
           tr.setAttribute("data-fleet-id", id);
+          tr.setAttribute("data-fleet-layout", "v2");
           tr.innerHTML =
-            '<td class="fleet-id-td"><div class="fleet-id-cell"><div class="fleet-id-meta">' +
+            '<td data-fleet-col="cell_ip" class="fleet-id-td"><div class="fleet-id-cell"><div class="fleet-id-meta">' +
             '<span class="cell-name"></span><span class="cell-ip"></span>' +
             '<span class="cell-role-slot"></span></div></div></td>' +
-            '<td><div class="fleet-name-cell"><span class="nm"></span></div></td>' +
-            '<td><div class="fleet-model-cell"><span class="md"></span><span class="sub" hidden></span></div></td>' +
-            '<td class="fleet-num fleet-hr"></td>' +
-            '<td><div class="fleet-stack-cell fleet-pw-eff">' +
+            '<td data-fleet-col="model"><div class="fleet-model-cell">' +
+            '<span class="md"></span><span class="nm" hidden></span><span class="sub" hidden></span>' +
+            "</div></td>" +
+            '<td data-fleet-col="hash" class="fleet-num fleet-hr"></td>' +
+            '<td data-fleet-col="power_eff"><div class="fleet-stack-cell fleet-pw-eff">' +
             '<span class="fleet-main fleet-pw"></span>' +
             '<span class="fleet-sub fleet-eff"></span></div></td>' +
-            '<td class="fleet-num fleet-temp"></td>' +
-            '<td><div class="fleet-stack-cell fleet-boards-fans">' +
+            '<td data-fleet-col="temp" class="fleet-num fleet-temp"></td>' +
+            '<td data-fleet-col="boards_fans"><div class="fleet-stack-cell fleet-boards-fans">' +
             '<span class="fleet-boards"></span>' +
             '<span class="fleet-sub fleet-fans"></span></div></td>' +
-            '<td class="fleet-mode"></td>' +
-            '<td class="fleet-num fleet-elapsed"></td>' +
-            '<td class="fleet-pool"><span class="fleet-muted">—</span></td>' +
-            '<td class="fleet-vendor"></td>' +
-            '<td class="fleet-col-menu">' +
+            '<td data-fleet-col="mode" class="fleet-mode"></td>' +
+            '<td data-fleet-col="elapsed" class="fleet-num fleet-elapsed"></td>' +
+            '<td data-fleet-col="pool" class="fleet-pool"><span class="fleet-muted">—</span></td>' +
+            '<td data-fleet-col="vendor" class="fleet-vendor"></td>' +
+            '<td data-fleet-col="menu" class="fleet-col-menu">' +
             '<button type="button" class="fleet-menu-btn" data-fleet-menu="' +
             escapeLogHtml(id) +
             '" aria-label="Menu" title="Menu">⋮</button></td>';
@@ -24551,18 +26066,42 @@
         const idTd = tr.querySelector("td.fleet-id-td");
         if (idTd) {
           idTd.className = "fleet-id-td st-" + st;
+          idTd.setAttribute("data-fleet-col", "cell_ip");
           idTd.title = fleetStatusLabel(st);
         }
         const setTxt = (sel, val) => {
           const el = tr.querySelector(sel);
           if (el && el.textContent !== String(val)) el.textContent = val;
         };
-        setTxt(".cell-name", cellTitle);
-        setTxt(".cell-ip", ipLine);
+        // Cell label only when topology on (above IP)
+        const nameEl = tr.querySelector(".cell-name");
+        if (nameEl) {
+          if (topoOn && cellTitle) {
+            nameEl.hidden = false;
+            if (nameEl.textContent !== String(cellTitle))
+              nameEl.textContent = cellTitle;
+          } else {
+            nameEl.hidden = true;
+            nameEl.textContent = "";
+          }
+        }
+        // IP: plain text or dashed direct-LAN link (non-blocking probe)
+        const ipEl = tr.querySelector(".cell-ip");
+        paintCellIpEl(ipEl, hostOnly, ipLine);
         const roleSlot = tr.querySelector(".cell-role-slot");
         if (roleSlot && roleSlot.innerHTML !== roleHtml) roleSlot.innerHTML = roleHtml;
-        setTxt(".fleet-name-cell .nm", name);
+        // Model column: model + ASIC name (merged) + sub (algo/full)
         setTxt(".fleet-model-cell .md", model);
+        const nmEl = tr.querySelector(".fleet-model-cell .nm");
+        if (nmEl) {
+          if (name && name !== model) {
+            nmEl.hidden = false;
+            if (nmEl.textContent !== name) nmEl.textContent = name;
+          } else {
+            nmEl.hidden = true;
+            nmEl.textContent = "";
+          }
+        }
         const subEl = tr.querySelector(".fleet-model-cell .sub");
         if (subEl) {
           if (modelSub) {
@@ -24692,6 +26231,7 @@
       });
       // reorder without destroying preserved nodes
       tbody.replaceChildren(frag);
+      applyFleetColVisibility();
     }
 
     async function fleetDoAction(action, mid) {
@@ -25247,9 +26787,9 @@
               "<td>" +
               mpCell(m.name) +
               "</td>" +
-              "<td>" +
-              mpCell(m.cell) +
-              "</td>" +
+              (siteTopologyEnabled()
+                ? "<td>" + mpCell(m.cell) + "</td>"
+                : "") +
               "<td>" +
               vendorCellHtml(m) +
               "</td>" +
@@ -25398,7 +26938,15 @@
       set("mp-edit-host", m.host || "");
       set("mp-edit-alias", m.alias || "");
       set("mp-edit-name", m.name || "");
-      set("mp-edit-cell", m.cell || "");
+      try {
+        await loadSiteConfig();
+      } catch (_) { /* ignore */ }
+      applySiteTopologyUi();
+      await fillMinerCellSelect(
+        document.getElementById("mp-edit-cell"),
+        m,
+        m.cell || ""
+      );
       fillVendorSelect(
         document.getElementById("mp-edit-vendor"),
         vendorId
@@ -25466,7 +27014,6 @@
       const fields = {
         alias: (document.getElementById("mp-edit-alias")?.value || "").trim(),
         name: (document.getElementById("mp-edit-name")?.value || "").trim(),
-        cell: (document.getElementById("mp-edit-cell")?.value || "").trim(),
         vendor: (document.getElementById("mp-edit-vendor")?.value || "whatsminer").trim(),
         model: (document.getElementById("mp-edit-model")?.value || "").trim(),
         model_code: (
@@ -25488,6 +27035,12 @@
         host: (document.getElementById("mp-edit-host")?.value || "").trim(),
         port: Number(document.getElementById("mp-edit-port")?.value) || 4028,
       };
+      // Cell only when topology is on (select from free cells · move ASIC)
+      if (siteTopologyEnabled()) {
+        fields.cell = (
+          document.getElementById("mp-edit-cell")?.value || ""
+        ).trim();
+      }
       const pw = document.getElementById("mp-edit-password")?.value;
       if (pw) fields.password = pw;
       if (!fields.host) {
@@ -30478,6 +32031,55 @@
 
     initTooltips();
     loadMinerConfig();
+    void loadSiteConfig();
+    if (typeof initCircuitsUi === "function") initCircuitsUi();
+    void (async () => {
+      try {
+        await loadCircuits();
+      } catch (_) { /* ignore */ }
+      try {
+        await loadDashboardConfigFromServer();
+      } catch (_) { /* ignore */ }
+      try {
+        if (typeof applyDashLayout === "function") applyDashLayout();
+      } catch (_) { /* ignore */ }
+    })();
+
+    document.getElementById("btn-site-topology-save")?.addEventListener("click", async () => {
+      const st = document.getElementById("site-topology-status");
+      const enabled = !!document.getElementById("site-topology-enabled")?.checked;
+      try {
+        if (st) st.textContent = "…";
+        const res = await fetch("/api/site/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topology_enabled: enabled }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false)
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        siteConfigCache = {
+          topology_enabled: !!body.topology_enabled,
+          topology: body.topology || null,
+        };
+        applySiteTopologyUi();
+        if (typeof refreshFleetTable === "function") void refreshFleetTable();
+        if (st)
+          st.textContent =
+            typeof t === "function"
+              ? t("site.topology_saved", "Site settings saved")
+              : "Site settings saved";
+        if (typeof toastSuccess === "function")
+          toastSuccess(
+            typeof t === "function"
+              ? t("site.topology_saved", "Site settings saved")
+              : "Site settings saved"
+          );
+      } catch (e) {
+        if (st) st.textContent = e.message || String(e);
+        if (typeof toastError === "function") toastError(e.message || String(e));
+      }
+    });
     void loadTelegramConfig();
     setInterval(() => {
       const tab = document.querySelector("nav.tabs button.active");

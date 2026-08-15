@@ -315,6 +315,10 @@ VIRTUAL_METER_ID = "virtual_miner"
 POOL_CFG_FILE = DATA / "pool_config.json"
 # Multi-pool catalog (geometry + bound miners for heating)
 HEAT_POOLS_FILE = DATA / "heat_pools.json"
+# Heat utilization circuits (контуры): house/pool + drycooler + miners + heatmap bind
+CIRCUITS_FILE = DATA / "circuits.json"
+# Dashboard layout + chart prefs (per router, not browser localStorage)
+DASHBOARD_CFG_FILE = DATA / "dashboard_config.json"
 ZONE_CFG_FILE = DATA / "zone_map_config.json"
 ZONE_PRESETS_FILE = DATA / "zone_map_presets.json"
 MODE_PROFILES_FILE = DATA / "mode_profiles.json"
@@ -339,6 +343,8 @@ MINER_POLLER_PIDFILE = DATA / "miner_poller.pid"
 MINER_POLLER_LOG = DATA / "miner_poller.log"
 # Wall-clock when this serve process started (uptime display)
 _SERVE_BOOT_TS = time.time()
+# Site / facility (topology · cells). Topology layout not implemented yet.
+SITE_CFG_FILE = DATA / "site_config.json"
 # ASIC IPC (UI/serve → Go miner-poller → miner). Remote UI cannot open miner TCP.
 MINER_WRITE_REQ_FILE = DATA / "miner_write_req.json"
 MINER_WRITE_RESULT_FILE = DATA / "miner_write_result.json"
@@ -11137,6 +11143,156 @@ def save_miner_poller_cfg(raw: dict | None) -> dict:
     return cfg
 
 
+# ─── Site / facility (topology · miner cells) ───────────────────────────────
+# Topology layout is not implemented yet. Default: topology_enabled=False →
+# miner "cell" is hidden in UI and not free-text editable. When enabled later,
+# cells come from topology; ASICs can only be *moved* into free cells.
+
+DEFAULT_SITE_CFG: dict = {
+    "version": 1,
+    "topology_enabled": False,
+    # Future: racks/platforms layout. Until then free-cell list is empty.
+    "topology": None,
+}
+
+_site_cfg_lock = threading.Lock()
+_site_cfg: dict | None = None
+
+
+def _normalize_site_cfg(raw: dict | None) -> dict:
+    base = dict(DEFAULT_SITE_CFG)
+    if not isinstance(raw, dict):
+        return base
+    base["version"] = 1
+    base["topology_enabled"] = bool(raw.get("topology_enabled", False))
+    # Pass through opaque topology blob for future UI (must be dict or null)
+    topo = raw.get("topology")
+    base["topology"] = topo if isinstance(topo, dict) else None
+    return base
+
+
+def get_site_cfg() -> dict:
+    global _site_cfg
+    with _site_cfg_lock:
+        if _site_cfg is None:
+            raw = _load_json(SITE_CFG_FILE, None)
+            _site_cfg = _normalize_site_cfg(raw if isinstance(raw, dict) else {})
+        return dict(_site_cfg)
+
+
+def save_site_cfg(raw: dict | None) -> dict:
+    global _site_cfg
+    cfg = _normalize_site_cfg(raw if isinstance(raw, dict) else {})
+    with _site_cfg_lock:
+        _save_json_atomic(SITE_CFG_FILE, cfg)
+        _site_cfg = cfg
+    return dict(cfg)
+
+
+def site_topology_enabled() -> bool:
+    try:
+        return bool(get_site_cfg().get("topology_enabled"))
+    except Exception:
+        return False
+
+
+def list_site_cells(*, for_miner_id: str | None = None) -> dict:
+    """
+    Cells for miner placement.
+    topology_enabled=False → empty free list (UI hides cell entirely).
+    topology_enabled=True without layout → free=[] (move UI ready, no slots yet).
+    """
+    cfg = get_site_cfg()
+    enabled = bool(cfg.get("topology_enabled"))
+    out: dict = {
+        "ok": True,
+        "topology_enabled": enabled,
+        "cells": [],
+        "free": [],
+        "occupied": [],
+    }
+    if not enabled:
+        return out
+
+    # Occupied cells from inventory
+    mid = str(for_miner_id or "").strip()
+    occupied: list[dict] = []
+    used: set[str] = set()
+    try:
+        for m in get_miners_managed().get("miners") or []:
+            if not isinstance(m, dict):
+                continue
+            cell = str(m.get("cell") or "").strip()
+            if not cell:
+                continue
+            oid = str(m.get("id") or "")
+            occupied.append(
+                {
+                    "id": cell,
+                    "miner_id": oid,
+                    "alias": m.get("alias") or m.get("name") or "",
+                    "host": m.get("host") or "",
+                }
+            )
+            if mid and oid == mid:
+                continue  # current miner cell stays selectable
+            used.add(cell)
+    except Exception:
+        pass
+    out["occupied"] = occupied
+
+    # Free cells from topology layout (future). Stub: no generated slots yet.
+    free: list[dict] = []
+    topo = cfg.get("topology") if isinstance(cfg.get("topology"), dict) else {}
+    slots = topo.get("cells") if isinstance(topo.get("cells"), list) else []
+    for s in slots:
+        if isinstance(s, str):
+            cid = s.strip()
+            label = cid
+        elif isinstance(s, dict):
+            cid = str(s.get("id") or s.get("cell") or "").strip()
+            label = str(s.get("label") or s.get("name") or cid)
+        else:
+            continue
+        if not cid or cid in used:
+            continue
+        free.append({"id": cid, "label": label})
+    out["free"] = free
+    out["cells"] = free + [
+        {"id": o["id"], "label": o["id"], "occupied": True, **o} for o in occupied
+    ]
+    return out
+
+
+def _validate_miner_cell(cell: str | None, *, miner_id: str | None = None) -> str:
+    """
+    Normalize / enforce cell assignment rules.
+    topology off → always empty (cell not used).
+    topology on → empty OK, else must be free or already owned by this miner.
+    """
+    cell = str(cell or "").strip()[:64]
+    if not site_topology_enabled():
+        return ""
+    if not cell:
+        return ""
+    info = list_site_cells(for_miner_id=miner_id)
+    free_ids = {str(x.get("id") or "") for x in (info.get("free") or [])}
+    # current assignment always allowed
+    for o in info.get("occupied") or []:
+        if str(o.get("miner_id") or "") == str(miner_id or "") and str(
+            o.get("id") or ""
+        ) == cell:
+            return cell
+    if cell in free_ids:
+        return cell
+    # Topology enabled but no layout slots yet: reject free-text invented cells
+    if not free_ids and not (info.get("occupied") or []):
+        raise ValueError(
+            "topology has no cells yet — cannot assign cell by hand"
+        )
+    raise ValueError(f"cell not free: {cell}")
+
+
 def get_miners_discovered() -> dict:
     raw = _load_json(
         MINERS_DISCOVERED_FILE,
@@ -12628,7 +12784,6 @@ def update_managed(mid: str, fields: dict | None) -> dict:
     str_keys = (
         "alias",
         "name",
-        "cell",
         "model",
         "model_code",
         "serial",
@@ -12644,6 +12799,12 @@ def update_managed(mid: str, fields: dict | None) -> dict:
     for k in str_keys:
         if k in fields and fields[k] is not None:
             found[k] = str(fields[k]).strip()
+    # Cell: topology-only (move into free cell). Never free-text when topology off.
+    if "cell" in fields or "location" in fields:
+        raw_cell = fields.get("cell", fields.get("location"))
+        found["cell"] = _validate_miner_cell(
+            raw_cell, miner_id=str(found.get("id") or mid)
+        )
     if "algorithm" in fields and "algo" not in fields:
         found["algo"] = str(fields.get("algorithm") or "").strip()
     if "cooling" in fields or "cooling_type" in fields:
@@ -15960,6 +16121,382 @@ def fetch_weather_current(cfg: dict | None = None, *, force: bool = False) -> di
         }
 
 
+# ─── Heat circuits (контуры утилизации тепла) ────────────────────────────────
+_circuits_lock = threading.Lock()
+_circuits: dict = {"version": 1, "circuits": []}
+
+_CIRCUIT_TYPES = ("house", "pool", "dhw", "custom")
+
+
+def _new_circuit_id() -> str:
+    return "circuit_" + uuid.uuid4().hex[:10]
+
+
+def _coerce_circuit(raw: dict | None) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+    cid = str(raw.get("id") or "").strip() or _new_circuit_id()
+    name = str(raw.get("name") or "").strip()[:64] or "Circuit"
+    ctype = str(raw.get("type") or "house").strip().lower()
+    if ctype not in _CIRCUIT_TYPES:
+        ctype = "custom"
+    miner_ids: list[str] = []
+    for x in raw.get("miner_ids") or []:
+        s = str(x).strip()
+        if s and s not in miner_ids:
+            miner_ids.append(s)
+    drycooler = bool(raw.get("drycooler", False))
+    dd = raw.get("drycooler_device_id")
+    drycooler_device_id = str(dd).strip() if dd not in (None, "") else None
+    if not drycooler:
+        drycooler_device_id = None
+    pool_geometry = None
+    if ctype == "pool":
+        geom = raw.get("pool_geometry")
+        if isinstance(geom, dict):
+            pool_geometry = _coerce_pool_geometry(geom)
+        elif isinstance(raw.get("config"), dict):
+            pool_geometry = _coerce_pool_geometry(raw.get("config"))
+    return {
+        "id": cid,
+        "name": name,
+        "type": ctype,
+        "enabled": bool(raw.get("enabled", True)),
+        "drycooler": drycooler,
+        "drycooler_device_id": drycooler_device_id,
+        "miner_ids": miner_ids,
+        "pool_geometry": pool_geometry,
+        "updated_ts": raw.get("updated_ts")
+        or datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def _default_circuits() -> dict:
+    """Seed one circuit; migrate heat_pools entries as type=pool when present."""
+    circuits: list[dict] = []
+    try:
+        with _heat_pools_lock:
+            pools = list(_heat_pools.get("pools") or [])
+    except Exception:
+        pools = []
+    if pools:
+        for p in pools:
+            if not isinstance(p, dict):
+                continue
+            circuits.append(
+                _coerce_circuit(
+                    {
+                        "id": str(p.get("id") or "").strip() or _new_circuit_id(),
+                        "name": str(p.get("name") or "Pool").strip() or "Pool",
+                        "type": "pool",
+                        "enabled": bool(p.get("enabled", True)),
+                        "drycooler": False,
+                        "pool_geometry": p.get("config"),
+                        "miner_ids": [],
+                        "updated_ts": p.get("updated_ts"),
+                    }
+                )
+            )
+    if not circuits:
+        circuits = [
+            _coerce_circuit(
+                {
+                    "id": "circuit_default",
+                    "name": "Main",
+                    "type": "house",
+                    "enabled": True,
+                    "drycooler": False,
+                    "miner_ids": [],
+                }
+            )
+        ]
+    circuits = [c for c in circuits if c]
+    return {"version": 1, "circuits": circuits}
+
+
+def _load_circuits() -> None:
+    global _circuits
+    with _circuits_lock:
+        raw = _load_json(CIRCUITS_FILE, None)
+        if not isinstance(raw, dict) or not isinstance(raw.get("circuits"), list):
+            _circuits = _default_circuits()
+            try:
+                _save_json(CIRCUITS_FILE, _circuits)
+            except Exception:
+                pass
+            return
+        out: list[dict] = []
+        for c in raw.get("circuits") or []:
+            coerced = _coerce_circuit(c if isinstance(c, dict) else None)
+            if coerced:
+                out.append(coerced)
+        if not out:
+            _circuits = _default_circuits()
+            try:
+                _save_json(CIRCUITS_FILE, _circuits)
+            except Exception:
+                pass
+            return
+        _circuits = {"version": 1, "circuits": out}
+
+
+def _save_circuits() -> None:
+    with _circuits_lock:
+        _save_json(CIRCUITS_FILE, _circuits)
+
+
+def list_circuits() -> dict:
+    with _circuits_lock:
+        circuits = [dict(c) for c in (_circuits.get("circuits") or [])]
+    return {"ok": True, "version": 1, "circuits": circuits}
+
+
+def get_circuit(circuit_id: str) -> dict | None:
+    cid = str(circuit_id or "").strip()
+    if not cid:
+        return None
+    with _circuits_lock:
+        for c in _circuits.get("circuits") or []:
+            if str(c.get("id")) == cid:
+                return dict(c)
+    return None
+
+
+def save_circuits_payload(req: dict) -> dict:
+    """
+    POST /api/circuits
+    - { circuits: [...] } full replace
+    - { action: create|update|remove, circuit: {...} | id }
+    - { action: set_miners, id, miner_ids: [] }
+    """
+    global _circuits
+    if not isinstance(req, dict):
+        raise ValueError("expected JSON object")
+    action = str(req.get("action") or "").strip().lower()
+    with _circuits_lock:
+        circuits: list[dict] = [
+            dict(c) for c in (_circuits.get("circuits") or []) if isinstance(c, dict)
+        ]
+
+        if "circuits" in req and isinstance(req.get("circuits"), list) and not action:
+            out: list[dict] = []
+            for c in req.get("circuits") or []:
+                coerced = _coerce_circuit(c if isinstance(c, dict) else None)
+                if coerced:
+                    out.append(coerced)
+            if not out:
+                raise ValueError("circuits list empty")
+            _circuits = {"version": 1, "circuits": out}
+            _save_json(CIRCUITS_FILE, _circuits)
+            return {
+                "ok": True,
+                "version": 1,
+                "circuits": [dict(c) for c in out],
+            }
+
+        if action == "create":
+            c = _coerce_circuit(
+                req.get("circuit") if isinstance(req.get("circuit"), dict) else req
+            )
+            if not c:
+                raise ValueError("invalid circuit")
+            if any(str(x.get("id")) == c["id"] for x in circuits):
+                c["id"] = _new_circuit_id()
+            c["updated_ts"] = datetime.now().isoformat(timespec="seconds")
+            circuits.append(c)
+        elif action == "update":
+            body = req.get("circuit") if isinstance(req.get("circuit"), dict) else req
+            c = _coerce_circuit(body if isinstance(body, dict) else None)
+            if not c:
+                raise ValueError("invalid circuit")
+            found = False
+            for i, x in enumerate(circuits):
+                if str(x.get("id")) == c["id"]:
+                    c["updated_ts"] = datetime.now().isoformat(timespec="seconds")
+                    circuits[i] = c
+                    found = True
+                    break
+            if not found:
+                raise ValueError("circuit not found")
+        elif action == "remove":
+            cid = str(req.get("id") or "").strip()
+            if not cid and isinstance(req.get("circuit"), dict):
+                cid = str(req.get("circuit").get("id") or "").strip()
+            if not cid:
+                raise ValueError("id required")
+            if len(circuits) <= 1:
+                raise ValueError("cannot remove last circuit")
+            circuits = [x for x in circuits if str(x.get("id")) != cid]
+        elif action == "set_miners":
+            cid = str(req.get("id") or "").strip()
+            if not cid:
+                raise ValueError("id required")
+            ids: list[str] = []
+            for x in req.get("miner_ids") or []:
+                s = str(x).strip()
+                if s and s not in ids:
+                    ids.append(s)
+            found = False
+            for i, x in enumerate(circuits):
+                if str(x.get("id")) == cid:
+                    x = dict(x)
+                    x["miner_ids"] = ids
+                    x["updated_ts"] = datetime.now().isoformat(timespec="seconds")
+                    circuits[i] = x
+                    found = True
+                    break
+            if not found:
+                raise ValueError("circuit not found")
+        else:
+            raise ValueError(
+                "unknown action (create|update|remove|set_miners) or pass circuits[]"
+            )
+
+        _circuits = {"version": 1, "circuits": circuits}
+        _save_json(CIRCUITS_FILE, _circuits)
+        return {
+            "ok": True,
+            "version": 1,
+            "circuits": [dict(c) for c in circuits],
+        }
+
+
+# ─── Dashboard config (layout + chart bindings, per router) ──────────────────
+_dashboard_cfg_lock = threading.Lock()
+_dashboard_cfg: dict = {"version": 1}
+
+
+def _default_dashboard_cfg() -> dict:
+    return {
+        "version": 1,
+        "layout": {"order": [], "hidden": [], "half": []},
+        "charts": {
+            "temps": {
+                "circuit_id": None,
+                "series": {},
+                "display": {},
+                "status_bands": {},
+            },
+            "power": {
+                "miner_id": None,
+                "series": {},
+                "display": {},
+                "status_bands": {},
+            },
+            "energy": {
+                "miner_id": None,
+                "series": {},
+                "display": {},
+            },
+        },
+        "chart_sync": True,
+        "updated_ts": None,
+    }
+
+
+def _normalize_dashboard_cfg(raw: dict | None) -> dict:
+    base = _default_dashboard_cfg()
+    if not isinstance(raw, dict):
+        return base
+    layout = raw.get("layout")
+    if isinstance(layout, dict):
+        order = layout.get("order")
+        hidden = layout.get("hidden")
+        half = layout.get("half")
+        base["layout"] = {
+            "order": [str(x) for x in order] if isinstance(order, list) else [],
+            "hidden": [str(x) for x in hidden] if isinstance(hidden, list) else [],
+            "half": [str(x) for x in half] if isinstance(half, list) else [],
+        }
+    charts_in = raw.get("charts") if isinstance(raw.get("charts"), dict) else {}
+    for kind in ("temps", "power", "energy"):
+        src = charts_in.get(kind) if isinstance(charts_in.get(kind), dict) else {}
+        dst = base["charts"][kind]
+        if kind == "temps":
+            cid = src.get("circuit_id")
+            dst["circuit_id"] = str(cid).strip() if cid not in (None, "") else None
+        else:
+            mid = src.get("miner_id")
+            dst["miner_id"] = str(mid).strip() if mid not in (None, "") else None
+        for key in ("series", "display", "status_bands"):
+            if key == "status_bands" and kind == "energy":
+                continue
+            val = src.get(key)
+            if isinstance(val, dict):
+                dst[key] = dict(val)
+    if "chart_sync" in raw:
+        base["chart_sync"] = bool(raw.get("chart_sync"))
+    if raw.get("updated_ts"):
+        base["updated_ts"] = raw.get("updated_ts")
+    return base
+
+
+def _load_dashboard_cfg() -> None:
+    global _dashboard_cfg
+    with _dashboard_cfg_lock:
+        raw = _load_json(DASHBOARD_CFG_FILE, None)
+        _dashboard_cfg = _normalize_dashboard_cfg(raw if isinstance(raw, dict) else None)
+
+
+def _save_dashboard_cfg() -> None:
+    with _dashboard_cfg_lock:
+        _save_json(DASHBOARD_CFG_FILE, _dashboard_cfg)
+
+
+def get_dashboard_cfg() -> dict:
+    with _dashboard_cfg_lock:
+        cfg = _normalize_dashboard_cfg(_dashboard_cfg)
+    return {"ok": True, **cfg}
+
+
+def save_dashboard_cfg(req: dict) -> dict:
+    """Merge partial dashboard config and persist on router."""
+    global _dashboard_cfg
+    if not isinstance(req, dict):
+        raise ValueError("expected JSON object")
+    with _dashboard_cfg_lock:
+        cur = _normalize_dashboard_cfg(_dashboard_cfg)
+        # layout
+        if isinstance(req.get("layout"), dict):
+            lay = req["layout"]
+            if isinstance(lay.get("order"), list):
+                cur["layout"]["order"] = [str(x) for x in lay["order"]]
+            if isinstance(lay.get("hidden"), list):
+                cur["layout"]["hidden"] = [str(x) for x in lay["hidden"]]
+            if isinstance(lay.get("half"), list):
+                cur["layout"]["half"] = [str(x) for x in lay["half"]]
+        # charts
+        if isinstance(req.get("charts"), dict):
+            for kind in ("temps", "power", "energy"):
+                src = req["charts"].get(kind)
+                if not isinstance(src, dict):
+                    continue
+                dst = cur["charts"][kind]
+                if kind == "temps" and "circuit_id" in src:
+                    cid = src.get("circuit_id")
+                    dst["circuit_id"] = (
+                        str(cid).strip() if cid not in (None, "") else None
+                    )
+                if kind in ("power", "energy") and "miner_id" in src:
+                    mid = src.get("miner_id")
+                    dst["miner_id"] = (
+                        str(mid).strip() if mid not in (None, "") else None
+                    )
+                for key in ("series", "display", "status_bands"):
+                    if key == "status_bands" and kind == "energy":
+                        continue
+                    if key in src and isinstance(src.get(key), dict):
+                        dst[key] = dict(src[key])
+        if "chart_sync" in req:
+            cur["chart_sync"] = bool(req.get("chart_sync"))
+        # allow top-level migrate blob: full charts/layout already handled
+        cur["updated_ts"] = datetime.now().isoformat(timespec="seconds")
+        cur["version"] = 1
+        _dashboard_cfg = cur
+        _save_json(DASHBOARD_CFG_FILE, _dashboard_cfg)
+    return get_dashboard_cfg()
+
+
 _load_state()
 _load_hist_cfg()
 _load_logs_cfg()
@@ -15967,6 +16504,8 @@ _load_sensors_cfg()
 _load_weather_cfg()
 _load_pool_cfg()
 _load_heat_pools()
+_load_circuits()
+_load_dashboard_cfg()
 _load_zone_cfg()
 _load_zone_presets()
 _load_mode_profiles()
@@ -36739,6 +37278,40 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/miner/config":
             self._api_miner_config_get()
             return
+        if path in ("/api/site/config", "/api/site", "/api/facility/config"):
+            try:
+                self._json_response(200, {"ok": True, **get_site_cfg()})
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/circuits",
+            "/api/heat/circuits",
+            "/api/heat_circuits",
+        ):
+            try:
+                self._json_response(200, list_circuits())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/dashboard/config",
+            "/api/dash/config",
+            "/api/ui/dashboard",
+        ):
+            try:
+                self._json_response(200, get_dashboard_cfg())
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
+        if path in ("/api/site/cells", "/api/facility/cells"):
+            try:
+                qs = parse_qs(urlparse(self.path).query)
+                mid = (qs.get("miner_id") or qs.get("id") or [None])[0]
+                self._json_response(200, list_site_cells(for_miner_id=mid))
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
+            return
         if path in ("/api/miner/poller", "/api/miner-poller/config"):
             try:
                 self._json_response(200, {"ok": True, "config": get_miner_poller_cfg()})
@@ -37383,6 +37956,46 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path == "/api/miner/config":
             self._api_miner_config_post()
+            return
+        if path in ("/api/site/config", "/api/site", "/api/facility/config"):
+            try:
+                req = self._read_json_body()
+                if not isinstance(req, dict):
+                    raise ValueError("expected JSON object")
+                cur = get_site_cfg()
+                if "topology_enabled" in req:
+                    cur["topology_enabled"] = bool(req.get("topology_enabled"))
+                if "topology" in req:
+                    topo = req.get("topology")
+                    cur["topology"] = topo if isinstance(topo, dict) else None
+                cfg = save_site_cfg(cur)
+                self._json_response(200, {"ok": True, **cfg})
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/circuits",
+            "/api/heat/circuits",
+            "/api/heat_circuits",
+        ):
+            try:
+                req = self._read_json_body()
+                body = save_circuits_payload(req if isinstance(req, dict) else {})
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
+            return
+        if path in (
+            "/api/dashboard/config",
+            "/api/dash/config",
+            "/api/ui/dashboard",
+        ):
+            try:
+                req = self._read_json_body()
+                body = save_dashboard_cfg(req if isinstance(req, dict) else {})
+                self._json_response(200, body)
+            except Exception as e:
+                self._json_response(400, {"ok": False, "error": str(e)})
             return
         if path in ("/api/miner/poller", "/api/miner-poller/config"):
             try:
