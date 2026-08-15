@@ -150,9 +150,9 @@
         "note": "Approx from rated ~3360 W / 17 GH/s scrypt — refine when metered"
       },
       "power": {
-        "reported": false,
+        "reported": true,
         "estimate_from_efficiency": true,
-        "note": "Stock BMMiner often omits wall power on :4028; :6060 has miner_power"
+        "note": "Wall power from SearchFreq :6060 /miner_power (PSU). :4028 often omits power — estimate only as fallback when 6060 is down."
       },
       "hardware": {
         "hashboards": {

@@ -26666,27 +26666,45 @@
           m.model ||
           m.model_code ||
           "—";
+        const algoLabel = (() => {
+          const raw =
+            m.algo_display ||
+            (live && live.algo_display) ||
+            m.algo ||
+            (live && live.algo) ||
+            m.algorithm ||
+            (live && live.algorithm) ||
+            "";
+          const s = String(raw || "").trim();
+          if (!s) return "";
+          // normalize short ids for display
+          const low = s.toLowerCase();
+          if (low === "sha256" || low === "sha-256") return "SHA-256";
+          if (low === "scrypt") return "Scrypt";
+          if (low === "eaglesong") return "Eaglesong";
+          if (low === "ethash" || low === "etchash") return "Ethash";
+          if (low === "kheavyhash" || low === "k-heavyhash") return "kHeavyHash";
+          return s;
+        })();
         const modelSub = (() => {
           const full =
             m.model_display_full ||
             (live && live.model_display_full) ||
             "";
-          const algo =
-            m.algo_display ||
-            (live && live.algo_display) ||
-            m.algo ||
-            (live && live.algo) ||
-            "";
           const bits = [];
           if (full && full !== model) bits.push(full);
           else if (m.model_code && m.model && m.model !== m.model_code)
             bits.push(m.model_code);
-          if (algo) bits.push(algo);
-          else if (m.cooling_name) bits.push(m.cooling_name);
+          // algo lives in Hashrate column now
+          if (m.cooling_name) bits.push(m.cooling_name);
           return bits.join(" · ");
         })();
+        const hrThEff = live ? fleetEffectiveHashrateTh(live) : null;
         const hr = live
-          ? formatTh(live.hashrate_th, live.hashrate_unit || m.hashrate_unit)
+          ? formatTh(
+              hrThEff != null ? hrThEff : live.hashrate_th,
+              live.hashrate_unit || m.hashrate_unit
+            )
           : "—";
         let pw = "—";
         if (live && live.power != null && Number(live.power) > 0) {
@@ -26803,6 +26821,7 @@
           !tr ||
           tr.getAttribute("data-fleet-layout") !== "v2" ||
           !tr.querySelector(".fleet-pw-eff") ||
+          !tr.querySelector(".fleet-hr-cell") ||
           !tr.querySelector(".fleet-boards-fans") ||
           !tr.querySelector(".fleet-model-cell .nm")
         ) {
@@ -26816,7 +26835,9 @@
             '<td data-fleet-col="model"><div class="fleet-model-cell">' +
             '<span class="md"></span><span class="nm" hidden></span><span class="sub" hidden></span>' +
             "</div></td>" +
-            '<td data-fleet-col="hash" class="fleet-num fleet-hr"></td>' +
+            '<td data-fleet-col="hash"><div class="fleet-stack-cell fleet-hr-cell">' +
+            '<span class="fleet-main fleet-hr"></span>' +
+            '<span class="fleet-sub fleet-algo" hidden></span></div></td>' +
             '<td data-fleet-col="power_eff"><div class="fleet-stack-cell fleet-pw-eff">' +
             '<span class="fleet-main fleet-pw"></span>' +
             '<span class="fleet-sub fleet-eff"></span></div></td>' +
@@ -26889,6 +26910,16 @@
           }
         }
         setTxt(".fleet-hr", hr);
+        const algoEl = tr.querySelector(".fleet-algo");
+        if (algoEl) {
+          if (algoLabel) {
+            algoEl.hidden = false;
+            if (algoEl.textContent !== algoLabel) algoEl.textContent = algoLabel;
+          } else {
+            algoEl.hidden = true;
+            algoEl.textContent = "";
+          }
+        }
         // Per-board hashrate tip + factory/configured / 30m avg when known
         const hrEl = tr.querySelector(".fleet-hr");
         if (hrEl) {

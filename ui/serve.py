@@ -12280,10 +12280,28 @@ def _load_fleet_live_map(*, max_age_sec: float = 120.0) -> dict[str, dict]:
     return out
 
 
+# Keep last-good fleet row this long when a poll returns timeout/offline.
+# High-latency remotes (e.g. giant → 192.168.1.10) often miss one cycle but stay up.
+_FLEET_STICKY_OK_SEC = 120.0
+
+
+def _fleet_live_is_ok(live: dict | None) -> bool:
+    if not isinstance(live, dict):
+        return False
+    if live.get("ok") is False:
+        return False
+    if live.get("error") and not live.get("sticky_online"):
+        return False
+    return True
+
+
 def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
     """
     Write fleet_live.json. Merge with previous hosts so a partial poll
     (timeout / crash mid-cycle) does not wipe other miners' live rows.
+
+    Also: do not let a single timeout stamp permanently offline a host that
+    had a fresh ok snapshot (sticky last-good for ~2 min).
     """
     try:
         now = time.time()
@@ -12319,6 +12337,41 @@ def _publish_fleet_live_map(by_host: dict[str, dict]) -> None:
             hh = str(h).strip()
             if not hh:
                 continue
+            new_fail = live.get("ok") is False or bool(live.get("error"))
+            prev_entry = merged.get(hh) if isinstance(merged.get(hh), dict) else None
+            if new_fail and prev_entry:
+                prev_live = (
+                    prev_entry.get("live")
+                    if isinstance(prev_entry.get("live"), dict)
+                    else {}
+                )
+                prev_ts = float(prev_entry.get("ts") or 0)
+                prev_ok = _fleet_live_is_ok(prev_live) or bool(
+                    prev_live.get("sticky_online")
+                )
+                age = (now - prev_ts) if prev_ts > 0 else 1e9
+                if prev_ok and age < _FLEET_STICKY_OK_SEC:
+                    # Keep last-good telemetry; mark soft so UI can still show online
+                    sticky = dict(prev_live)
+                    sticky["ok"] = True
+                    sticky["sticky_online"] = True
+                    sticky["last_poll_error"] = str(live.get("error") or "poll fail")[
+                        :200
+                    ]
+                    # do not keep hard error that would force offline in get_miners_fleet
+                    sticky.pop("error", None)
+                    merged[hh] = {
+                        "ts": prev_ts or now,
+                        "live": sticky,
+                        "host": hh,
+                        "fail_ts": now,
+                    }
+                    continue
+            # successful poll or sticky expired → write new stamp
+            if not new_fail:
+                live = dict(live)
+                live.pop("sticky_online", None)
+                live.pop("last_poll_error", None)
             merged[hh] = {"ts": now, "live": live, "host": hh}
         payload = {"ts": now, "miners": merged}
         FLEET_LIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -12364,13 +12417,43 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
             return live
         raise RuntimeError("empty live")
 
+    def _stamp_inventory(live: dict) -> dict:
+        """Carry inventory vendor/model so L9/Antminer :6060 still runs."""
+        if not isinstance(live, dict):
+            return live
+        for src_k, dst_k in (
+            ("vendor", "vendor"),
+            ("vendor", "api_vendor"),
+            ("model", "model"),
+            ("model", "model_name"),
+            ("model_code", "model_code"),
+            ("miner_type", "miner_type"),
+        ):
+            v = m.get(src_k) if isinstance(m, dict) else None
+            if v and not live.get(dst_k):
+                live[dst_k] = v
+        # Second chance: inventory says Bitmain but live path skipped :6060
+        try:
+            vend = str(m.get("vendor") or live.get("vendor") or "").lower()
+            if (
+                _want_antminer_6060(live)
+                or vend in ("antminer", "bitmain")
+            ) and (
+                live.get("power_estimated") is True
+                or live.get("power") in (None, "", 0, 0.0)
+            ):
+                live = _enrich_live_antminer_6060(host.split(":")[0], live)
+        except Exception as e:
+            print(f"[fleet-live] {host}: 6060 enrich: {e}", flush=True)
+        return live
+
     # Isolate hang: ThreadPool result timeout (remote VPN latency OK up to timeout)
     try:
         with ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(_do_fetch)
             live = fut.result(timeout=max(5.0, float(timeout)))
         if isinstance(live, dict):
-            return host, live
+            return host, _stamp_inventory(live)
     except FuturesTimeout:
         err = f"poll timeout ({timeout:.0f}s)"
         print(f"[fleet-live] {host}:{port}: {err}", flush=True)
@@ -12399,7 +12482,7 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
                 f"[fleet-live] {host}: tcp failed ({e}); using goldshell HTTP",
                 flush=True,
             )
-            return host, live_http
+            return host, _stamp_inventory(live_http)
         err = str(e)[:200]
         print(f"[fleet-live] {host}:{port}: {err}", flush=True)
         try:
@@ -12675,7 +12758,10 @@ def get_miners_fleet() -> dict:
             sl = _fleet_live_slice(host_live, host=host)
             fleet_ok = bool(
                 sl
-                and host_live.get("ok", True)
+                and (
+                    host_live.get("ok", True)
+                    or host_live.get("sticky_online")
+                )
                 and not host_live.get("error")
             )
             if fleet_ok:
@@ -12687,23 +12773,15 @@ def get_miners_fleet() -> dict:
                 row["online"] = False
                 row["live"] = sl
                 row["last_error"] = (
-                    (host_live or {}).get("error") or (sl or {}).get("error")
+                    (host_live or {}).get("error")
+                    or (host_live or {}).get("last_poll_error")
+                    or (sl or {}).get("error")
                 )
             rows.append(row)
             continue
         if match and live_slice and live_slice.get("ok"):
-            row["online"] = True
-            row["live"] = live_slice
-            online_n += 1
-            if live_slice.get("hashrate_th") is not None:
-                sum_th += float(live_slice["hashrate_th"])
-            if live_slice.get("power") is not None:
-                sum_w += float(live_slice["power"])
-            # fill model from live if inventory empty
-            if not row.get("model_code") and live_slice.get("miner_type"):
-                row["model_code"] = live_slice["miner_type"]
-            if not row.get("model") and live_slice.get("miner_type"):
-                row["model"] = live_slice["miner_type"]
+            # no fleet_live row yet — still show active live_cache
+            _apply_live_ok(live if isinstance(live, dict) else {}, live_slice)
         elif match and live_slice and not live_slice.get("ok"):
             row["online"] = False
             row["live"] = live_slice
@@ -27398,6 +27476,59 @@ def _parse_antminer_nonce_text(text: str | None) -> dict | None:
     return out
 
 
+def _want_antminer_6060(
+    body: dict | None,
+    *,
+    vendor_l: str = "",
+    type_l: str = "",
+) -> bool:
+    """
+    Whether to probe SearchFreq :6060 for wall power / nonces.
+
+    L9 often arrives as vendor=cgminer / miner_type="Antminer L9" — must not
+    require type.startswith("l9") only.
+    """
+    b = body if isinstance(body, dict) else {}
+    vend = (vendor_l or str(b.get("vendor") or b.get("api_vendor") or "")).lower()
+    mtype = (type_l or str(b.get("miner_type") or b.get("model_name") or b.get("model") or "")).lower()
+    mtype = mtype.replace(" ", "").replace("_", "").replace("-", "")
+    blob = " ".join(
+        str(x or "")
+        for x in (
+            vend,
+            mtype,
+            b.get("miner_type"),
+            b.get("model_name"),
+            b.get("model"),
+            b.get("model_code"),
+            b.get("model_display"),
+        )
+    ).lower()
+    if vend in ("antminer", "bitmain"):
+        return True
+    if b.get("bmminer") or "bmminer" in blob:
+        return True
+    if "antminer" in blob or "bitmain" in blob:
+        return True
+    # stock Bitmain model tokens
+    for tok in (
+        "l9",
+        "l7",
+        "s19",
+        "s21",
+        "t19",
+        "t21",
+        "s9",
+        "s17",
+        "z15",
+        "ks3",
+        "ks5",
+    ):
+        if tok in mtype or tok in blob.replace(" ", ""):
+            return True
+    return False
+
+
 def _enrich_live_antminer_6060(host: str, body: dict) -> dict:
     """
     Bitmain SearchFreqServer on :6060 (stock / L9 / S19 FW):
@@ -29550,16 +29681,10 @@ def _fetch_live_direct() -> dict:
     except Exception as e:
         print(f"[live] model profile: {e}")
     # Antminer SearchFreqServer :6060 — real wall power / nonces (after profile
-    # so measured power wins over J/TH estimate)
+    # so measured power wins over J/TH estimate). Match L9/S19 even when
+    # miner_type is "Antminer L9" (not startswith "l9") or vendor=cgminer.
     try:
-        if (
-            vendor_l in ("antminer", "bitmain")
-            or "antminer" in type_l
-            or body.get("bmminer")
-            or type_l.startswith("l9")
-            or type_l.startswith("s19")
-            or type_l.startswith("s21")
-        ):
+        if _want_antminer_6060(body, vendor_l=vendor_l, type_l=type_l):
             body = _enrich_live_antminer_6060(host_only, body)
     except Exception as e:
         print(f"[live] antminer 6060: {e}")

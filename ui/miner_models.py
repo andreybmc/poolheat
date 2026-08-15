@@ -1194,6 +1194,12 @@ def estimate_power_from_profile(
             gh = hs / 1e9
         if mh is None:
             mh = hs / 1e6
+    # live.hashrate_th is always true TH/s — derive GH/MH for scrypt/etc.
+    if th is not None and th > 0:
+        if gh is None:
+            gh = th * 1e3
+        if mh is None:
+            mh = th * 1e6
 
     j_th = eff.get("j_per_th")
     j_gh = eff.get("j_per_gh")
@@ -1567,13 +1573,33 @@ def apply_model_profile_to_live(
         "psu",
         "summary",
         "api",
+        "cgminer",
+        "stats",
+    )
+    # Integrated smart PSU (L9 / M63 class): prefer metered path; do not force
+    # model estimate when profile says reported=true and PSU reports power.
+    psu_reports = bool(
+        live.get("psu_reports_power")
+        or (isinstance(hw_map, dict) and (hw_map.get("psu") or {}).get("reports_power"))
     )
     if reported_flag is False and not metered_src and (cur_pf is None or cur_pf <= 0):
         need_est = True
-    if already_est and not metered_src:
+    if (
+        reported_flag is True
+        and psu_reports
+        and not metered_src
+        and (cur_pf is None or cur_pf <= 0)
+    ):
+        # Wait for :6060 / PSU meter — estimate only as soft fallback below
+        need_est = bool(pwr_cfg.get("estimate_from_efficiency", True))
+    if already_est and not metered_src and cur_pf is not None and cur_pf > 0 and not psu_reports:
         # second apply() must not re-label a model estimate as metered
         live["power_estimated"] = True
         live["power_source"] = src_now or "model"
+        need_est = False
+    if metered_src and cur_pf is not None and cur_pf > 0:
+        live["power_estimated"] = False
+        live.setdefault("power_source", src_now or "meter")
         need_est = False
     if need_est and pwr_cfg.get("estimate_from_efficiency", True):
         try:
