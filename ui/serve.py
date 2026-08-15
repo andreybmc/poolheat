@@ -38522,6 +38522,11 @@ class Handler(SimpleHTTPRequestHandler):
             "minerinfo",
             "map",
             "pool",
+            "circuits",
+            "circuit",
+            "heat",
+            "profiles",
+            "schedule",
             "periph",
             "peripheral",
             "peripherals",
@@ -38543,19 +38548,29 @@ class Handler(SimpleHTTPRequestHandler):
             "fleet",
             "asics",
         }
-        # Nested SPA under known parents: /miners/managed · /miners/unmanaged
+        # Nested SPA under known parents: /miners/managed · /circuits/{id}
         spa_nested = {
             "miners": {"managed", "unmanaged", "inventory", "discovered"},
             "fleet": {"managed", "unmanaged", "inventory", "discovered"},
             "asics": {"managed", "unmanaged", "inventory", "discovered"},
+            # freeform circuit id: /circuits/pool_default · /circuits/circuit_ab12
+            "circuits": None,
+            "circuit": None,
         }
-        # Path-based SPA: / · /index.html · /en/dashboard · /ru/miners/managed · /miner
+        # Path-based SPA: / · /index.html · /en/dashboard · /ru/circuits/{id}
         parts = [p for p in path.strip("/").split("/") if p]
         if parts and parts[0].lower() in ("en", "ru"):
             parts = parts[1:]
         seg = parts[0].lower() if parts else ""
         sub = parts[1].lower() if len(parts) >= 2 else ""
-        nested_ok = bool(seg and seg in spa_nested and (not sub or sub in spa_nested[seg]))
+        nested_ok = False
+        if seg and seg in spa_nested:
+            allowed = spa_nested[seg]
+            if allowed is None:
+                # freeform child segment (circuit id) — any non-empty sub ok
+                nested_ok = True
+            else:
+                nested_ok = not sub or sub in allowed
         if (
             path == "/"
             or path == "/index.html"

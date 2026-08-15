@@ -14054,8 +14054,9 @@
     }
 
     /**
-     * Parse /{lang}/{tab} · /{lang}/miners/{managed|unmanaged} · /{tab} · #tab
-     * Returns { lang: 'en'|'ru'|null, tab: tabId }
+     * Parse /{lang}/{tab} · /{lang}/miners/{managed|unmanaged} ·
+     * /{lang}/circuits/{id} · /{tab} · #tab
+     * Returns { lang, tab, circuitId }
      */
     function parseLocationRoute() {
       const parts = location.pathname
@@ -14069,7 +14070,9 @@
         tabSegs = parts.slice(1);
       }
       let tab = null;
+      let circuitId = null;
       // Nested Miners: /miners/managed · /miners/unmanaged · /fleet/managed
+      // Circuits edit: /circuits/{id}
       if (tabSegs.length >= 2) {
         const a = String(tabSegs[0] || "").toLowerCase();
         const b = String(tabSegs[1] || "").toLowerCase();
@@ -14077,6 +14080,20 @@
           if (b === "unmanaged" || b === "discovered") tab = "unmanaged";
           else if (b === "managed" || b === "inventory" || b === "") tab = "managed";
           else tab = "managed";
+        } else if (a === "circuits" || a === "circuit") {
+          tab = "circuits";
+          // reserved subtabs under circuits plane
+          if (b === "heat" || b === "map" || b === "zonemap") tab = "map";
+          else if (b === "profiles") tab = "profiles";
+          else if (b === "schedule") tab = "schedule";
+          else if (b && b !== "main" && b !== "list") {
+            try {
+              circuitId = decodeURIComponent(String(tabSegs[1] || "").trim());
+            } catch (_) {
+              circuitId = String(tabSegs[1] || "").trim();
+            }
+            if (!circuitId) circuitId = null;
+          }
         }
       }
       if (!tab && tabSegs.length) {
@@ -14087,7 +14104,7 @@
         tab = resolveTabId(location.hash);
       }
       if (!tab) tab = "dash";
-      return { lang, tab };
+      return { lang, tab, circuitId };
     }
 
     function tabFromLocation() {
@@ -14101,12 +14118,14 @@
     }
 
     /**
-     * Canonical path: /en/dashboard · /ru/miners/managed · /en/miners/unmanaged
+     * Canonical path: /en/dashboard · /ru/miners/managed · /ru/circuits/{id}
      * Bare "miners" normalizes to managed subtab.
+     * opts.circuitId → /{lang}/circuits/{id} (edit plane)
      */
-    function buildAppPath(tabId, lang) {
+    function buildAppPath(tabId, lang, opts) {
       const L = lang === "ru" ? "ru" : "en";
       const id = String(tabId || "dash");
+      opts = opts || {};
       if (
         id === "managed" ||
         id === "miners-managed" ||
@@ -14117,15 +14136,33 @@
       if (id === "unmanaged" || id === "miners-unmanaged") {
         return "/" + L + "/miners/unmanaged";
       }
+      if (id === "circuits" || id === "pool" || id === "circuit") {
+        const cid = opts.circuitId != null ? String(opts.circuitId).trim() : "";
+        if (cid) {
+          return "/" + L + "/circuits/" + encodeURIComponent(cid);
+        }
+        return "/" + L + "/circuits";
+      }
       const seg = tabToPathSeg(id);
       return "/" + L + "/" + seg;
     }
 
-    function setTabUrl(tabId, mode) {
-      // Path-based: /en/dashboard · /ru/miners/managed (hash no longer canonical)
+    function setTabUrl(tabId, mode, opts) {
+      // Path-based: /en/dashboard · /ru/miners/managed · /ru/circuits/{id}
       if (!TAB_IDS.includes(tabId)) tabId = "dash";
       const lang = typeof getUiLang === "function" ? getUiLang() : "en";
-      const url = buildAppPath(tabId, lang);
+      opts = opts || {};
+      // Keep open circuit editor URL when staying on circuits tab
+      if (
+        (tabId === "circuits" || tabId === "pool") &&
+        opts.circuitId == null &&
+        typeof circuitEditorOpen !== "undefined" &&
+        circuitEditorOpen &&
+        selectedCircuitId
+      ) {
+        opts = Object.assign({}, opts, { circuitId: selectedCircuitId });
+      }
+      const url = buildAppPath(tabId, lang, opts);
       try {
         const cur =
           location.pathname.replace(/\/+$/, "") || "/";
@@ -14133,16 +14170,36 @@
         // clear hash when switching to path routes
         const full = url + (location.search || "");
         if (cur === want && !location.hash) return;
+        const state = { tab: tabId, lang: lang };
+        if (opts.circuitId) state.circuitId = String(opts.circuitId);
         if (mode === "replace") {
-          history.replaceState({ tab: tabId, lang: lang }, "", full);
+          history.replaceState(state, "", full);
         } else {
-          history.pushState({ tab: tabId, lang: lang }, "", full);
+          history.pushState(state, "", full);
         }
       } catch (_) {
         try {
           location.pathname = url;
         } catch (__) { /* ignore */ }
       }
+    }
+
+    /** Sync /{lang}/circuits[/{id}] when opening/closing the circuit editor. */
+    function setCircuitEditorUrl(circuitId, mode) {
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const cid = circuitId != null ? String(circuitId).trim() : "";
+      const url = cid
+        ? "/" + lang + "/circuits/" + encodeURIComponent(cid)
+        : "/" + lang + "/circuits";
+      try {
+        const cur = location.pathname.replace(/\/+$/, "") || "/";
+        const want = url.replace(/\/+$/, "") || "/";
+        if (cur === want && !location.hash) return;
+        const state = { tab: "circuits", lang: lang };
+        if (cid) state.circuitId = cid;
+        if (mode === "replace") history.replaceState(state, "", url);
+        else history.pushState(state, "", url);
+      } catch (_) { /* ignore */ }
     }
 
     function activateTab(tabId, opts) {
@@ -14633,8 +14690,19 @@
         applyUiLang(route.lang, { persist: true, syncUrl: false });
       }
       activateTab(route.tab, { skipUrl: true });
+      if (typeof applyCircuitRouteFromUrl === "function") {
+        if (route.circuitId) {
+          void applyCircuitRouteFromUrl(route.circuitId, { replaceUrl: true });
+        } else if (
+          typeof circuitEditorOpen !== "undefined" &&
+          circuitEditorOpen &&
+          (route.tab === "circuits" || route.tab === "pool")
+        ) {
+          closeCircuitEditor({ skipUrl: true });
+        }
+      }
     });
-    // initial route: /en/dashboard · /ru/miners/managed (migrate #hash + bare /)
+    // initial route: /en/dashboard · /ru/circuits/{id} · /ru/miners/managed
     (function initTabRoute() {
       const route = parseLocationRoute();
       // Language from path wins over localStorage on first paint
@@ -14642,16 +14710,24 @@
         applyUiLang(route.lang, { persist: true, syncUrl: false });
       }
       const t = route.tab || "dash";
-      // Normalize to /{lang}/{tab}[/{sub}] (drop hash; miners → /miners/managed)
+      // Normalize to /{lang}/{tab}[/{sub}] (drop hash; keep /circuits/{id})
       try {
         const lang = typeof getUiLang === "function" ? getUiLang() : "en";
-        const want = buildAppPath(t, lang);
+        const want = buildAppPath(t, lang, {
+          circuitId: route.circuitId || null,
+        });
         const cur = (location.pathname.replace(/\/+$/, "") || "/") + (location.hash || "");
         if (cur !== want) {
-          history.replaceState({ tab: t, lang: lang }, "", want);
+          const st = { tab: t, lang: lang };
+          if (route.circuitId) st.circuitId = route.circuitId;
+          history.replaceState(st, "", want);
         }
       } catch (_) { /* ignore */ }
       activateTab(t, { skipUrl: false, replaceUrl: true });
+      // Deep-link /circuits/{id}: apply after circuits UI is ready (see initCircuitsUi)
+      if (route.circuitId) {
+        window.__pendingCircuitId = String(route.circuitId);
+      }
     })();
 
     /* —— toast stack (hash2cash admin style) —— */
@@ -17871,15 +17947,21 @@
     /** When true, editor card is open for selectedCircuitId */
     let circuitEditorOpen = false;
 
-    function closeCircuitEditor() {
+    function closeCircuitEditor(opts) {
+      opts = opts || {};
       circuitEditorOpen = false;
       const card = document.getElementById("circuit-editor-card");
       if (card) card.hidden = true;
       // re-render list highlight only (no auto-open)
       renderCircuitsListOnly();
+      // URL → /{lang}/circuits (unless caller already navigated)
+      if (opts.skipUrl !== true && typeof setCircuitEditorUrl === "function") {
+        setCircuitEditorUrl(null, opts.replaceUrl ? "replace" : "push");
+      }
     }
 
-    function openCircuitEditor(cid) {
+    function openCircuitEditor(cid, opts) {
+      opts = opts || {};
       const c = (circuitsCache.circuits || []).find(
         (x) => String(x.id) === String(cid)
       );
@@ -17887,18 +17969,47 @@
         circuitEditorOpen = false;
         const card = document.getElementById("circuit-editor-card");
         if (card) card.hidden = true;
+        if (opts.skipUrl !== true && typeof setCircuitEditorUrl === "function") {
+          setCircuitEditorUrl(null, "replace");
+        }
         return;
       }
       selectedCircuitId = c.id;
       circuitEditorOpen = true;
       fillCircuitEditor(c.id);
       renderCircuitsListOnly();
+      // Canonical edit URL: /ru/circuits/{id}
+      if (opts.skipUrl !== true && typeof setCircuitEditorUrl === "function") {
+        setCircuitEditorUrl(c.id, opts.replaceUrl ? "replace" : "push");
+      }
       // scroll editor into view
       try {
         document
           .getElementById("circuit-editor-card")
           ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
       } catch (_) { /* ignore */ }
+    }
+
+    /** Open editor from URL after circuits list is loaded. */
+    async function applyCircuitRouteFromUrl(circuitId, opts) {
+      opts = opts || {};
+      const cid = circuitId != null ? String(circuitId).trim() : "";
+      if (!cid) {
+        if (circuitEditorOpen) closeCircuitEditor({ skipUrl: true });
+        return;
+      }
+      try {
+        if (typeof loadCircuits === "function") await loadCircuits();
+        else if (typeof refreshCircuits === "function") await refreshCircuits();
+      } catch (_) { /* ignore */ }
+      openCircuitEditor(cid, {
+        skipUrl: true,
+        replaceUrl: opts.replaceUrl !== false,
+      });
+      // ensure circuits tab is visible
+      if (typeof activateTab === "function") {
+        activateTab("circuits", { skipUrl: true });
+      }
     }
 
     function renderCircuitsListOnly() {
@@ -18200,6 +18311,17 @@
       const closeBtn = document.getElementById("btn-circuit-close");
       const typeEl = document.getElementById("circuit-edit-type");
       const dryEl = document.getElementById("circuit-edit-drycooler");
+      // Deep-link: /ru/circuits/{id} opened before circuitsCache was loaded
+      if (window.__pendingCircuitId) {
+        const pending = String(window.__pendingCircuitId);
+        window.__pendingCircuitId = null;
+        void (async () => {
+          try {
+            await loadCircuits();
+          } catch (_) { /* ignore */ }
+          openCircuitEditor(pending, { skipUrl: true, replaceUrl: true });
+        })();
+      }
       if (addBtn && !addBtn._bound) {
         addBtn._bound = true;
         addBtn.addEventListener("click", async () => {
@@ -18233,7 +18355,7 @@
             .then(() => {
               // stay in editor after save so user can continue; re-fill from cache
               if (selectedCircuitId && circuitEditorOpen) {
-                openCircuitEditor(selectedCircuitId);
+                openCircuitEditor(selectedCircuitId, { skipUrl: true });
               }
             })
             .catch((e) => {
@@ -18262,9 +18384,7 @@
           try {
             await circuitApi({ action: "remove", id });
             selectedCircuitId = null;
-            circuitEditorOpen = false;
-            const card = document.getElementById("circuit-editor-card");
-            if (card) card.hidden = true;
+            closeCircuitEditor({ replaceUrl: true });
             if (typeof toastSuccess === "function")
               toastSuccess(
                 typeof t === "function" ? t("circuit.saved", "Circuits saved") : "Saved"
