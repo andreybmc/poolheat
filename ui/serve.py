@@ -19411,10 +19411,16 @@ def _parse_miner_json(text: str) -> dict:
     Parse Whatsminer TCP JSON robustly.
     Handles: trailing junk, multiple objects, partial reads already completed,
     and common firmware quirks — never surface raw JSONDecodeError as «offline».
+
+    Goldshell ckbminer / classic CGMiner ``stats`` often emits adjacent objects
+    without commas: ``}{`` → must become ``},{`` or fans/temps are lost.
     """
     s = (text or "").replace("\x00", "").strip()
     if not s:
         raise TimeoutError("empty response from miner")
+    # CGMiner/BFGMiner (Goldshell CK-BOX): missing commas between array objects
+    if "}{" in s:
+        s = s.replace("}{", "},{")
     dec = json.JSONDecoder()
     # Prefer first complete object starting at first '{'
     i = s.find("{")
@@ -19432,6 +19438,8 @@ def _parse_miner_json(text: str) -> dict:
     cleaned = re.sub(r",\s*}", "}", cleaned)
     cleaned = re.sub(r",\s*]", "]", cleaned)
     cleaned = cleaned.replace("NaN", "null").replace("Infinity", "null")
+    if "}{" in cleaned:
+        cleaned = cleaned.replace("}{", "},{")
     try:
         obj, _end = dec.raw_decode(cleaned)
         if isinstance(obj, dict):
@@ -27986,6 +27994,72 @@ def _antminer_stats_temps(row: dict) -> dict:
     }
 
 
+def _cgminer_row_fans(row: dict) -> list[int]:
+    """
+    Fan RPM list from one CGMiner/BFGMiner STATS or DEVS row.
+
+    Goldshell CK-BOX (ckbminer): fan0 / fan1 on both stats and devs
+    (e.g. 2820 / 2760). Also Fan Speed In/Out and fan_speedN aliases.
+    """
+    if not isinstance(row, dict):
+        return []
+    by_i: dict[int, int] = {}
+    for i in range(0, 12):
+        for key in (
+            f"fan{i}",
+            f"Fan{i}",
+            f"fan_speed{i}",
+            f"fanspeed{i}",
+            f"Fan Speed {i}",
+        ):
+            if key not in row or row.get(key) in (None, "", 0, "0"):
+                continue
+            try:
+                fv = int(float(row[key]))
+            except (TypeError, ValueError):
+                continue
+            if fv > 0:
+                by_i[i] = fv
+                break
+    if by_i:
+        return [by_i[i] for i in sorted(by_i)]
+    named: list[int] = []
+    for key in (
+        "Fan Speed In",
+        "fanspeed_in",
+        "Fan Speed Out",
+        "fanspeed_out",
+        "Fan Speed",
+        "fanspeed",
+    ):
+        if key not in row or row.get(key) in (None, "", 0, "0"):
+            continue
+        try:
+            fv = int(float(row[key]))
+        except (TypeError, ValueError):
+            continue
+        if fv > 0:
+            named.append(fv)
+    return named
+
+
+def _body_apply_fans(body: dict, fans: list[int]) -> dict:
+    """Set body fans/fan if missing; keep channel order (do not collapse equal RPM)."""
+    if not isinstance(body, dict) or not fans:
+        return body
+    existing = body.get("fans")
+    if isinstance(existing, list) and existing:
+        return body
+    clean = [int(f) for f in fans if isinstance(f, (int, float)) and int(f) > 0][:8]
+    if not clean:
+        return body
+    body["fans"] = clean
+    body["fan"] = clean[0]
+    if body.get("psu_fan") in (None, "", 0, 0.0):
+        body["psu_fan"] = clean[0]
+    return body
+
+
 def _cgminer_apply_stats(body: dict) -> dict:
     """
     Pull fans / frequency / temps / chain rates from CGMiner/BMMiner ``stats``.
@@ -27993,6 +28067,9 @@ def _cgminer_apply_stats(body: dict) -> dict:
     Temp mapping follows pyasic:
       Antminer BMMiner — STATS[1] temp2_{i} (PCB), temp{i} (chip)
       Avalon — handled via estats separately when present
+
+    Goldshell CK-BOX: fan0/fan1 live in STATS (and DEVS); stats JSON often needs
+    ``}{`` → ``},{`` fix in ``_parse_miner_json``.
     """
     try:
         stats_raw = miner_cmd({"cmd": "stats"}, timeout=6)
@@ -28072,16 +28149,10 @@ def _cgminer_apply_stats(body: dict) -> dict:
                 if key == "HBOTemp" and body.get("outlet") in (None, ""):
                     body["outlet"] = tv
 
-        # fan0..fanN (Whatsminer/iPollo) and fan1.. (Bitmain)
-        for i in range(0, 12):
-            for key in (f"fan{i}", f"Fan{i}", f"fan_speed{i}"):
-                if key in row and row.get(key) not in (None, "", 0, "0"):
-                    try:
-                        fv = int(float(row[key]))
-                        if fv > 0:
-                            fans.append(fv)
-                    except (TypeError, ValueError):
-                        pass
+        # fan0..fanN (Goldshell CK-BOX / Whatsminer / iPollo / Bitmain)
+        row_fans = _cgminer_row_fans(row)
+        if row_fans and not fans:
+            fans = row_fans
 
         # Structured Antminer chain temps (pyasic)
         parsed = _antminer_stats_temps(row)
@@ -28168,16 +28239,7 @@ def _cgminer_apply_stats(body: dict) -> dict:
                 except (TypeError, ValueError):
                     pass
 
-    if fans and not body.get("fans"):
-        seen: set[int] = set()
-        uniq: list[int] = []
-        for f in fans:
-            if f not in seen:
-                seen.add(f)
-                uniq.append(f)
-        body["fans"] = uniq[:8]
-        body["fan"] = uniq[0]
-        body["psu_fan"] = uniq[0]
+    body = _body_apply_fans(body, fans)
 
     # Prefer chip sensors for chip_*; PCB for boards[]
     chip_vals = [t for t in all_chip if _temp_plausible(t)]
@@ -28797,6 +28859,16 @@ def _fetch_live_direct() -> dict:
                 body["fw_ver"] = cg_ident.get("fw_ver")
     except Exception as e:
         print(f"[live] cgminer stats: {e}")
+    # DEVS fan0/fan1 fallback (Goldshell CK-BOX — valid JSON even when stats is broken)
+    try:
+        if not (isinstance(body.get("fans"), list) and body.get("fans")):
+            for drow in devs if isinstance(devs, list) else []:
+                fl = _cgminer_row_fans(drow if isinstance(drow, dict) else {})
+                if fl:
+                    body = _body_apply_fans(body, fl)
+                    break
+    except Exception as e:
+        print(f"[live] devs fans: {e}")
     # iPollo LuCI enrichment (model V1 mini, fans, precise temps)
     try:
         if vendor_l in ("ipollo",) or type_l.startswith("ipollo"):
