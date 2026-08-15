@@ -59,7 +59,7 @@ func DefaultPollerConfig() PollerConfigFile {
 		Poll: PollCfg{
 			MaxParallel:     4,
 			IntervalSec:     0,
-			PerMinerTimeoutS: 8,
+			PerMinerTimeoutS: 15, // Whatsminer + multi-vendor fleet; 8s caused false offline
 		},
 	}
 }
@@ -316,23 +316,17 @@ func SaveManaged(dataDir string, f ManagedFile) error {
 }
 
 // ActiveManaged returns the active managed miner, or nil.
+// Only returns a miner with role=="active" (enabled). Does NOT fall back to
+// "first enabled" — that silently pointed the live poller at a standby ASIC
+// (e.g. iPollo 172.16.100.195) while inventory showed Whatsminer 192.168.1.10
+// as active after miners.db migration left miners_managed.json stale.
 func ActiveManaged(dataDir string) *ManagedMiner {
 	f := LoadManaged(dataDir)
 	for i := range f.Miners {
-		if f.Miners[i].Role == "active" && f.Miners[i].Enabled {
+		if strings.EqualFold(strings.TrimSpace(f.Miners[i].Role), "active") && f.Miners[i].Enabled {
 			m := f.Miners[i]
 			return &m
 		}
-	}
-	for i := range f.Miners {
-		if f.Miners[i].Enabled {
-			m := f.Miners[i]
-			return &m
-		}
-	}
-	if len(f.Miners) > 0 {
-		m := f.Miners[0]
-		return &m
 	}
 	return nil
 }

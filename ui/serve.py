@@ -11917,6 +11917,35 @@ def get_miners_managed() -> dict:
     # fix non-positive / legacy ids if any slipped in
     if any(not isinstance(m.get("id"), int) or int(m.get("id") or 0) <= 0 for m in clean):
         return _save_miners_managed(clean)
+    # Ensure Go poller mirror exists / matches active host (cheap check)
+    try:
+        need_mirror = not MINERS_MANAGED_FILE.is_file()
+        if not need_mirror and clean:
+            raw = _load_json(MINERS_MANAGED_FILE, {})
+            jminers = raw.get("miners") if isinstance(raw, dict) else None
+            if not isinstance(jminers, list) or len(jminers) != len(clean):
+                need_mirror = True
+            else:
+                def _act(ms):
+                    for x in ms or []:
+                        if isinstance(x, dict) and str(x.get("role") or "") == "active":
+                            return str(x.get("host") or "").strip()
+                    return ""
+
+                if _act(jminers) != _act(clean):
+                    need_mirror = True
+        if need_mirror and clean:
+            _save_json_atomic(
+                MINERS_MANAGED_FILE,
+                {
+                    "version": 1,
+                    "miners": clean,
+                    "next_id": _next_managed_id(clean),
+                    "source": "miners.db",
+                },
+            )
+    except Exception as e:
+        print(f"[miners.db] ensure JSON mirror: {e}", flush=True)
     return {
         "ok": True,
         "miners": clean,
@@ -12608,8 +12637,8 @@ def _poll_managed_fleet_live() -> None:
         per_to = float(pcfg.get("per_miner_timeout_sec") or 12)
     except (TypeError, ValueError):
         per_to = 12.0
-    # high-latency remote sites: at least 12s, cap 30s
-    per_to = max(8.0, min(30.0, per_to))
+    # high-latency / busy Whatsminer: at least 15s (8s was too tight on Giant)
+    per_to = max(15.0, min(45.0, per_to))
 
     by_host: dict[str, dict] = {}
     workers = min(max_par, len(miners))
@@ -12988,6 +13017,23 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
             conn.commit()
         finally:
             conn.close()
+
+    # Always mirror to miners_managed.json for Go miner-poller.
+    # Go reads JSON only (no sqlite); after DB migration the JSON was archived
+    # and the poller kept a stale active host (e.g. 172.16.100.195) while the UI
+    # showed 192.168.1.10 as active → live_cache never matched fleet row.
+    try:
+        _save_json_atomic(
+            MINERS_MANAGED_FILE,
+            {
+                "version": 1,
+                "miners": clean,
+                "next_id": _next_managed_id(clean),
+                "source": "miners.db",
+            },
+        )
+    except Exception as e:
+        print(f"[miners.db] mirror JSON for poller: {e}", flush=True)
 
     # mirror next_id into optional JSON backup only during migrate (debug)
     if _from_migrate:
