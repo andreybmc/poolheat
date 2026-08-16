@@ -17322,6 +17322,12 @@ def _default_dashboard_cfg() -> dict:
         "weather_widgets": {},
         # Per power widget bind: { "power": {"miner_id": null}, "power_2": {"miner_id": "…"} }
         "power_widgets": {},
+        # Thermal dash cards → heat circuit: t_ctrl / heat_loss / heat_balance
+        "thermal_widgets": {
+            "t_ctrl": {"circuit_id": None},
+            "heat_loss": {"circuit_id": None},
+            "heat_balance": {"circuit_id": None},
+        },
         "chart_sync": True,
         "updated_ts": None,
     }
@@ -17399,6 +17405,33 @@ def _normalize_dashboard_cfg(raw: dict | None) -> dict:
                 )
             }
         base["power_widgets"] = out_pw
+    tw = raw.get("thermal_widgets")
+    if isinstance(tw, dict):
+        out_tw: dict = {}
+        for wid in ("t_ctrl", "heat_loss", "heat_balance"):
+            conf = tw.get(wid)
+            if not isinstance(conf, dict):
+                conf = {}
+            cid = conf.get("circuit_id")
+            out_tw[wid] = {
+                "circuit_id": (
+                    str(cid).strip() if cid not in (None, "") else None
+                )
+            }
+        # allow only known keys; ignore extras
+        for wid, conf in tw.items():
+            sid = str(wid or "").strip()
+            if sid in out_tw or sid not in ("t_ctrl", "heat_loss", "heat_balance"):
+                continue
+            if not isinstance(conf, dict):
+                continue
+            cid = conf.get("circuit_id")
+            out_tw[sid] = {
+                "circuit_id": (
+                    str(cid).strip() if cid not in (None, "") else None
+                )
+            }
+        base["thermal_widgets"] = out_tw
     if raw.get("updated_ts"):
         base["updated_ts"] = raw.get("updated_ts")
     return base
@@ -17507,6 +17540,28 @@ def save_dashboard_cfg(req: dict) -> dict:
                     )
                 }
             cur["power_widgets"] = pww
+        if "thermal_widgets" in req and isinstance(req.get("thermal_widgets"), dict):
+            tw = dict(cur.get("thermal_widgets") or {})
+            for wid, conf in (req.get("thermal_widgets") or {}).items():
+                sid = str(wid or "").strip()
+                if sid not in ("t_ctrl", "heat_loss", "heat_balance"):
+                    continue
+                if conf is None:
+                    tw[sid] = {"circuit_id": None}
+                    continue
+                if not isinstance(conf, dict):
+                    continue
+                cid = conf.get("circuit_id")
+                tw[sid] = {
+                    "circuit_id": (
+                        str(cid).strip() if cid not in (None, "") else None
+                    )
+                }
+            # ensure all three keys exist
+            for wid in ("t_ctrl", "heat_loss", "heat_balance"):
+                if wid not in tw:
+                    tw[wid] = {"circuit_id": None}
+            cur["thermal_widgets"] = tw
         # allow top-level migrate blob: full charts/layout already handled
         cur["updated_ts"] = datetime.now().isoformat(timespec="seconds")
         cur["version"] = 1
