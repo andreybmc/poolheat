@@ -12377,6 +12377,7 @@ def _fleet_live_slice(live: dict | None, *, host: str | None = None) -> dict | N
         "temps": live.get("temps") if isinstance(live.get("temps"), list) else None,
         "power_source": live.get("power_source"),
         "power_estimated": live.get("power_estimated"),
+        "power_estimated_w": live.get("power_estimated_w"),
         "efficiency_value": live.get("efficiency_value"),
         "efficiency_unit": live.get("efficiency_unit"),
         "hashrate_th_avg_30m": avg_30m,

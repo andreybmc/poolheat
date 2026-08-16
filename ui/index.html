@@ -28221,7 +28221,125 @@
       if (!src || typeof src !== "object") return false;
       if (src.power_estimated === true) return true;
       const s = String(src.power_source || "").toLowerCase();
-      return s === "model" || s === "estimate" || s === "estimated" || s === "profile";
+      return (
+        s === "model" ||
+        s === "estimate" ||
+        s === "estimated" ||
+        s === "profile" ||
+        s === "calc" ||
+        s === "calculated"
+      );
+    }
+
+    function isPowerMetered(src) {
+      if (!src || typeof src !== "object") return false;
+      if (src.power_estimated === true) return false;
+      const s = String(src.power_source || "").toLowerCase();
+      if (
+        s === "antminer_6060" ||
+        s === "6060" ||
+        s === "meter" ||
+        s === "psu" ||
+        s === "summary" ||
+        s === "api" ||
+        s === "cgminer" ||
+        s === "stats"
+      )
+        return true;
+      // explicit false + positive power → treat as metered
+      if (src.power_estimated === false && Number(src.power) > 0) return true;
+      return false;
+    }
+
+    /**
+     * Prefer PSU/metered wall power; when missing (Antminer :6060 glitches)
+     * fall back to model estimate so the power widget does not flicker to "—".
+     * @returns {{ w: number|null, estimated: boolean }}
+     */
+    function resolveDisplayPower(r) {
+      if (!r || typeof r !== "object") return { w: null, estimated: false };
+      let pw = null;
+      try {
+        pw = r.power != null && r.power !== "" ? Number(r.power) : null;
+      } catch (_) {
+        pw = null;
+      }
+      if (!Number.isFinite(pw) || pw <= 0) pw = null;
+
+      if (pw != null && isPowerMetered(r)) {
+        return { w: pw, estimated: false };
+      }
+
+      // Model / profile estimate side-channel
+      let est = null;
+      try {
+        if (r.power_estimated_w != null && r.power_estimated_w !== "")
+          est = Number(r.power_estimated_w);
+      } catch (_) {
+        est = null;
+      }
+      if (!Number.isFinite(est) || est <= 0) est = null;
+
+      if (est == null && pw != null && isPowerEstimated(r)) {
+        est = pw;
+      }
+      // Client calc: TH/s × J/TH (or efficiency_value)
+      if (est == null) {
+        try {
+          const th =
+            r.hashrate_th != null
+              ? Number(r.hashrate_th)
+              : r.rate_th != null
+                ? Number(r.rate_th)
+                : NaN;
+          let jth = NaN;
+          if (r.efficiency_jth != null) jth = Number(r.efficiency_jth);
+          else if (
+            r.efficiency_value != null &&
+            String(r.efficiency_unit || "")
+              .toUpperCase()
+              .indexOf("J/T") >= 0
+          ) {
+            jth = Number(r.efficiency_value);
+          }
+          if (Number.isFinite(th) && th > 0 && Number.isFinite(jth) && jth > 0) {
+            est = th * jth;
+          }
+        } catch (_) { /* ignore */ }
+      }
+
+      if (est != null && est > 0) {
+        return { w: est, estimated: true };
+      }
+      // Non-metered positive power (unknown source)
+      if (pw != null) {
+        return { w: pw, estimated: isPowerEstimated(r) };
+      }
+      return { w: null, estimated: false };
+    }
+
+    /** Sticky last-good power per widget — bridges short PSU poll gaps. */
+    const _pwDisplaySticky = {};
+    const PW_STICKY_MS = 20000;
+
+    function stickyDisplayPower(widgetId, resolved) {
+      const id = String(widgetId || "power");
+      const now = Date.now();
+      if (resolved && resolved.w != null && Number(resolved.w) > 0) {
+        _pwDisplaySticky[id] = {
+          w: Number(resolved.w),
+          estimated: !!resolved.estimated,
+          ts: now,
+          metered: !resolved.estimated,
+        };
+        return resolved;
+      }
+      const prev = _pwDisplaySticky[id];
+      if (prev && now - prev.ts < PW_STICKY_MS && prev.w > 0) {
+        // Hold last value as estimated when live gap (PSU timeout)
+        return { w: prev.w, estimated: true };
+      }
+      return resolved || { w: null, estimated: false };
     }
 
     /** Watts for UI: 1290 W≈ when model-estimated, 1290 W when ASIC-metered. */
@@ -35523,12 +35641,25 @@
         return d == null ? String(n) : n.toFixed(d);
       };
 
-      const est =
-        typeof isPowerEstimated === "function"
-          ? isPowerEstimated(r) ||
-            isPowerEstimated(typeof live !== "undefined" ? live : null)
-          : false;
-      card.classList.toggle("is-estimated", !!est && Number.isFinite(r.power));
+      // Prefer PSU/metered power; if missing (Antminer :6060 gaps) → calculated
+      let disp =
+        typeof resolveDisplayPower === "function"
+          ? resolveDisplayPower(r)
+          : {
+              w: Number.isFinite(r.power) && r.power > 0 ? Number(r.power) : null,
+              estimated: !!(
+                typeof isPowerEstimated === "function" && isPowerEstimated(r)
+              ),
+            };
+      if (typeof stickyDisplayPower === "function") {
+        disp = stickyDisplayPower(widgetId, disp);
+      }
+      const est = !!disp.estimated;
+      const pwShow = disp.w;
+      card.classList.toggle(
+        "is-estimated",
+        !!est && pwShow != null && Number(pwShow) > 0
+      );
 
       const lab = card.querySelector("[data-i18n='dash.power_measured']");
       if (lab && typeof t === "function") {
@@ -35540,11 +35671,11 @@
       // formatPowerW includes unit ("1234 W" / "1234 W≈"); hide separate unit label
       {
         const unitEl = card.querySelector('[data-bind="pwUnit"]');
-        if (Number.isFinite(r.power) && typeof formatPowerW === "function") {
-          pwSetBind(card, "pw", formatPowerW(r.power, est));
+        if (pwShow != null && Number(pwShow) > 0 && typeof formatPowerW === "function") {
+          pwSetBind(card, "pw", formatPowerW(pwShow, est));
           if (unitEl) unitEl.hidden = true;
-        } else if (Number.isFinite(r.power)) {
-          pwSetBind(card, "pw", String(Math.round(r.power)));
+        } else if (pwShow != null && Number(pwShow) > 0) {
+          pwSetBind(card, "pw", String(Math.round(pwShow)) + (est ? "≈" : ""));
           if (unitEl) {
             unitEl.hidden = false;
             unitEl.textContent = "W";
@@ -35596,6 +35727,13 @@
           eff = n.toFixed(1);
           effUnit = String(r.efficiency_unit);
         }
+      } else if (
+        pwShow != null &&
+        Number(pwShow) > 0 &&
+        Number.isFinite(r.hashrate_th) &&
+        r.hashrate_th > 0
+      ) {
+        eff = (Number(pwShow) / r.hashrate_th).toFixed(1);
       } else if (
         Number.isFinite(r.power) &&
         Number.isFinite(r.hashrate_th) &&

@@ -1569,7 +1569,9 @@ def apply_model_profile_to_live(
     if prof.get("hashrate_unit") and not live.get("hashrate_unit"):
         live["hashrate_unit"] = prof.get("hashrate_unit")
 
-    # Estimate power when missing / not reported by ASIC
+    # Estimate power when missing / not reported by ASIC.
+    # Always keep power_estimated_w (model calc) so UI can fall back when PSU
+    # :6060 / meter briefly drops — avoids power widget flicker on Antminer.
     try:
         cur_p = live.get("power")
         cur_pf = float(cur_p) if cur_p is not None and cur_p != "" else None
@@ -1610,7 +1612,7 @@ def apply_model_profile_to_live(
         and not metered_src
         and (cur_pf is None or cur_pf <= 0)
     ):
-        # Wait for :6060 / PSU meter — estimate only as soft fallback below
+        # Soft fallback to model estimate when PSU has not reported yet
         need_est = bool(pwr_cfg.get("estimate_from_efficiency", True))
     if already_est and not metered_src and cur_pf is not None and cur_pf > 0 and not psu_reports:
         # second apply() must not re-label a model estimate as metered
@@ -1621,7 +1623,10 @@ def apply_model_profile_to_live(
         live["power_estimated"] = False
         live.setdefault("power_source", src_now or "meter")
         need_est = False
-    if need_est and pwr_cfg.get("estimate_from_efficiency", True):
+
+    # Always compute model estimate side-channel (for UI fallback)
+    est_payload = None
+    if pwr_cfg.get("estimate_from_efficiency", True):
         try:
             hs = float(live["hashrate_hs"]) if live.get("hashrate_hs") is not None else None
         except (TypeError, ValueError):
@@ -1630,23 +1635,42 @@ def apply_model_profile_to_live(
             th = float(live["hashrate_th"]) if live.get("hashrate_th") is not None else None
         except (TypeError, ValueError):
             th = None
-        est = estimate_power_from_profile(prof, hashrate_hs=hs, hashrate_th=th)
-        if est:
-            live["power"] = est["power_w"]
-            live["power_source"] = "model"
-            live["power_estimated"] = True
-            want = str((ainfo or {}).get("efficiency_unit") or est["efficiency_unit"])
-            live["efficiency_value"] = round(
-                convert_efficiency(
-                    float(est["efficiency_value"]), est["efficiency_unit"], want
-                ),
-                1 if _eff_unit_key(want) == "j/t" else 3,
-            )
-            live["efficiency_unit"] = want
-            live["efficiency_jth"] = convert_efficiency(
-                float(est["efficiency_value"]), est["efficiency_unit"], "J/T"
-            )
-            live["efficiency_note"] = est.get("note")
+        est_payload = estimate_power_from_profile(prof, hashrate_hs=hs, hashrate_th=th)
+        if est_payload and est_payload.get("power_w"):
+            live["power_estimated_w"] = est_payload["power_w"]
+            if not live.get("efficiency_jth") and est_payload.get("efficiency_value") is not None:
+                try:
+                    live.setdefault(
+                        "efficiency_jth",
+                        convert_efficiency(
+                            float(est_payload["efficiency_value"]),
+                            est_payload.get("efficiency_unit") or "J/T",
+                            "J/T",
+                        ),
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+    if need_est and est_payload:
+        live["power"] = est_payload["power_w"]
+        live["power_source"] = "model"
+        live["power_estimated"] = True
+        want = str((ainfo or {}).get("efficiency_unit") or est_payload["efficiency_unit"])
+        live["efficiency_value"] = round(
+            convert_efficiency(
+                float(est_payload["efficiency_value"]),
+                est_payload["efficiency_unit"],
+                want,
+            ),
+            1 if _eff_unit_key(want) == "j/t" else 3,
+        )
+        live["efficiency_unit"] = want
+        live["efficiency_jth"] = convert_efficiency(
+            float(est_payload["efficiency_value"]),
+            est_payload["efficiency_unit"],
+            "J/T",
+        )
+        live["efficiency_note"] = est_payload.get("note")
     elif cur_pf is not None and cur_pf > 0:
         if already_est and not metered_src:
             live["power_estimated"] = True
@@ -1663,6 +1687,10 @@ def apply_model_profile_to_live(
                 live["efficiency_jth"] = convert_efficiency(ev, eu, "J/T")
         except (TypeError, ValueError):
             pass
+    elif need_est and not est_payload:
+        # No meter, no model estimate — leave power empty for UI sticky/fallback
+        if cur_pf is not None and cur_pf <= 0:
+            live["power"] = None
 
     # Rated stats for UI tooltips
     rated = prof.get("rated") if isinstance(prof.get("rated"), dict) else None
@@ -1817,6 +1845,7 @@ def _apply_algo_when_no_profile(live: dict[str, Any], vendor: str | None) -> Non
             est = estimate_power_from_profile(fam, hashrate_hs=hs, hashrate_th=th)
             if est:
                 live["power"] = est["power_w"]
+                live["power_estimated_w"] = est["power_w"]
                 live["power_source"] = "model"
                 live["power_estimated"] = True
                 p = est["power_w"]
@@ -1833,8 +1862,24 @@ def _apply_algo_when_no_profile(live: dict[str, Any], vendor: str | None) -> Non
                 )
     elif p and p > 0 and src in ("model", "estimate", "estimated", "profile"):
         live["power_estimated"] = True
+        if live.get("power_estimated_w") is None:
+            live["power_estimated_w"] = p
     elif p and p > 0 and not live.get("power_estimated") and metered:
         live["power_estimated"] = False
+        # side-channel estimate from family for PSU gaps
+        if live.get("power_estimated_w") is None:
+            fam = lookup_family(
+                live.get("miner_type")
+                or live.get("model_code")
+                or (live.get("model") if isinstance(live.get("model"), str) else None)
+            )
+            if fam:
+                try:
+                    est2 = estimate_power_from_profile(fam, hashrate_th=th)
+                    if est2 and est2.get("power_w"):
+                        live["power_estimated_w"] = est2["power_w"]
+                except Exception:
+                    pass
     if p and th and th > 0 and live.get("efficiency_value") is None:
         ev, eu = efficiency_from_power(p, th, ainfo)
         if ev is not None:
