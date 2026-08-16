@@ -38697,6 +38697,51 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+
+    def _try_serve_gzip_file(self, rel_path: str, content_type: str) -> bool:
+        """Serve precompressed .gz next to static file when client accepts gzip."""
+        try:
+            ae = (self.headers.get("Accept-Encoding") or "").lower()
+            if "gzip" not in ae:
+                return False
+            # prevent path escape
+            rel = str(rel_path or "").lstrip("/").replace("\\", "/")
+            if not rel or ".." in rel.split("/"):
+                return False
+            src = ROOT / rel
+            gz = ROOT / (rel + ".gz")
+            if not gz.is_file():
+                if not src.is_file():
+                    return False
+                try:
+                    import gzip as _gzip
+
+                    raw = src.read_bytes()
+                    with _gzip.open(gz, "wb", compresslevel=6) as f:
+                        f.write(raw)
+                except Exception:
+                    return False
+            data = gz.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Vary", "Accept-Encoding")
+            # vendor libs are immutable enough to cache briefly
+            if rel.startswith("vendor/"):
+                self.send_header("Cache-Control", "public, max-age=86400")
+            else:
+                self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return True
+        except Exception:
+            return False
+
+    def _try_serve_index_gz(self) -> bool:
+        """Serve index.html.gz when client accepts gzip (big SPA, low-RAM routers)."""
+        return self._try_serve_gzip_file("index.html", "text/html; charset=utf-8")
+
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path in ("/api/live", "/api/status"):
@@ -39270,6 +39315,13 @@ class Handler(SimpleHTTPRequestHandler):
                 )
                 return
             self.path = "/index.html"
+            # Prefer precompressed SPA on small routers (Peak ~500MB RAM)
+            if self._try_serve_index_gz():
+                return
+        # Precompressed static assets (Chart.js etc.) — big win on Peak WAN/LAN thrash
+        if path.startswith("/vendor/") and path.endswith(".js"):
+            if self._try_serve_gzip_file(path.lstrip("/"), "application/javascript; charset=utf-8"):
+                return
         return super().do_GET()
 
     def do_POST(self) -> None:

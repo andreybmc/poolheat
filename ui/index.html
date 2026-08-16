@@ -5164,7 +5164,34 @@
         #d46b1f 100%
       );
     }
-    /* Energy accounting (Miner → Energy) */
+    /* Energy accounting (Miner → Energy) — flat tiles, no outer card */
+    .energy-summary-flat {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 0;
+      padding-top: 10px;
+    }
+    .energy-summary-toolbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      min-width: 0;
+      margin-top: 4px;
+      padding-top: 2px;
+    }
+    .energy-summary-toolbar h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 650;
+    }
+    .energy-summary-toolbar .sub {
+      margin-top: 2px;
+      font-size: 0.78rem;
+      color: var(--dim);
+      line-height: 1.35;
+    }
     .energy-live-row {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
@@ -5177,10 +5204,11 @@
       .energy-live-row { grid-template-columns: 1fr; }
     }
     .energy-live-item {
-      background: var(--panel2, rgba(255,255,255,0.03));
+      background: var(--panel, var(--panel2, rgba(255,255,255,0.03)));
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm, 8px);
-      padding: 10px 12px;
+      border-radius: var(--radius, 10px);
+      padding: 12px 14px;
+      box-shadow: none;
     }
     .energy-live-label {
       font-size: 0.72rem;
@@ -5209,11 +5237,12 @@
       .energy-period-grid { grid-template-columns: 1fr; }
     }
     .energy-period-card {
-      background: var(--panel2, rgba(255,255,255,0.03));
+      background: var(--panel, var(--panel2, rgba(255,255,255,0.03)));
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm, 8px);
-      padding: 12px 12px 10px;
+      border-radius: var(--radius, 10px);
+      padding: 12px 14px 10px;
       min-width: 0;
+      box-shadow: none;
     }
     .energy-period-title {
       font-size: 0.75rem;
@@ -6514,7 +6543,6 @@
 
     <nav class="tabs" role="tablist">
       <button type="button" class="active" data-tab="dash" data-i18n="tab.dash">Overview</button>
-      <button type="button" data-tab="miner" data-i18n="tab.miner">Miner</button>
       <button type="button" data-tab="miners" data-i18n="tab.miners">Miners</button>
       <button type="button" data-tab="circuits" data-i18n="tab.circuits">Circuits</button>
       <button type="button" data-tab="periph" data-i18n="tab.periph">Peripherals</button>
@@ -6959,279 +6987,6 @@
         </div><!-- /dash-board -->
       </div>
     </section>
-
-    <!-- ========== MINER ========== -->
-    <section class="view" id="view-miner">
-      <nav class="subtabs" role="tablist" aria-label="Miner">
-        <button type="button" class="active" data-subtab="miner" data-i18n="sub.miner">Miner</button>
-        <button type="button" data-subtab="pools" data-i18n="sub.pools">Pools</button>
-        <button type="button" data-subtab="energy" data-i18n="sub.energy">Energy</button>
-        <button type="button" data-subtab="chips" data-i18n="sub.chips">Chips</button>
-        <button type="button" data-subtab="info" data-i18n="sub.info">Info</button>
-      </nav>
-
-      <div class="subview active" id="subview-miner">
-      <div class="stack">
-        <div class="card" id="panel-dry-run">
-          <div class="card-h">
-            <div>
-              <h2 class="tip" data-tip-key="dry_run" data-i18n="h2.dry">Dry Run</h2>
-              <div class="sub" data-i18n="sub.dry">auto zones off · manual always · Safety · Save</div>
-            </div>
-            <div class="btn-row" style="gap:10px;align-items:center">
-              <label class="check" style="margin:0">
-                <input type="checkbox" id="dry-run" checked />
-                <span>Dry Run</span>
-              </label>
-              <button class="btn primary" type="button" id="btn-dry-save" hidden data-i18n="btn.save">Save</button>
-            </div>
-          </div>
-          <div class="card-b">
-            <p style="font-size:0.78rem;margin:0" id="dry-run-save-status">on server: —</p>
-            <p style="font-size:0.75rem;color:var(--dim);margin:6px 0 0" id="policy-status-line">policy: —</p>
-          </div>
-        </div>
-
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-h">
-              <div>
-                <h2 data-i18n="h2.layers">Decision layers</h2>
-                <div class="sub" data-i18n="sub.layers">priority top to bottom</div>
-              </div>
-            </div>
-            <div class="card-b layers" id="layers">
-              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (chip)</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="force_stop"><span class="n">2</span><span class="tip" data-tip-key="force_stop">Force Stop (Suspend)</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="override"><span class="n">3</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
-              <div class="layer" data-layer="schedule"><span class="n">4</span><span class="tip" data-tip-key="schedule">Schedule (time map)</span><span class="tag">off</span></div>
-              <div class="layer on block" data-layer="warmup"><span class="n">5</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
-              <div class="layer" data-layer="map"><span class="n">6</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
-              <div class="layer" data-layer="fail"><span class="n">7</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-h">
-              <div>
-                <h2 id="would-apply-title" data-i18n="h2.would_apply">What would apply now</h2>
-                <div class="sub" id="would-apply-sub" data-i18n="sub.would_apply">preview · dry_run</div>
-              </div>
-            </div>
-            <div class="card-b">
-              <div class="grid-3" style="margin-bottom:12px">
-                <div class="metric">
-                  <label>working_mode</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevMode">— hold</div>
-                </div>
-                <div class="metric">
-                  <label>power_limit</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevLim" data-i18n="label.skip">— skip</div>
-                </div>
-                <div class="metric">
-                  <label>power_pct</label>
-                  <div class="val" style="font-size:1rem" data-bind="prevPct" data-i18n="label.skip">— skip</div>
-                </div>
-              </div>
-              <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
-                Warmup: upward (→ Z0) blocked. Map: Z0 / Z1 / Z2 by liquid.
-              </p>
-              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-                <button class="btn" type="button" id="btn-override" title="Override 30m · click again to clear">
-                  Override 30m
-                </button>
-                <button class="btn danger" type="button" id="btn-force-suspend" title="Force Stop: sticky Suspend (ignore zones and Dry Run)">
-                  Force Stop
-                </button>
-                <button class="btn danger" type="button" id="btn-reboot-asic" title="Whatsminer reboot — full ASIC reboot">
-                  Reboot ASIC
-                </button>
-                <button class="btn" type="button" id="btn-restart-miner" title="restart_btminer — mining process only">
-                  Restart miner
-                </button>
-                <button
-                  class="btn danger"
-                  type="button"
-                  id="btn-factory-reset-miner"
-                  title="Whatsminer factory_reset — full settings reset"
-                >
-                  Factory reset
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Miner mode / power controls -->
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.mode">Miner mode</h2>
-            </div>
-            <span class="pill" id="pill-write" style="display:none"><span class="dot"></span> write…</span>
-          </div>
-          <div class="card-b">
-            <div class="grid-4" style="margin-bottom:12px;grid-template-columns:repeat(5,minmax(0,1fr))">
-              <div class="metric">
-                <label><span class="tip" data-tip-key="power_mode" data-i18n="field.power_mode">Power Mode</span></label>
-                <div class="val" style="font-size:1.2rem" id="pw-mode-now">—</div>
-              </div>
-              <div class="metric">
-                <label><span class="tip" data-tip-key="working_mode" data-i18n="field.mining_control">Mining Control</span></label>
-                <div class="val" style="font-size:1.05rem" id="wk-mode-now">—</div>
-              </div>
-              <div class="metric">
-                <label data-i18n="field.status">Status</label>
-                <div class="val" style="font-size:1.05rem" id="wk-run-status">—</div>
-              </div>
-              <div class="metric">
-                <label><span class="tip" data-tip-key="power_limit" data-i18n="field.power_limit">Power Limit</span></label>
-                <div class="val" style="font-size:1.05rem">
-                  <span id="pw-lim-meas">—</span> <small>W</small>
-                </div>
-              </div>
-              <div class="metric">
-                <label><span class="tip" data-tip-key="power_pct" data-i18n="field.power_pct">Power pct</span></label>
-                <div class="val" style="font-size:0.95rem;font-weight:600;line-height:1.35">
-                  set: <span id="pw-pct-set">—</span> <small>%</small>
-                  <span class="val-sep" aria-hidden="true">|</span>
-                  meas: <span id="pw-pct-meas">—</span> <small>%</small>
-                </div>
-              </div>
-            </div>
-
-            <button type="button" class="collapse-toggle" id="btn-toggle-pw-settings"
-              aria-expanded="false" aria-controls="pw-settings-panel">
-              <span class="chev" aria-hidden="true">▶</span>
-              <span class="collapse-label" id="pw-settings-toggle-label" data-i18n="pw.settings">Power settings</span>
-            </button>
-
-            <div class="collapse-panel is-collapsed" id="pw-settings-panel" hidden>
-              <div class="divider" style="margin-top:0"></div>
-
-              <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;align-items:start">
-                <div>
-                  <label class="field"><span data-i18n="field.power_mode">Power Mode</span>
-                    <select id="set-mode">
-                      <option value="low">low</option>
-                      <option value="normal">normal</option>
-                      <option value="high">high</option>
-                    </select>
-                  </label>
-                  <button class="btn primary" type="button" style="width:100%;margin-top:8px" id="btn-set-mode" data-i18n="btn.apply_power_mode">
-                    Apply Power Mode
-                  </button>
-                  <p style="font-size:0.7rem;color:var(--warn);margin-top:6px" data-i18n="hint.mode_restart">⚠ mode change restarts mining</p>
-                </div>
-                <div>
-                  <label class="field">Mining Control
-                    <select id="set-work">
-                      <option value="resume">Resume Mining</option>
-                      <option value="sleep">Suspend Mining</option>
-                    </select>
-                  </label>
-                  <button class="btn" type="button" style="width:100%;margin-top:8px" id="btn-set-work">
-                    Apply Mining Control
-                  </button>
-                  <p style="font-size:0.7rem;color:var(--muted);margin-top:6px">Suspend = stop · Resume = continue</p>
-                </div>
-                <div>
-                  <label class="field">Set Power Limit (W)
-                    <input type="number" id="set-limit" value="7000" min="0" max="15000" step="50" />
-                  </label>
-                  <button class="btn" type="button" style="width:100%;margin-top:8px" id="btn-set-limit">
-                    Apply limit
-                  </button>
-                  <p style="font-size:0.7rem;color:var(--warn);margin-top:6px">⚠ Power Limit will restart mining</p>
-                </div>
-                <div>
-                  <label class="field">Power pct (%)
-                    <input type="number" id="set-pct" value="100" min="0" max="100" step="1" />
-                  </label>
-                  <button class="btn" type="button" style="width:100%;margin-top:8px" id="btn-set-pct">
-                    Apply pct
-                  </button>
-                  <p style="font-size:0.7rem;color:var(--muted);margin-top:6px">until restart / may cause LOW_HASH</p>
-                </div>
-              </div>
-
-              <div class="row" style="margin-top:14px;grid-template-columns:1fr;align-items:end;gap:14px">
-                <button class="btn ghost" type="button" id="btn-refresh-pw" onclick="fetchLive(true)" data-i18n="btn.refresh_status" style="justify-self:end">Refresh status</button>
-              </div>
-              <div class="write-log" id="write-log">
-                <p id="write-status" class="write-status">last write: —</p>
-                <div id="write-error" class="write-error" hidden></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Hashboards + temperature catalog moved to /miners/{id} (Whatsminer detail) -->
-      </div>
-      </div><!-- /subview-miner -->
-
-            <div class="subview" id="subview-chips">
-      <div class="stack">
-        <div class="card">
-          <div class="card-b">
-            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.chips_moved">
-              Chip map moved to each miner page: Miners → open ASIC → Chips.
-            </p>
-            <button type="button" class="btn primary" id="btn-chips-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_chips">
-              Open miner Chips
-            </button>
-          </div>
-        </div>
-      </div>
-      <div class="chip-tip" id="chipmap-tip-legacy" hidden></div>
-      </div><!-- /subview-chips -->
-
-            <div class="subview" id="subview-miner-info">
-      <div class="stack">
-        <div class="card">
-          <div class="card-b">
-            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.info_moved">
-              Miner Info moved to each miner page: Miners → open ASIC → Info.
-            </p>
-            <button type="button" class="btn primary" id="btn-minerinfo-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_info">
-              Open miner Info
-            </button>
-          </div>
-        </div>
-      </div>
-      </div><!-- /subview-miner-info -->
-
-            <div class="subview" id="subview-pools">
-      <div class="stack">
-        <div class="card">
-          <div class="card-b">
-            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.pools_moved">
-              Pools moved to each miner page: Miners → open ASIC → Pools.
-            </p>
-            <button type="button" class="btn primary" id="btn-pools-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_pools">
-              Open miner Pools
-            </button>
-          </div>
-        </div>
-      </div>
-      </div><!-- /subview-pools -->
-
-      <div class="subview" id="subview-energy">
-      <div class="stack">
-        <div class="card">
-          <div class="card-b">
-            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.energy_moved">
-              Energy moved to each miner page: Miners → open ASIC → Energy.
-            </p>
-            <button type="button" class="btn primary" id="btn-energy-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_energy">
-              Open miner Energy
-            </button>
-          </div>
-        </div>
-      </div>
-      </div><!-- /subview-energy -->
-    </section>
-
 
     <!-- ========== CIRCUITS (list · heat map · profiles · schedule) ========== -->
     <section class="view" id="view-circuits">
@@ -8284,6 +8039,7 @@
                 <button type="button" role="tab" data-md-tab="chips" aria-selected="false" data-i18n="miner_detail.tab_chips">Chips</button>
                 <button type="button" role="tab" data-md-tab="pools" aria-selected="false" data-i18n="miner_detail.tab_pools">Pools</button>
                 <button type="button" role="tab" data-md-tab="energy" aria-selected="false" data-i18n="miner_detail.tab_energy">Energy</button>
+                <button type="button" role="tab" data-md-tab="circuit" aria-selected="false" data-i18n="miner_detail.tab_circuit" id="md-tab-circuit">Circuit</button>
                 <button type="button" role="tab" data-md-tab="info" aria-selected="false" data-i18n="miner_detail.tab_info">Info</button>
               </nav>
             </div>
@@ -8935,11 +8691,11 @@
                 <div class="miner-detail-pane" id="miner-detail-pane-energy" role="tabpanel" data-md-pane="energy" hidden>
                   <div class="stack" id="miner-detail-energy-stack" style="gap:14px">
 
-        <div class="card" id="panel-energy-summary">
-          <div class="card-h">
+        <!-- Energy summary: flat tiles (no outer card wrapping inner cards) -->
+        <div id="panel-energy-summary" class="energy-summary-flat">
+          <div class="energy-summary-toolbar">
             <div>
               <h2 data-i18n="h2.energy">Energy accounting</h2>
-              <div class="sub" data-i18n="sub.energy_card">kWh · cost · from history power samples</div>
             </div>
             <button
               class="btn energy-chart-refresh"
@@ -8953,51 +8709,45 @@
               <span class="ico-refresh" aria-hidden="true">↻</span>
             </button>
           </div>
-          <div class="card-b stack" style="gap:14px">
-            <div class="energy-live-row">
-              <div class="energy-live-item">
-                <div class="energy-live-label" data-i18n="energy.live_power">Live power</div>
-                <div class="energy-live-val"><span id="energy-live-w">—</span> <small>W</small></div>
-              </div>
-              <div class="energy-live-item">
-                <div class="energy-live-label" data-i18n="energy.tariff_now">Tariff now</div>
-                <div class="energy-live-val"><span id="energy-tariff-now">—</span></div>
-              </div>
-              <div class="energy-live-item">
-                <div class="energy-live-label" data-i18n="energy.virtual_total">Virtual counter</div>
-                <div class="energy-live-val"><span id="energy-virtual-total">—</span> <small>kWh</small></div>
-              </div>
+          <div class="energy-live-row">
+            <div class="energy-live-item">
+              <div class="energy-live-label" data-i18n="energy.live_power">Live power</div>
+              <div class="energy-live-val"><span id="energy-live-w">—</span> <small>W</small></div>
             </div>
-            <div class="energy-period-grid" id="energy-period-grid">
-              <div class="energy-period-card" data-period="today">
-                <div class="energy-period-title" data-i18n="energy.today">Today</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-              <div class="energy-period-card" data-period="yesterday">
-                <div class="energy-period-title" data-i18n="energy.yesterday">Yesterday</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-              <div class="energy-period-card" data-period="d7">
-                <div class="energy-period-title" data-i18n="energy.d7">7 days</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-              <div class="energy-period-card" data-period="d30">
-                <div class="energy-period-title" data-i18n="energy.d30">30 days</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
+            <div class="energy-live-item">
+              <div class="energy-live-label" data-i18n="energy.tariff_now">Tariff now</div>
+              <div class="energy-live-val"><span id="energy-tariff-now">—</span></div>
             </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-status">—</p>
-            <p style="font-size:0.75rem;color:var(--dim);margin:4px 0 0;line-height:1.45" data-i18n="hint.energy_source">
-              Collection settings: Settings → Advanced → Energy metering.
-            </p>
+            <div class="energy-live-item">
+              <div class="energy-live-label" data-i18n="energy.virtual_total">Virtual counter</div>
+              <div class="energy-live-val"><span id="energy-virtual-total">—</span> <small>kWh</small></div>
+            </div>
+          </div>
+          <div class="energy-period-grid" id="energy-period-grid">
+            <div class="energy-period-card" data-period="today">
+              <div class="energy-period-title" data-i18n="energy.today">Today</div>
+              <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+              <div class="energy-period-cost"><span data-cost>—</span></div>
+              <div class="energy-period-avg"><span data-avg>—</span></div>
+            </div>
+            <div class="energy-period-card" data-period="yesterday">
+              <div class="energy-period-title" data-i18n="energy.yesterday">Yesterday</div>
+              <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+              <div class="energy-period-cost"><span data-cost>—</span></div>
+              <div class="energy-period-avg"><span data-avg>—</span></div>
+            </div>
+            <div class="energy-period-card" data-period="d7">
+              <div class="energy-period-title" data-i18n="energy.d7">7 days</div>
+              <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+              <div class="energy-period-cost"><span data-cost>—</span></div>
+              <div class="energy-period-avg"><span data-avg>—</span></div>
+            </div>
+            <div class="energy-period-card" data-period="d30">
+              <div class="energy-period-title" data-i18n="energy.d30">30 days</div>
+              <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+              <div class="energy-period-cost"><span data-cost>—</span></div>
+              <div class="energy-period-avg"><span data-avg>—</span></div>
+            </div>
           </div>
         </div>
 
@@ -9178,14 +8928,126 @@
               </p>
             </div>
 
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="hint.energy_tariff">
-              Used only for cost estimate. Does not control the miner.
-            </p>
           </div>
         </div>
 
                   </div>
                 </div><!-- /pane-energy -->
+                <!-- Tab: Circuit (only if miner bound to a heat circuit) -->
+                <div class="miner-detail-pane" id="miner-detail-pane-circuit" role="tabpanel" data-md-pane="circuit" hidden>
+                  <div class="stack" id="miner-detail-circuit-stack" style="gap:14px;padding-top:8px">
+                    <div class="card" id="panel-miner-circuit">
+                      <div class="card-h">
+                        <div>
+                          <h2 data-i18n="miner_detail.circuit_title">Heat circuit</h2>
+                          <div class="sub" id="md-circuit-sub">—</div>
+                        </div>
+                        <button type="button" class="btn primary" id="btn-md-open-circuit" data-i18n="miner_detail.open_circuit">
+                          Open circuit
+                        </button>
+                      </div>
+                      <div class="card-b stack" style="gap:12px">
+                        <div class="miner-detail-grid" id="md-circuit-kv"></div>
+                        <p style="font-size:0.78rem;color:var(--dim);margin:0;line-height:1.4" id="md-circuit-hint" data-i18n="miner_detail.circuit_hint">
+                          This miner is bound to a heat utilization circuit. Geometry and heat widgets use that circuit.
+                        </p>
+                      </div>
+                    </div>
+
+        <div class="card" id="panel-dry-run">
+          <div class="card-h">
+            <div>
+              <h2 class="tip" data-tip-key="dry_run" data-i18n="h2.dry">Dry Run</h2>
+              <div class="sub" data-i18n="sub.dry">auto zones off · manual always · Safety · Save</div>
+            </div>
+            <div class="btn-row" style="gap:10px;align-items:center">
+              <label class="check" style="margin:0">
+                <input type="checkbox" id="dry-run" checked />
+                <span>Dry Run</span>
+              </label>
+              <button class="btn primary" type="button" id="btn-dry-save" hidden data-i18n="btn.save">Save</button>
+            </div>
+          </div>
+          <div class="card-b">
+            <p style="font-size:0.78rem;margin:0" id="dry-run-save-status">on server: —</p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:6px 0 0" id="policy-status-line">policy: —</p>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2 data-i18n="h2.layers">Decision layers</h2>
+                <div class="sub" data-i18n="sub.layers">priority top to bottom</div>
+              </div>
+            </div>
+            <div class="card-b layers" id="layers">
+              <div class="layer" data-layer="critical"><span class="n">1</span><span class="tip" data-tip-key="critical">Safety / Critical (chip)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="force_stop"><span class="n">2</span><span class="tip" data-tip-key="force_stop">Force Stop (Suspend)</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="override"><span class="n">3</span><span class="tip" data-tip-key="override">Override 30m</span><span class="tag">off</span></div>
+              <div class="layer" data-layer="schedule"><span class="n">4</span><span class="tip" data-tip-key="schedule">Schedule (time map)</span><span class="tag">off</span></div>
+              <div class="layer on block" data-layer="warmup"><span class="n">5</span><span class="tip" data-tip-key="warmup">Warmup gate (upfreq)</span><span class="tag">block ↑</span></div>
+              <div class="layer" data-layer="map"><span class="n">6</span><span class="tip" data-tip-key="zone">Temperature map</span><span class="tag">hold</span></div>
+              <div class="layer" data-layer="fail"><span class="n">7</span><span class="tip" data-tip-key="fail_safe">API fail-safe</span><span class="tag">ok</span></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <div>
+                <h2 id="would-apply-title" data-i18n="h2.would_apply">What would apply now</h2>
+                <div class="sub" id="would-apply-sub" data-i18n="sub.would_apply">preview · dry_run</div>
+              </div>
+            </div>
+            <div class="card-b">
+              <div class="grid-3" style="margin-bottom:12px">
+                <div class="metric">
+                  <label>working_mode</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevMode">— hold</div>
+                </div>
+                <div class="metric">
+                  <label>power_limit</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevLim" data-i18n="label.skip">— skip</div>
+                </div>
+                <div class="metric">
+                  <label>power_pct</label>
+                  <div class="val" style="font-size:1rem" data-bind="prevPct" data-i18n="label.skip">— skip</div>
+                </div>
+              </div>
+              <p style="font-size:0.8rem;color:var(--muted)" data-bind="prevReason">
+                Warmup: upward (→ Z0) blocked. Map: Z0 / Z1 / Z2 by liquid.
+              </p>
+              <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+                <button class="btn" type="button" id="btn-override" title="Override 30m · click again to clear">
+                  Override 30m
+                </button>
+                <button class="btn danger" type="button" id="btn-force-suspend" title="Force Stop: sticky Suspend (ignore zones and Dry Run)">
+                  Force Stop
+                </button>
+                <button class="btn danger" type="button" id="btn-reboot-asic" title="Whatsminer reboot — full ASIC reboot">
+                  Reboot ASIC
+                </button>
+                <button class="btn" type="button" id="btn-restart-miner" title="restart_btminer — mining process only">
+                  Restart miner
+                </button>
+                <button
+                  class="btn danger"
+                  type="button"
+                  id="btn-factory-reset-miner"
+                  title="Whatsminer factory_reset — full settings reset"
+                >
+                  Factory reset
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+                  </div>
+                </div><!-- /pane-circuit -->
+
+
 <!-- /pane-pools -->
               </div>
             </div>
@@ -11040,7 +10902,8 @@
     <div class="tip-body" id="tip-body"></div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Local Chart.js — CDN blocks SPA boot on Peak when WAN/CDN is slow or down -->
+  <script src="/vendor/chart.umd.min.js"></script>
   <script>
 
     /* —— UI i18n (ru / en) + region prefs —— */
@@ -11350,6 +11213,17 @@
         "miner_detail.tab_chips": "Chips",
         "miner_detail.tab_pools": "Pools",
         "miner_detail.tab_energy": "Energy",
+        "miner_detail.tab_circuit": "Circuit",
+        "miner_detail.circuit_title": "Heat circuit",
+        "miner_detail.open_circuit": "Open circuit",
+        "miner_detail.circuit_hint": "This miner is bound to a heat utilization circuit. Geometry and heat widgets use that circuit.",
+        "miner_detail.circuit_none": "Not bound to a heat circuit",
+        "miner_detail.circuit_moved": "Policy controls moved to miner page → Circuit tab.",
+        "miner_detail.open_circuit_tab": "Open miner Circuit",
+        "miner_detail.field_name": "Name",
+        "miner_detail.field_type": "Type",
+        "miner_detail.field_miners": "Miners",
+        "miner_detail.field_pool_geo": "Pool geometry",
         "miner_detail.energy_moved": "Energy moved to each miner page: Miners → open ASIC → Energy.",
         "miner_detail.open_energy": "Open miner Energy",
         "miner_detail.pools_moved": "Pools moved to each miner page: Miners → open ASIC → Pools.",
@@ -12449,6 +12323,17 @@
         "miner_detail.tab_chips": "Чипы",
         "miner_detail.tab_pools": "Пулы",
         "miner_detail.tab_energy": "Энергия",
+        "miner_detail.tab_circuit": "Контур",
+        "miner_detail.circuit_title": "Контур тепла",
+        "miner_detail.open_circuit": "Открыть контур",
+        "miner_detail.circuit_hint": "Майнер привязан к контуру утилизации тепла. Геометрия и тепловые виджеты используют этот контур.",
+        "miner_detail.circuit_none": "Не привязан к контуру тепла",
+        "miner_detail.circuit_moved": "Управление политикой перенесено: Майнеры → ASIC → вкладка Контур.",
+        "miner_detail.open_circuit_tab": "Открыть Контур майнера",
+        "miner_detail.field_name": "Имя",
+        "miner_detail.field_type": "Тип",
+        "miner_detail.field_miners": "Майнеры",
+        "miner_detail.field_pool_geo": "Геометрия бассейна",
         "miner_detail.energy_moved": "Учёт энергии перенесён: Miners → ASIC → вкладка Энергия.",
         "miner_detail.open_energy": "Открыть Energy майнера",
         "miner_detail.pools_moved": "Пулы перенесены: Miners → ASIC → вкладка Пулы.",
@@ -13409,7 +13294,18 @@
       // EN is product default — no browser auto-detect
     } catch (_) { /* ignore */ }
 
-    function getUiLang() {
+    /**
+     * Update-check state lives only on window — never a script-scoped `let`.
+     * A lexical binding caused TDZ: "can't access lexical declaration
+     * 'lastUpdateCheck' before initialization" when applySystemInfoToUI ran
+     * from early paint / loadSystemInfo (toast: miner info refresh failed).
+     */
+    if (typeof window.__lastUpdateCheck === "undefined") {
+      window.__lastUpdateCheck = null;
+    }
+    let headerIdentityLoaded = false;
+
+function getUiLang() {
       return _uiLang === "en" ? "en" : "ru";
     }
 
@@ -14253,8 +14149,9 @@
     /** Miner detail page: /{lang}/miners/{id} (must be before initTabRoute) */
     let selectedMinerId = null;
     let minerDetailOpen = false;
-    /** Inner tabs on detail card: miner | info */
+    /** Inner tabs on detail card: miner | info | chips | pools | energy | circuit */
     let minerDetailTab = "miner";
+    /** System Info / update check — must be before applyUiLang & loadSystemInfo (TDZ) */
     /** Site facility: topology_enabled default false → hide miner cells */
     let siteConfigCache = { topology_enabled: false };
     let fleetTimer = null;
@@ -14727,19 +14624,14 @@
       sel.value = cur || "";
     }
 
-    /* —— tabs + URL: #/ · / · #dashboard · #miner · /miner —— */
-    /* Virtual: logs→info, chips/pools/minerinfo→miner, advanced→settings,
-       sensors/devices→periph */
+    /* —— tabs + URL: /{lang}/dashboard · /miners · /circuits · … —— */
+    /* Virtual: logs→info, advanced→settings, sensors/devices→periph.
+       Legacy /miner · /chips · /pools · /energy · /minerinfo → managed fleet. */
     const TAB_IDS = [
       "dash",
-      "miner",
       "miners",
       "managed",
       "unmanaged",
-      "chips",
-      "pools",
-      "energy",
-      "minerinfo",
       "map", // alias → circuits heat
       "circuits",
       "heat",
@@ -14755,6 +14647,12 @@
       "miner-poller",
       "info",
       "logs",
+      // legacy ids (resolve only → managed, no UI section)
+      "miner",
+      "chips",
+      "pools",
+      "energy",
+      "minerinfo",
     ];
     const TAB_ALIASES = {
       "": "dash",
@@ -14765,16 +14663,20 @@
       "index.html": "dash",
       dashboard: "dash",
       dash: "dash",
-      chips: "chips",
-      chipmap: "chips",
-      chip: "chips",
-      miningpools: "pools",
-      "miner-pools": "pools",
-      stratum: "pools",
-      minerinfo: "minerinfo",
-      "miner-info": "minerinfo",
-      whatsminer: "minerinfo",
-      wm: "minerinfo",
+      // former Miner section → Miners (managed)
+      miner: "managed",
+      chips: "managed",
+      chipmap: "managed",
+      chip: "managed",
+      pools: "managed",
+      miningpools: "managed",
+      "miner-pools": "managed",
+      stratum: "managed",
+      energy: "managed",
+      minerinfo: "managed",
+      "miner-info": "managed",
+      whatsminer: "managed",
+      wm: "managed",
       zones: "map",
       zone: "map",
       "zone-map": "map",
@@ -14859,23 +14761,6 @@
       return sub;
     }
 
-    function setMinerSubtab(subId) {
-      const allowed = { miner: 1, chips: 1, pools: 1, energy: 1, info: 1 };
-      const sub = allowed[subId] ? subId : "miner";
-      document.querySelectorAll("#view-miner nav.subtabs button").forEach((b) => {
-        b.classList.toggle("active", b.dataset.subtab === sub);
-      });
-      // "info" → #subview-miner-info (avoid clash with #view-info #subview-info)
-      const viewId =
-        sub === "info" ? "subview-miner-info" : "subview-" + sub;
-      document.querySelectorAll("#view-miner .subview").forEach((v) => {
-        v.classList.toggle("active", v.id === viewId);
-      });
-      if (sub === "energy" && typeof loadEnergyPanel === "function") {
-        void loadEnergyPanel();
-      }
-      return sub;
-    }
 
     function setCircuitsSubtab(subId) {
       const allowed = { main: 1, heat: 1, profiles: 1, schedule: 1, list: 1 };
@@ -14930,7 +14815,8 @@
       return sub;
     }
 
-    function setMinersSubtab(subId) {
+    function setMinersSubtab(subId, opts) {
+      opts = opts || {};
       // detail = /miners/{id} page; managed/unmanaged = list tabs
       if (subId === "detail") {
         document.querySelectorAll("#view-miners nav.subtabs button").forEach((b) => {
@@ -14942,8 +14828,12 @@
         return "detail";
       }
       const sub = subId === "unmanaged" ? "unmanaged" : "managed";
-      // leaving detail page when switching list tabs
-      if (typeof minerDetailOpen !== "undefined" && minerDetailOpen) {
+      // leaving detail page when switching list tabs (unless keepDetail)
+      if (
+        !opts.keepDetail &&
+        typeof minerDetailOpen !== "undefined" &&
+        minerDetailOpen
+      ) {
         minerDetailOpen = false;
         selectedMinerId = null;
       }
@@ -14971,15 +14861,17 @@
 
     function isChipsSubtabActive() {
       return (
-        document.getElementById("view-miner")?.classList.contains("active") &&
-        document.getElementById("subview-chips")?.classList.contains("active")
+        !!minerDetailOpen &&
+        minerDetailTab === "chips" &&
+        document.getElementById("view-miners")?.classList.contains("active")
       );
     }
 
     function isPoolsSubtabActive() {
       return (
-        document.getElementById("view-miner")?.classList.contains("active") &&
-        document.getElementById("subview-pools")?.classList.contains("active")
+        !!minerDetailOpen &&
+        minerDetailTab === "pools" &&
+        document.getElementById("view-miners")?.classList.contains("active")
       );
     }
 
@@ -15073,6 +14965,13 @@
               minerDetailTab = "pools";
             } else if (c === "energy" || c === "kwh" || c === "power-energy") {
               minerDetailTab = "energy";
+            } else if (
+              c === "circuit" ||
+              c === "contour" ||
+              c === "kontur" ||
+              c === "heat-circuit"
+            ) {
+              minerDetailTab = "circuit";
             } else if (c === "miner" || c === "main" || c === "live" || c === "") {
               minerDetailTab = minerId ? "miner" : null;
             } else if (c) {
@@ -15106,16 +15005,6 @@
         tab = resolveTabId(location.hash);
       }
       if (!tab) tab = "dash";
-      // legacy /minerinfo · /chips → resolve later to /miners/{active}/…
-      if (tab === "minerinfo") {
-        minerDetailTab = "info";
-      } else if (tab === "chips") {
-        minerDetailTab = "chips";
-      } else if (tab === "pools") {
-        minerDetailTab = "pools";
-      } else if (tab === "energy") {
-        minerDetailTab = "energy";
-      }
       return { lang, tab, circuitId, minerId, minerDetailTab };
     }
 
@@ -15143,6 +15032,7 @@
         id === "managed" ||
         id === "miners-managed" ||
         id === "miners" ||
+        id === "miner" ||
         id === "minerinfo" ||
         id === "chips" ||
         id === "pools" ||
@@ -15152,24 +15042,12 @@
         if (mid) {
           let sub = "";
           const dt = opts.minerDetailTab;
-          if (dt === "info" || id === "minerinfo") sub = "/info";
-          else if (dt === "chips" || id === "chips") sub = "/chips";
-          else if (dt === "pools" || id === "pools") sub = "/pools";
-          else if (dt === "energy" || id === "energy") sub = "/energy";
+          if (dt === "info") sub = "/info";
+          else if (dt === "chips") sub = "/chips";
+          else if (dt === "pools") sub = "/pools";
+          else if (dt === "energy") sub = "/energy";
+          else if (dt === "circuit") sub = "/circuit";
           return "/" + L + "/miners/" + encodeURIComponent(mid) + sub;
-        }
-        if (id === "minerinfo") {
-          // no id yet — keep legacy path until redirect finds active
-          return "/" + L + "/minerinfo";
-        }
-        if (id === "chips") {
-          return "/" + L + "/chips";
-        }
-        if (id === "pools") {
-          return "/" + L + "/pools";
-        }
-        if (id === "energy") {
-          return "/" + L + "/energy";
         }
         return "/" + L + "/miners/managed";
       }
@@ -15276,6 +15154,7 @@
         else if (detailTab === "chips") sub = "/chips";
         else if (detailTab === "pools") sub = "/pools";
         else if (detailTab === "energy") sub = "/energy";
+        else if (detailTab === "circuit") sub = "/circuit";
         url =
           "/" + lang + "/miners/" + encodeURIComponent(mid) + sub;
       }
@@ -15297,7 +15176,6 @@
       // virtual tabs → main view + subtab
       let mainTab = tabId;
       let infoSub = "info";
-      let minerSub = "miner";
       let settingsSub = "main";
       let periphSub = "sensors";
       let circuitsSub = "main";
@@ -15305,38 +15183,16 @@
       if (tabId === "logs") {
         mainTab = "info";
         infoSub = "logs";
-      } else if (tabId === "chips") {
-        // Legacy /chips → /miners/{active}/chips (disk-cached chipmap)
-        if (typeof openActiveMinerChips === "function") {
-          openActiveMinerChips({ replaceUrl: !!opts.replaceUrl });
-          return "chips";
-        }
-        mainTab = "miner";
-        minerSub = "chips";
-      } else if (tabId === "pools") {
-        // Legacy /pools → /miners/{active}/pools
-        if (typeof openActiveMinerPools === "function") {
-          openActiveMinerPools({ replaceUrl: !!opts.replaceUrl });
-          return "pools";
-        }
-        mainTab = "miner";
-        minerSub = "pools";
-      } else if (tabId === "energy") {
-        // Legacy /energy → /miners/{active}/energy
-        if (typeof openActiveMinerEnergy === "function") {
-          openActiveMinerEnergy({ replaceUrl: !!opts.replaceUrl });
-          return "energy";
-        }
-        mainTab = "miner";
-        minerSub = "energy";
-      } else if (tabId === "minerinfo") {
-        // Legacy /minerinfo → /miners/{active}/info (full Info UI lives there)
-        if (typeof openActiveMinerInfo === "function") {
-          openActiveMinerInfo({ replaceUrl: !!opts.replaceUrl });
-          return "minerinfo";
-        }
-        mainTab = "miner";
-        minerSub = "info";
+      } else if (
+        tabId === "miner" ||
+        tabId === "chips" ||
+        tabId === "pools" ||
+        tabId === "energy" ||
+        tabId === "minerinfo"
+      ) {
+        // Former top-level Miner section removed → Miners fleet
+        mainTab = "miners";
+        tabId = "managed";
       } else if (tabId === "advanced") {
         mainTab = "settings";
         settingsSub = "advanced";
@@ -15385,8 +15241,6 @@
               : circuitsSub;
       } else if (tabId === "info") {
         infoSub = "info";
-      } else if (tabId === "miner") {
-        minerSub = "miner";
       } else if (tabId === "settings") {
         settingsSub = "main";
       } else if (
@@ -15415,7 +15269,6 @@
         }
       });
       if (mainTab === "info") setInfoSubtab(infoSub);
-      if (mainTab === "miner") setMinerSubtab(minerSub);
       if (mainTab === "settings") setSettingsSubtab(settingsSub);
       if (mainTab === "periph") setPeriphSubtab(periphSub);
       if (mainTab === "circuits") setCircuitsSubtab(circuitsSub);
@@ -15458,29 +15311,6 @@
         loadSystemInfo({ forceLive: true });
       }
       // Whatsminer identity under Miner → Info
-      if (mainTab === "miner" && minerSub === "info" && typeof loadSystemInfo === "function") {
-        loadSystemInfo({ forceLive: true });
-        if (typeof loadMinerFirmwareFlashOptions === "function") {
-          setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
-        }
-      }
-      if (mainTab === "miner" && minerSub === "pools") {
-        if (typeof openActiveMinerPools === "function" && !opts.skipRedirect) {
-          openActiveMinerPools({ replaceUrl: !!opts.replaceUrl });
-          return "pools";
-        }
-        if (typeof loadMiningPools === "function") loadMiningPools(false);
-        if (typeof loadPoolPresets === "function") loadPoolPresets();
-      }
-      if (mainTab === "miner" && minerSub === "chips") {
-        // Prefer per-miner Chips tab (disk cache); legacy subview is a stub
-        if (typeof openActiveMinerChips === "function" && !opts.skipRedirect) {
-          openActiveMinerChips({ replaceUrl: !!opts.replaceUrl });
-          return "chips";
-        }
-        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
-        if (typeof loadChipmap === "function") loadChipmap(false);
-      }
       if (mainTab === "settings" && settingsSub === "advanced") {
         if (typeof loadHistoryConfig === "function") loadHistoryConfig();
         if (typeof loadEnergyMeteringSettings === "function") loadEnergyMeteringSettings();
@@ -15655,16 +15485,6 @@
         else activateTab("settings");
       });
     });
-    document.querySelectorAll("#view-miner nav.subtabs button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const s = btn.dataset.subtab;
-        if (s === "chips") activateTab("chips");
-        else if (s === "pools") activateTab("pools");
-        else if (s === "energy") activateTab("energy");
-        else if (s === "info") activateTab("minerinfo");
-        else activateTab("miner");
-      });
-    });
     document.querySelectorAll("#view-periph nav.subtabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         const s = btn.dataset.subtab;
@@ -15823,34 +15643,16 @@
       if (route.lang && typeof applyUiLang === "function") {
         applyUiLang(route.lang, { persist: true, syncUrl: false });
       }
-      if (route.tab === "minerinfo" && !route.minerId) {
-        if (typeof openActiveMinerInfo === "function") {
-          openActiveMinerInfo({ replaceUrl: true });
-        } else {
-          activateTab("minerinfo", { skipUrl: true });
+      if (route.minerId) {
+        selectedMinerId = String(route.minerId);
+        minerDetailOpen = true;
+        if (route.minerDetailTab) minerDetailTab = route.minerDetailTab;
+        if (typeof activateTab === "function") {
+          activateTab("managed", { skipUrl: true, minerDetail: true });
         }
-      } else if (route.tab === "chips" && !route.minerId) {
-        if (typeof openActiveMinerChips === "function") {
-          openActiveMinerChips({ replaceUrl: true });
-        } else {
-          activateTab("chips", { skipUrl: true });
-        }
-      } else if (route.tab === "pools" && !route.minerId) {
-        if (typeof openActiveMinerPools === "function") {
-          openActiveMinerPools({ replaceUrl: true });
-        } else {
-          activateTab("pools", { skipUrl: true });
-        }
-      } else if (route.tab === "energy" && !route.minerId) {
-        if (typeof openActiveMinerEnergy === "function") {
-          openActiveMinerEnergy({ replaceUrl: true });
-        } else {
-          activateTab("energy", { skipUrl: true });
-        }
-      } else if (route.minerId) {
         void applyMinerRouteFromUrl(route.minerId, {
           replaceUrl: true,
-          minerDetailTab: route.minerDetailTab || "miner",
+          minerDetailTab: route.minerDetailTab || minerDetailTab || "miner",
         });
       } else {
         if (typeof minerDetailOpen !== "undefined" && minerDetailOpen) {
@@ -15887,7 +15689,7 @@
           minerDetailTab: route.minerDetailTab || null,
         });
         const cur = (location.pathname.replace(/\/+$/, "") || "/") + (location.hash || "");
-        if (cur !== want && !(t === "minerinfo" && !route.minerId)) {
+        if (cur !== want) {
           const st = { tab: t, lang: lang };
           if (route.circuitId) st.circuitId = route.circuitId;
           if (route.minerId) st.minerId = route.minerId;
@@ -15895,26 +15697,23 @@
           history.replaceState(st, "", want);
         }
       } catch (_) { /* ignore */ }
-      if (t === "minerinfo" && !route.minerId) {
-        // legacy /ru/minerinfo → /ru/miners/{active}/info
-        openActiveMinerInfo({ replaceUrl: true });
-      } else if (t === "chips" && !route.minerId) {
-        // legacy /ru/chips → /ru/miners/{active}/chips
-        openActiveMinerChips({ replaceUrl: true });
-      } else if (t === "pools" && !route.minerId) {
-        openActiveMinerPools({ replaceUrl: true });
-      } else if (t === "energy" && !route.minerId) {
-        // legacy /ru/energy → /ru/miners/{active}/energy
-        openActiveMinerEnergy({ replaceUrl: true });
-      } else if (route.minerId) {
-        // Deep-link /miners/{id}[/info|/chips|/pools|/energy]
+      if (route.minerId) {
+        // Deep-link /miners/{id}[/info|/chips|/pools|/energy|/circuit]
         window.__pendingMinerId = String(route.minerId);
+        selectedMinerId = String(route.minerId);
+        minerDetailOpen = true;
         if (route.minerDetailTab) minerDetailTab = route.minerDetailTab;
-        activateTab("managed", { skipUrl: true, minerDetail: true });
-        void applyMinerRouteFromUrl(route.minerId, {
-          replaceUrl: true,
-          minerDetailTab: route.minerDetailTab || "miner",
-        });
+        else minerDetailTab = "miner";
+        // open detail first (needs selectedMinerId + minerDetailOpen)
+        if (typeof activateTab === "function") {
+          activateTab("managed", { skipUrl: true, minerDetail: true });
+        }
+        if (typeof applyMinerRouteFromUrl === "function") {
+          void applyMinerRouteFromUrl(route.minerId, {
+            replaceUrl: true,
+            minerDetailTab: minerDetailTab || "miner",
+          });
+        }
       } else {
         activateTab(t, { skipUrl: false, replaceUrl: true });
       }
@@ -23176,8 +22975,6 @@
     }
 
     async function loadEnergyPanel() {
-      const st = document.getElementById("energy-status");
-      if (st) st.textContent = "…";
       bindEnergyChartControls();
       try {
         const res = await fetch("/api/energy" + energyApiQs(), {
@@ -23187,37 +22984,9 @@
         if (!body.ok) throw new Error(body.error || "energy fail");
         fillEnergyConfigForm(body.config || {});
         renderEnergySummary(body);
-        // show which miner this panel is bound to
-        try {
-          const mid = resolveEnergyQueryMinerId();
-          const sub = document.querySelector(
-            "#panel-energy-summary .sub, #miner-detail-energy-stack #panel-energy-summary .sub"
-          );
-          if (sub && mid) {
-            const m =
-              typeof findMinerById === "function"
-                ? findMinerById(
-                    (fleetCache && fleetCache.miners) || managedMinersCache || [],
-                    mid
-                  )
-                : null;
-            const name = m
-              ? (m.alias && String(m.alias).trim()) ||
-                (m.name && String(m.name).trim()) ||
-                m.host ||
-                mid
-              : mid;
-            const base =
-              typeof t === "function"
-                ? t("sub.energy_card", "kWh · cost · from history power samples")
-                : "kWh · cost · from history power samples";
-            sub.textContent = base + " · " + name;
-          }
-        } catch (_) { /* ignore */ }
         void loadEnergyChart();
         return body;
       } catch (e) {
-        if (st) st.textContent = "error: " + (e.message || e);
         toastError("Energy: " + (e.message || e));
         return null;
       }
@@ -23912,7 +23681,8 @@
       const needleEl = document.getElementById("needle");
       if (needleEl) needleEl.style.left = pct + "%";
 
-      document.getElementById("banner-dry").style.display = dry ? "flex" : "none";
+      const bannerDry = document.getElementById("banner-dry");
+      if (bannerDry) bannerDry.style.display = dry ? "flex" : "none";
       const pillDry = document.getElementById("pill-dry");
       if (pillDry) pillDry.style.display = dry ? "inline-flex" : "none";
       updateWouldApplyLabels(dry);
@@ -23920,8 +23690,10 @@
       // WARMUP only when mining is active (not Suspend)
       const miningSuspended = inferWorkState(r) === "suspend";
       const showWarmup = !!upfreq && !miningSuspended;
-      document.getElementById("banner-warmup").style.display = showWarmup ? "flex" : "none";
-      document.getElementById("pill-warmup").style.display = showWarmup ? "inline-flex" : "none";
+      const bannerWarmup = document.getElementById("banner-warmup");
+      if (bannerWarmup) bannerWarmup.style.display = showWarmup ? "flex" : "none";
+      const pillWarmup = document.getElementById("pill-warmup");
+      if (pillWarmup) pillWarmup.style.display = showWarmup ? "inline-flex" : "none";
 
       const readyEl = document.getElementById("ready-val");
       if (readyEl) {
@@ -24232,7 +24004,7 @@
 
     async function fetchLive(manual) {
       // Live off: freeze UI (no auto-poll). Manual Refresh still pulls once.
-      if (!useLive.checked && !manual) {
+      if (useLive && !useLive.checked && !manual) {
         try {
           recompute();
         } catch (e) {
@@ -24321,7 +24093,7 @@
     }
 
     function onLiveToggle() {
-      if (useLive.checked) {
+      if (useLive && useLive.checked) {
         fetchLive(false);
       } else {
         // Stop realtime updates; keep last snapshot on screen.
@@ -24334,7 +24106,7 @@
       }
     }
 
-    useLive.addEventListener("change", onLiveToggle);
+    useLive?.addEventListener("change", onLiveToggle);
     // Dry Run: server is source of truth; save only via «Save»
     let dryRunServer = true;
     let dryRunDirty = false;
@@ -24448,11 +24220,15 @@
       if (el) el.addEventListener("input", () => { window.__pwFormDirty = true; });
       if (el) el.addEventListener("change", () => { window.__pwFormDirty = true; });
     });
-    document.getElementById("btn-set-mode").addEventListener("click", () => {
-      applyPower("mode", document.getElementById("set-mode").value);
+    // Power apply buttons live on miner detail / power widgets (may be absent on some builds)
+    document.getElementById("btn-set-mode")?.addEventListener("click", () => {
+      const el = document.getElementById("set-mode");
+      if (el) applyPower("mode", el.value);
     });
-    document.getElementById("btn-set-work").addEventListener("click", () => {
-      const v = document.getElementById("set-work").value;
+    document.getElementById("btn-set-work")?.addEventListener("click", () => {
+      const el = document.getElementById("set-work");
+      if (!el) return;
+      const v = el.value;
       if (v === "sleep") {
         if (!confirm("Suspend Mining — stop mining. Continue?")) return;
       } else if (v === "resume") {
@@ -24460,13 +24236,17 @@
       }
       applyPower("working", v);
     });
-    document.getElementById("btn-set-limit").addEventListener("click", () => {
-      const w = document.getElementById("set-limit").value;
+    document.getElementById("btn-set-limit")?.addEventListener("click", () => {
+      const el = document.getElementById("set-limit");
+      if (!el) return;
+      const w = el.value;
       if (!confirm("adjust_power_limit " + w + " W — reboot/restart possible. Continue?")) return;
       applyPower("power_limit", w);
     });
-    document.getElementById("btn-set-pct").addEventListener("click", () => {
-      const p = document.getElementById("set-pct").value;
+    document.getElementById("btn-set-pct")?.addEventListener("click", () => {
+      const el = document.getElementById("set-pct");
+      if (!el) return;
+      const p = el.value;
       if (!confirm("set_power_pct " + p + "% — LOW_HASH possible, temporary. Continue?")) return;
       applyPower("power_pct", p);
     });
@@ -24589,10 +24369,16 @@
         livePollTimer = null;
       }
       livePollTimer = setInterval(() => {
-        if (useLive.checked) fetchLive(false);
+        if (!useLive || useLive.checked) fetchLive(false);
       }, getLivePollMs());
     }
     restartLivePollTimer();
+    // first paint immediately (do not wait for first interval)
+    try {
+      if (!useLive || useLive.checked) void fetchLive(false);
+    } catch (e) {
+      console.warn("initial fetchLive", e);
+    }
     document.getElementById("settings-poll-interval")?.addEventListener("change", () => {
       restartLivePollTimer();
     });
@@ -27487,15 +27273,20 @@
       const nextLoad = neededLoadHours();
       loadHours = nextLoad;
       try {
-        // cap points so Overview first paint stays responsive on Keenetic RAM
-        const maxPts = Math.min(2500, Math.max(400, Math.floor(Number(loadHours || 48) * 40)));
+        // Peak ~500MB RAM: keep first history payload small (cols + low max)
+        const maxPts = Math.min(
+          900,
+          Math.max(180, Math.floor(Number(loadHours || 24) * 18))
+        );
+        const hours = Math.min(Number(loadHours) || 24, 48);
         // P2: dash columns + columnar JSON (much smaller than chart=all objects)
         const res = await fetch(
           "/api/history?hours=" +
-            loadHours +
+            hours +
             "&max=" +
             maxPts +
-            "&chart=dash&fmt=cols"
+            "&chart=dash&fmt=cols",
+          { cache: "no-store" }
         );
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "history fail");
@@ -27562,11 +27353,11 @@
     document.getElementById("btn-hist-clear")?.addEventListener("click", () => {
       clearHistoryDb();
     });
-    document.getElementById("btn-hist-refresh").addEventListener("click", () => {
+    document.getElementById("btn-hist-refresh")?.addEventListener("click", () => {
       toastInfo("Updating charts…", 1500);
       loadHistoryCharts().then(() => toastSuccess("Charts updated"));
     });
-    document.getElementById("btn-hist-save").addEventListener("click", saveHistoryConfig);
+    document.getElementById("btn-hist-save")?.addEventListener("click", saveHistoryConfig);
     document.getElementById("chart-zoom")?.addEventListener("change", (e) => {
       applyZoomPreset(e.target.value);
     });
@@ -28970,7 +28761,9 @@
       const frag = document.createDocumentFragment();
 
       rows.forEach((m) => {
-        const id = m.id || "";
+        // always string — Map keys from getAttribute are strings
+        const id = m.id != null && m.id !== "" ? String(m.id) : "";
+        if (!id) return;
         const live = m.live || null;
         const st = fleetStatusOf(m);
         // Cell only when site topology is on; otherwise first col is IP only.
@@ -29190,7 +28983,12 @@
           }
         }
 
-        tr.className = trClass.trim();
+        tr.className = (trClass + " fleet-row-click").trim();
+        tr.style.cursor = "pointer";
+        tr.title =
+          typeof fleetT === "function"
+            ? fleetT("fleet.open_hint", "Open miner page")
+            : "Open miner page";
         const idTd = tr.querySelector("td.fleet-id-td");
         if (idTd) {
           idTd.className = "fleet-id-td st-" + st;
@@ -29600,6 +29398,127 @@
       if (el.textContent !== s) el.textContent = s;
     }
 
+
+    /** Circuits that include this managed miner id. */
+    function circuitsForMinerId(mid) {
+      mid = mid != null ? String(mid).trim() : "";
+      if (!mid) return [];
+      const list = (circuitsCache && circuitsCache.circuits) || [];
+      return list.filter((c) => {
+        if (!c || !Array.isArray(c.miner_ids)) return false;
+        return c.miner_ids.some((x) => String(x) === mid);
+      });
+    }
+
+    function syncMinerDetailCircuitTab(mid) {
+      const btn = document.getElementById("md-tab-circuit");
+      const circuits = circuitsForMinerId(mid);
+      // Always show Circuit tab (policy controls live here; circuit info if bound)
+      if (btn) {
+        btn.hidden = false;
+        btn.removeAttribute("aria-hidden");
+      }
+      return circuits;
+    }
+
+    function renderMinerDetailCircuit() {
+      const mid = selectedMinerId != null ? String(selectedMinerId) : "";
+      const kv = document.getElementById("md-circuit-kv");
+      const sub = document.getElementById("md-circuit-sub");
+      const openBtn = document.getElementById("btn-md-open-circuit");
+      const circuits = syncMinerDetailCircuitTab(mid);
+      if (!kv) return;
+      const hint = document.getElementById("md-circuit-hint");
+      if (!circuits.length) {
+        kv.innerHTML =
+          '<div style="color:var(--muted);font-size:0.9rem">' +
+          (typeof t === "function"
+            ? t("miner_detail.circuit_none", "Not bound to a heat circuit")
+            : "Not bound to a heat circuit") +
+          "</div>";
+        if (sub) sub.textContent = "—";
+        if (openBtn) {
+          openBtn.disabled = true;
+          openBtn.hidden = true;
+        }
+        if (hint) hint.hidden = true;
+        return;
+      }
+      if (openBtn) openBtn.hidden = false;
+      if (hint) hint.hidden = false;
+      // Prefer first circuit (miner can be in several — list all)
+      const primary = circuits[0];
+      if (sub) {
+        const names = circuits
+          .map((c) => (c.name && String(c.name).trim()) || c.id)
+          .join(" · ");
+        sub.textContent = names;
+      }
+      if (openBtn) {
+        openBtn.disabled = false;
+        openBtn._circuitId = primary.id;
+      }
+      const rows = [];
+      const L = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
+      const typeLab =
+        typeof circuitTypeLabel === "function"
+          ? circuitTypeLabel(primary.type)
+          : primary.type || "—";
+      const push = (lab, val) => {
+        rows.push(
+          '<div class="miner-detail-metric"><label>' +
+            String(lab)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;") +
+            '</label><div class="val">' +
+            String(val == null || val === "" ? "—" : val)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;") +
+            "</div></div>"
+        );
+      };
+      // If multiple circuits, show each
+      circuits.forEach((c, idx) => {
+        if (circuits.length > 1) {
+          rows.push(
+            '<div class="miner-detail-metric" style="grid-column:1/-1"><label>' +
+              L("miner_detail.circuit_title", "Heat circuit") +
+              " · " +
+              (idx + 1) +
+              '</label><div class="val">' +
+              String((c.name && c.name.trim()) || c.id)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;") +
+              "</div></div>"
+          );
+        }
+        push(L("miner_detail.field_name", "Name"), (c.name && c.name.trim()) || c.id);
+        push(L("miner_detail.field_type", "Type"), typeof circuitTypeLabel === "function" ? circuitTypeLabel(c.type) : c.type || "—");
+        push("ID", c.id);
+        const nMiners = Array.isArray(c.miner_ids) ? c.miner_ids.length : 0;
+        push(L("miner_detail.field_miners", "Miners"), String(nMiners));
+        if (c.type === "pool" && c.pool_geometry) {
+          const g = c.pool_geometry;
+          const bits = [];
+          if (g.length_m != null) bits.push("L=" + g.length_m + "m");
+          if (g.width_m != null) bits.push("W=" + g.width_m + "m");
+          if (g.depth_m != null) bits.push("D=" + g.depth_m + "m");
+          if (g.shape) bits.push(String(g.shape));
+          if (g.water_sensor) bits.push("sensor " + g.water_sensor);
+          push(L("miner_detail.field_pool_geo", "Pool geometry"), bits.join(" · ") || "—");
+        }
+        if (c.city) push(L("field.city", "City"), c.city);
+        if (c.drycooler) push(L("circuit.drycooler", "Dry cooler"), "yes");
+      });
+      kv.innerHTML = rows.join("") || "—";
+      // style grid if needed
+      try {
+        kv.style.display = "grid";
+        kv.style.gridTemplateColumns = "repeat(auto-fill,minmax(10rem,1fr))";
+        kv.style.gap = "10px 14px";
+      } catch (_) { /* ignore */ }
+    }
+
     /** Switch Miner / Chips / Info panes; sync URL …/chips · …/info. */
     function setMinerDetailTab(tabId, opts) {
       opts = opts || {};
@@ -29608,6 +29527,12 @@
       else if (tabId === "chips" || tabId === "chipmap") tab = "chips";
       else if (tabId === "pools" || tabId === "pool") tab = "pools";
       else if (tabId === "energy" || tabId === "kwh") tab = "energy";
+      else if (
+        tabId === "circuit" ||
+        tabId === "contour" ||
+        tabId === "kontur"
+      )
+        tab = "circuit";
       const prev = minerDetailTab;
       const changed = prev !== tab;
       minerDetailTab = tab;
@@ -29654,6 +29579,16 @@
       // Energy accounting — former /energy (per-miner)
       if (tab === "energy" && (changed || opts.forceLoad)) {
         if (typeof loadEnergyPanel === "function") void loadEnergyPanel();
+      }
+      // Heat circuit + policy (Dry Run / layers) from former /miner
+      if (tab === "circuit" && (changed || opts.forceLoad)) {
+        if (typeof renderMinerDetailCircuit === "function")
+          renderMinerDetailCircuit();
+        try {
+          const pane = document.getElementById("miner-detail-pane-circuit");
+          if (pane && typeof applyI18n === "function") applyI18n(pane);
+          else if (typeof applyUiLang === "function") applyUiLang();
+        } catch (_) { /* ignore */ }
       }
     }
 
@@ -29706,6 +29641,7 @@
       else if (tab === "info") want = "info";
       else if (tab === "pools") want = "pools";
       else if (tab === "energy") want = "energy";
+      else if (tab === "circuit") want = "circuit";
       const mid = resolveActiveMinerId();
       if (!mid) {
         if (typeof toastWarn === "function") {
@@ -30305,7 +30241,22 @@
         console.warn("miner detail wm blocks", e);
       }
 
-      // Keep current inner tab (Miner / Info) — no URL thrash on live refresh
+      // Circuit tab only when miner is bound to a heat circuit
+      try {
+        if (typeof loadCircuits === "function" &&
+            !(circuitsCache.circuits && circuitsCache.circuits.length)) {
+          void loadCircuits().then(() => {
+            try {
+              syncMinerDetailCircuitTab(selectedMinerId);
+              if (minerDetailTab === "circuit") renderMinerDetailCircuit();
+            } catch (_) { /* ignore */ }
+          });
+        } else {
+          syncMinerDetailCircuitTab(selectedMinerId);
+          if (minerDetailTab === "circuit") renderMinerDetailCircuit();
+        }
+      } catch (_) { /* ignore */ }
+      // Keep current inner tab — no URL thrash on live refresh
       try {
         setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
       } catch (_) { /* ignore */ }
@@ -30362,68 +30313,102 @@
       opts = opts || {};
       const mid = minerId != null ? String(minerId).trim() : "";
       if (!mid) return;
-      selectedMinerId = mid;
-      minerDetailOpen = true;
-      // default to Miner tab when opening a miner page
-      if (
-        opts.tab === "info" ||
-        opts.tab === "chips" ||
-        opts.tab === "pools" ||
-        opts.tab === "energy" ||
-        opts.tab === "miner"
-      ) {
-        minerDetailTab = opts.tab;
-      } else if (!opts.keepTab) {
-        minerDetailTab = "miner";
-      }
-      // show detail subview under Miners tab
-      if (typeof activateTab === "function") {
-        activateTab("managed", {
-          skipUrl: true,
-          minerDetail: true,
-        });
-      } else if (typeof setMinersSubtab === "function") {
-        setMinersSubtab("detail");
-      }
-      renderMinerDetail();
-      if (typeof setMinerDetailTab === "function") {
-        setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
-      }
-      if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
-        setMinerDetailUrl(mid, opts.replaceUrl ? "replace" : "push", {
-          minerDetailTab: minerDetailTab,
-        });
-      }
-      if (minerDetailTab === "info" && typeof loadSystemInfo === "function") {
-        void loadSystemInfo({ forceLive: true });
-        if (typeof loadMinerFirmwareFlashOptions === "function") {
-          setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
+      try {
+        selectedMinerId = mid;
+        minerDetailOpen = true;
+        // default to Miner tab when opening a miner page
+        if (
+          opts.tab === "info" ||
+          opts.tab === "chips" ||
+          opts.tab === "pools" ||
+          opts.tab === "energy" ||
+          opts.tab === "circuit" ||
+          opts.tab === "miner"
+        ) {
+          minerDetailTab = opts.tab;
+        } else if (!opts.keepTab) {
+          minerDetailTab = "miner";
+        }
+
+        // URL first — address bar must update even if render throws
+        if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
+          setMinerDetailUrl(mid, opts.replaceUrl ? "replace" : "push", {
+            minerDetailTab: minerDetailTab || "miner",
+          });
+        }
+
+        // Show Miners → detail shell (do not rely only on activateTab flags)
+        try {
+          document.querySelectorAll(".view").forEach((v) => {
+            v.classList.toggle("active", v.id === "view-miners");
+          });
+          document.querySelectorAll("nav.tabs button").forEach((b) => {
+            b.classList.toggle("active", b.dataset.tab === "miners");
+          });
+        } catch (_) { /* ignore */ }
+        if (typeof setMinersSubtab === "function") {
+          setMinersSubtab("detail");
+        }
+        if (typeof activateTab === "function") {
+          // keep URL we just set; re-assert detail subview
+          activateTab("managed", {
+            skipUrl: true,
+            minerDetail: true,
+          });
+        }
+
+        if (typeof renderMinerDetail === "function") renderMinerDetail();
+        if (typeof setMinerDetailTab === "function") {
+          setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
+        }
+        if (minerDetailTab === "info" && typeof loadSystemInfo === "function") {
+          void loadSystemInfo({ forceLive: true });
+          if (typeof loadMinerFirmwareFlashOptions === "function") {
+            setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
+          }
+        }
+        if (minerDetailTab === "chips") {
+          if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+          if (typeof loadChipmap === "function") void loadChipmap(false);
+        }
+        if (minerDetailTab === "pools") {
+          if (typeof loadMiningPools === "function") loadMiningPools(false);
+          if (typeof loadPoolPresets === "function") loadPoolPresets();
+        }
+        if (minerDetailTab === "energy" && typeof loadEnergyPanel === "function") {
+          void loadEnergyPanel();
+        }
+        if (
+          minerDetailTab === "circuit" &&
+          typeof renderMinerDetailCircuit === "function"
+        ) {
+          void renderMinerDetailCircuit();
+        }
+        // ensure fleet data is fresh
+        if (typeof refreshFleetTable === "function") {
+          void refreshFleetTable().then(() => {
+            if (minerDetailOpen && minerIdEq(selectedMinerId, mid)) {
+              renderMinerDetail();
+            }
+          });
+        }
+        try {
+          document
+            .getElementById("miner-detail-card")
+            ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        } catch (_) { /* ignore */ }
+      } catch (e) {
+        console.error("openMinerDetail", e);
+        if (typeof toastError === "function") {
+          toastError(
+            (typeof t === "function"
+              ? t("miner_detail.open_fail", "Failed to open miner")
+              : "Failed to open miner") +
+              ": " +
+              (e && e.message ? e.message : e)
+          );
         }
       }
-      if (minerDetailTab === "chips") {
-        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
-        if (typeof loadChipmap === "function") void loadChipmap(false);
-      }
-      if (minerDetailTab === "pools") {
-        if (typeof loadMiningPools === "function") loadMiningPools(false);
-        if (typeof loadPoolPresets === "function") loadPoolPresets();
-      }
-      if (minerDetailTab === "energy" && typeof loadEnergyPanel === "function") {
-        void loadEnergyPanel();
-      }
-      // ensure fleet data is fresh
-      if (typeof refreshFleetTable === "function") {
-        void refreshFleetTable().then(() => {
-          if (minerDetailOpen && minerIdEq(selectedMinerId, mid)) {
-            renderMinerDetail();
-          }
-        });
-      }
-      try {
-        document
-          .getElementById("miner-detail-card")
-          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      } catch (_) { /* ignore */ }
     }
 
     async function applyMinerRouteFromUrl(minerId, opts) {
@@ -30443,6 +30428,8 @@
         minerDetailTab = "pools";
       } else if (opts.tab === "energy" || opts.minerDetailTab === "energy") {
         minerDetailTab = "energy";
+      } else if (opts.tab === "circuit" || opts.minerDetailTab === "circuit") {
+        minerDetailTab = "circuit";
       } else if (opts.tab === "miner" || opts.minerDetailTab === "miner") {
         minerDetailTab = "miner";
       }
@@ -30483,15 +30470,57 @@
       if (minerDetailTab === "energy" && typeof loadEnergyPanel === "function") {
         void loadEnergyPanel();
       }
+      if (minerDetailTab === "circuit" && typeof renderMinerDetailCircuit === "function") {
+        void renderMinerDetailCircuit();
+      }
       // ensure correct pane visible for deep-link tab
       if (typeof setMinerDetailTab === "function") {
         setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
       }
     }
 
+    /**
+     * Deep-link /{lang}/miners/{id}[/{tab}]: initTabRoute runs mid-script, before
+     * applyMinerRouteFromUrl exists — only sets selectedMinerId + __pendingMinerId.
+     * Consume pending here (same pattern as __pendingCircuitId in initCircuitsUi).
+     */
+    (function consumePendingMinerRoute() {
+      const pending =
+        window.__pendingMinerId != null && String(window.__pendingMinerId).trim()
+          ? String(window.__pendingMinerId).trim()
+          : selectedMinerId && minerDetailOpen
+            ? String(selectedMinerId)
+            : "";
+      if (!pending) return;
+      window.__pendingMinerId = null;
+      const tab =
+        typeof minerDetailTab === "string" && minerDetailTab
+          ? minerDetailTab
+          : "miner";
+      try {
+        void applyMinerRouteFromUrl(pending, {
+          replaceUrl: true,
+          minerDetailTab: tab,
+        });
+      } catch (e) {
+        console.warn("pending miner route", e);
+      }
+    })();
+
     // Wire miner detail toolbar
     document.getElementById("btn-miner-detail-back")?.addEventListener("click", () => {
       closeMinerDetail();
+    });
+    document.getElementById("btn-md-open-circuit")?.addEventListener("click", () => {
+      const btn = document.getElementById("btn-md-open-circuit");
+      const cid = (btn && btn._circuitId) || null;
+      if (!cid) return;
+      if (typeof activateTab === "function") {
+        activateTab("circuits", { skipUrl: false });
+      }
+      if (typeof openCircuitEditor === "function") {
+        openCircuitEditor(cid, { replaceUrl: false });
+      }
     });
     document.getElementById("miner-detail-tabs")?.addEventListener("click", (ev) => {
       const btn =
@@ -30516,18 +30545,12 @@
         if (typeof loadMiningPools === "function") loadMiningPools(true);
         if (typeof loadPoolPresets === "function") loadPoolPresets();
       }
-    });
-    document.getElementById("btn-minerinfo-goto-detail")?.addEventListener("click", () => {
-      openActiveMinerInfo({ replaceUrl: false });
-    });
-    document.getElementById("btn-chips-goto-detail")?.addEventListener("click", () => {
-      openActiveMinerChips({ replaceUrl: false });
-    });
-    document.getElementById("btn-pools-goto-detail")?.addEventListener("click", () => {
-      openActiveMinerPools({ replaceUrl: false });
-    });
-    document.getElementById("btn-energy-goto-detail")?.addEventListener("click", () => {
-      if (typeof openActiveMinerEnergy === "function") openActiveMinerEnergy({ replaceUrl: false });
+      if (minerDetailTab === "energy" && typeof loadEnergyPanel === "function") {
+        void loadEnergyPanel();
+      }
+      if (minerDetailTab === "circuit" && typeof renderMinerDetailCircuit === "function") {
+        void renderMinerDetailCircuit();
+      }
     });
     document.getElementById("btn-miner-detail-edit")?.addEventListener("click", () => {
       if (selectedMinerId && typeof fleetDoAction === "function") {
@@ -30552,7 +30575,7 @@
       if (m && m.role !== "active" && typeof fleetDoAction === "function") {
         await fleetDoAction("active", mid);
       }
-      if (typeof activateTab === "function") activateTab("miner");
+      if (typeof activateTab === "function") activateTab("managed");
     });
 
     // Whatsminer power settings on /miners/{id}
@@ -30663,12 +30686,26 @@
         }
         return;
       }
-      // Click row (not menu) → open miner page
+      // Direct ASIC web UI link — leave alone (new tab); do not open detail
+      const direct = t.closest("a.cell-ip-link");
+      if (direct) {
+        ev.stopPropagation();
+        return;
+      }
+      // Click row (not menu) → open miner page /{lang}/miners/{id}
       const tr = t.closest("tr[data-fleet-id]");
       if (tr) {
+        ev.preventDefault();
         const mid = tr.getAttribute("data-fleet-id");
         if (mid && typeof openMinerDetail === "function") {
           openMinerDetail(mid);
+        } else if (mid) {
+          // fallback if openMinerDetail missing mid-boot
+          try {
+            const lang =
+              typeof getUiLang === "function" ? getUiLang() : "ru";
+            location.assign("/" + lang + "/miners/" + encodeURIComponent(mid));
+          } catch (_) { /* ignore */ }
         }
       }
     });
@@ -33142,18 +33179,11 @@
       void loadActionLog();
     }
     document.getElementById("btn-dry-goto")?.addEventListener("click", () => {
-      if (typeof activateTab === "function") activateTab("miner");
-      else {
-        const tab = document.querySelector('nav.tabs button[data-tab="miner"]');
-        if (tab) tab.click();
-      }
+      if (typeof activateTab === "function") activateTab("managed");
       document.getElementById("panel-dry-run")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
     // ─── System Info tab ────────────────────────────────────────────────────
-    let lastUpdateCheck = null;
-    let headerIdentityLoaded = false;
-
     function fmtRouterBrand(r) {
       if (!r) return "Keenetic —";
       // Header: compact "Keenetic KN-3811"
@@ -33290,7 +33320,9 @@
       const fromCache = !!opts.fromCache;
 
       updateBrandDevices(r, m, ph.version);
-      renderUpdateCheck(lastUpdateCheck, ph);
+      try {
+        renderUpdateCheck(window.__lastUpdateCheck || null, ph);
+      } catch (_) { /* ignore */ }
 
       setTxt(
         "info-router-model",
@@ -34067,7 +34099,6 @@
     }
 
     function renderUpdateCheck(chk, ph) {
-      lastUpdateCheck = chk || null;
       window.__lastUpdateCheck = chk || null;
       const applyBtn = document.getElementById("btn-update-apply");
       const statusEl = document.getElementById("info-app-status");
@@ -34461,24 +34492,36 @@
       const toastOk = opts.toastOk === true;
       const toastFail = opts.toastFail === true;
       const spinBtns = Array.isArray(opts.spinBtns) ? opts.spinBtns.filter(Boolean) : [];
+      const timeoutMs = Math.max(3000, Number(opts.timeoutMs) || 12000);
       spinBtns.forEach((b) => {
         b.disabled = true;
         b.classList.add("is-spinning");
       });
+
+      const fetchJsonTimed = async (url) => {
+        const ctrl = new AbortController();
+        const to = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+          const res = await fetch(url, { cache: "no-store", signal: ctrl.signal });
+          const body = await res.json().catch(() => ({}));
+          return { res, body };
+        } finally {
+          clearTimeout(to);
+        }
+      };
 
       // 1) instant paint from localStorage
       const hadLocal = paintInfoFromLocalCache();
 
       // 2) server cache (models/versions from last successful update)
       try {
-        const resC = await fetch("/api/system/info?cached=1", { cache: "no-store" });
-        if (resC.ok) {
-          const bodyC = await resC.json();
-          if (bodyC && bodyC.ok !== false) {
-            applySystemInfoToUI(bodyC, { fromCache: true });
-            saveFullInfoCache(bodyC);
-            headerIdentityLoaded = true;
-          }
+        const { res: resC, body: bodyC } = await fetchJsonTimed(
+          "/api/system/info?cached=1"
+        );
+        if (resC.ok && bodyC && bodyC.ok !== false) {
+          applySystemInfoToUI(bodyC, { fromCache: true });
+          saveFullInfoCache(bodyC);
+          headerIdentityLoaded = true;
         }
       } catch (_) { /* ignore */ }
 
@@ -34491,9 +34534,9 @@
       }
 
       // 3) live refresh → rewrite cache (force=1 clears identity TTL on server)
+      // Peak can take 20s+ under RAM pressure — hard timeout so UI stays responsive.
       try {
-        const res = await fetch("/api/system/info?force=1", { cache: "no-store" });
-        const body = await res.json();
+        const { res, body } = await fetchJsonTimed("/api/system/info?force=1");
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || ("HTTP " + res.status));
         }
@@ -34508,6 +34551,12 @@
           );
         }
       } catch (e) {
+        const msg =
+          e && e.name === "AbortError"
+            ? "timeout " + timeoutMs + "ms"
+            : e && e.message
+              ? e.message
+              : String(e || "error");
         // keep cached paint; toast only if no cache at all or explicit
         if (toastFail || !hadLocal) {
           if (typeof toastError === "function") {
@@ -34516,7 +34565,7 @@
                 ? t("toast.miner_info_refresh_fail", "Miner info refresh failed")
                 : "Miner info refresh failed") +
                 ": " +
-                (e.message || e)
+                msg
             );
           }
         }
@@ -34664,7 +34713,7 @@
       }
     });
     document.getElementById("btn-update-apply")?.addEventListener("click", async () => {
-      const chk = lastUpdateCheck || {};
+      const chk = window.__lastUpdateCheck || {};
       const ver = chk.latest_version || chk.tag || chk.github_branch || "main";
       const ok = window.confirm(
         (typeof t === "function"
@@ -34818,7 +34867,7 @@
             intervalMs: 1000,
           });
         } else {
-          lastUpdateCheck = null;
+          window.__lastUpdateCheck = null;
           void loadSystemInfo();
           if (btn) {
             btn.disabled = false;
@@ -44227,8 +44276,14 @@
     });
 
     if (typeof initDashLayout === "function") initDashLayout();
+    // Live immediately — do not wait for poll interval (dashboard was empty until first tick)
+    try {
+      if (typeof fetchLive === "function") void fetchLive(false);
+    } catch (e) {
+      console.warn("boot fetchLive", e);
+    }
     // Live first (clears dash skeleton); heavy charts/chipmap deferred so Overview paints
-    // (history can be ~1MB+ and blocks main thread while parsing)
+    // (history can be ~1MB+ and blocks main thread / single-threaded serve.py)
     const deferHeavy = (fn, ms) => {
       const run = () => {
         try {
@@ -44238,27 +44293,28 @@
         }
       };
       if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(run, { timeout: ms + 500 });
+        requestIdleCallback(run, { timeout: ms + 800 });
       } else {
         setTimeout(run, ms);
       }
     };
+    // History after live paints — Peak history is slow & blocks other API calls
     deferHeavy(() => {
       if (typeof loadHistoryCharts === "function") loadHistoryCharts();
-    }, 400);
+    }, 1800);
     deferHeavy(() => {
       if (typeof bindEnergyChartControls === "function") bindEnergyChartControls();
       if (typeof loadEnergyChart === "function") void loadEnergyChart();
-    }, 550);
+    }, 2500);
     deferHeavy(() => {
       if (typeof loadChipmapConfig === "function") loadChipmapConfig();
       if (typeof scheduleChipmapPoll === "function") scheduleChipmapPoll();
-    }, 800);
+    }, 3200);
     deferHeavy(() => {
       if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
       if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
       if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
-    }, 600);
+    }, 2800);
     // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
     Promise.all([
       loadPoolConfig(),

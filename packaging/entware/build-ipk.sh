@@ -133,6 +133,17 @@ PY
     cp -a "$UI/whatsminer" "$STAGE/opt/lib/poolheat/whatsminer"
   fi
   cp -f "$UI/index.html" "$STAGE/opt/share/poolheat/www/"
+  # Precompressed SPA (Peak ~500MB RAM) — serve.py prefers index.html.gz
+  if [ -f "$UI/index.html.gz" ]; then
+    cp -f "$UI/index.html.gz" "$STAGE/opt/share/poolheat/www/"
+  elif command -v gzip >/dev/null 2>&1; then
+    gzip -9 -c "$UI/index.html" >"$STAGE/opt/share/poolheat/www/index.html.gz"
+  fi
+  # Local Chart.js — SPA must not depend on CDN (WAN/CDN often broken on routers)
+  if [ -d "$UI/vendor" ]; then
+    rm -rf "$STAGE/opt/share/poolheat/www/vendor"
+    cp -a "$UI/vendor" "$STAGE/opt/share/poolheat/www/vendor"
+  fi
   if [ -d "$UI/icons" ]; then
     rm -rf "$STAGE/opt/share/poolheat/www/icons"
     cp -a "$UI/icons" "$STAGE/opt/share/poolheat/www/icons"
