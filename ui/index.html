@@ -2975,6 +2975,29 @@
       color: var(--muted);
       font-size: 0.9rem;
     }
+    #miner-detail-content {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    #miner-detail-wm {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    #miner-detail-wm[hidden] {
+      display: none !important;
+    }
+    @media (max-width: 900px) {
+      #miner-detail-wm .grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+      }
+    }
+    @media (max-width: 520px) {
+      #miner-detail-wm .grid-4 {
+        grid-template-columns: 1fr !important;
+      }
+    }
     /* First col: left status strip + cell/IP — no text badge */
     .fleet-table tbody tr {
       position: relative;
@@ -8841,6 +8864,88 @@
                   <h3 data-i18n="miner_detail.live">Live</h3>
                   <div class="miner-detail-grid" id="miner-detail-live-grid"></div>
                 </div>
+
+                <!-- Whatsminer: same blocks as /miner (mode · boards · temps) -->
+                <div id="miner-detail-wm" hidden>
+                  <div class="card" style="margin:0">
+                    <div class="card-h">
+                      <div>
+                        <h2 data-i18n="h2.mode">Miner mode</h2>
+                      </div>
+                    </div>
+                    <div class="card-b">
+                      <div class="grid-4" style="margin-bottom:0;grid-template-columns:repeat(5,minmax(0,1fr))">
+                        <div class="metric">
+                          <label><span class="tip" data-tip-key="power_mode" data-i18n="field.power_mode">Power Mode</span></label>
+                          <div class="val" style="font-size:1.2rem" id="md-pw-mode-now">—</div>
+                        </div>
+                        <div class="metric">
+                          <label><span class="tip" data-tip-key="working_mode" data-i18n="field.mining_control">Mining Control</span></label>
+                          <div class="val" style="font-size:1.05rem" id="md-wk-mode-now">—</div>
+                        </div>
+                        <div class="metric">
+                          <label data-i18n="field.status">Status</label>
+                          <div class="val" style="font-size:1.05rem" id="md-wk-run-status">—</div>
+                        </div>
+                        <div class="metric">
+                          <label><span class="tip" data-tip-key="power_limit" data-i18n="field.power_limit">Power Limit</span></label>
+                          <div class="val" style="font-size:1.05rem">
+                            <span id="md-pw-lim-meas">—</span> <small>W</small>
+                          </div>
+                        </div>
+                        <div class="metric">
+                          <label><span class="tip" data-tip-key="power_pct" data-i18n="field.power_pct">Power pct</span></label>
+                          <div class="val" style="font-size:0.95rem;font-weight:600;line-height:1.35">
+                            set: <span id="md-pw-pct-set">—</span> <small>%</small>
+                            <span class="val-sep" aria-hidden="true">|</span>
+                            meas: <span id="md-pw-pct-meas">—</span> <small>%</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card" style="margin:0">
+                    <div class="card-h">
+                      <div>
+                        <h2 id="md-boards-pcb-title" data-i18n="h2.boards">Hashboards</h2>
+                        <div class="sub" id="md-boards-pcb-sub">Upfreq Complete</div>
+                      </div>
+                    </div>
+                    <div class="card-b board-chip-grid" id="md-boards-grid">
+                      <!-- filled from live.board_count -->
+                    </div>
+                  </div>
+
+                  <div class="card" style="margin:0" id="md-panel-miner-temps">
+                    <div class="card-h">
+                      <div>
+                        <h2 data-i18n="h2.temps_catalog">Temperature sensors</h2>
+                        <div class="sub" data-i18n="sub.temps_catalog">all points available for this model · live</div>
+                      </div>
+                      <span class="pill" id="md-pill-temps-count" style="display:none"><span class="dot"></span> 0</span>
+                    </div>
+                    <div class="card-b" style="padding-top:10px;padding-bottom:8px">
+                      <p id="md-temps-catalog-hint" style="font-size:0.75rem;color:var(--dim);margin:0 0 8px">—</p>
+                      <div class="temps-scroll" style="max-height:min(50vh,420px);overflow:auto">
+                        <table class="err-table temps-table" id="md-temps-catalog-table">
+                          <thead>
+                            <tr>
+                              <th data-i18n="temps.col_sensor">Sensor</th>
+                              <th data-i18n="temps.col_value">°C</th>
+                              <th data-i18n="temps.col_group">Group</th>
+                              <th data-i18n="temps.col_source">Source</th>
+                            </tr>
+                          </thead>
+                          <tbody id="md-temps-catalog-body">
+                            <tr><td colspan="4" style="color:var(--dim);text-align:center;padding:12px">—</td></tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="miner-detail-section">
                   <h3 data-i18n="miner_detail.inventory">Inventory</h3>
                   <dl class="miner-detail-kv" id="miner-detail-inv"></dl>
@@ -23000,6 +23105,18 @@
         updatePollerPills(r);
       } catch (_) { /* ignore */ }
 
+      // Keep open /miners/{id} Whatsminer blocks in sync with /api/live
+      try {
+        if (
+          typeof minerDetailOpen !== "undefined" &&
+          minerDetailOpen &&
+          selectedMinerId &&
+          typeof renderMinerDetail === "function"
+        ) {
+          renderMinerDetail();
+        }
+      } catch (_) { /* ignore */ }
+
       updateSrcBar(r);
 
       document.querySelectorAll(".layer").forEach((l) => {
@@ -28424,6 +28541,358 @@
       );
     }
 
+    /** Whatsminer / MicroBT — show Miner-tab style mode · boards · temps on detail. */
+    function isWhatsminerMiner(m, liveSrc) {
+      const v = String(
+        (m && (m.vendor || m.api_vendor)) ||
+          (liveSrc && (liveSrc.vendor || liveSrc.api_vendor)) ||
+          ""
+      ).toLowerCase();
+      if (v === "whatsminer" || v === "microbt") return true;
+      const model = String(
+        (m && (m.model_code || m.model || m.model_display)) ||
+          (liveSrc && (liveSrc.miner_type || liveSrc.model || liveSrc.model_display)) ||
+          ""
+      ).toUpperCase();
+      if (/^M\d/.test(model) || model.indexOf("WHATSMINER") >= 0) return true;
+      // full temps catalog is a strong Whatsminer signal
+      if (
+        liveSrc &&
+        Array.isArray(liveSrc.temps) &&
+        liveSrc.temps.length > 4 &&
+        (liveSrc.upfreq || liveSrc.board_count)
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    /**
+     * Richest live for miner detail: prefer full /api/live when this host is
+     * the active polled ASIC; else fleet row live slice.
+     */
+    function minerDetailLiveSource(m) {
+      if (!m) return null;
+      const rowLive = m.live && typeof m.live === "object" ? m.live : null;
+      let full = null;
+      try {
+        if (typeof live !== "undefined" && live && typeof live === "object") {
+          full = live;
+        } else if (window.__lastLive && typeof window.__lastLive === "object") {
+          full = window.__lastLive;
+        }
+      } catch (_) {
+        full = null;
+      }
+      const host = String(m.host || "")
+        .split(":")[0]
+        .trim()
+        .toLowerCase();
+      let fullHost = "";
+      if (full) {
+        fullHost = String(full.host || full.ip || "")
+          .split(":")[0]
+          .trim()
+          .toLowerCase();
+      }
+      const matchHost = !!(host && fullHost && host === fullHost);
+      const isActive = m.role === "active" || matchHost;
+      if (isActive && full && full.ok !== false) {
+        // full snapshot wins (temps catalog, upfreq, mode…)
+        return Object.assign({}, rowLive || {}, full);
+      }
+      return rowLive;
+    }
+
+    function setMdText(id, val) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const s = val == null || val === "" ? "—" : String(val);
+      if (el.textContent !== s) el.textContent = s;
+    }
+
+    /** Read-only mode strip (same fields as /miner). */
+    function renderMinerDetailMode(src) {
+      src = src || {};
+      const modeNow =
+        src.mode || src.mode_measured || src.mode_norm || "—";
+      setMdText("md-pw-mode-now", modeNow);
+
+      let workKey = null;
+      try {
+        if (typeof inferWorkState === "function") workKey = inferWorkState(src);
+      } catch (_) {
+        workKey = null;
+      }
+      if (!workKey) {
+        const w = String(src.work || src.work_measured || "").toLowerCase();
+        if (w === "sleep" || w === "suspend") workKey = "suspend";
+        else if (w === "resume" || w === "mining") workKey = "resume";
+      }
+      const workLabel = (v) => {
+        if (v === "sleep" || v === "suspend") return "Suspend Mining";
+        if (v === "resume") return "Resume Mining";
+        return v || "—";
+      };
+      setMdText("md-wk-mode-now", workKey ? workLabel(workKey) : "—");
+
+      // run status (same logic as Miner tab, compact)
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      let runLab = "—";
+      if (lang === "ru" && src.run_status_ru) runLab = src.run_status_ru;
+      else if (lang !== "ru" && src.run_status_en) runLab = src.run_status_en;
+      else if (src.run_status_ru) runLab = src.run_status_ru;
+      else if (src.run_status_en) runLab = src.run_status_en;
+      else if (src.run_status) {
+        const map =
+          lang === "ru"
+            ? {
+                starting: "Запускается",
+                stopping: "Останавливается",
+                tuning: "Настройка",
+                running: "Майнинг",
+                stopped: "Остановлен",
+              }
+            : {
+                starting: "Starting",
+                stopping: "Stopping",
+                tuning: "Tuning",
+                running: "Running",
+                stopped: "Stopped",
+              };
+        runLab = map[src.run_status] || src.run_status;
+      } else if (workKey === "resume") {
+        const up = src.upfreq || [];
+        const tuning =
+          Array.isArray(up) && up.length && up.some((u) => Number(u) !== 1);
+        runLab =
+          lang === "ru"
+            ? tuning
+              ? "Настройка"
+              : "Майнинг"
+            : tuning
+              ? "Tuning"
+              : "Running";
+      } else if (workKey === "suspend" || workKey === "sleep") {
+        runLab = lang === "ru" ? "Остановлен" : "Stopped";
+      }
+      setMdText("md-wk-run-status", runLab);
+
+      const limSet =
+        src.power_limit_set != null && src.power_limit_set !== ""
+          ? Number(src.power_limit_set)
+          : src.power_limit_measured != null
+            ? Number(src.power_limit_measured)
+            : NaN;
+      const limEff =
+        src.power_limit != null && Number(src.power_limit) > 0
+          ? Number(src.power_limit)
+          : NaN;
+      const limShow = Number.isFinite(limSet)
+        ? limSet
+        : Number.isFinite(limEff)
+          ? limEff
+          : null;
+      setMdText(
+        "md-pw-lim-meas",
+        limShow != null ? Math.round(limShow) : "—"
+      );
+
+      let pctSet = "—";
+      if (src.power_pct_cmd != null && src.power_pct_cmd !== "") {
+        pctSet = String(Math.round(Number(src.power_pct_cmd)));
+      }
+      setMdText("md-pw-pct-set", pctSet);
+
+      let pctMeas = "—";
+      const pW = Number(src.power);
+      const pLim = Number.isFinite(limSet)
+        ? limSet
+        : Number.isFinite(limEff)
+          ? limEff
+          : NaN;
+      if (Number.isFinite(pW) && Number.isFinite(pLim) && pLim > 0) {
+        pctMeas = String(Math.round((pW / pLim) * 100));
+      } else if (src.power_pct_reported != null) {
+        const hp = Number(src.power_pct_reported);
+        if (Number.isFinite(hp) && hp > 0) pctMeas = String(Math.round(hp));
+      }
+      setMdText("md-pw-pct-meas", pctMeas);
+    }
+
+    /** Hashboard cards for detail page (ids md-b0… not shared with /miner). */
+    function renderMinerDetailBoards(src) {
+      const grid = document.getElementById("md-boards-grid");
+      const title = document.getElementById("md-boards-pcb-title");
+      const sub = document.getElementById("md-boards-pcb-sub");
+      if (!grid) return;
+      src = src || {};
+      const nB =
+        typeof resolveBoardCount === "function" ? resolveBoardCount(src) : 4;
+      grid.style.setProperty("--board-cols", String(nB));
+      grid.setAttribute("data-cols", String(nB));
+      const cur = grid.querySelectorAll(".bc-cell").length;
+      if (cur !== nB) {
+        let html = "";
+        for (let i = 0; i < nB; i++) {
+          const idLab =
+            typeof formatBoardCellId === "function"
+              ? formatBoardCellId(i, src)
+              : "SM" + i;
+          html +=
+            '<div class="bc-cell"><div class="bc-id">' +
+            escapeLogHtml(idLab) +
+            '</div><div class="bc-t"><span id="md-b' +
+            i +
+            '">—</span> <small>°C</small></div><div class="tc-extra" id="md-b' +
+            i +
+            'u">upfreq —</div></div>';
+        }
+        grid.innerHTML = html;
+      } else {
+        grid.querySelectorAll(".bc-cell .bc-id").forEach((el, i) => {
+          el.textContent =
+            typeof formatBoardCellId === "function"
+              ? formatBoardCellId(i, src)
+              : "SM" + i;
+        });
+      }
+      if (title) {
+        title.textContent =
+          typeof formatBoardsTitle === "function"
+            ? formatBoardsTitle(nB)
+            : "Hashboards · " + nB;
+      }
+      if (sub) {
+        sub.textContent =
+          typeof formatBoardLayoutNote === "function"
+            ? formatBoardLayoutNote(src)
+            : "Upfreq Complete";
+      }
+      const boards = Array.isArray(src.boards) ? src.boards : [];
+      const upfreq = Array.isArray(src.upfreq) ? src.upfreq : [];
+      for (let i = 0; i < nB; i++) {
+        const tv = boards[i];
+        const tEl = document.getElementById("md-b" + i);
+        if (tEl) {
+          const n = Number(tv);
+          tEl.textContent =
+            Number.isFinite(n) && n > 0
+              ? n.toFixed(1)
+              : typeof fmt === "function"
+                ? fmt(tv)
+                : tv != null
+                  ? String(tv)
+                  : "—";
+        }
+        const u = upfreq[i];
+        const uEl = document.getElementById("md-b" + i + "u");
+        if (uEl) {
+          uEl.textContent =
+            "upfreq " + (u === 1 ? "ok" : u == null ? "—" : String(u));
+        }
+      }
+    }
+
+    /** Temperature sensors table for detail (same columns as /miner). */
+    function renderMinerDetailTemps(src) {
+      const body = document.getElementById("md-temps-catalog-body");
+      const hint = document.getElementById("md-temps-catalog-hint");
+      const pill = document.getElementById("md-pill-temps-count");
+      if (!body) return;
+      src = src || {};
+      const list = Array.isArray(src.temps) ? src.temps : [];
+      const ru = typeof getUiLang === "function" && getUiLang() === "ru";
+      const avail = list.filter((x) => x && x.available && x.value != null);
+      if (pill) {
+        pill.style.display = list.length ? "inline-flex" : "none";
+        pill.innerHTML =
+          '<span class="dot"></span> ' +
+          avail.length +
+          (list.length && avail.length !== list.length
+            ? "/" + list.length
+            : "");
+      }
+      if (hint) {
+        const model = src.miner_type || src.model || src.model_display || "—";
+        hint.textContent =
+          (model && model !== "—" ? model + " · " : "") +
+          avail.length +
+          " " +
+          (ru ? "с данными" : "with data") +
+          (list.length > avail.length
+            ? " · " + (list.length - avail.length) + (ru ? " н/д" : " n/a")
+            : "");
+      }
+      if (!list.length) {
+        body.innerHTML =
+          '<tr><td colspan="4" style="color:var(--dim);text-align:center;padding:12px">' +
+          (ru ? "нет данных" : "no data") +
+          "</td></tr>";
+        return;
+      }
+      const esc = (s) =>
+        String(s == null ? "" : s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      body.innerHTML = list
+        .map((it) => {
+          const lab = ru
+            ? it.label_ru || it.label || it.id
+            : it.label || it.id;
+          const grpKey = "temps.group." + (it.group || "");
+          const grp =
+            typeof t === "function"
+              ? t(grpKey, it.group || "—")
+              : it.group || "—";
+          const val =
+            it.available && it.value != null
+              ? Number(it.value).toFixed(2)
+              : typeof t === "function"
+                ? t("temps.na", "n/a")
+                : "n/a";
+          const na = !(it.available && it.value != null);
+          const grpClass =
+            it.group === "chip" || it.group === "board_chip"
+              ? "grp-chip"
+              : it.group === "board"
+                ? "grp-board"
+                : it.group === "coolant"
+                  ? "grp-coolant"
+                  : it.group === "psu"
+                    ? "grp-psu"
+                    : "";
+          return (
+            "<tr><td>" +
+            esc(lab) +
+            '</td><td class="col-val' +
+            (na ? " is-na" : "") +
+            '">' +
+            esc(val) +
+            '</td><td class="col-group' +
+            (grpClass ? " " + grpClass : "") +
+            '">' +
+            esc(grp) +
+            '</td><td class="col-src">' +
+            esc(it.source || "—") +
+            "</td></tr>"
+          );
+        })
+        .join("");
+    }
+
+    function renderMinerDetailWhatsminerBlocks(m, liveSrc) {
+      const wrap = document.getElementById("miner-detail-wm");
+      if (!wrap) return;
+      const show = isWhatsminerMiner(m, liveSrc);
+      wrap.hidden = !show;
+      if (!show) return;
+      renderMinerDetailMode(liveSrc || {});
+      renderMinerDetailBoards(liveSrc || {});
+      renderMinerDetailTemps(liveSrc || {});
+    }
+
     function minerDetailMetric(label, val, hint) {
       return (
         '<div class="miner-detail-metric">' +
@@ -28479,6 +28948,8 @@
               : "Miner not found";
         }
         if (contentEl) contentEl.hidden = true;
+        const wmHide = document.getElementById("miner-detail-wm");
+        if (wmHide) wmHide.hidden = true;
         if (titleEl) titleEl.textContent = String(mid);
         if (subEl) subEl.textContent = "id · " + String(mid);
         return;
@@ -28487,7 +28958,9 @@
       if (emptyEl) emptyEl.hidden = true;
       if (contentEl) contentEl.hidden = false;
 
-      const live = m.live || null;
+      // Richest live: full /api/live when this host is active, else fleet slice
+      const liveSrc = minerDetailLiveSource(m);
+      const live = liveSrc || m.live || null;
       const st = typeof fleetStatusOf === "function" ? fleetStatusOf(m) : "unknown";
       const name =
         (m.alias && String(m.alias).trim()) ||
@@ -28504,7 +28977,7 @@
       const vendorName =
         m.vendor_name ||
         (typeof vendorDisplayName === "function"
-          ? vendorDisplayName(m.vendor || "")
+          ? vendorDisplayName(m.vendor || (live && live.vendor) || "")
           : m.vendor || "—");
 
       if (titleEl) titleEl.textContent = name;
@@ -28530,7 +29003,7 @@
             ? absAssetUrl(
                 m.vendor_logo ||
                   (typeof vendorLogoSrc === "function"
-                    ? vendorLogoSrc(m.vendor || "")
+                    ? vendorLogoSrc(m.vendor || (live && live.vendor) || "")
                     : "")
               )
             : m.vendor_logo || "";
@@ -28546,7 +29019,7 @@
         actBtn.disabled = m.role === "active";
       }
 
-      // Live metrics
+      // Live metrics summary grid
       if (liveGrid) {
         const hrThEff = live ? fleetEffectiveHashrateTh(live) : null;
         const hr = live
@@ -28653,6 +29126,13 @@
           minerDetailMetric(L("fleet.col.elapsed", "Elapsed"), elapsed, "") +
           minerDetailMetric(L("fleet.col.boards_fans", "Boards"), boards, fans) +
           minerDetailMetric(L("fleet.col.pool", "Pool"), poolLine, "");
+      }
+
+      // Whatsminer: Режим майнера · Хешплаты · Датчики температуры
+      try {
+        renderMinerDetailWhatsminerBlocks(m, liveSrc || live);
+      } catch (e) {
+        console.warn("miner detail wm blocks", e);
       }
 
       // Inventory

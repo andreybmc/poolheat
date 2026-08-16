@@ -12266,11 +12266,29 @@ def _fleet_live_slice(live: dict | None, *, host: str | None = None) -> dict | N
         "board_labels": live.get("board_labels"),
         "boards_detail": live.get("boards_detail"),
         "hashboard_style": live.get("hashboard_style"),
+        "board_layout_note": live.get("board_layout_note"),
         "board_temps": [
             (round(float(x), 1) if isinstance(x, (int, float)) else None)
             for x in (live.get("boards") or [])[:8]
             if True
         ],
+        # Mode / mining control (Miner tab parity for /miners/{id})
+        "mode": live.get("mode") or live.get("mode_measured"),
+        "mode_measured": live.get("mode_measured") or live.get("mode"),
+        "mode_norm": live.get("mode_norm"),
+        "work_measured": live.get("work_measured") or live.get("work"),
+        "mineroff": live.get("mineroff"),
+        "run_status": live.get("run_status"),
+        "run_status_en": live.get("run_status_en"),
+        "run_status_ru": live.get("run_status_ru"),
+        "power_limit": live.get("power_limit"),
+        "power_limit_set": live.get("power_limit_set"),
+        "power_limit_measured": live.get("power_limit_measured"),
+        "power_pct_cmd": live.get("power_pct_cmd"),
+        "power_pct_reported": live.get("power_pct_reported"),
+        "upfreq": live.get("upfreq") if isinstance(live.get("upfreq"), list) else None,
+        # Full temp catalog for miner detail page (Whatsminer sensors table)
+        "temps": live.get("temps") if isinstance(live.get("temps"), list) else None,
         "power_source": live.get("power_source"),
         "power_estimated": live.get("power_estimated"),
         "efficiency_value": live.get("efficiency_value"),
