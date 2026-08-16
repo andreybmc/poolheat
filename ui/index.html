@@ -2839,6 +2839,13 @@
     /* —— Miner detail page (/miners/{id}) —— */
     .miner-detail-head {
       display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 12px;
+      padding-bottom: 0;
+    }
+    .miner-detail-head-top {
+      display: flex;
       flex-wrap: wrap;
       align-items: flex-start;
       gap: 12px 16px;
@@ -2849,6 +2856,38 @@
       gap: 12px;
       min-width: 0;
       flex: 1 1 14rem;
+    }
+    .miner-detail-tabs {
+      display: flex;
+      gap: 0;
+      margin: 0 -2px -1px;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .miner-detail-tabs button {
+      appearance: none;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-weight: 600;
+      padding: 10px 16px 12px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .miner-detail-tabs button:hover {
+      color: var(--text);
+    }
+    .miner-detail-tabs button.active {
+      color: var(--accent, #3d9cf0);
+      border-bottom-color: var(--accent, #3d9cf0);
+    }
+    .miner-detail-pane[hidden] {
+      display: none !important;
     }
     .miner-detail-logo {
       width: 40px;
@@ -7033,45 +7072,7 @@
           </div>
         </div>
 
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 id="boards-pcb-title" data-i18n="h2.boards">Hashboards</h2>
-              <div class="sub" id="boards-pcb-sub">Upfreq Complete</div>
-            </div>
-          </div>
-          <div class="card-b board-chip-grid" id="boards-grid">
-            <!-- cells rebuilt from live.board_count (M63=4, M60S=3, …) -->
-          </div>
-        </div>
-
-        <div class="card" id="panel-miner-temps">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.temps_catalog">Temperature sensors</h2>
-              <div class="sub" data-i18n="sub.temps_catalog">all points available for this model · live</div>
-            </div>
-            <span class="pill" id="pill-temps-count" style="display:none"><span class="dot"></span> 0</span>
-          </div>
-          <div class="card-b" style="padding-top:10px;padding-bottom:8px">
-            <p id="temps-catalog-hint" style="font-size:0.75rem;color:var(--dim);margin:0 0 8px">—</p>
-            <div class="temps-scroll" style="max-height:min(50vh,420px);overflow:auto">
-              <table class="err-table temps-table" id="temps-catalog-table">
-                <thead>
-                  <tr>
-                    <th data-i18n="temps.col_sensor">Sensor</th>
-                    <th data-i18n="temps.col_value">°C</th>
-                    <th data-i18n="temps.col_group">Group</th>
-                    <th data-i18n="temps.col_source">Source</th>
-                  </tr>
-                </thead>
-                <tbody id="temps-catalog-body">
-                  <tr><td colspan="4" style="color:var(--dim);text-align:center;padding:12px">—</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <!-- Hashboards + temperature catalog moved to /miners/{id} (Whatsminer detail) -->
       </div>
       </div><!-- /subview-miner -->
 
@@ -8840,41 +8841,51 @@
         <div class="stack">
           <div class="card fleet-card" id="miner-detail-card">
             <div class="card-h miner-detail-head">
-              <div class="brand-row">
-                <button type="button" class="btn ghost" id="btn-miner-detail-back" data-i18n="miner_detail.back">← Fleet</button>
-                <img class="miner-detail-logo" id="miner-detail-logo" alt="" width="40" height="40" hidden />
-                <div style="min-width:0">
-                  <h2 class="miner-detail-title" id="miner-detail-title">Miner</h2>
-                  <p class="miner-detail-sub" id="miner-detail-sub">—</p>
-                  <div class="miner-detail-status" id="miner-detail-status"><span class="dot"></span> <span id="miner-detail-status-text">—</span></div>
+              <div class="miner-detail-head-top">
+                <div class="brand-row">
+                  <button type="button" class="btn ghost" id="btn-miner-detail-back" data-i18n="miner_detail.back">← Fleet</button>
+                  <img class="miner-detail-logo" id="miner-detail-logo" alt="" width="40" height="40" hidden />
+                  <div style="min-width:0">
+                    <h2 class="miner-detail-title" id="miner-detail-title">Miner</h2>
+                    <p class="miner-detail-sub" id="miner-detail-sub">—</p>
+                    <div class="miner-detail-status" id="miner-detail-status"><span class="dot"></span> <span id="miner-detail-status-text">—</span></div>
+                  </div>
+                </div>
+                <div class="miner-detail-actions btn-row">
+                  <button type="button" class="btn" id="btn-miner-detail-refresh" data-i18n="btn.refresh">Refresh</button>
+                  <button type="button" class="btn" id="btn-miner-detail-edit" data-i18n="fleet.edit">Edit</button>
+                  <button type="button" class="btn" id="btn-miner-detail-active" data-i18n="fleet.make_active">Make active</button>
+                  <button type="button" class="btn primary" id="btn-miner-detail-controls" data-i18n="miner_detail.controls">Controls</button>
+                  <button type="button" class="btn" id="btn-miner-detail-reboot" data-i18n="fleet.reboot">Reboot</button>
                 </div>
               </div>
-              <div class="miner-detail-actions btn-row">
-                <button type="button" class="btn" id="btn-miner-detail-refresh" data-i18n="btn.refresh">Refresh</button>
-                <button type="button" class="btn" id="btn-miner-detail-edit" data-i18n="fleet.edit">Edit</button>
-                <button type="button" class="btn" id="btn-miner-detail-active" data-i18n="fleet.make_active">Make active</button>
-                <button type="button" class="btn primary" id="btn-miner-detail-controls" data-i18n="miner_detail.controls">Controls</button>
-                <button type="button" class="btn" id="btn-miner-detail-reboot" data-i18n="fleet.reboot">Reboot</button>
-              </div>
+              <nav class="miner-detail-tabs" id="miner-detail-tabs" role="tablist" aria-label="Miner detail">
+                <button type="button" class="active" role="tab" data-md-tab="miner" aria-selected="true" data-i18n="miner_detail.tab_miner">Miner</button>
+                <button type="button" role="tab" data-md-tab="info" aria-selected="false" data-i18n="miner_detail.tab_info">Info</button>
+              </nav>
             </div>
             <div class="card-b stack" style="gap:18px" id="miner-detail-body">
               <p class="miner-detail-empty" id="miner-detail-empty" hidden data-i18n="miner_detail.not_found">Miner not found</p>
               <div id="miner-detail-content">
+                <!-- Tab: Miner (live · mode · boards · temps) -->
+                <div class="miner-detail-pane" id="miner-detail-pane-miner" role="tabpanel" data-md-pane="miner">
                 <div class="miner-detail-section">
                   <h3 data-i18n="miner_detail.live">Live</h3>
                   <div class="miner-detail-grid" id="miner-detail-live-grid"></div>
                 </div>
 
-                <!-- Whatsminer: same blocks as /miner (mode · boards · temps) -->
+                <!-- Whatsminer: mode + power settings · boards · temps (per-miner) -->
                 <div id="miner-detail-wm" hidden>
                   <div class="card" style="margin:0">
                     <div class="card-h">
                       <div>
                         <h2 data-i18n="h2.mode">Miner mode</h2>
+                        <div class="sub" id="md-mode-target-hint" style="font-size:0.75rem">—</div>
                       </div>
+                      <span class="pill" id="md-pill-write" style="display:none"><span class="dot"></span> write…</span>
                     </div>
                     <div class="card-b">
-                      <div class="grid-4" style="margin-bottom:0;grid-template-columns:repeat(5,minmax(0,1fr))">
+                      <div class="grid-4" style="margin-bottom:12px;grid-template-columns:repeat(5,minmax(0,1fr))">
                         <div class="metric">
                           <label><span class="tip" data-tip-key="power_mode" data-i18n="field.power_mode">Power Mode</span></label>
                           <div class="val" style="font-size:1.2rem" id="md-pw-mode-now">—</div>
@@ -8900,6 +8911,68 @@
                             <span class="val-sep" aria-hidden="true">|</span>
                             meas: <span id="md-pw-pct-meas">—</span> <small>%</small>
                           </div>
+                        </div>
+                      </div>
+
+                      <button type="button" class="collapse-toggle" id="md-btn-toggle-pw-settings"
+                        aria-expanded="true" aria-controls="md-pw-settings-panel">
+                        <span class="chev" aria-hidden="true">▼</span>
+                        <span class="collapse-label" id="md-pw-settings-toggle-label" data-i18n="pw.settings">Power settings</span>
+                      </button>
+
+                      <div class="collapse-panel" id="md-pw-settings-panel">
+                        <div class="divider" style="margin-top:0"></div>
+                        <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;align-items:start">
+                          <div>
+                            <label class="field"><span data-i18n="field.power_mode">Power Mode</span>
+                              <select id="md-set-mode">
+                                <option value="low">low</option>
+                                <option value="normal">normal</option>
+                                <option value="high">high</option>
+                              </select>
+                            </label>
+                            <button class="btn primary" type="button" style="width:100%;margin-top:8px" id="md-btn-set-mode" data-i18n="btn.apply_power_mode">
+                              Apply Power Mode
+                            </button>
+                            <p style="font-size:0.7rem;color:var(--warn);margin-top:6px" data-i18n="hint.mode_restart">⚠ mode change restarts mining</p>
+                          </div>
+                          <div>
+                            <label class="field">Mining Control
+                              <select id="md-set-work">
+                                <option value="resume">Resume Mining</option>
+                                <option value="sleep">Suspend Mining</option>
+                              </select>
+                            </label>
+                            <button class="btn" type="button" style="width:100%;margin-top:8px" id="md-btn-set-work">
+                              Apply Mining Control
+                            </button>
+                            <p style="font-size:0.7rem;color:var(--muted);margin-top:6px">Suspend = stop · Resume = continue</p>
+                          </div>
+                          <div>
+                            <label class="field">Set Power Limit (W)
+                              <input type="number" id="md-set-limit" value="7000" min="0" max="15000" step="50" />
+                            </label>
+                            <button class="btn" type="button" style="width:100%;margin-top:8px" id="md-btn-set-limit">
+                              Apply limit
+                            </button>
+                            <p style="font-size:0.7rem;color:var(--warn);margin-top:6px">⚠ Power Limit will restart mining</p>
+                          </div>
+                          <div>
+                            <label class="field">Power pct (%)
+                              <input type="number" id="md-set-pct" value="100" min="0" max="100" step="1" />
+                            </label>
+                            <button class="btn" type="button" style="width:100%;margin-top:8px" id="md-btn-set-pct">
+                              Apply pct
+                            </button>
+                            <p style="font-size:0.7rem;color:var(--muted);margin-top:6px">until restart / may cause LOW_HASH</p>
+                          </div>
+                        </div>
+                        <div class="row" style="margin-top:14px;grid-template-columns:1fr;align-items:end;gap:14px">
+                          <button class="btn ghost" type="button" id="md-btn-refresh-pw" data-i18n="btn.refresh_status" style="justify-self:end">Refresh status</button>
+                        </div>
+                        <div class="write-log" id="md-write-log">
+                          <p id="md-write-status" class="write-status">last write: —</p>
+                          <div id="md-write-error" class="write-error" hidden></div>
                         </div>
                       </div>
                     </div>
@@ -8945,11 +9018,50 @@
                     </div>
                   </div>
                 </div>
+                </div><!-- /pane-miner -->
 
-                <div class="miner-detail-section">
-                  <h3 data-i18n="miner_detail.inventory">Inventory</h3>
-                  <dl class="miner-detail-kv" id="miner-detail-inv"></dl>
-                </div>
+                <!-- Tab: Info (identity · inventory) -->
+                <div class="miner-detail-pane" id="miner-detail-pane-info" role="tabpanel" data-md-pane="info" hidden>
+                  <div class="miner-detail-section">
+                    <h3 data-i18n="miner_detail.identity">Identity</h3>
+                    <div class="grid-3" id="miner-detail-identity-grid" style="gap:10px">
+                      <div class="metric">
+                        <label data-i18n="fleet.col.model">Model</label>
+                        <div class="val" style="font-size:1.0rem" id="md-info-model">—</div>
+                        <div class="hint" id="md-info-model-sub">—</div>
+                      </div>
+                      <div class="metric">
+                        <label data-i18n="miner_detail.firmware">Firmware</label>
+                        <div class="val" style="font-size:0.95rem" id="md-info-fw">—</div>
+                        <div class="hint" id="md-info-api">—</div>
+                      </div>
+                      <div class="metric">
+                        <label data-i18n="fleet.col.ip">IP</label>
+                        <div class="val" style="font-size:0.95rem" id="md-info-host">—</div>
+                        <div class="hint" id="md-info-mac">—</div>
+                      </div>
+                      <div class="metric">
+                        <label data-i18n="miner_detail.serial">Serial</label>
+                        <div class="val info-sn-val" id="md-info-sn">—</div>
+                        <div class="hint" id="md-info-sn-src">—</div>
+                      </div>
+                      <div class="metric">
+                        <label data-i18n="fleet.col.vendor">Vendor</label>
+                        <div class="val" style="font-size:0.95rem" id="md-info-vendor">—</div>
+                        <div class="hint" id="md-info-cooling">—</div>
+                      </div>
+                      <div class="metric">
+                        <label data-i18n="mp.col.algo">Algorithm</label>
+                        <div class="val" style="font-size:0.95rem" id="md-info-algo">—</div>
+                        <div class="hint" id="md-info-coin">—</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="miner-detail-section">
+                    <h3 data-i18n="miner_detail.inventory">Inventory</h3>
+                    <dl class="miner-detail-kv" id="miner-detail-inv"></dl>
+                  </div>
+                </div><!-- /pane-info -->
               </div>
             </div>
           </div>
@@ -11088,6 +11200,12 @@
         "miner_detail.cooling": "Cooling",
         "miner_detail.role": "Role",
         "miner_detail.enabled": "Enabled",
+        "miner_detail.target": "Target",
+        "miner_detail.no_host": "No miner host",
+        "miner_detail.tab_miner": "Miner",
+        "miner_detail.tab_info": "Info",
+        "miner_detail.identity": "Identity",
+        "miner_detail.firmware": "Firmware",
         "fleet.edit": "Edit",
         "fleet.reboot": "Reboot",
         "fleet.reboot_confirm": "Reboot {name}?\n\nFull device reboot · offline for several minutes.",
@@ -12157,6 +12275,12 @@
         "miner_detail.cooling": "Охлаждение",
         "miner_detail.role": "Роль",
         "miner_detail.enabled": "Включён",
+        "miner_detail.target": "Цель",
+        "miner_detail.no_host": "Нет host майнера",
+        "miner_detail.tab_miner": "Майнер",
+        "miner_detail.tab_info": "Инфо",
+        "miner_detail.identity": "Идентификация",
+        "miner_detail.firmware": "Прошивка",
         "fleet.edit": "Редактировать",
         "fleet.reboot": "Перезагрузить",
         "fleet.reboot_confirm": "Перезагрузить {name}?\n\nПолный reboot устройства · offline несколько минут.",
@@ -13956,6 +14080,8 @@
     /** Miner detail page: /{lang}/miners/{id} (must be before initTabRoute) */
     let selectedMinerId = null;
     let minerDetailOpen = false;
+    /** Inner tabs on detail card: miner | info */
+    let minerDetailTab = "miner";
     /** Site facility: topology_enabled default false → hide miner cells */
     let siteConfigCache = { topology_enabled: false };
     let fleetTimer = null;
@@ -21250,29 +21376,58 @@
     /**
      * @param {string} action
      * @param {*} value
-     * @param {{ force?: boolean, quiet?: boolean, source?: string }} [opts]
+     * @param {{ force?: boolean, quiet?: boolean, source?: string, target?: {host,port,vendor,id}, pillId?: string, writeStatusId?: string, skipLiveCheck?: boolean }} [opts]
      * Power settings are collapsed by default — no separate allow-writes gate.
+     * opts.target → multi-miner write to a specific Whatsminer (/miners/{id}).
      */
     async function applyPower(action, value, opts) {
       opts = opts || {};
       const quiet = !!opts.quiet;
       const source = opts.source || "manual";
-      if (!useLive.checked) {
+      const target = opts.target && typeof opts.target === "object" ? opts.target : null;
+      const hostLabel =
+        target && target.host
+          ? String(target.host).split(":")[0]
+          : "";
+      if (!opts.skipLiveCheck && !useLive.checked && !target) {
         if (!quiet) toastWarn("Enable Live from miner");
         return { ok: false, error: "live off" };
       }
       const pwEl = document.getElementById("settings-api-password");
       const password = (pwEl && pwEl.value) ? pwEl.value : undefined;
-      const pill = document.getElementById("pill-write");
+      const pillId = opts.pillId || "pill-write";
+      const pill = document.getElementById(pillId);
       if (pill) {
         pill.style.display = "inline-flex";
         pill.className = "pill warn";
         pill.innerHTML = '<span class="dot"></span> write…';
       }
-      if (!quiet) toastInfo("Sending command: " + action + " = " + value + "…", 1800);
+      if (!quiet) {
+        toastInfo(
+          "Sending command: " +
+            action +
+            " = " +
+            value +
+            (hostLabel ? " → " + hostLabel : "") +
+            "…",
+          1800
+        );
+      }
 
       try {
-        const payload = { action, value };
+        // Targeted write: wrap scalar as {host,port,vendor,id,value}
+        let sendValue = value;
+        if (target && target.host) {
+          sendValue = {
+            host: String(target.host).split(":")[0],
+            value: value,
+          };
+          if (target.port != null && target.port !== "")
+            sendValue.port = Number(target.port) || target.port;
+          if (target.vendor) sendValue.vendor = target.vendor;
+          if (target.id != null && target.id !== "") sendValue.id = target.id;
+        }
+        const payload = { action, value: sendValue };
         if (password) payload.password = password;
         const res = await fetch("/api/set", {
           method: "POST",
@@ -21283,7 +21438,15 @@
         if (!res.ok || !body.ok) {
           const err = body.error || ("HTTP " + res.status);
           const lw = body.last_write || { ts: new Date(), action, value, ok: false, error: err };
-          renderWriteStatus(lw, null);
+          if (!target) renderWriteStatus(lw, null);
+          else {
+            const mdSt = document.getElementById(opts.writeStatusId || "md-write-status");
+            if (mdSt) {
+              mdSt.textContent =
+                "last write: FAIL · " + action + " = " + value + " · " + err;
+              mdSt.classList.add("is-fail");
+            }
+          }
           throw new Error(err);
         }
         let okMsg = "Command accepted";
@@ -21302,6 +21465,7 @@
             : "Mining Control: Resume Mining";
         } else if (action === "power_limit") okMsg = "Power Limit set: " + value + " W";
         else if (action === "power_pct") okMsg = "Power pct set: " + value + " %";
+        if (hostLabel && !body.skipped) okMsg = okMsg + " · " + hostLabel;
         if (source && String(source).startsWith("auto") && !body.skipped) {
           okMsg = "AUTO · " + okMsg;
         }
@@ -21315,25 +21479,59 @@
         } else {
           toastSuccess(okMsg, 2200);
         }
-        renderWriteStatus({ ts: new Date(), action, value, ok: true, source }, null);
+        if (!target) {
+          renderWriteStatus({ ts: new Date(), action, value, ok: true, source }, null);
+        } else {
+          const mdSt = document.getElementById(opts.writeStatusId || "md-write-status");
+          if (mdSt) {
+            mdSt.textContent =
+              "last write: OK · " +
+              action +
+              " = " +
+              value +
+              (hostLabel ? " → " + hostLabel : "");
+            mdSt.classList.remove("is-fail");
+          }
+          const mdErr = document.getElementById("md-write-error");
+          if (mdErr) mdErr.hidden = true;
+        }
         if (pill) {
           pill.className = "pill ok";
           pill.innerHTML = '<span class="dot"></span> write ok';
         }
-        window.__pwFormDirty = false;
+        if (!target) window.__pwFormDirty = false;
+        else window.__mdPwFormDirty = false;
         if (!opts.skipRefresh) {
-          setTimeout(() => fetchLive(false), 800);
-          setTimeout(() => fetchLive(false), 3000);
+          if (target) {
+            setTimeout(() => {
+              if (typeof refreshFleetTable === "function") void refreshFleetTable();
+            }, 800);
+            setTimeout(() => {
+              if (typeof refreshFleetTable === "function") void refreshFleetTable();
+            }, 3000);
+          } else {
+            setTimeout(() => fetchLive(false), 800);
+            setTimeout(() => fetchLive(false), 3000);
+          }
         }
         return { ok: true, body };
       } catch (e) {
         if (!quiet) toastError("Write error: " + e.message);
         else toastError("AUTO fail: " + e.message);
-        const st = document.getElementById("write-status");
-        if (st && !st.classList.contains("is-fail")) {
-          renderWriteStatus({ ts: new Date(), action, value, ok: false, error: e.message }, null);
+        if (!target) {
+          const st = document.getElementById("write-status");
+          if (st && !st.classList.contains("is-fail")) {
+            renderWriteStatus({ ts: new Date(), action, value, ok: false, error: e.message }, null);
+          } else {
+            setWriteError(e.message);
+          }
         } else {
-          setWriteError(e.message);
+          const mdSt = document.getElementById(opts.writeStatusId || "md-write-status");
+          if (mdSt) {
+            mdSt.textContent =
+              "last write: FAIL · " + action + " · " + e.message;
+            mdSt.classList.add("is-fail");
+          }
         }
         if (pill) {
           pill.className = "pill danger";
@@ -21341,6 +21539,38 @@
         }
         return { ok: false, error: e.message };
       }
+    }
+
+    /** Build /api/set target for currently open miner detail page. */
+    function minerDetailWriteTarget() {
+      if (!selectedMinerId) return null;
+      const m = resolveMinerForDetail(selectedMinerId);
+      if (!m || !m.host) return null;
+      return {
+        host: String(m.host).split(":")[0],
+        port: m.port != null ? Number(m.port) || 4028 : 4028,
+        vendor: m.vendor || m.api_vendor || "whatsminer",
+        id: m.id,
+      };
+    }
+
+    async function applyMinerDetailPower(action, value) {
+      const target = minerDetailWriteTarget();
+      if (!target || !target.host) {
+        toastError(
+          typeof t === "function"
+            ? t("miner_detail.no_host", "No miner host")
+            : "No miner host"
+        );
+        return { ok: false, error: "no host" };
+      }
+      return applyPower(action, value, {
+        target,
+        pillId: "md-pill-write",
+        writeStatusId: "md-write-status",
+        skipLiveCheck: true,
+        source: "miner-detail",
+      });
     }
 
     /* Policy auto-write: server-side only (serve.py policy_loop). */
@@ -28611,6 +28841,115 @@
       if (el.textContent !== s) el.textContent = s;
     }
 
+    /** Switch Miner / Info panes inside /miners/{id} card header. */
+    function setMinerDetailTab(tabId) {
+      const tab = tabId === "info" ? "info" : "miner";
+      minerDetailTab = tab;
+      document.querySelectorAll("#miner-detail-tabs [data-md-tab]").forEach((btn) => {
+        const on = btn.getAttribute("data-md-tab") === tab;
+        btn.classList.toggle("active", on);
+        btn.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      document.querySelectorAll("#miner-detail-content .miner-detail-pane").forEach((pane) => {
+        const id = pane.getAttribute("data-md-pane") || "";
+        const on = id === tab;
+        pane.hidden = !on;
+      });
+    }
+
+    function renderMinerDetailIdentity(m, liveSrc) {
+      const live = liveSrc || (m && m.live) || {};
+      const model =
+        (m && (m.model_display || m.model || m.model_code)) ||
+        live.model_display ||
+        live.miner_type ||
+        live.model ||
+        "—";
+      const modelSub =
+        (m && m.model_display_full) ||
+        live.model_display_full ||
+        live.miner_type ||
+        (m && m.model_code) ||
+        "";
+      setMdText("md-info-model", model);
+      setMdText("md-info-model-sub", modelSub || "—");
+
+      const fw =
+        (m && (m.fw_ver || m.firmware || m.fw)) ||
+        live.fw_ver ||
+        live.firmware ||
+        live.fw ||
+        "—";
+      setMdText("md-info-fw", fw);
+      const api =
+        live.api_ver ||
+        live.api_version ||
+        (live.miner_type ? "type " + live.miner_type : "");
+      setMdText("md-info-api", api || "—");
+
+      const host =
+        (m && m.host && String(m.host).split(":")[0]) ||
+        (live.host && String(live.host).split(":")[0]) ||
+        "—";
+      const port = m && m.port != null ? m.port : live.port;
+      setMdText(
+        "md-info-host",
+        host + (port != null && host !== "—" ? ":" + port : "")
+      );
+      const mac = (m && m.mac) || live.mac || "";
+      setMdText("md-info-mac", mac ? "mac " + mac : "mac —");
+
+      const sn =
+        (m && (m.serial || m.sn || m.minersn)) ||
+        live.serial ||
+        live.minersn ||
+        live.customer_sn ||
+        "—";
+      setMdText("md-info-sn", sn);
+      const snSrc =
+        live.sn_source ||
+        (live.minersn
+          ? "minersn"
+          : live.customer_sn
+            ? "CustomerSn"
+            : m && m.serial
+              ? "inventory"
+              : "—");
+      setMdText("md-info-sn-src", snSrc);
+
+      const vendorName =
+        (m && m.vendor_name) ||
+        (typeof vendorDisplayName === "function"
+          ? vendorDisplayName((m && m.vendor) || live.vendor || "")
+          : (m && m.vendor) || live.vendor || "—");
+      setMdText("md-info-vendor", vendorName || "—");
+      const cooling =
+        (m && (m.cooling_name || m.cooling)) ||
+        live.cooling_name ||
+        live.cooling ||
+        "";
+      const nB =
+        live.board_count != null
+          ? live.board_count
+          : Array.isArray(live.boards)
+            ? live.boards.length
+            : "";
+      setMdText(
+        "md-info-cooling",
+        (cooling ? String(cooling) : "—") +
+          (nB !== "" ? " · " + nB + " boards" : "")
+      );
+
+      const algo =
+        (m && (m.algo_display || m.algo)) ||
+        live.algo_display ||
+        live.algo ||
+        "—";
+      setMdText("md-info-algo", algo);
+      const coin = (m && m.coin) || live.coin || "";
+      setMdText("md-info-coin", coin ? "coin " + coin : "—");
+    }
+
     /** Read-only mode strip (same fields as /miner). */
     function renderMinerDetailMode(src) {
       src = src || {};
@@ -28718,6 +29057,27 @@
         if (Number.isFinite(hp) && hp > 0) pctMeas = String(Math.round(hp));
       }
       setMdText("md-pw-pct-meas", pctMeas);
+
+      // Sync form defaults (unless user is editing)
+      if (!window.__mdPwFormDirty) {
+        const mn = String(
+          src.mode_norm || src.mode_measured || modeNow || ""
+        ).toLowerCase();
+        const sel = document.getElementById("md-set-mode");
+        if (sel && ["low", "normal", "high"].includes(mn)) sel.value = mn;
+        const wsel = document.getElementById("md-set-work");
+        if (wsel) {
+          if (workKey === "suspend" || workKey === "sleep") wsel.value = "sleep";
+          else if (workKey === "resume") wsel.value = "resume";
+        }
+        if (Number.isFinite(limSet)) {
+          const le = document.getElementById("md-set-limit");
+          if (le) le.value = Math.round(limSet);
+        } else if (Number.isFinite(limEff)) {
+          const le = document.getElementById("md-set-limit");
+          if (le) le.value = Math.round(limEff);
+        }
+      }
     }
 
     /** Hashboard cards for detail page (ids md-b0… not shared with /miner). */
@@ -28888,6 +29248,23 @@
       const show = isWhatsminerMiner(m, liveSrc);
       wrap.hidden = !show;
       if (!show) return;
+      const hint = document.getElementById("md-mode-target-hint");
+      if (hint && m) {
+        const host = (m.host && String(m.host).split(":")[0]) || "—";
+        const lab =
+          (m.alias && String(m.alias).trim()) ||
+          (m.name && String(m.name).trim()) ||
+          host;
+        hint.textContent =
+          (typeof t === "function"
+            ? t("miner_detail.target", "Target")
+            : "Target") +
+          ": " +
+          lab +
+          " · " +
+          host +
+          (m.port != null ? ":" + m.port : "");
+      }
       renderMinerDetailMode(liveSrc || {});
       renderMinerDetailBoards(liveSrc || {});
       renderMinerDetailTemps(liveSrc || {});
@@ -29135,6 +29512,18 @@
         console.warn("miner detail wm blocks", e);
       }
 
+      // Info tab: identity cards
+      try {
+        renderMinerDetailIdentity(m, liveSrc || live);
+      } catch (e) {
+        console.warn("miner detail identity", e);
+      }
+
+      // Keep current inner tab (Miner / Info)
+      try {
+        setMinerDetailTab(minerDetailTab || "miner");
+      } catch (_) { /* ignore */ }
+
       // Inventory
       if (invEl) {
         const L = (k, fb) =>
@@ -29189,6 +29578,9 @@
       if (!mid) return;
       selectedMinerId = mid;
       minerDetailOpen = true;
+      // default to Miner tab when opening a miner page
+      if (opts.tab) minerDetailTab = opts.tab === "info" ? "info" : "miner";
+      else if (!opts.keepTab) minerDetailTab = "miner";
       // show detail subview under Miners tab
       if (typeof activateTab === "function") {
         activateTab("managed", {
@@ -29250,6 +29642,15 @@
     document.getElementById("btn-miner-detail-back")?.addEventListener("click", () => {
       closeMinerDetail();
     });
+    document.getElementById("miner-detail-tabs")?.addEventListener("click", (ev) => {
+      const btn =
+        ev.target && ev.target.closest
+          ? ev.target.closest("[data-md-tab]")
+          : null;
+      if (!btn) return;
+      const tab = btn.getAttribute("data-md-tab");
+      if (tab) setMinerDetailTab(tab);
+    });
     document.getElementById("btn-miner-detail-refresh")?.addEventListener("click", () => {
       if (typeof refreshFleetTable === "function") {
         void refreshFleetTable({ manual: true });
@@ -29280,6 +29681,98 @@
       }
       if (typeof activateTab === "function") activateTab("miner");
     });
+
+    // Whatsminer power settings on /miners/{id}
+    ["md-set-mode", "md-set-work", "md-set-limit", "md-set-pct"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("input", () => {
+        window.__mdPwFormDirty = true;
+      });
+      el.addEventListener("change", () => {
+        window.__mdPwFormDirty = true;
+      });
+    });
+    document.getElementById("md-btn-set-mode")?.addEventListener("click", () => {
+      const v = document.getElementById("md-set-mode")?.value;
+      if (v) void applyMinerDetailPower("mode", v);
+    });
+    document.getElementById("md-btn-set-work")?.addEventListener("click", () => {
+      const v = document.getElementById("md-set-work")?.value;
+      if (!v) return;
+      if (v === "sleep") {
+        if (!confirm("Suspend Mining — stop mining on this ASIC. Continue?"))
+          return;
+      } else if (v === "resume") {
+        if (!confirm("Resume Mining — resume mining on this ASIC. Continue?"))
+          return;
+      }
+      void applyMinerDetailPower("working", v);
+    });
+    document.getElementById("md-btn-set-limit")?.addEventListener("click", () => {
+      const w = document.getElementById("md-set-limit")?.value;
+      if (w == null || w === "") return;
+      if (
+        !confirm(
+          "adjust_power_limit " +
+            w +
+            " W on this ASIC — reboot/restart possible. Continue?"
+        )
+      )
+        return;
+      void applyMinerDetailPower("power_limit", w);
+    });
+    document.getElementById("md-btn-set-pct")?.addEventListener("click", () => {
+      const p = document.getElementById("md-set-pct")?.value;
+      if (p == null || p === "") return;
+      if (
+        !confirm(
+          "set_power_pct " +
+            p +
+            "% on this ASIC — LOW_HASH possible. Continue?"
+        )
+      )
+        return;
+      void applyMinerDetailPower("power_pct", p);
+    });
+    document.getElementById("md-btn-refresh-pw")?.addEventListener("click", () => {
+      if (typeof refreshFleetTable === "function") {
+        void refreshFleetTable({ manual: true });
+      }
+      if (typeof fetchLive === "function") void fetchLive(true);
+    });
+    document
+      .getElementById("md-btn-toggle-pw-settings")
+      ?.addEventListener("click", (ev) => {
+        try {
+          ev.preventDefault();
+        } catch (_) { /* ignore */ }
+        const btn = document.getElementById("md-btn-toggle-pw-settings");
+        const panel = document.getElementById("md-pw-settings-panel");
+        const lab = document.getElementById("md-pw-settings-toggle-label");
+        if (!panel || !btn) return;
+        const open = btn.getAttribute("aria-expanded") === "true";
+        const next = !open;
+        btn.setAttribute("aria-expanded", next ? "true" : "false");
+        if (next) {
+          panel.hidden = false;
+          panel.classList.remove("is-collapsed");
+        } else {
+          panel.hidden = true;
+          panel.classList.add("is-collapsed");
+        }
+        const chev = btn.querySelector(".chev");
+        if (chev) chev.textContent = next ? "▼" : "▶";
+        if (lab) {
+          lab.textContent = next
+            ? typeof t === "function"
+              ? t("pw.settings_hide", "Hide power settings")
+              : "Hide power settings"
+            : typeof t === "function"
+              ? t("pw.settings", "Power settings")
+              : "Power settings";
+        }
+      });
 
     document.getElementById("fleet-body")?.addEventListener("click", (ev) => {
       const t = ev.target;

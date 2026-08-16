@@ -30443,32 +30443,88 @@ def _live_power_limit_w(live: dict | None = None) -> float | None:
     return lim
 
 
+def _parse_set_target(value) -> tuple[object, dict]:
+    """
+    Split multi-miner write payload.
+    value may be a scalar, or {host, port, vendor, id, password, value|mode|…}.
+    Returns (scalar_value, target_dict with host/port/vendor/id/password).
+    """
+    if not isinstance(value, dict):
+        return value, {}
+    target: dict = {}
+    for k in ("host", "ip", "port", "vendor", "api_vendor", "id", "password"):
+        if value.get(k) not in (None, ""):
+            key = "vendor" if k == "api_vendor" else ("host" if k == "ip" else k)
+            if key == "host" and "host" not in target:
+                target["host"] = value.get(k)
+            elif key != "host":
+                target[key] = value.get(k)
+    # scalar payload keys (first hit wins)
+    for sk in (
+        "value",
+        "mode",
+        "work",
+        "working",
+        "watts",
+        "power_limit",
+        "percent",
+        "pct",
+        "power_pct",
+    ):
+        if sk in value and value.get(sk) not in (None, ""):
+            return value.get(sk), target
+    # only routing keys — treat whole dict as non-scalar (caller handles reboot)
+    return value, target
+
+
+def _cmd_with_target(cmd: dict, target: dict | None) -> dict:
+    """Attach host/port/vendor/id/password so miner-poller can target a fleet ASIC."""
+    out = dict(cmd or {})
+    if not isinstance(target, dict):
+        return out
+    for k in ("host", "port", "vendor", "id", "password"):
+        if target.get(k) not in (None, ""):
+            out[k] = target.get(k)
+    # resolve inventory password / vendor for host when not provided
+    th = str(target.get("host") or "").strip()
+    if th:
+        try:
+            for m in get_miners_managed().get("miners") or []:
+                if not isinstance(m, dict):
+                    continue
+                if str(m.get("host") or "").strip() != th:
+                    continue
+                if out.get("password") in (None, "") and m.get("password") not in (
+                    None,
+                    "",
+                ):
+                    out["password"] = str(m.get("password"))
+                if not out.get("vendor") and m.get("vendor"):
+                    out["vendor"] = m.get("vendor")
+                if out.get("port") in (None, "") and m.get("port"):
+                    out["port"] = m.get("port")
+                if out.get("id") in (None, "") and m.get("id") not in (None, ""):
+                    out["id"] = m.get("id")
+                break
+        except Exception:
+            pass
+    return out
+
+
 def apply_set(action: str, value, password: str) -> dict:
     global _cache, _cache_ts
     action = (action or "").strip().lower()
     password = password or DEFAULT_API_PASSWORD
 
-    # Optional multi-miner target (fleet context menu): value={host,vendor,port,…}
-    target_host = None
-    if isinstance(value, dict):
+    # Optional multi-miner target: value={host,vendor,port,value|mode|…}
+    scalar, target = _parse_set_target(value)
+    target_host = str(target.get("host") or "").strip() or None
+    if not target_host and isinstance(value, dict):
         target_host = str(value.get("host") or value.get("ip") or "").strip() or None
 
-    # No write if active ASIC is offline — except targeted reboot/restart by host
-    # (iPollo/Goldshell may still accept LuCI/HTTP reboot when :4028 is down).
-    _skip_online_gate = bool(
-        target_host
-        and action
-        in (
-            "reboot",
-            "reboot_asic",
-            "system_reboot",
-            "restart",
-            "restart_miner",
-            "restart_btminer",
-            "btminer_restart",
-            "restart_cgminer",
-        )
-    )
+    # No write if active ASIC is offline — except targeted writes by host
+    # (fleet /miners/{id} power settings, reboot of standby ASIC, …).
+    _skip_online_gate = bool(target_host)
     if not _skip_online_gate:
         if not miner_is_online(max_age_sec=_MINER_ONLINE_MAX_AGE_SEC, probe=True):
             raise RuntimeError(
@@ -30476,7 +30532,7 @@ def apply_set(action: str, value, password: str) -> dict:
             )
 
     if action == "mode":
-        v = str(value).strip().lower()
+        v = str(scalar).strip().lower()
         # Power Mode only: low / normal / high
         cmd_map = {
             "low": "set_low_power",
@@ -30486,28 +30542,34 @@ def apply_set(action: str, value, password: str) -> dict:
         if v not in cmd_map:
             raise ValueError("Power Mode must be low|normal|high (use action=working for suspend|resume)")
         # skip if already on this mode (mode change restarts mining)
-        try:
-            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
-            cur = str(live.get("mode_norm") or live.get("mode") or "").strip().lower()
-            if cur == v:
-                return {
-                    "ok": True,
-                    "skipped": True,
-                    "action": "mode",
-                    "value": v,
-                    "msg": f"mode already {v}",
-                }
-        except Exception:
-            pass
-        resp = miner_write_cmd({"cmd": cmd_map[v]}, password)
+        # only for active (no target) — fleet live may lag for other hosts
+        if not target_host:
+            try:
+                live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
+                cur = str(live.get("mode_norm") or live.get("mode") or "").strip().lower()
+                if cur == v:
+                    return {
+                        "ok": True,
+                        "skipped": True,
+                        "action": "mode",
+                        "value": v,
+                        "msg": f"mode already {v}",
+                    }
+            except Exception:
+                pass
+        cmd = _cmd_with_target({"cmd": cmd_map[v]}, target)
+        pw = str(cmd.get("password") or password)
+        resp = miner_write_cmd(cmd, pw)
         out = _record_write("mode", v, resp)
         out["cmd"] = cmd_map[v]
+        if target_host:
+            out["host"] = target_host
         if isinstance(resp, dict) and resp.get("transport"):
             out["transport"] = resp.get("transport")
         return out
 
     if action in ("working", "working_mode", "work", "mining"):
-        v = str(value).strip().lower().replace(" ", "_")
+        v = str(scalar).strip().lower().replace(" ", "_")
         # Mining Control: Suspend Mining / Resume Mining (Whatsminer power_off / power_on)
         aliases = {
             "sleep": "sleep",
@@ -30527,148 +30589,167 @@ def apply_set(action: str, value, password: str) -> dict:
         }
         miner_cmd_name = cmd_map[stored]
         # skip only when solidly already in target state (not mid-transition)
-        try:
-            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
-            have = str(live.get("work_measured") or _live_work(live) or "").lower()
-            want = "suspend" if stored == "sleep" else "resume"
-            mo = str(live.get("mineroff") or "").strip().lower()
-            h = _f(live.get("hashrate_th"))
-            hashing = h is not None and h >= 1.0
-            # sticky command: if user commanded the opposite recently, do not skip
-            cmd = str(live.get("work_cmd") or "").strip().lower()
-            cmd_side = (
-                "suspend"
-                if cmd in ("sleep", "suspend", "power_off", "off")
-                else (
-                    "resume"
-                    if cmd in ("resume", "mining", "power_on", "on")
-                    else None
+        if not target_host:
+            try:
+                live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
+                have = str(live.get("work_measured") or _live_work(live) or "").lower()
+                want = "suspend" if stored == "sleep" else "resume"
+                mo = str(live.get("mineroff") or "").strip().lower()
+                h = _f(live.get("hashrate_th"))
+                hashing = h is not None and h >= 1.0
+                # sticky command: if user commanded the opposite recently, do not skip
+                cmd = str(live.get("work_cmd") or "").strip().lower()
+                cmd_side = (
+                    "suspend"
+                    if cmd in ("sleep", "suspend", "power_off", "off")
+                    else (
+                        "resume"
+                        if cmd in ("resume", "mining", "power_on", "on")
+                        else None
+                    )
                 )
-            )
-            if want == "suspend":
-                # solid stop: API says off and no hash (not just measured label)
-                solid_off = mo in ("true", "1", "yes") and not hashing
-                # if commanded resume (starting) — always allow Suspend to cancel
-                if solid_off and cmd_side != "resume" and have in (
-                    "sleep",
-                    "suspend",
-                ):
-                    return {
-                        "ok": True,
-                        "skipped": True,
-                        "action": "working",
-                        "value": stored,
-                        "msg": "already suspend",
-                    }
-            elif want == "resume":
-                solid_on = hashing or mo in ("false", "0", "no")
-                if solid_on and cmd_side != "suspend" and have in (
-                    "resume",
-                    "mining",
-                ):
-                    return {
-                        "ok": True,
-                        "skipped": True,
-                        "action": "working",
-                        "value": stored,
-                        "msg": "already resume",
-                    }
-        except Exception:
-            pass
-        resp = miner_write_cmd({"cmd": miner_cmd_name}, password)
+                if want == "suspend":
+                    # solid stop: API says off and no hash (not just measured label)
+                    solid_off = mo in ("true", "1", "yes") and not hashing
+                    # if commanded resume (starting) — always allow Suspend to cancel
+                    if solid_off and cmd_side != "resume" and have in (
+                        "sleep",
+                        "suspend",
+                    ):
+                        return {
+                            "ok": True,
+                            "skipped": True,
+                            "action": "working",
+                            "value": stored,
+                            "msg": "already suspend",
+                        }
+                elif want == "resume":
+                    solid_on = hashing or mo in ("false", "0", "no")
+                    if solid_on and cmd_side != "suspend" and have in (
+                        "resume",
+                        "mining",
+                    ):
+                        return {
+                            "ok": True,
+                            "skipped": True,
+                            "action": "working",
+                            "value": stored,
+                            "msg": "already resume",
+                        }
+            except Exception:
+                pass
+        cmd = _cmd_with_target({"cmd": miner_cmd_name}, target)
+        pw = str(cmd.get("password") or password)
+        resp = miner_write_cmd(cmd, pw)
         out = _record_write("working", stored, resp)
         out["cmd"] = miner_cmd_name
+        if target_host:
+            out["host"] = target_host
         if isinstance(resp, dict) and resp.get("transport"):
             out["transport"] = resp.get("transport")
         return out
 
     if action == "power_pct":
-        pct = int(value)
+        pct = int(scalar)
         if not 0 <= pct <= 100:
             raise ValueError("power_pct must be 0..100")
         # skip if already at this pct — set_power_pct can disturb / restart hashing
-        try:
-            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
-            have_cmd = _f(live.get("power_pct_cmd"))
-            if have_cmd is None:
-                have_cmd = _f(_state.get("power_pct_cmd"))
-            same = False
-            if have_cmd is not None and abs(float(have_cmd) - float(pct)) < 0.5:
-                same = True
-            if not same:
-                # estimate from power / limit (ASIC may not read back pct)
-                pw = _f(live.get("power"))
-                lim = _live_power_limit_w(live)
-                if pw is not None and lim is not None and lim > 0 and float(pw) > 0:
-                    est = 100.0 * float(pw) / float(lim)
-                    if abs(est - float(pct)) <= 3.0:
-                        same = True
-            if same:
-                return {
-                    "ok": True,
-                    "skipped": True,
-                    "action": "power_pct",
-                    "value": pct,
-                    "msg": f"power_pct already {pct}%",
-                }
-        except Exception:
-            pass
-        resp = miner_write_cmd(
-            {"cmd": "set_power_pct", "percent": str(pct)}, password
+        if not target_host:
+            try:
+                live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
+                have_cmd = _f(live.get("power_pct_cmd"))
+                if have_cmd is None:
+                    have_cmd = _f(_state.get("power_pct_cmd"))
+                same = False
+                if have_cmd is not None and abs(float(have_cmd) - float(pct)) < 0.5:
+                    same = True
+                if not same:
+                    # estimate from power / limit (ASIC may not read back pct)
+                    pw = _f(live.get("power"))
+                    lim = _live_power_limit_w(live)
+                    if pw is not None and lim is not None and lim > 0 and float(pw) > 0:
+                        est = 100.0 * float(pw) / float(lim)
+                        if abs(est - float(pct)) <= 3.0:
+                            same = True
+                if same:
+                    return {
+                        "ok": True,
+                        "skipped": True,
+                        "action": "power_pct",
+                        "value": pct,
+                        "msg": f"power_pct already {pct}%",
+                    }
+            except Exception:
+                pass
+        cmd = _cmd_with_target(
+            {"cmd": "set_power_pct", "percent": str(pct)}, target
         )
-        return _record_write("power_pct", pct, resp)
+        pw = str(cmd.get("password") or password)
+        resp = miner_write_cmd(cmd, pw)
+        out = _record_write("power_pct", pct, resp)
+        if target_host:
+            out["host"] = target_host
+        return out
 
     if action in ("power_limit", "set_power_limit", "adjust_power_limit"):
-        watts = int(value)
+        watts = int(scalar)
         if watts < 0 or watts > 20000:
             raise ValueError("power_limit out of range")
         # skip if ASIC already reports this limit (prefer power_limit_set, not
         # summary Power Limit which is often 0 in Suspend)
-        try:
-            live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
-            cur = _live_power_limit_w(live)
-            # do NOT skip based only on power_limit_cmd — user may re-apply after
-            # miner reset; only skip when live ASIC readback matches
-            if cur is not None and abs(int(round(float(cur))) - int(watts)) <= 1:
-                # still stamp cmd so UI form stays in sync
-                with _state_lock:
-                    _state["power_limit_cmd"] = watts
-                    _save_state()
-                return {
-                    "ok": True,
-                    "skipped": True,
-                    "action": "power_limit",
-                    "value": watts,
-                    "msg": f"power_limit already {watts} W",
-                }
-        except Exception:
-            pass
+        if not target_host:
+            try:
+                live = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
+                cur = _live_power_limit_w(live)
+                # do NOT skip based only on power_limit_cmd — user may re-apply after
+                # miner reset; only skip when live ASIC readback matches
+                if cur is not None and abs(int(round(float(cur))) - int(watts)) <= 1:
+                    # still stamp cmd so UI form stays in sync
+                    with _state_lock:
+                        _state["power_limit_cmd"] = watts
+                        _save_state()
+                    return {
+                        "ok": True,
+                        "skipped": True,
+                        "action": "power_limit",
+                        "value": watts,
+                        "msg": f"power_limit already {watts} W",
+                    }
+            except Exception:
+                pass
         # Prefer WMT NetPacket first (PoolheatMiner); if netpacket acks but
         # readback stays wrong, UniversalMiner still tried fallbacks.
-        resp = miner_write_cmd(
-            {"cmd": "adjust_power_limit", "power_limit": str(watts)}, password
+        cmd = _cmd_with_target(
+            {"cmd": "adjust_power_limit", "power_limit": str(watts)}, target
         )
+        pw = str(cmd.get("password") or password)
+        resp = miner_write_cmd(cmd, pw)
         out = _record_write(
             "power_limit",
             watts,
             resp,
             warning="adjust_power_limit may reboot / restart mining",
         )
-        # Best-effort verify / refresh limit into cache after write
-        try:
-            live2 = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
-            got = _live_power_limit_w(live2 if isinstance(live2, dict) else None)
-            if got is not None:
-                out["power_limit_set"] = got
-                with _cache_lock:
-                    if isinstance(_cache, dict):
-                        _cache["power_limit_set"] = got
-                        _cache["power_limit_measured"] = got
-                        _cache["power_limit_cmd"] = watts
-            else:
-                # status may lag; still surface commanded watts in UI
+        if target_host:
+            out["host"] = target_host
+        # Best-effort verify / refresh limit into cache after write (active only)
+        if not target_host:
+            try:
+                live2 = live_snapshot(max_age_sec=LIVE_STALE_MAX_SEC)
+                got = _live_power_limit_w(live2 if isinstance(live2, dict) else None)
+                if got is not None:
+                    out["power_limit_set"] = got
+                    with _cache_lock:
+                        if isinstance(_cache, dict):
+                            _cache["power_limit_set"] = got
+                            _cache["power_limit_measured"] = got
+                            _cache["power_limit_cmd"] = watts
+                else:
+                    # status may lag; still surface commanded watts in UI
+                    out["power_limit_set"] = float(watts)
+            except Exception:
                 out["power_limit_set"] = float(watts)
-        except Exception:
+        else:
             out["power_limit_set"] = float(watts)
         return out
 

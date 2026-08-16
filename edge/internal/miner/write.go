@@ -96,10 +96,10 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 		return res
 	}
 
-	pw := strings.TrimSpace(req.Password)
-	if pw == "" {
-		pw = s.Password
-	}
+	// Optional per-miner target (fleet /miners/{id} power settings):
+	// req.Cmd may carry host|ip, port, vendor, password — same as reboot path.
+	host, port, pw, _ := writeTarget(s, req, req.Password)
+	s.Host, s.Port, s.Password = host, port, pw
 	if pw == "" {
 		pw = api.DefaultAdmin
 	}
@@ -111,7 +111,9 @@ func executeWrite(s Settings, req WriteRequest) WriteResult {
 
 	params := map[string]any{}
 	for k, v := range req.Cmd {
-		if k == "cmd" {
+		// do not forward routing fields as V2 API params
+		switch k {
+		case "cmd", "host", "ip", "port", "vendor", "api_vendor", "password", "id":
 			continue
 		}
 		params[k] = v
