@@ -12808,6 +12808,11 @@ def _poll_managed_fleet_live() -> None:
 
     if by_host:
         _publish_fleet_live_map(by_host)
+        # Per-miner energy accounting from fleet live power
+        try:
+            energy_meter_tick_fleet_map(by_host, miners)
+        except Exception as e:
+            print(f"[energy] fleet map tick: {e}", flush=True)
         # Merge per-miner work for device binding (devices-poller reads by_miner)
         try:
             by_miner: dict = {}
@@ -19145,6 +19150,75 @@ def list_energy_meters() -> list[dict]:
             conn.close()
 
 
+def energy_meter_id_for_miner(miner_id) -> str:
+    """Stable virtual meter id for a managed miner (per-ASIC energy)."""
+    mid = str(miner_id or "").strip()
+    if not mid:
+        return VIRTUAL_METER_ID
+    return "miner_" + mid
+
+
+def _is_virtual_energy_meter(meter_id: str) -> bool:
+    mid = str(meter_id or "").strip()
+    if not mid:
+        return False
+    if mid == VIRTUAL_METER_ID:
+        return True
+    # per-miner virtual meters written from live / fleet power
+    if mid.startswith("miner_"):
+        return True
+    return False
+
+
+def _resolve_managed_id_from_live(live: dict | None) -> str | None:
+    """Map live snapshot host → managed miner id when possible."""
+    if not isinstance(live, dict):
+        return None
+    for k in ("miner_id", "managed_id", "id"):
+        v = live.get(k)
+        if v is not None and str(v).strip() != "":
+            # only accept if it looks like inventory id (avoid host as id)
+            sv = str(v).strip()
+            if sv and not (sv.count(".") == 3 and sv.replace(".", "").isdigit()):
+                # prefer explicit miner_id / managed_id
+                if k in ("miner_id", "managed_id"):
+                    return sv
+    try:
+        hip = _fleet_host_key(_live_host_ip(live) or live.get("host"))
+    except Exception:
+        hip = ""
+    if not hip:
+        return None
+    try:
+        managed = get_miners_managed().get("miners") or []
+    except Exception:
+        try:
+            managed = _load_miners_managed() if "_load_miners_managed" in dir() else []
+        except Exception:
+            managed = []
+    if not isinstance(managed, list):
+        managed = []
+    for m in managed:
+        if not isinstance(m, dict):
+            continue
+        mh = str(m.get("host") or "").strip()
+        try:
+            if _fleet_host_key(mh) == hip and m.get("id") is not None:
+                return str(m.get("id")).strip()
+        except Exception:
+            if mh and hip and mh.split(":")[0] == hip and m.get("id") is not None:
+                return str(m.get("id")).strip()
+    # active fallback
+    try:
+        for m in managed:
+            if isinstance(m, dict) and str(m.get("role") or "").lower() == "active":
+                if m.get("id") is not None:
+                    return str(m.get("id")).strip()
+    except Exception:
+        pass
+    return None
+
+
 def energy_meter_tick(
     power_w: float | None,
     *,
@@ -19162,9 +19236,11 @@ def energy_meter_tick(
     cfg = get_energy_cfg()
     if not cfg.get("metering_enabled", True):
         return None
-    if meter_id != VIRTUAL_METER_ID:
+    mid = str(meter_id or VIRTUAL_METER_ID).strip() or VIRTUAL_METER_ID
+    if not _is_virtual_energy_meter(mid):
         # physical drivers not implemented yet
         return None
+    meter_id = mid
     _ensure_energy_db()
     now = float(ts if ts is not None else time.time())
     try:
@@ -19184,13 +19260,18 @@ def energy_meter_tick(
                 (meter_id,),
             ).fetchone()
             if not st:
+                mname = (
+                    "Virtual · miner power"
+                    if meter_id == VIRTUAL_METER_ID
+                    else f"Miner · {meter_id}"
+                )
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO meters
                         (id, type, name, enabled, source, unit, created_ts)
                     VALUES (?, 'virtual', ?, 1, 'miner_power', 'kWh', ?)
                     """,
-                    (meter_id, "Virtual · miner power", now),
+                    (meter_id, mname, now),
                 )
                 conn.execute(
                     """
@@ -19264,8 +19345,14 @@ def energy_meter_tick(
             conn.close()
 
 
-def energy_meter_tick_from_live(live: dict | None) -> dict | None:
-    """Extract power from live payload and tick virtual meter."""
+def energy_meter_tick_from_live(
+    live: dict | None,
+    *,
+    miner_id: str | None = None,
+    meter_id: str | None = None,
+    dual_write_legacy: bool = True,
+) -> dict | None:
+    """Extract power from live payload and tick per-miner (and legacy) virtual meter."""
     if not isinstance(live, dict):
         return None
     cfg = get_energy_cfg()
@@ -19298,7 +19385,62 @@ def energy_meter_tick_from_live(live: dict | None) -> dict | None:
         ts = float(ts)
     except (TypeError, ValueError):
         ts = time.time()
-    return energy_meter_tick(pw, ts=ts, online=online)
+    mid = str(meter_id or "").strip() or None
+    if not mid:
+        rid = str(miner_id or "").strip() or _resolve_managed_id_from_live(live)
+        mid = energy_meter_id_for_miner(rid)
+    out = energy_meter_tick(pw, ts=ts, online=online, meter_id=mid)
+    # Keep legacy virtual_miner in sync for active / unbound dash chart
+    if dual_write_legacy and mid != VIRTUAL_METER_ID:
+        try:
+            energy_meter_tick(pw, ts=ts, online=online, meter_id=VIRTUAL_METER_ID)
+        except Exception:
+            pass
+    return out
+
+
+def energy_meter_tick_fleet_map(by_host: dict | None, miners: list | None = None) -> int:
+    """Tick per-miner virtual meters from fleet_live host map. Returns tick count."""
+    if not isinstance(by_host, dict) or not by_host:
+        return 0
+    cfg = get_energy_cfg()
+    if not cfg.get("metering_enabled", True):
+        return 0
+    host_to_id: dict[str, str] = {}
+    try:
+        rows = miners if isinstance(miners, list) else (get_miners_managed().get("miners") or [])
+    except Exception:
+        rows = miners if isinstance(miners, list) else []
+    for m in rows or []:
+        if not isinstance(m, dict):
+            continue
+        mid = str(m.get("id") or "").strip()
+        host = str(m.get("host") or "").strip()
+        if not mid or not host:
+            continue
+        try:
+            host_to_id[_fleet_host_key(host)] = mid
+        except Exception:
+            host_to_id[host.split(":")[0]] = mid
+    n = 0
+    for host, live in by_host.items():
+        if not isinstance(live, dict):
+            continue
+        try:
+            hk = _fleet_host_key(host)
+        except Exception:
+            hk = str(host or "").split(":")[0]
+        mid = host_to_id.get(hk) or host_to_id.get(str(host or ""))
+        if not mid:
+            continue
+        try:
+            energy_meter_tick_from_live(
+                live, miner_id=mid, dual_write_legacy=False
+            )
+            n += 1
+        except Exception as e:
+            print(f"[energy] fleet tick {host}/{mid}: {e}", flush=True)
+    return n
 
 
 def prune_energy_samples(retention_days: int | None = None) -> int:
@@ -20228,10 +20370,63 @@ def _local_day_start(ts: float | None = None) -> float:
     return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 0, 0, 0, 0, 0, -1))
 
 
-def energy_summary() -> dict:
+def _energy_sample_count(meter_id: str) -> int:
+    mid = str(meter_id or VIRTUAL_METER_ID)
+    try:
+        with _energy_db_lock:
+            conn = _energy_db_connect()
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM energy_samples WHERE meter_id = ?",
+                    (mid,),
+                ).fetchone()
+                return int(row["c"] or 0)
+            finally:
+                conn.close()
+    except Exception:
+        return 0
+
+
+def resolve_energy_meter_id(
+    *,
+    meter_id: str | None = None,
+    miner_id: str | None = None,
+    fallback_legacy: bool = True,
+) -> str:
+    """
+    Resolve which energy.db meter to read.
+    Prefer explicit meter_id; else miner_{id}; if empty + fallback, virtual_miner.
+    """
+    mid = str(meter_id or "").strip()
+    if mid:
+        return mid
+    want = energy_meter_id_for_miner(miner_id)
+    if want != VIRTUAL_METER_ID and fallback_legacy:
+        # historical samples lived on virtual_miner before per-miner meters
+        if _energy_sample_count(want) == 0 and _energy_sample_count(VIRTUAL_METER_ID) > 0:
+            # only fall back when this miner is the active one
+            try:
+                active = None
+                for m in (get_miners_managed().get("miners") or []):
+                    if isinstance(m, dict) and str(m.get("role") or "").lower() == "active":
+                        active = str(m.get("id") or "").strip()
+                        break
+                if active and str(miner_id or "").strip() == active:
+                    return VIRTUAL_METER_ID
+            except Exception:
+                pass
+    return want
+
+
+def energy_summary(
+    *,
+    meter_id: str | None = None,
+    miner_id: str | None = None,
+) -> dict:
     """kWh / cost periods from energy.db hold samples + virtual meter state."""
     cfg = get_energy_cfg()
     _ensure_energy_db()
+    mid = resolve_energy_meter_id(meter_id=meter_id, miner_id=miner_id)
     now = time.time()
     day0 = _local_day_start(now)
     windows = {
@@ -20247,14 +20442,33 @@ def energy_summary() -> dict:
             "to_ts": b,
             "from_iso": datetime.fromtimestamp(a).isoformat(timespec="seconds"),
             "to_iso": datetime.fromtimestamp(b).isoformat(timespec="seconds"),
-            **_sum_energy_period(a, b, cfg),
+            **_sum_energy_period(a, b, cfg, mid),
         }
     meters = list_energy_meters()
-    virtual = next((m for m in meters if m.get("id") == VIRTUAL_METER_ID), None)
+    virtual = next((m for m in meters if m.get("id") == mid), None)
+    if virtual is None:
+        virtual = next((m for m in meters if m.get("id") == VIRTUAL_METER_ID), None)
     live_w = virtual.get("last_power_w") if virtual else None
     live_est = False
     try:
-        snap = hydrate_live_from_disk(max_age_sec=180.0)
+        snap = None
+        rid = str(miner_id or "").strip()
+        if rid:
+            try:
+                fleet = get_miners_fleet()
+                for m in (fleet.get("miners") or []):
+                    if not isinstance(m, dict):
+                        continue
+                    if str(m.get("id") or "").strip() != rid:
+                        continue
+                    lv = m.get("live")
+                    if isinstance(lv, dict):
+                        snap = lv
+                    break
+            except Exception:
+                snap = None
+        if snap is None:
+            snap = hydrate_live_from_disk(max_age_sec=180.0)
         if isinstance(snap, dict):
             src = str(snap.get("power_source") or "").lower()
             live_est = bool(snap.get("power_estimated")) or src in (
@@ -20267,13 +20481,23 @@ def energy_summary() -> dict:
                 live_w = snap.get("power")
     except Exception:
         live_est = False
+    # Prefer last_power from the selected meter state
+    try:
+        for m in meters:
+            if m.get("id") == mid and m.get("last_power_w") is not None:
+                live_w = m.get("last_power_w")
+                break
+    except Exception:
+        pass
     sample_count = 0
+    oldest = None
+    newest = None
     with _energy_db_lock:
         conn = _energy_db_connect()
         try:
             row = conn.execute(
                 "SELECT COUNT(*) AS c, MIN(ts) AS tmin, MAX(ts) AS tmax FROM energy_samples WHERE meter_id = ?",
-                (VIRTUAL_METER_ID,),
+                (mid,),
             ).fetchone()
             sample_count = int(row["c"] or 0)
             oldest = row["tmin"]
@@ -20283,6 +20507,8 @@ def energy_summary() -> dict:
     return {
         "ok": True,
         "config": cfg,
+        "meter_id": mid,
+        "miner_id": str(miner_id).strip() if miner_id not in (None, "") else None,
         "live_power_w": live_w,
         "live_power_estimated": live_est,
         "periods": periods,
@@ -20299,6 +20525,7 @@ def energy_summary() -> dict:
             "history_backfill_done": bool(cfg.get("history_backfill_done")),
             "history_backfill_at": cfg.get("history_backfill_at"),
             "history_backfill_samples": cfg.get("history_backfill_samples"),
+            "meter_id": mid,
         },
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -40893,7 +41120,13 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api_energy_summary(self) -> None:
         try:
-            body = energy_summary()
+            qs = parse_qs(urlparse(self.path).query)
+            miner_id = (qs.get("miner_id") or qs.get("id") or [None])[0]
+            meter_id = (qs.get("meter_id") or [None])[0]
+            body = energy_summary(
+                meter_id=str(meter_id).strip() if meter_id else None,
+                miner_id=str(miner_id).strip() if miner_id else None,
+            )
             self._json_response(200, body)
         except Exception as e:
             self._json_response(500, {"ok": False, "error": str(e)})
@@ -40912,13 +41145,20 @@ class Handler(SimpleHTTPRequestHandler):
             except (TypeError, ValueError):
                 max_points = 500
             bucket = (qs.get("bucket") or qs.get("group") or ["hour"])[0] or "hour"
-            mid = (qs.get("meter_id") or [VIRTUAL_METER_ID])[0] or VIRTUAL_METER_ID
+            miner_id = (qs.get("miner_id") or qs.get("id") or [None])[0]
+            meter_q = (qs.get("meter_id") or [None])[0]
+            mid = resolve_energy_meter_id(
+                meter_id=str(meter_q).strip() if meter_q else None,
+                miner_id=str(miner_id).strip() if miner_id else None,
+            )
             body = energy_series(
                 hours=hours,
                 bucket=str(bucket),
                 max_points=max_points,
                 meter_id=str(mid),
             )
+            body["miner_id"] = str(miner_id).strip() if miner_id else None
+            body["meter_id"] = str(mid)
             self._json_response(200, body)
         except Exception as e:
             self._json_response(500, {"ok": False, "error": str(e)})
@@ -40948,10 +41188,19 @@ class Handler(SimpleHTTPRequestHandler):
             req = self._read_json_body() if self.headers.get("Content-Length") else {}
             if not isinstance(req, dict):
                 req = {}
-            mid = str(req.get("meter_id") or VIRTUAL_METER_ID)
+            miner_id = req.get("miner_id") or req.get("id")
+            if req.get("meter_id"):
+                mid = str(req.get("meter_id"))
+            elif miner_id not in (None, ""):
+                mid = energy_meter_id_for_miner(miner_id)
+            else:
+                mid = VIRTUAL_METER_ID
             clear = bool(req.get("clear_samples") or req.get("clear"))
             body = reset_energy_meter(mid, clear_samples=clear)
-            body["summary"] = energy_summary()
+            body["summary"] = energy_summary(
+                meter_id=mid,
+                miner_id=str(miner_id).strip() if miner_id not in (None, "") else None,
+            )
             self._json_response(200, body)
         except Exception as e:
             self._json_response(400, {"ok": False, "error": str(e)})

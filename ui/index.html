@@ -7193,252 +7193,14 @@
 
       <div class="subview" id="subview-energy">
       <div class="stack">
-        <div class="card" id="panel-energy-summary">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.energy">Energy accounting</h2>
-              <div class="sub" data-i18n="sub.energy_card">kWh · cost · from history power samples</div>
-            </div>
-            <button
-              class="btn energy-chart-refresh"
-              type="button"
-              id="btn-energy-refresh"
-              title="Refresh"
-              aria-label="Refresh"
-              data-i18n-title="btn.refresh"
-              data-i18n-aria="btn.refresh"
-            >
-              <span class="ico-refresh" aria-hidden="true">↻</span>
-            </button>
-          </div>
-          <div class="card-b stack" style="gap:14px">
-            <div class="energy-live-row">
-              <div class="energy-live-item">
-                <div class="energy-live-label" data-i18n="energy.live_power">Live power</div>
-                <div class="energy-live-val"><span id="energy-live-w">—</span> <small>W</small></div>
-              </div>
-              <div class="energy-live-item">
-                <div class="energy-live-label" data-i18n="energy.tariff_now">Tariff now</div>
-                <div class="energy-live-val"><span id="energy-tariff-now">—</span></div>
-              </div>
-              <div class="energy-live-item">
-                <div class="energy-live-label" data-i18n="energy.virtual_total">Virtual counter</div>
-                <div class="energy-live-val"><span id="energy-virtual-total">—</span> <small>kWh</small></div>
-              </div>
-            </div>
-            <div class="energy-period-grid" id="energy-period-grid">
-              <div class="energy-period-card" data-period="today">
-                <div class="energy-period-title" data-i18n="energy.today">Today</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-              <div class="energy-period-card" data-period="yesterday">
-                <div class="energy-period-title" data-i18n="energy.yesterday">Yesterday</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-              <div class="energy-period-card" data-period="d7">
-                <div class="energy-period-title" data-i18n="energy.d7">7 days</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-              <div class="energy-period-card" data-period="d30">
-                <div class="energy-period-title" data-i18n="energy.d30">30 days</div>
-                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
-                <div class="energy-period-cost"><span data-cost>—</span></div>
-                <div class="energy-period-avg"><span data-avg>—</span></div>
-              </div>
-            </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-status">—</p>
-            <p style="font-size:0.75rem;color:var(--dim);margin:4px 0 0;line-height:1.45" data-i18n="hint.energy_source">
-              Collection settings: Settings → Advanced → Energy metering.
-            </p>
-          </div>
-        </div>
-
-        <div class="card" id="panel-energy-chart">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
-              <div class="sub energy-chart-range-sub">—</div>
-            </div>
-            <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
-              <label class="field energy-chart-field" style="max-width:7.5rem">
-                <span data-i18n="field.energy_bucket">Sample by</span>
-                <select
-                  id="energy-chart-bucket"
-                  class="energy-chart-bucket ui-pill-control"
-                  title="Sample by"
-                  aria-label="Sample by"
-                  data-i18n-title="field.energy_bucket"
-                  data-i18n-aria="field.energy_bucket"
-                >
-                  <optgroup label="Sample by" data-i18n-label="field.energy_bucket">
-                    <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
-                    <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
-                    <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
-                    <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
-                  </optgroup>
-                </select>
-              </label>
-              <label class="field energy-chart-field energy-chart-field-range" style="max-width:4.5rem">
-                <span data-i18n="field.energy_range">Range</span>
-                <select
-                  id="energy-chart-range"
-                  class="energy-chart-range ui-pill-control"
-                  title="Range"
-                  aria-label="Range"
-                  data-i18n-title="field.energy_range"
-                  data-i18n-aria="field.energy_range"
-                >
-                  <optgroup label="Range" data-i18n-label="field.energy_range">
-                    <option value="24">1d</option>
-                    <option value="48" selected>2d</option>
-                    <option value="168">7d</option>
-                    <option value="720">30d</option>
-                    <option value="2160">90d</option>
-                  </optgroup>
-                </select>
-              </label>
-            </div>
-          </div>
+        <div class="card">
           <div class="card-b">
-            <div style="height:280px;position:relative">
-              <canvas id="chart-energy"></canvas>
-            </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4;display:none" id="energy-chart-meta" class="energy-chart-meta">—</p>
-          </div>
-        </div>
-
-        <div class="card" id="panel-energy-tariff">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.energy_tariff">Electricity tariff</h2>
-              <div class="sub" data-i18n="sub.energy_tariff">price per kWh · day / night optional</div>
-            </div>
-            <button class="btn primary" type="button" id="btn-energy-save" data-i18n="btn.save">Save</button>
-          </div>
-          <div class="card-b stack" style="gap:14px">
-            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-              <label class="field"><span data-i18n="field.energy_mode">Tariff type</span>
-                <select id="energy-tariff-mode">
-                  <option value="1zone" data-i18n="opt.energy_1zone">1-zone</option>
-                  <option value="2zone" data-i18n="opt.energy_2zone">2-zone</option>
-                  <option value="3zone" data-i18n="opt.energy_3zone">3-zone</option>
-                </select>
-              </label>
-              <label class="field"><span data-i18n="field.energy_currency">Currency</span>
-                <input type="text" id="energy-currency" value="RUB" maxlength="8" autocomplete="off" />
-              </label>
-              <label class="field"><span data-i18n="field.energy_symbol">Symbol</span>
-                <input type="text" id="energy-symbol" value="₽" maxlength="4" autocomplete="off" />
-              </label>
-            </div>
-
-            <!-- 1-zone: single rate -->
-            <div id="energy-1zone-fields" class="energy-zone-fields">
-              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="field.energy_price">Price, /kWh</span>
-                  <input type="number" id="energy-price" value="5" min="0" step="0.01" />
-                </label>
-              </div>
-            </div>
-
-            <!-- 2-zone: day + night -->
-            <div id="energy-2zone-fields" class="energy-zone-fields" hidden>
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="field.energy_price_day">Day, /kWh</span>
-                  <input type="number" id="energy-price-day" value="6" min="0" step="0.01" />
-                </label>
-                <label class="field"><span data-i18n="field.energy_price_night">Night, /kWh</span>
-                  <input type="number" id="energy-price-night" value="3" min="0" step="0.01" />
-                </label>
-              </div>
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-                <label class="field"><span data-i18n="field.energy_night_start">Night from</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-night-start" value="23:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="field"><span data-i18n="field.energy_night_end">Night until</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-night-end" value="07:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-              </div>
-              <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4" data-i18n="hint.energy_2zone">
-                Outside the night window the day rate applies. Night may cross midnight.
-              </p>
-            </div>
-
-            <!-- 3-zone: peak + semi-peak (mid) + night; peak has two time windows -->
-            <div id="energy-3zone-fields" class="energy-zone-fields" hidden>
-              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
-                <label class="field"><span data-i18n="field.energy_price_peak">Peak, /kWh</span>
-                  <input type="number" id="energy-price-peak" value="8" min="0" step="0.01" />
-                </label>
-                <label class="field"><span data-i18n="field.energy_price_mid">Semi-peak, /kWh</span>
-                  <input type="number" id="energy-price-mid" value="6" min="0" step="0.01" />
-                </label>
-                <label class="field"><span data-i18n="field.energy_price_night_3">Night, /kWh</span>
-                  <input type="number" id="energy-price-night-3" value="3" min="0" step="0.01" />
-                </label>
-              </div>
-              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-                <label class="field"><span data-i18n="field.energy_night_start">Night from</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-night-start-3" value="23:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="field"><span data-i18n="field.energy_night_end">Night until</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-night-end-3" value="07:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-              </div>
-              <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-top:12px">
-                <label class="field"><span data-i18n="field.energy_peak1_start">Peak window 1 from</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-peak1-start" value="07:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="field"><span data-i18n="field.energy_peak1_end">Peak window 1 until</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-peak1-end" value="10:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="field"><span data-i18n="field.energy_peak2_start">Peak window 2 from</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-peak2-start" value="17:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-                <label class="field"><span data-i18n="field.energy_peak2_end">Peak window 2 until</span>
-                  <span class="time-wrap">
-                    <input type="time" id="energy-peak2-end" value="21:00" />
-                    <span class="time-ico" aria-hidden="true"></span>
-                  </span>
-                </label>
-              </div>
-              <p style="font-size:0.72rem;color:var(--dim);margin:10px 0 0;line-height:1.45" data-i18n-html="hint.energy_3zone">
-                <strong>Peak</strong> / <strong>Semi-peak</strong> / <strong>Night</strong> — three rates.<br />
-                <strong>Peak windows 1–2</strong> — when Peak rate applies (same price in both).<br />
-                <strong>Semi-peak</strong> — all other time. Priority: night → peak → semi-peak.
-              </p>
-            </div>
-
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="hint.energy_tariff">
-              Used only for cost estimate. Does not control the miner.
+            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.energy_moved">
+              Energy moved to each miner page: Miners → open ASIC → Energy.
             </p>
+            <button type="button" class="btn primary" id="btn-energy-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_energy">
+              Open miner Energy
+            </button>
           </div>
         </div>
       </div>
@@ -8496,6 +8258,7 @@
                 <button type="button" class="active" role="tab" data-md-tab="miner" aria-selected="true" data-i18n="miner_detail.tab_miner">Miner</button>
                 <button type="button" role="tab" data-md-tab="chips" aria-selected="false" data-i18n="miner_detail.tab_chips">Chips</button>
                 <button type="button" role="tab" data-md-tab="pools" aria-selected="false" data-i18n="miner_detail.tab_pools">Pools</button>
+                <button type="button" role="tab" data-md-tab="energy" aria-selected="false" data-i18n="miner_detail.tab_energy">Energy</button>
                 <button type="button" role="tab" data-md-tab="info" aria-selected="false" data-i18n="miner_detail.tab_info">Info</button>
               </nav>
             </div>
@@ -9142,7 +8905,263 @@
           </div>
         </div>
                   </div>
-                </div><!-- /pane-pools -->
+                </div>
+                <!-- Tab: Energy = former /energy (per-miner accounting) -->
+                <div class="miner-detail-pane" id="miner-detail-pane-energy" role="tabpanel" data-md-pane="energy" hidden>
+                  <div class="stack" id="miner-detail-energy-stack" style="gap:14px">
+
+        <div class="card" id="panel-energy-summary">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.energy">Energy accounting</h2>
+              <div class="sub" data-i18n="sub.energy_card">kWh · cost · from history power samples</div>
+            </div>
+            <button
+              class="btn energy-chart-refresh"
+              type="button"
+              id="btn-energy-refresh"
+              title="Refresh"
+              aria-label="Refresh"
+              data-i18n-title="btn.refresh"
+              data-i18n-aria="btn.refresh"
+            >
+              <span class="ico-refresh" aria-hidden="true">↻</span>
+            </button>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <div class="energy-live-row">
+              <div class="energy-live-item">
+                <div class="energy-live-label" data-i18n="energy.live_power">Live power</div>
+                <div class="energy-live-val"><span id="energy-live-w">—</span> <small>W</small></div>
+              </div>
+              <div class="energy-live-item">
+                <div class="energy-live-label" data-i18n="energy.tariff_now">Tariff now</div>
+                <div class="energy-live-val"><span id="energy-tariff-now">—</span></div>
+              </div>
+              <div class="energy-live-item">
+                <div class="energy-live-label" data-i18n="energy.virtual_total">Virtual counter</div>
+                <div class="energy-live-val"><span id="energy-virtual-total">—</span> <small>kWh</small></div>
+              </div>
+            </div>
+            <div class="energy-period-grid" id="energy-period-grid">
+              <div class="energy-period-card" data-period="today">
+                <div class="energy-period-title" data-i18n="energy.today">Today</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+              <div class="energy-period-card" data-period="yesterday">
+                <div class="energy-period-title" data-i18n="energy.yesterday">Yesterday</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+              <div class="energy-period-card" data-period="d7">
+                <div class="energy-period-title" data-i18n="energy.d7">7 days</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+              <div class="energy-period-card" data-period="d30">
+                <div class="energy-period-title" data-i18n="energy.d30">30 days</div>
+                <div class="energy-period-kwh"><span data-kwh>—</span> <small>kWh</small></div>
+                <div class="energy-period-cost"><span data-cost>—</span></div>
+                <div class="energy-period-avg"><span data-avg>—</span></div>
+              </div>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0;line-height:1.4" id="energy-status">—</p>
+            <p style="font-size:0.75rem;color:var(--dim);margin:4px 0 0;line-height:1.45" data-i18n="hint.energy_source">
+              Collection settings: Settings → Advanced → Energy metering.
+            </p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-energy-chart">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.energy_chart">Energy consumption</h2>
+              <div class="sub energy-chart-range-sub">—</div>
+            </div>
+            <div class="btn-row energy-chart-toolbar" style="flex-wrap:wrap">
+              <label class="field energy-chart-field" style="max-width:7.5rem">
+                <span data-i18n="field.energy_bucket">Sample by</span>
+                <select
+                  id="energy-chart-bucket"
+                  class="energy-chart-bucket ui-pill-control"
+                  title="Sample by"
+                  aria-label="Sample by"
+                  data-i18n-title="field.energy_bucket"
+                  data-i18n-aria="field.energy_bucket"
+                >
+                  <optgroup label="Sample by" data-i18n-label="field.energy_bucket">
+                    <option value="hour" data-i18n="opt.energy_bucket_hour" selected>Hours</option>
+                    <option value="day" data-i18n="opt.energy_bucket_day">Days</option>
+                    <option value="week" data-i18n="opt.energy_bucket_week">Weeks</option>
+                    <option value="month" data-i18n="opt.energy_bucket_month">Months</option>
+                  </optgroup>
+                </select>
+              </label>
+              <label class="field energy-chart-field energy-chart-field-range" style="max-width:4.5rem">
+                <span data-i18n="field.energy_range">Range</span>
+                <select
+                  id="energy-chart-range"
+                  class="energy-chart-range ui-pill-control"
+                  title="Range"
+                  aria-label="Range"
+                  data-i18n-title="field.energy_range"
+                  data-i18n-aria="field.energy_range"
+                >
+                  <optgroup label="Range" data-i18n-label="field.energy_range">
+                    <option value="24">1d</option>
+                    <option value="48" selected>2d</option>
+                    <option value="168">7d</option>
+                    <option value="720">30d</option>
+                    <option value="2160">90d</option>
+                  </optgroup>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="card-b">
+            <div style="height:280px;position:relative">
+              <canvas id="chart-energy"></canvas>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4;display:none" id="energy-chart-meta" class="energy-chart-meta">—</p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-energy-tariff">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.energy_tariff">Electricity tariff</h2>
+              <div class="sub" data-i18n="sub.energy_tariff">price per kWh · day / night optional</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-energy-save" data-i18n="btn.save">Save</button>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+              <label class="field"><span data-i18n="field.energy_mode">Tariff type</span>
+                <select id="energy-tariff-mode">
+                  <option value="1zone" data-i18n="opt.energy_1zone">1-zone</option>
+                  <option value="2zone" data-i18n="opt.energy_2zone">2-zone</option>
+                  <option value="3zone" data-i18n="opt.energy_3zone">3-zone</option>
+                </select>
+              </label>
+              <label class="field"><span data-i18n="field.energy_currency">Currency</span>
+                <input type="text" id="energy-currency" value="RUB" maxlength="8" autocomplete="off" />
+              </label>
+              <label class="field"><span data-i18n="field.energy_symbol">Symbol</span>
+                <input type="text" id="energy-symbol" value="₽" maxlength="4" autocomplete="off" />
+              </label>
+            </div>
+
+            <!-- 1-zone: single rate -->
+            <div id="energy-1zone-fields" class="energy-zone-fields">
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.energy_price">Price, /kWh</span>
+                  <input type="number" id="energy-price" value="5" min="0" step="0.01" />
+                </label>
+              </div>
+            </div>
+
+            <!-- 2-zone: day + night -->
+            <div id="energy-2zone-fields" class="energy-zone-fields" hidden>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.energy_price_day">Day, /kWh</span>
+                  <input type="number" id="energy-price-day" value="6" min="0" step="0.01" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_price_night">Night, /kWh</span>
+                  <input type="number" id="energy-price-night" value="3" min="0" step="0.01" />
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_night_start">Night from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-start" value="23:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_night_end">Night until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-end" value="07:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <p style="font-size:0.72rem;color:var(--dim);margin:8px 0 0;line-height:1.4" data-i18n="hint.energy_2zone">
+                Outside the night window the day rate applies. Night may cross midnight.
+              </p>
+            </div>
+
+            <!-- 3-zone: peak + semi-peak (mid) + night; peak has two time windows -->
+            <div id="energy-3zone-fields" class="energy-zone-fields" hidden>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr;gap:12px">
+                <label class="field"><span data-i18n="field.energy_price_peak">Peak, /kWh</span>
+                  <input type="number" id="energy-price-peak" value="8" min="0" step="0.01" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_price_mid">Semi-peak, /kWh</span>
+                  <input type="number" id="energy-price-mid" value="6" min="0" step="0.01" />
+                </label>
+                <label class="field"><span data-i18n="field.energy_price_night_3">Night, /kWh</span>
+                  <input type="number" id="energy-price-night-3" value="3" min="0" step="0.01" />
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_night_start">Night from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-start-3" value="23:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_night_end">Night until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-night-end-3" value="07:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-top:12px">
+                <label class="field"><span data-i18n="field.energy_peak1_start">Peak window 1 from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak1-start" value="07:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_peak1_end">Peak window 1 until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak1-end" value="10:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_peak2_start">Peak window 2 from</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak2-start" value="17:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="field"><span data-i18n="field.energy_peak2_end">Peak window 2 until</span>
+                  <span class="time-wrap">
+                    <input type="time" id="energy-peak2-end" value="21:00" />
+                    <span class="time-ico" aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+              <p style="font-size:0.72rem;color:var(--dim);margin:10px 0 0;line-height:1.45" data-i18n-html="hint.energy_3zone">
+                <strong>Peak</strong> / <strong>Semi-peak</strong> / <strong>Night</strong> — three rates.<br />
+                <strong>Peak windows 1–2</strong> — when Peak rate applies (same price in both).<br />
+                <strong>Semi-peak</strong> — all other time. Priority: night → peak → semi-peak.
+              </p>
+            </div>
+
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="hint.energy_tariff">
+              Used only for cost estimate. Does not control the miner.
+            </p>
+          </div>
+        </div>
+
+                  </div>
+                </div><!-- /pane-energy -->
+<!-- /pane-pools -->
               </div>
             </div>
           </div>
@@ -11300,6 +11319,9 @@
         "miner_detail.open_chips": "Open miner Chips",
         "miner_detail.tab_chips": "Chips",
         "miner_detail.tab_pools": "Pools",
+        "miner_detail.tab_energy": "Energy",
+        "miner_detail.energy_moved": "Energy moved to each miner page: Miners → open ASIC → Energy.",
+        "miner_detail.open_energy": "Open miner Energy",
         "miner_detail.pools_moved": "Pools moved to each miner page: Miners → open ASIC → Pools.",
         "miner_detail.open_pools": "Open miner Pools",
         "miner_detail.no_active": "No managed miner — open Miners",
@@ -12391,6 +12413,9 @@
         "miner_detail.open_chips": "Открыть Чипы майнера",
         "miner_detail.tab_chips": "Чипы",
         "miner_detail.tab_pools": "Пулы",
+        "miner_detail.tab_energy": "Энергия",
+        "miner_detail.energy_moved": "Учёт энергии перенесён: Miners → ASIC → вкладка Энергия.",
+        "miner_detail.open_energy": "Открыть Energy майнера",
         "miner_detail.pools_moved": "Пулы перенесены: Miners → ASIC → вкладка Пулы.",
         "miner_detail.open_pools": "Открыть Пулы майнера",
         "miner_detail.no_active": "Нет managed-майнера — откройте Miners",
@@ -15011,6 +15036,8 @@
               minerDetailTab = "chips";
             } else if (c === "pools" || c === "pool") {
               minerDetailTab = "pools";
+            } else if (c === "energy" || c === "kwh" || c === "power-energy") {
+              minerDetailTab = "energy";
             } else if (c === "miner" || c === "main" || c === "live" || c === "") {
               minerDetailTab = minerId ? "miner" : null;
             } else if (c) {
@@ -15051,6 +15078,8 @@
         minerDetailTab = "chips";
       } else if (tab === "pools") {
         minerDetailTab = "pools";
+      } else if (tab === "energy") {
+        minerDetailTab = "energy";
       }
       return { lang, tab, circuitId, minerId, minerDetailTab };
     }
@@ -15081,7 +15110,8 @@
         id === "miners" ||
         id === "minerinfo" ||
         id === "chips" ||
-        id === "pools"
+        id === "pools" ||
+        id === "energy"
       ) {
         const mid = opts.minerId != null ? String(opts.minerId).trim() : "";
         if (mid) {
@@ -15090,6 +15120,7 @@
           if (dt === "info" || id === "minerinfo") sub = "/info";
           else if (dt === "chips" || id === "chips") sub = "/chips";
           else if (dt === "pools" || id === "pools") sub = "/pools";
+          else if (dt === "energy" || id === "energy") sub = "/energy";
           return "/" + L + "/miners/" + encodeURIComponent(mid) + sub;
         }
         if (id === "minerinfo") {
@@ -15101,6 +15132,9 @@
         }
         if (id === "pools") {
           return "/" + L + "/pools";
+        }
+        if (id === "energy") {
+          return "/" + L + "/energy";
         }
         return "/" + L + "/miners/managed";
       }
@@ -15206,6 +15240,7 @@
         if (detailTab === "info") sub = "/info";
         else if (detailTab === "chips") sub = "/chips";
         else if (detailTab === "pools") sub = "/pools";
+        else if (detailTab === "energy") sub = "/energy";
         url =
           "/" + lang + "/miners/" + encodeURIComponent(mid) + sub;
       }
@@ -15252,6 +15287,11 @@
         mainTab = "miner";
         minerSub = "pools";
       } else if (tabId === "energy") {
+        // Legacy /energy → /miners/{active}/energy
+        if (typeof openActiveMinerEnergy === "function") {
+          openActiveMinerEnergy({ replaceUrl: !!opts.replaceUrl });
+          return "energy";
+        }
         mainTab = "miner";
         minerSub = "energy";
       } else if (tabId === "minerinfo") {
@@ -15766,6 +15806,12 @@
         } else {
           activateTab("pools", { skipUrl: true });
         }
+      } else if (route.tab === "energy" && !route.minerId) {
+        if (typeof openActiveMinerEnergy === "function") {
+          openActiveMinerEnergy({ replaceUrl: true });
+        } else {
+          activateTab("energy", { skipUrl: true });
+        }
       } else if (route.minerId) {
         void applyMinerRouteFromUrl(route.minerId, {
           replaceUrl: true,
@@ -15822,8 +15868,11 @@
         openActiveMinerChips({ replaceUrl: true });
       } else if (t === "pools" && !route.minerId) {
         openActiveMinerPools({ replaceUrl: true });
+      } else if (t === "energy" && !route.minerId) {
+        // legacy /ru/energy → /ru/miners/{active}/energy
+        openActiveMinerEnergy({ replaceUrl: true });
       } else if (route.minerId) {
-        // Deep-link /miners/{id}[/info|/chips|/pools]
+        // Deep-link /miners/{id}[/info|/chips|/pools|/energy]
         window.__pendingMinerId = String(route.minerId);
         if (route.minerDetailTab) minerDetailTab = route.minerDetailTab;
         activateTab("managed", { skipUrl: true, minerDetail: true });
@@ -22884,6 +22933,40 @@
       });
     }
 
+    function resolveEnergyQueryMinerId() {
+      // Prefer open miner detail page; else dashboard chart bind; else none (legacy virtual)
+      if (
+        typeof minerDetailOpen !== "undefined" &&
+        minerDetailOpen &&
+        selectedMinerId
+      ) {
+        return String(selectedMinerId);
+      }
+      try {
+        const bound =
+          dashboardChartBind &&
+          dashboardChartBind.energy &&
+          dashboardChartBind.energy.miner_id;
+        if (bound) return String(bound);
+      } catch (_) { /* ignore */ }
+      return null;
+    }
+
+    function energyApiQs(extra) {
+      const parts = [];
+      const mid = resolveEnergyQueryMinerId();
+      if (mid) parts.push("miner_id=" + encodeURIComponent(mid));
+      if (extra) {
+        Object.keys(extra).forEach((k) => {
+          if (extra[k] != null && extra[k] !== "")
+            parts.push(
+              encodeURIComponent(k) + "=" + encodeURIComponent(extra[k])
+            );
+        });
+      }
+      return parts.length ? "?" + parts.join("&") : "";
+    }
+
     async function loadEnergyChart() {
       const bucketEl =
         document.getElementById("energy-chart-bucket") ||
@@ -22901,11 +22984,12 @@
       });
       try {
         const q =
-          "/api/energy/series?bucket=" +
-          encodeURIComponent(energyChartBucket) +
-          "&hours=" +
-          encodeURIComponent(energyChartHours) +
-          "&max=500";
+          "/api/energy/series" +
+          energyApiQs({
+            bucket: energyChartBucket,
+            hours: energyChartHours,
+            max: 500,
+          });
         const res = await fetch(q, { cache: "no-store" });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "series fail");
@@ -22964,11 +23048,40 @@
       if (st) st.textContent = "…";
       bindEnergyChartControls();
       try {
-        const res = await fetch("/api/energy", { cache: "no-store" });
+        const res = await fetch("/api/energy" + energyApiQs(), {
+          cache: "no-store",
+        });
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "energy fail");
         fillEnergyConfigForm(body.config || {});
         renderEnergySummary(body);
+        // show which miner this panel is bound to
+        try {
+          const mid = resolveEnergyQueryMinerId();
+          const sub = document.querySelector(
+            "#panel-energy-summary .sub, #miner-detail-energy-stack #panel-energy-summary .sub"
+          );
+          if (sub && mid) {
+            const m =
+              typeof findMinerById === "function"
+                ? findMinerById(
+                    (fleetCache && fleetCache.miners) || managedMinersCache || [],
+                    mid
+                  )
+                : null;
+            const name = m
+              ? (m.alias && String(m.alias).trim()) ||
+                (m.name && String(m.name).trim()) ||
+                m.host ||
+                mid
+              : mid;
+            const base =
+              typeof t === "function"
+                ? t("sub.energy_card", "kWh · cost · from history power samples")
+                : "kWh · cost · from history power samples";
+            sub.textContent = base + " · " + name;
+          }
+        } catch (_) { /* ignore */ }
         void loadEnergyChart();
         return body;
       } catch (e) {
@@ -29244,6 +29357,7 @@
       if (tabId === "info") tab = "info";
       else if (tabId === "chips" || tabId === "chipmap") tab = "chips";
       else if (tabId === "pools" || tabId === "pool") tab = "pools";
+      else if (tabId === "energy" || tabId === "kwh") tab = "energy";
       const prev = minerDetailTab;
       const changed = prev !== tab;
       minerDetailTab = tab;
@@ -29286,6 +29400,10 @@
       if (tab === "pools" && (changed || opts.forceLoad)) {
         if (typeof loadMiningPools === "function") loadMiningPools(false);
         if (typeof loadPoolPresets === "function") loadPoolPresets();
+      }
+      // Energy accounting — former /energy (per-miner)
+      if (tab === "energy" && (changed || opts.forceLoad)) {
+        if (typeof loadEnergyPanel === "function") void loadEnergyPanel();
       }
     }
 
@@ -29337,6 +29455,7 @@
       if (tab === "chips") want = "chips";
       else if (tab === "info") want = "info";
       else if (tab === "pools") want = "pools";
+      else if (tab === "energy") want = "energy";
       const mid = resolveActiveMinerId();
       if (!mid) {
         if (typeof toastWarn === "function") {
@@ -29368,6 +29487,10 @@
 
     function openActiveMinerPools(opts) {
       openActiveMinerDetailTab("pools", opts);
+    }
+
+    function openActiveMinerEnergy(opts) {
+      openActiveMinerDetailTab("energy", opts);
     }
 
     /** Read-only mode strip (same fields as /miner). */
@@ -29996,6 +30119,7 @@
         opts.tab === "info" ||
         opts.tab === "chips" ||
         opts.tab === "pools" ||
+        opts.tab === "energy" ||
         opts.tab === "miner"
       ) {
         minerDetailTab = opts.tab;
@@ -30012,6 +30136,9 @@
         setMinersSubtab("detail");
       }
       renderMinerDetail();
+      if (typeof setMinerDetailTab === "function") {
+        setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
+      }
       if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
         setMinerDetailUrl(mid, opts.replaceUrl ? "replace" : "push", {
           minerDetailTab: minerDetailTab,
@@ -30030,6 +30157,9 @@
       if (minerDetailTab === "pools") {
         if (typeof loadMiningPools === "function") loadMiningPools(false);
         if (typeof loadPoolPresets === "function") loadPoolPresets();
+      }
+      if (minerDetailTab === "energy" && typeof loadEnergyPanel === "function") {
+        void loadEnergyPanel();
       }
       // ensure fleet data is fresh
       if (typeof refreshFleetTable === "function") {
@@ -30061,6 +30191,8 @@
         minerDetailTab = "chips";
       } else if (opts.tab === "pools" || opts.minerDetailTab === "pools") {
         minerDetailTab = "pools";
+      } else if (opts.tab === "energy" || opts.minerDetailTab === "energy") {
+        minerDetailTab = "energy";
       } else if (opts.tab === "miner" || opts.minerDetailTab === "miner") {
         minerDetailTab = "miner";
       }
@@ -30097,6 +30229,13 @@
       if (minerDetailTab === "pools") {
         if (typeof loadMiningPools === "function") loadMiningPools(false);
         if (typeof loadPoolPresets === "function") loadPoolPresets();
+      }
+      if (minerDetailTab === "energy" && typeof loadEnergyPanel === "function") {
+        void loadEnergyPanel();
+      }
+      // ensure correct pane visible for deep-link tab
+      if (typeof setMinerDetailTab === "function") {
+        setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
       }
     }
 
@@ -30136,6 +30275,9 @@
     });
     document.getElementById("btn-pools-goto-detail")?.addEventListener("click", () => {
       openActiveMinerPools({ replaceUrl: false });
+    });
+    document.getElementById("btn-energy-goto-detail")?.addEventListener("click", () => {
+      if (typeof openActiveMinerEnergy === "function") openActiveMinerEnergy({ replaceUrl: false });
     });
     document.getElementById("btn-miner-detail-edit")?.addEventListener("click", () => {
       if (selectedMinerId && typeof fleetDoAction === "function") {
