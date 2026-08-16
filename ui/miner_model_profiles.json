@@ -250,7 +250,7 @@
       "display_name": "M63",
       "display_name_full": "Whatsminer M63",
       "manufacturer": "MicroBT",
-      "algo": "sha256",
+      "algo": "sha256ab",
       "coin": "BTC",
       "cooling": "liquid",
       "hashrate_unit": "TH/s",

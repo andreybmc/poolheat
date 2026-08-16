@@ -41,10 +41,20 @@ MANUFACTURERS: dict[str, dict[str, Any]] = {
 # Canonical mining algorithms (id stored in miners.db / live).
 # Default meter units (hashrate + efficiency) are per-algo, not per-model.
 ALGO_INFO: dict[str, dict[str, str]] = {
+    # BTC-class with AsicBoost (Whatsminer / most modern SHA ASICs)
+    "sha256ab": {
+        "id": "sha256ab",
+        "name": "SHA-256ab",
+        "name_ru": "SHA-256ab",
+        "coin": "BTC",
+        "hashrate_unit": "TH/s",
+        "efficiency_unit": "J/T",
+    },
+    # Legacy id kept only for normalize aliases → sha256ab
     "sha256": {
-        "id": "sha256",
-        "name": "SHA-256",
-        "name_ru": "SHA-256",
+        "id": "sha256ab",
+        "name": "SHA-256ab",
+        "name_ru": "SHA-256ab",
         "coin": "BTC",
         "hashrate_unit": "TH/s",
         "efficiency_unit": "J/T",
@@ -116,22 +126,27 @@ ALGO_INFO: dict[str, dict[str, str]] = {
 }
 
 _VENDOR_DEFAULT_ALGO: dict[str, str] = {
-    "microbt": "sha256",
-    "whatsminer": "sha256",
-    "bitmain": "sha256",
-    "antminer": "sha256",
-    "avalon": "sha256",
-    "canaan": "sha256",
+    "microbt": "sha256ab",
+    "whatsminer": "sha256ab",
+    "bitmain": "sha256ab",
+    "antminer": "sha256ab",
+    "avalon": "sha256ab",
+    "canaan": "sha256ab",
 }
 
 
 def normalize_algo(raw: Any) -> str:
     s = re.sub(r"[^a-z0-9]+", "", str(raw or "").strip().lower())
     aliases = {
-        "sha2": "sha256",
-        "sha256d": "sha256",
-        "btc": "sha256",
-        "bitcoin": "sha256",
+        # AsicBoost is the system default for BTC-class SHA ASICs
+        "sha2": "sha256ab",
+        "sha256": "sha256ab",
+        "sha256d": "sha256ab",
+        "sha256ab": "sha256ab",
+        "asicboost": "sha256ab",
+        "boost": "sha256ab",
+        "btc": "sha256ab",
+        "bitcoin": "sha256ab",
         "ltc": "scrypt",
         "litecoin": "scrypt",
         "ckb": "eaglesong",
@@ -145,6 +160,9 @@ def normalize_algo(raw: Any) -> str:
         "heavyhash": "kheavyhash",
     }
     s = aliases.get(s, s)
+    # never surface legacy id
+    if s == "sha256":
+        s = "sha256ab"
     return s
 
 
@@ -154,7 +172,9 @@ def algo_info(raw: Any) -> dict[str, str] | None:
         return None
     known = ALGO_INFO.get(aid)
     if known:
-        return dict(known)
+        out = dict(known)
+        out["id"] = aid  # always canonical after normalize
+        return out
     # unknown but non-empty — keep as free-form id, BTC-class units
     label = str(raw or aid).strip() or aid
     return {
@@ -677,9 +697,9 @@ _FAMILIES: list[dict[str, Any]] = [
     },
 ]
 
-# BTC-class families inherit SHA-256 unless a row sets its own algo/coin.
+# BTC-class families inherit SHA-256ab (AsicBoost) unless a row sets its own algo/coin.
 for _fam in _FAMILIES:
-    _fam.setdefault("algo", "sha256")
+    _fam.setdefault("algo", "sha256ab")
     _fam.setdefault("coin", "BTC")
 
 

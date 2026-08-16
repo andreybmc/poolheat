@@ -67,6 +67,7 @@ try:
         list_families as miner_models_list_families,
         list_manufacturers as miner_models_list_manufacturers,
         lookup_model_profile,
+        normalize_algo,
         resolve_hashboard_layout as _mm_resolve_hashboard_layout,
         resolve_miner_algo,
         resolve_miner_model,
@@ -86,6 +87,7 @@ except ImportError:
             list_families as miner_models_list_families,
             list_manufacturers as miner_models_list_manufacturers,
             lookup_model_profile,
+            normalize_algo,
             resolve_hashboard_layout as _mm_resolve_hashboard_layout,
             resolve_miner_algo,
             resolve_miner_model,
@@ -100,6 +102,7 @@ except ImportError:
         miner_algo_display = None  # type: ignore
         apply_model_profile_to_live = None  # type: ignore
         lookup_model_profile = None  # type: ignore
+        normalize_algo = None  # type: ignore
 
 
 def _load_app_config() -> dict:
@@ -1838,6 +1841,21 @@ def _normalize_coin_type(v) -> str:
     return s[:32]
 
 
+def _normalize_pool_preset_algo(v) -> str:
+    """Canonical mining algo for pool presets (e.g. sha256ab)."""
+    try:
+        if normalize_algo is not None:
+            a = normalize_algo(v)
+            if a:
+                return str(a)
+    except Exception:
+        pass
+    s = re.sub(r"[^a-z0-9]+", "", str(v or "").strip().lower())
+    if s in ("sha256", "sha2", "sha256d", "btc", "bitcoin", ""):
+        return "sha256ab"
+    return s or "sha256ab"
+
+
 def _load_pool_presets() -> None:
     global _pool_presets
     with _pool_presets_lock:
@@ -1845,6 +1863,7 @@ def _load_pool_presets() -> None:
         if not isinstance(raw, dict):
             raw = {"presets": [], "active_id": None}
         clean = []
+        dirty = False
         for p in raw.get("presets") or []:
             if not isinstance(p, dict):
                 continue
@@ -1853,6 +1872,11 @@ def _load_pool_presets() -> None:
             except Exception:
                 continue
             coin = _normalize_coin_type(p.get("coin_type") or p.get("coin"))
+            # Legacy presets without algo → BTC/AsicBoost class
+            raw_algo = p.get("algo") or p.get("algorithm") or ""
+            if not str(raw_algo).strip():
+                dirty = True
+            algo = _normalize_pool_preset_algo(raw_algo or "sha256ab")
             clean.append(
                 {
                     "id": str(p.get("id") or "").strip() or _new_preset_id(),
@@ -1861,6 +1885,7 @@ def _load_pool_presets() -> None:
                     or datetime.now().isoformat(timespec="seconds"),
                     "pools": pools,
                     "coin_type": coin,
+                    "algo": algo,
                     "summary": _pool_preset_summary(pools, coin_type=coin),
                 }
             )
@@ -1869,7 +1894,8 @@ def _load_pool_presets() -> None:
             "active_id": raw.get("active_id") if raw.get("active_id") else None,
         }
         try:
-            _save_json(POOL_PRESETS_FILE, _pool_presets)
+            if dirty or True:
+                _save_json(POOL_PRESETS_FILE, _pool_presets)
         except Exception:
             pass
 
@@ -1879,10 +1905,22 @@ def _save_pool_presets() -> None:
         _save_json(POOL_PRESETS_FILE, _pool_presets)
 
 
-def list_pool_presets(*, include_secrets: bool = True) -> dict:
+def list_pool_presets(
+    *, include_secrets: bool = True, algo: str | None = None
+) -> dict:
+    """
+    List pool presets. If algo is set, only presets for that algorithm
+    (e.g. sha256ab) are returned — used on /miners/{id}/pools.
+    """
+    want = _normalize_pool_preset_algo(algo) if algo not in (None, "") else None
     with _pool_presets_lock:
         items = []
         for p in _pool_presets.get("presets") or []:
+            p_algo = _normalize_pool_preset_algo(
+                p.get("algo") or p.get("algorithm") or "sha256ab"
+            )
+            if want and p_algo != want:
+                continue
             pools = p.get("pools") or []
             coin = _normalize_coin_type(p.get("coin_type") or p.get("coin"))
             if not include_secrets:
@@ -1902,6 +1940,7 @@ def list_pool_presets(*, include_secrets: bool = True) -> dict:
                     "name": p.get("name"),
                     "updated_ts": p.get("updated_ts"),
                     "coin_type": coin,
+                    "algo": p_algo,
                     "summary": p.get("summary")
                     or _pool_preset_summary(p.get("pools") or [], coin_type=coin),
                     "pools": pools,
@@ -1911,6 +1950,7 @@ def list_pool_presets(*, include_secrets: bool = True) -> dict:
             "ok": True,
             "presets": items,
             "active_id": _pool_presets.get("active_id"),
+            "algo_filter": want,
         }
 
 
@@ -1963,8 +2003,11 @@ def save_pool_preset(
     preset_id: str | None = None,
     from_live: bool = False,
     coin_type: str | None = None,
+    algo: str | None = None,
 ) -> dict:
-    """Create/update pool preset. from_live → snapshot miner; pools=list → edit."""
+    """Create/update pool preset. from_live → snapshot miner; pools=list → edit.
+    algo binds the preset to a mining algorithm (e.g. sha256ab) for per-ASIC filter.
+    """
     name = str(name or "").strip()
     if not name:
         raise ValueError("name empty")
@@ -1972,6 +2015,7 @@ def save_pool_preset(
         name = name[:64]
 
     coin_in = None if coin_type is None else _normalize_coin_type(coin_type)
+    algo_in = None if algo is None else _normalize_pool_preset_algo(algo)
 
     if from_live:
         pools_norm = snapshot_live_pools_for_preset()
@@ -2025,6 +2069,32 @@ def save_pool_preset(
     if coin_in is None:
         coin_in = ""
 
+    # preserve / default algo (BTC AsicBoost class)
+    if algo_in is None and preset_id:
+        old = get_pool_preset(preset_id)
+        algo_in = _normalize_pool_preset_algo((old or {}).get("algo") or "sha256ab")
+    if algo_in is None:
+        # from_live: try active miner algo
+        if from_live and resolve_miner_algo is not None:
+            try:
+                live = hydrate_live_from_disk(max_age_sec=120.0) or {}
+                if not isinstance(live, dict):
+                    live = {}
+                ainfo = resolve_miner_algo(
+                    vendor=live.get("vendor") or live.get("api_vendor"),
+                    miner_type=live.get("miner_type"),
+                    model=live.get("model") or live.get("model_name"),
+                    model_name=live.get("model_name") or live.get("model_display"),
+                    model_code=live.get("model_code"),
+                    explicit=live.get("algo") or live.get("algorithm"),
+                )
+                if isinstance(ainfo, dict) and ainfo.get("id"):
+                    algo_in = _normalize_pool_preset_algo(ainfo.get("id"))
+            except Exception:
+                pass
+        if algo_in is None:
+            algo_in = "sha256ab"
+
     now = datetime.now().isoformat(timespec="seconds")
     with _pool_presets_lock:
         presets = list(_pool_presets.get("presets") or [])
@@ -2039,6 +2109,7 @@ def save_pool_preset(
                         "updated_ts": now,
                         "pools": pools_norm,
                         "coin_type": coin_in,
+                        "algo": algo_in,
                         "summary": _pool_preset_summary(
                             pools_norm, coin_type=coin_in
                         ),
@@ -2057,6 +2128,7 @@ def save_pool_preset(
                     "updated_ts": now,
                     "pools": pools_norm,
                     "coin_type": coin_in,
+                    "algo": algo_in,
                     "summary": _pool_preset_summary(
                         pools_norm, coin_type=coin_in
                     ),
@@ -2064,7 +2136,7 @@ def save_pool_preset(
             )
         _pool_presets["presets"] = presets
     _save_pool_presets()
-    return {"ok": True, "id": out_id, **list_pool_presets()}
+    return {"ok": True, "id": out_id, **list_pool_presets(algo=algo_in)}
 
 
 def delete_pool_preset(preset_id: str) -> dict:
@@ -9347,11 +9419,11 @@ def _save_chipmap_cache_disk(data: dict | None = None) -> bool:
         return False
 
 
-def _load_chipmap_cache_disk(*, into_ram: bool = True) -> dict | None:
+def _load_chipmap_cache_disk(*, into_ram: bool = False) -> dict | None:
     """
-    Restore last chipmap from disk.
-    into_ram=True: full map in RAM (boot / explicit UI need).
-    into_ram=False: only summary in RAM (memory-light).
+    Restore chipmap metadata from disk into RAM as summary only.
+    Full boards always stay on disk (chipmap_cache.json) — never pin in serve RAM.
+    into_ram is ignored (kept for call-site compatibility); always summary.
     """
     global _chipmap_cache
     try:
@@ -9360,25 +9432,19 @@ def _load_chipmap_cache_disk(*, into_ram: bool = True) -> dict | None:
         raw = _read_chipmap_cache_disk()
         if not raw:
             return None
-        if into_ram:
-            with _chipmap_lock:
-                _chipmap_cache.clear()
-                _chipmap_cache.update(raw)
-                _chipmap_cache["boards_in_ram"] = True
-        else:
-            # summary only — full boards stay on disk until get_chipmap needs them
-            summary = _chipmap_summary_only(raw)
-            summary["stale"] = True
-            summary["from_disk"] = True
-            with _chipmap_lock:
-                _chipmap_cache.clear()
-                _chipmap_cache.update(summary)
+        summary = _chipmap_summary_only(raw)
+        summary["stale"] = True
+        summary["from_disk"] = True
+        summary["boards"] = []
+        summary["boards_in_ram"] = False
+        with _chipmap_lock:
+            _chipmap_cache.clear()
+            _chipmap_cache.update(summary)
         n = raw.get("chip_count") or 0
-        mode = "full" if into_ram else "summary"
         print(
-            f"[chipmap] restored disk cache ({mode}) · chips {n} · ts {raw.get('ts')}"
+            f"[chipmap] restored disk cache (summary only, boards on disk) · chips {n} · ts {raw.get('ts')}"
         )
-        return raw if into_ram else _chipmap_cache
+        return _chipmap_cache
     except Exception as e:
         print(f"[chipmap] cache load: {e}")
         return None
@@ -9386,16 +9452,17 @@ def _load_chipmap_cache_disk(*, into_ram: bool = True) -> dict | None:
 
 def _chipmap_ensure_boards_in_ram() -> dict:
     """
-    Return full map for one-shot use (disk preferred).
-    Does not pin boards into long-lived RAM — summary stays in _chipmap_cache.
+    Return full map for one-shot use from disk only.
+    Never pins boards into long-lived RAM (_chipmap_cache stays summary-only).
     """
-    with _chipmap_lock:
-        cur = dict(_chipmap_cache)
-        if cur.get("boards"):
-            return cur
     disk = _read_chipmap_cache_disk()
     if disk and disk.get("boards"):
         return dict(disk)
+    with _chipmap_lock:
+        cur = dict(_chipmap_cache)
+    # summary-only fallback (no chips)
+    cur["boards"] = []
+    cur["boards_in_ram"] = False
     return cur
 
 
@@ -9770,8 +9837,11 @@ def request_chipmap_refresh(*, timeout_sec: float = 45.0) -> dict:
 
 def get_chipmap(*, force: bool = False) -> dict:
     """
-    Return chipmap for UI from chipmap_cache.json only.
-    Poller writes the full ready JSON; serve never scrapes LuCI.
+    Return chipmap for UI from chipmap_cache.json only (disk).
+
+    Poller writes the full JSON; serve never scrapes LuCI and never keeps
+    per-chip boards in long-lived RAM — only a light summary in _chipmap_cache.
+    Full boards exist only for the duration of this HTTP response (from disk).
     force=True enqueues chipmap_req.json and waits briefly for refresh.
     """
     if force:
@@ -9781,19 +9851,34 @@ def get_chipmap(*, force: bool = False) -> dict:
         out = dict(disk)
         out["from_disk"] = True
         out["boards_in_ram"] = False
-        # light RAM summary only
+        out["cache"] = "disk"
+        # light RAM summary only — drop any boards from process memory
         with _chipmap_lock:
             _chipmap_cache.clear()
-            _chipmap_cache.update(_chipmap_summary_only(out) if out.get("boards") else out)
-            _chipmap_cache["boards_in_ram"] = False
+            summary = (
+                _chipmap_summary_only(out)
+                if out.get("boards")
+                else _chipmap_summary_only({**out, "boards": []})
+            )
+            summary["boards"] = []
+            summary["boards_in_ram"] = False
+            summary["disk_cache"] = True
+            _chipmap_cache.update(summary)
         return out
     with _chipmap_lock:
         ram = dict(_chipmap_cache)
+        # never expose stale boards from RAM
+        if ram.get("boards"):
+            ram = _chipmap_summary_only(ram)
+            _chipmap_cache.clear()
+            _chipmap_cache.update(ram)
     if ram:
         ram = dict(ram)
+        ram["boards"] = []
         ram.setdefault("ok", False)
         ram.setdefault("error", "no chipmap_cache.json yet — wait for miner-poller")
         ram["from_disk"] = False
+        ram["boards_in_ram"] = False
         return ram
     return {
         "ok": False,
@@ -9801,6 +9886,7 @@ def get_chipmap(*, force: bool = False) -> dict:
         "boards": [],
         "chip_count": 0,
         "from_disk": False,
+        "boards_in_ram": False,
     }
 
 
@@ -17229,6 +17315,8 @@ def _default_dashboard_cfg() -> dict:
         },
         # Per weather widget place: { "weather": {city,lat,lon,...}, "weather_2": {...} }
         "weather_widgets": {},
+        # Per power widget bind: { "power": {"miner_id": null}, "power_2": {"miner_id": "…"} }
+        "power_widgets": {},
         "chart_sync": True,
         "updated_ts": None,
     }
@@ -17290,6 +17378,22 @@ def _normalize_dashboard_cfg(raw: dict | None) -> dict:
                 or "auto",
             }
         base["weather_widgets"] = out_ww
+    pw = raw.get("power_widgets")
+    if isinstance(pw, dict):
+        out_pw: dict = {}
+        for wid, conf in pw.items():
+            sid = str(wid or "").strip()
+            if not (sid == "power" or sid.startswith("power_")):
+                continue
+            if not isinstance(conf, dict):
+                continue
+            mid = conf.get("miner_id")
+            out_pw[sid] = {
+                "miner_id": (
+                    str(mid).strip() if mid not in (None, "") else None
+                )
+            }
+        base["power_widgets"] = out_pw
     if raw.get("updated_ts"):
         base["updated_ts"] = raw.get("updated_ts")
     return base
@@ -17380,6 +17484,24 @@ def save_dashboard_cfg(req: dict) -> dict:
                     or "auto",
                 }
             cur["weather_widgets"] = ww
+        if "power_widgets" in req and isinstance(req.get("power_widgets"), dict):
+            pww = dict(cur.get("power_widgets") or {})
+            for wid, conf in (req.get("power_widgets") or {}).items():
+                sid = str(wid or "").strip()
+                if not (sid == "power" or sid.startswith("power_")):
+                    continue
+                if conf is None:
+                    pww.pop(sid, None)
+                    continue
+                if not isinstance(conf, dict):
+                    continue
+                mid = conf.get("miner_id")
+                pww[sid] = {
+                    "miner_id": (
+                        str(mid).strip() if mid not in (None, "") else None
+                    )
+                }
+            cur["power_widgets"] = pww
         # allow top-level migrate blob: full charts/layout already handled
         cur["updated_ts"] = datetime.now().isoformat(timespec="seconds")
         cur["version"] = 1
@@ -41387,14 +41509,18 @@ class Handler(SimpleHTTPRequestHandler):
             self._json_response(400, {"ok": False, "error": str(e)})
 
     def _api_pool_presets_get(self) -> None:
-        self._json_response(200, list_pool_presets(include_secrets=True))
+        qs = parse_qs(urlparse(self.path).query)
+        algo = (qs.get("algo") or [None])[0]
+        self._json_response(
+            200, list_pool_presets(include_secrets=True, algo=algo)
+        )
 
     def _api_pool_presets_post(self) -> None:
         """
         Pool presets:
-          {action: list}
-          {action: save, name, from_live?:true, pools?}
-          {action: update, id, name?, pools?, from_live?}
+          {action: list, algo?}
+          {action: save, name, from_live?:true, pools?, algo?}
+          {action: update, id, name?, pools?, from_live?, algo?}
           {action: delete, id}
           {action: apply, id}  — write to ASIC
           {action: get, id}
@@ -41405,7 +41531,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("expected JSON object")
             action = str(req.get("action") or "list").strip().lower()
             if action in ("list", "ls"):
-                self._json_response(200, list_pool_presets())
+                algo = req.get("algo") or req.get("algorithm")
+                self._json_response(200, list_pool_presets(algo=algo))
                 return
             if action in ("get", "one"):
                 p = get_pool_preset(str(req.get("id") or ""))
@@ -41420,12 +41547,14 @@ class Handler(SimpleHTTPRequestHandler):
                 coin = req.get("coin_type")
                 if coin is None:
                     coin = req.get("coin")
+                algo = req.get("algo") or req.get("algorithm")
                 out = save_pool_preset(
                     str(name or ""),
                     pools,
                     preset_id=None,
                     from_live=from_live or pools is None,
                     coin_type=str(coin) if coin is not None else None,
+                    algo=str(algo) if algo is not None else None,
                 )
                 self._json_response(200, out)
                 return
@@ -41452,6 +41581,13 @@ class Handler(SimpleHTTPRequestHandler):
                     coin_kw["coin_type"] = (
                         str(coin) if coin is not None else None
                     )
+                algo = req.get("algo") or req.get("algorithm")
+                if algo is not None:
+                    coin_kw["algo"] = str(algo)
+                elif from_live or pools is not None:
+                    # keep existing algo unless caller overrides
+                    if existing.get("algo"):
+                        coin_kw["algo"] = existing.get("algo")
                 out = save_pool_preset(
                     str(name),
                     pools,

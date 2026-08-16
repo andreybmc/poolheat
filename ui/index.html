@@ -2836,6 +2836,69 @@
       background: rgba(99, 102, 241, 0.12);
     }
 
+
+    /* —— Power widgets: multi-instance + vendor skins —— */
+    .temp-card.power-meas.vendor-whatsminer {
+      /* current M33/M53/M63/M64/M73/M74 look (default) */
+    }
+    .temp-card.power-meas.vendor-antminer {
+      background:
+        linear-gradient(145deg, rgba(234, 179, 8, 0.12) 0%, transparent 55%),
+        var(--panel2, var(--panel));
+      border-color: color-mix(in srgb, #eab308 35%, var(--border));
+      box-shadow: 0 0 0 1px color-mix(in srgb, #eab308 12%, transparent) inset;
+    }
+    .temp-card.power-meas.vendor-antminer .tc-label {
+      color: #fbbf24;
+    }
+    .temp-card.power-meas.vendor-antminer .tc-val-dual > span:first-child,
+    .temp-card.power-meas.vendor-antminer .tc-val {
+      color: #fde68a;
+    }
+    .temp-card.power-meas.vendor-antminer .pm-badge {
+      border-color: color-mix(in srgb, #eab308 40%, var(--border));
+      background: color-mix(in srgb, #eab308 14%, transparent);
+    }
+    .temp-card.power-meas.vendor-antminer .pm-side {
+      border-left: 1px solid color-mix(in srgb, #eab308 30%, var(--border));
+      padding-left: 10px;
+    }
+    .temp-card.power-meas.vendor-antminer .pm-extra {
+      border-top-color: color-mix(in srgb, #eab308 25%, var(--border));
+    }
+    .temp-card.power-meas .pm-miner-tag {
+      display: inline-block;
+      margin-left: 6px;
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--dim);
+      letter-spacing: 0.02em;
+      max-width: 9rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .temp-card.power-meas.vendor-antminer .pm-miner-tag {
+      color: #fcd34d;
+    }
+    .temp-card.power-meas .pm-ant-rates {
+      display: none;
+      margin-top: 4px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      gap: 0.35rem 0.75rem;
+      flex-wrap: wrap;
+    }
+    .temp-card.power-meas.vendor-antminer .pm-ant-rates {
+      display: flex;
+    }
+    .temp-card.power-meas.vendor-antminer .pm-ant-rates b {
+      color: #fde68a;
+      font-weight: 650;
+    }
+
     /* —— Miner detail page (/miners/{id}) —— */
     .miner-detail-head {
       display: flex;
@@ -6563,36 +6626,42 @@
             </div>
           </div>
 
-          <div class="dash-item" data-dash-id="power">
-            <div class="temp-card power-meas" id="card-power-meas">
+          <div class="dash-item" data-dash-id="power" data-power-widget="power">
+            <div class="temp-card power-meas vendor-whatsminer" id="card-power-meas" data-power-card="power">
               <div class="tc-label">
                 <span class="tip" data-tip-key="power_measured" data-i18n="dash.power_measured">Power measured</span>
-                <span class="pm-badge" id="pm-work-badge">—</span>
-                <span class="pm-badge pm-upfreq is-unknown" id="pm-upfreq-badge"
+                <span class="pm-miner-tag" data-bind="minerTag" hidden></span>
+                <span class="pm-badge" data-bind="workBadge">—</span>
+                <span class="pm-badge pm-upfreq is-unknown" data-bind="upfreqBadge"
                   title="upfreq —" role="status" aria-label="upfreq">
                   <span class="pm-uf-ico" aria-hidden="true">·</span>
-                  <span class="pm-uf-txt">—</span>
+                  <span class="pm-uf-txt" data-bind="upfreqTxt">—</span>
                 </span>
               </div>
               <div class="tc-val-row">
                 <div class="tc-val tc-val-dual">
-                  <span data-bind="pw">—</span> <small>W</small>
+                  <span data-bind="pw">—</span> <small data-bind="pwUnit">W</small>
                   <span class="tc-sep" aria-hidden="true">|</span>
-                  <span data-bind="hr">—</span> <small class="tip" data-tip-key="hashrate">TH/s</small>
+                  <span data-bind="hr">—</span> <small class="tip" data-tip-key="hashrate" data-bind="hrUnit">TH/s</small>
                 </div>
                 <div class="pm-side" aria-label="freq and efficiency">
                   <span class="pm-side-line"><span class="tip" data-tip-key="freq">freq</span> <span data-bind="freq">—</span></span>
-                  <span class="pm-side-line"><span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency">J/T</span></span>
+                  <span class="pm-side-line"><span data-bind="eff">—</span> <span class="tip" data-tip-key="efficiency" data-bind="effUnit">J/T</span></span>
                 </div>
+              </div>
+              <div class="pm-ant-rates" data-bind="antRates" aria-label="Antminer rates">
+                <span>rate <b data-bind="antRate">—</b></span>
+                <span>ideal <b data-bind="antIdeal">—</b></span>
+                <span>max <b data-bind="antMax">—</b></span>
               </div>
               <div class="tc-extra pm-extra">
                 <div class="pm-extra-line">
                   <span data-bind="pwMode">—</span>
                   · <span class="tip" data-tip-key="asic_uptime" title="ASIC uptime since reboot" data-i18n="dash.uptime">uptime</span>
-                  <span id="dash-asic-uptime" data-bind="asicUptime">—</span>
-                  · <span class="tip" data-tip-key="asic_elapsed" id="dash-asic-elapsed-lbl"
+                  <span data-bind="asicUptime">—</span>
+                  · <span class="tip" data-tip-key="asic_elapsed" data-bind="elapsedLbl"
                       title="Elapsed — since mining start" data-i18n="dash.mining">mining</span>
-                  <span id="dash-asic-elapsed" data-bind="asicElapsed">—</span>
+                  <span data-bind="asicElapsed">—</span>
                 </div>
                 <div class="pm-extra-line">
                   <span class="tip" data-tip-key="psu_temp" data-i18n="dash.psu">PSU</span>
@@ -7076,483 +7145,47 @@
       </div>
       </div><!-- /subview-miner -->
 
-      <div class="subview" id="subview-chips">
+            <div class="subview" id="subview-chips">
       <div class="stack">
         <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.chipmap">Chip map</h2>
-              <div class="sub" id="chipmap-mode-hint" style="line-height:1.45;max-width:52rem">
-                —
-              </div>
-            </div>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <label class="field" style="margin:0;min-width:180px">Map mode
-                <select id="chipmap-metric">
-                  <option value="temp">Temperature</option>
-                  <option value="gradient">Gradient (hotspots)</option>
-                  <option value="outliers">Outliers (cross-slot)</option>
-                  <option value="nonce_def">Nonce deficit</option>
-                  <option value="est_th">Hash est (TH/s)</option>
-                  <option value="nonce">Hash (nonce)</option>
-                  <option value="nonce_rate">Nonce/s (elapsed)</option>
-                  <option value="freq">Frequency</option>
-                </select>
-              </label>
-              <button
-                class="btn energy-chart-refresh"
-                type="button"
-                id="btn-chipmap-refresh"
-                title="Refresh"
-                aria-label="Refresh"
-                data-i18n-title="btn.refresh"
-                data-i18n-aria="btn.refresh"
-              >
-                <span class="ico-refresh" aria-hidden="true">↻</span>
-              </button>
-            </div>
-          </div>
           <div class="card-b">
-            <p id="chipmap-status" style="font-size:0.8rem;color:var(--muted);margin:0 0 12px">—</p>
-            <div class="chip-legend" id="chipmap-legend"></div>
-            <div id="chipmap-boards" style="margin-top:14px"></div>
-          </div>
-        </div>
-
-        <div class="card" id="panel-chipmap-glossary">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.chip_params">Chip parameters</h2>
-              <div class="sub">brief · what you see on the map and in tooltips</div>
-            </div>
-          </div>
-          <div class="card-b" style="font-size:0.78rem;color:var(--muted);line-height:1.5">
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 18px">
-              <div><strong style="color:var(--text)">#</strong> — chip number on board (C0…)</div>
-              <div><strong style="color:var(--text)">temp / °C</strong> — chip temperature</div>
-              <div><strong style="color:var(--text)">Freq</strong> — frequency, MHz</div>
-              <div><strong style="color:var(--text)">Vol</strong> — domain voltage, mV (Frequency mode only; from Miner API Log)</div>
-              <div><strong style="color:var(--text)">Nonce</strong> — nonce count found since mining start</div>
-              <div><strong style="color:var(--text)">Nonce/s</strong> — nonce / mining elapsed</div>
-              <div><strong style="color:var(--text)">Hash est</strong> — TH/s estimate: nonce share × ASIC hashrate</div>
-              <div><strong style="color:var(--text)">Nonce deficit</strong> — % below slot average nonce (−12% = weaker)</div>
-              <div><strong style="color:var(--text)">Gradient</strong> — °C hotter than upstream neighbors (local hotspot)</div>
-              <div><strong style="color:var(--text)">Outliers</strong> — hotter than same geometry on other boards (z-score; hydro M53/M63: mirrored boards reverse C#)</div>
-              <div><strong style="color:var(--text)">err</strong> — chip errors (API log)</div>
-              <div><strong style="color:var(--text)">crc</strong> — CRC link errors</div>
-              <div><strong style="color:var(--text)">x</strong> — xfer / transfer errors</div>
-              <div><strong style="color:var(--text)">r / repeat</strong> — repeat errors / repeats</div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.chip_poll">Chip map polling</h2>
-              <div class="sub" data-i18n="sub.chip_poll">own interval · web admin · separate from live poll</div>
-            </div>
-            <button class="btn primary" type="button" id="btn-chipmap-cfg-save" data-i18n="btn.save">Save</button>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <label class="check">
-              <input type="checkbox" id="chipmap-enabled" checked />
-              <span>Enable background polling
-                <span class="desc">parse /cgi-bin/luci/admin/status/btminerapi</span>
-              </span>
-            </label>
-            <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
-              <label class="field">Interval, sec
-                <input type="number" id="chipmap-interval" value="30" min="10" max="600" step="5" />
-              </label>
-              <label class="field">Web user
-                <input type="text" id="chipmap-user" value="admin" autocomplete="off" />
-              </label>
-              <label class="field">Web password
-                <span class="pw-wrap">
-                  <input type="password" id="chipmap-password" placeholder="empty = API password" autocomplete="off" />
-                  <button type="button" class="pw-eye" data-pw-for="chipmap-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
-                </span>
-              </label>
-              <label class="field">Scheme
-                <select id="chipmap-scheme">
-                  <option value="https">https</option>
-                  <option value="http">http</option>
-                </select>
-              </label>
-            </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45">
-              Data from <strong>Miner API Log</strong> (not TCP :4028). Typically 4×264 chips.
-              Empty password → miner API password is used. Server cache; UI reads cache.
+            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.chips_moved">
+              Chip map moved to each miner page: Miners → open ASIC → Chips.
             </p>
+            <button type="button" class="btn primary" id="btn-chips-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_chips">
+              Open miner Chips
+            </button>
           </div>
         </div>
       </div>
-      <div class="chip-tip" id="chipmap-tip"></div>
+      <div class="chip-tip" id="chipmap-tip-legacy" hidden></div>
       </div><!-- /subview-chips -->
 
-      <div class="subview" id="subview-miner-info">
+            <div class="subview" id="subview-miner-info">
       <div class="stack">
         <div class="card">
-          <div class="card-h">
-            <div>
-              <h2>Whatsminer</h2>
-              <div class="sub">model · fw · serial · PSU</div>
-            </div>
-            <div class="btn-row" style="gap:8px;margin-top:0;align-items:center">
-              <button
-                class="btn energy-chart-refresh"
-                type="button"
-                id="btn-miner-info-refresh"
-                title="Refresh miner identity (model, FW, SN, PSU, boards)"
-                aria-label="Refresh"
-                data-i18n-title="btn.refresh_miner_info"
-                data-i18n-aria="btn.refresh"
-              >
-                <span class="ico-refresh" aria-hidden="true">↻</span>
-              </button>
-              <button
-                class="btn danger"
-                type="button"
-                id="btn-factory-reset"
-                title="Whatsminer factory_reset — reset ASIC settings to factory"
-              >
-                Factory reset
-              </button>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:14px">
-            <div class="grid-3">
-              <div class="metric highlight-accent">
-                <label>Model · Hashrate</label>
-                <div class="val" style="font-size:1.05rem" id="info-miner-type">—</div>
-                <div class="hint" id="info-miner-platform">—</div>
-              </div>
-              <div class="metric">
-                <label>Firmware</label>
-                <div class="val" style="font-size:1.0rem" id="info-miner-fw">—</div>
-                <div class="hint" id="info-miner-api">api —</div>
-              </div>
-              <div class="metric">
-                <label>Host · MAC</label>
-                <div class="val" style="font-size:0.95rem" id="info-miner-host">—</div>
-                <div class="hint" id="info-miner-mac">mac —</div>
-              </div>
-            </div>
-            <div class="grid-3">
-              <div class="metric">
-                <label>ASIC SN</label>
-                <div class="val info-sn-val" id="info-miner-sn">—</div>
-                <div class="hint" id="info-miner-sn-src">minersn · CustomerSn</div>
-                <div class="btn-row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
-                  <button
-                    class="btn"
-                    type="button"
-                    id="btn-set-customer-sn"
-                    data-i18n="btn.set_customer_sn"
-                    data-i18n-title="btn.set_customer_sn_title"
-                    title="Write CustomerSn to ASIC EEPROM (when factory minersn is empty)"
-                    style="padding:4px 10px;font-size:0.75rem"
-                  >Set Customer SN</button>
-                  <button
-                    class="btn"
-                    type="button"
-                    id="btn-clear-customer-sn"
-                    data-i18n="btn.clear_customer_sn"
-                    title="Clear CustomerSn on ASIC"
-                    style="padding:4px 10px;font-size:0.75rem"
-                  >Clear</button>
-                </div>
-              </div>
-              <div class="metric">
-                <label>PSU SN</label>
-                <div class="val info-sn-val" id="info-psu-sn">—</div>
-                <div class="hint" id="info-psu-model">model —</div>
-              </div>
-              <div class="metric">
-                <label>Chip</label>
-                <div class="val info-chip-val" id="info-miner-chip">—</div>
-                <div class="hint">chip data</div>
-              </div>
-            </div>
-            <div class="grid-3" id="info-model-profile-row">
-              <div class="metric">
-                <label>Manufacturer</label>
-                <div class="val" style="font-size:0.95rem" id="info-model-mfr">—</div>
-                <div class="hint" id="info-model-family">family —</div>
-              </div>
-              <div class="metric">
-                <label>Cooling · boards</label>
-                <div class="val" style="font-size:0.95rem" id="info-model-cooling">—</div>
-                <div class="hint" id="info-model-boards">—</div>
-              </div>
-              <div class="metric">
-                <label data-i18n="mp.col.algo">Algorithm</label>
-                <div class="val" style="font-size:0.95rem" id="info-model-algo">—</div>
-                <div class="hint" id="info-model-coin">coin —</div>
-              </div>
-              <div class="metric">
-                <label>Chip layout</label>
-                <div class="val" style="font-size:0.95rem" id="info-model-layout">—</div>
-                <div class="hint" id="info-model-sensors">sensors —</div>
-              </div>
-            </div>
-            <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
-            <div class="grid-3" id="info-antminer-6060" hidden>
-              <div class="metric">
-                <label>SearchFreq :6060</label>
-                <div class="val" style="font-size:0.95rem" id="info-6060-status">—</div>
-                <div class="hint" id="info-6060-board">board —</div>
-              </div>
-              <div class="metric">
-                <label>Rate · ideal · max</label>
-                <div class="val" style="font-size:0.95rem" id="info-6060-rate">—</div>
-                <div class="hint" id="info-6060-ideal">ideal —</div>
-              </div>
-              <div class="metric">
-                <label>Voltage · PSU</label>
-                <div class="val" style="font-size:0.95rem" id="info-6060-volt">—</div>
-                <div class="hint" id="info-6060-psu">psu —</div>
-              </div>
-              <div class="metric">
-                <label>ASIC crosses · nonce</label>
-                <div class="val" style="font-size:0.95rem" id="info-6060-cross">—</div>
-                <div class="hint" id="info-6060-chips">chips —</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" id="panel-miner-fw-flash">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.fw_flash">Firmware update</h2>
-              <div class="sub" data-i18n="sub.fw_flash">from USB library · compatible models only</div>
-            </div>
-            <div class="btn-row" style="gap:8px">
-              <button
-                class="btn energy-chart-refresh"
-                type="button"
-                id="btn-fw-flash-refresh"
-                title="Refresh"
-                aria-label="Refresh"
-                data-i18n-title="btn.refresh"
-                data-i18n-aria="btn.refresh"
-              >
-                <span class="ico-refresh" aria-hidden="true">↻</span>
-              </button>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <p id="fw-flash-hint" style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">—</p>
-            <label class="field">
-              <span data-i18n="fw.flash_select">Compatible firmware</span>
-              <select id="fw-flash-select" style="width:100%">
-                <option value="">—</option>
-              </select>
-            </label>
-            <label class="check">
-              <input type="checkbox" id="fw-flash-force" />
-              <span data-i18n="fw.flash_force">Allow incompatible (not in model map)</span>
-            </label>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
-              <button class="btn danger" type="button" id="btn-fw-flash" data-i18n="fw.flash_btn">Flash to miner</button>
-              <span id="fw-flash-status" style="font-size:0.78rem;color:var(--muted)"></span>
-            </div>
-            <div id="fw-flash-progress-wrap" style="display:none">
-              <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-bottom:4px">
-                <span id="fw-flash-stage">—</span>
-                <span id="fw-flash-pct">0%</span>
-              </div>
-              <div style="height:8px;border-radius:4px;background:var(--border);overflow:hidden">
-                <div id="fw-flash-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.15s linear"></div>
-              </div>
-            </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="fw.flash_warn">
-              After the update the miner will reboot. Do not cut power or network during flashing.
+          <div class="card-b">
+            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.info_moved">
+              Miner Info moved to each miner page: Miners → open ASIC → Info.
             </p>
-            <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
-              <button class="btn ghost" type="button" id="btn-miner-export-log" data-i18n="fw.export_log">Export miner log</button>
-              <span id="miner-export-log-status" style="font-size:0.78rem;color:var(--muted)"></span>
-            </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0;line-height:1.45" data-i18n="fw.export_log_hint">
-              Pulls ASIC diagnostic log via miner-poller (NetPacket). File saved on router under export_logs/.
-            </p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.boards_pcb">Hashboards · PCB SN · Tagged</h2>
-              <div class="sub" data-i18n="sub.boards_pcb">
-                PCB SN + Tagged from EEPROM (v3 get.device.info) · chips from V2 devs · available in Suspend
-              </div>
-            </div>
-            <div class="btn-row" style="gap:8px">
-              <button
-                class="btn energy-chart-refresh"
-                type="button"
-                id="btn-boards-info-refresh"
-                title="Refresh hashboards / PCB SN / tagged"
-                aria-label="Refresh"
-                data-i18n-title="btn.refresh_miner_info"
-                data-i18n-aria="btn.refresh"
-              >
-                <span class="ico-refresh" aria-hidden="true">↻</span>
-              </button>
-            </div>
-          </div>
-          <div class="card-b" style="padding-top:8px">
-            <p
-              id="info-boards-source-hint"
-              style="font-size:0.72rem;color:var(--dim);margin:0 0 8px;line-height:1.45"
-              data-i18n="hint.boards_sources"
-            >
-              Slot · PCB SN · Tagged Hashrate · Chip Data ← API v3 get.device.info (EEPROM: pcbsnN, detect-hash-rate, chipdataN).
-              t°C · chips ← API v2 devs (Temperature, Effective Chips). In Suspend only v3 fields are filled.
-            </p>
-            <div style="overflow:auto">
-              <table class="err-table" id="info-boards-table">
-                <thead>
-                  <tr>
-                    <th>Slot</th>
-                    <th>PCB SN</th>
-                    <th>Tagged Hashrate</th>
-                    <th>Chip Data</th>
-                    <th>t°C</th>
-                    <th title="Effective Chips from V2 devs">chips</th>
-                  </tr>
-                </thead>
-                <tbody id="info-boards-body">
-                  <tr><td colspan="6" style="color:var(--muted)">—</td></tr>
-                </tbody>
-              </table>
-            </div>
+            <button type="button" class="btn primary" id="btn-minerinfo-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_info">
+              Open miner Info
+            </button>
           </div>
         </div>
       </div>
       </div><!-- /subview-miner-info -->
 
-      <div class="subview" id="subview-pools">
+            <div class="subview" id="subview-pools">
       <div class="stack">
-        <div class="card" id="panel-miner-pools">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.pools">Pools</h2>
-              <div class="sub" data-i18n="sub.pools_card">stratum · Active · shares · Whatsminer pools</div>
-            </div>
-            <button
-              class="btn energy-chart-refresh"
-              type="button"
-              id="btn-pools-refresh"
-              title="Refresh"
-              aria-label="Refresh"
-              data-i18n-title="btn.refresh"
-              data-i18n-aria="btn.refresh"
-            >
-              <span class="ico-refresh" aria-hidden="true">↻</span>
-            </button>
-          </div>
-          <div class="card-b" style="padding-top:8px">
-            <div style="overflow:auto">
-              <table class="err-table pools-table" id="miner-pools-table">
-                <thead>
-                  <tr>
-                    <th>Pool</th>
-                    <th>URL</th>
-                    <th>Active</th>
-                    <th>User</th>
-                    <th>Status</th>
-                    <th>Difficulty</th>
-                    <th>GetWorks</th>
-                    <th>Accepted</th>
-                    <th>Rejected</th>
-                    <th>Stale</th>
-                    <th>LST</th>
-                  </tr>
-                </thead>
-                <tbody id="miner-pools-body">
-                  <tr><td colspan="11" style="color:var(--muted);text-align:center">—</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="miner-pools-status">—</p>
-          </div>
-        </div>
-
-        <div class="card" id="panel-pool-presets">
-          <div class="card-h">
-            <div>
-              <h2 data-i18n="h2.pool_presets">Pool presets</h2>
-              <div class="sub" data-i18n="sub.pool_presets">save current · apply to ASIC · edit url/user/pass</div>
-            </div>
-          </div>
-          <div class="card-b stack" style="gap:12px">
-            <div class="row" style="grid-template-columns:1fr minmax(7rem,9rem) auto;gap:10px;align-items:end">
-              <label class="field" style="margin:0">Preset
-                <select id="pool-preset-select">
-                  <option value="">— select —</option>
-                </select>
-              </label>
-              <label class="field" style="margin:0" data-i18n="field.coin_type">Coin Type
-                <input type="text" id="pool-preset-coin" list="pool-coin-types" placeholder="BTC" maxlength="32" autocomplete="off" />
-                <datalist id="pool-coin-types">
-                  <option value="BTC"></option>
-                  <option value="BCH"></option>
-                  <option value="BSV"></option>
-                  <option value="FB"></option>
-                  <option value="LTC"></option>
-                  <option value="DOGE"></option>
-                  <option value="BEL"></option>
-                  <option value="KAS"></option>
-                  <option value="ALPH"></option>
-                </datalist>
-              </label>
-              <button class="btn primary" type="button" id="btn-pool-preset-apply" title="Write preset pools to the miner" data-i18n="btn.apply_asic">
-                Apply to ASIC
-              </button>
-            </div>
-            <p id="pool-preset-meta" style="font-size:0.75rem;color:var(--dim);margin:0">—</p>
-            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
-              <button class="btn" type="button" id="btn-pool-preset-save" title="Save current pools from ASIC as a new preset" data-i18n="btn.save_current">
-                Save current…
-              </button>
-              <button class="btn" type="button" id="btn-pool-preset-update" title="Overwrite selected preset with current ASIC pools" data-i18n="btn.overwrite_asic">
-                Overwrite from ASIC
-              </button>
-              <button class="btn ghost" type="button" id="btn-pool-preset-rename" title="Rename" data-i18n="btn.rename">
-                Rename
-              </button>
-              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Save url/user/pass + Coin Type edits" data-i18n="btn.save_edits">
-                Save edits
-              </button>
-              <button class="btn danger" type="button" id="btn-pool-preset-delete" title="Delete preset" data-i18n="btn.delete">
-                Delete
-              </button>
-            </div>
-            <div style="overflow:auto">
-              <table class="err-table pools-table" id="pool-preset-edit-table">
-                <thead>
-                  <tr>
-                    <th style="width:3rem">#</th>
-                    <th>URL</th>
-                    <th>User / worker</th>
-                    <th>Password</th>
-                  </tr>
-                </thead>
-                <tbody id="pool-preset-edit-body">
-                  <tr><td colspan="4" style="color:var(--muted);text-align:center">select a preset to edit</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.4">
-              <strong>Coin Type</strong> is saved with the preset and written to LuCI on Apply
-              (Whatsminer pools form). Pool password in ASIC status is
-              <strong>not provided</strong> — set when using “Save current” as <code>x</code>
-              if it was not saved earlier for the same url+user.
+        <div class="card">
+          <div class="card-b">
+            <p style="margin:0;color:var(--muted);font-size:0.9rem" data-i18n="miner_detail.pools_moved">
+              Pools moved to each miner page: Miners → open ASIC → Pools.
             </p>
+            <button type="button" class="btn primary" id="btn-pools-goto-detail" style="margin-top:12px" data-i18n="miner_detail.open_pools">
+              Open miner Pools
+            </button>
           </div>
         </div>
       </div>
@@ -8861,6 +8494,8 @@
               </div>
               <nav class="miner-detail-tabs" id="miner-detail-tabs" role="tablist" aria-label="Miner detail">
                 <button type="button" class="active" role="tab" data-md-tab="miner" aria-selected="true" data-i18n="miner_detail.tab_miner">Miner</button>
+                <button type="button" role="tab" data-md-tab="chips" aria-selected="false" data-i18n="miner_detail.tab_chips">Chips</button>
+                <button type="button" role="tab" data-md-tab="pools" aria-selected="false" data-i18n="miner_detail.tab_pools">Pools</button>
                 <button type="button" role="tab" data-md-tab="info" aria-selected="false" data-i18n="miner_detail.tab_info">Info</button>
               </nav>
             </div>
@@ -9020,48 +8655,494 @@
                 </div>
                 </div><!-- /pane-miner -->
 
-                <!-- Tab: Info (identity · inventory) -->
+                                <!-- Tab: Info = full former /minerinfo -->
                 <div class="miner-detail-pane" id="miner-detail-pane-info" role="tabpanel" data-md-pane="info" hidden>
-                  <div class="miner-detail-section">
-                    <h3 data-i18n="miner_detail.identity">Identity</h3>
-                    <div class="grid-3" id="miner-detail-identity-grid" style="gap:10px">
-                      <div class="metric">
-                        <label data-i18n="fleet.col.model">Model</label>
-                        <div class="val" style="font-size:1.0rem" id="md-info-model">—</div>
-                        <div class="hint" id="md-info-model-sub">—</div>
-                      </div>
-                      <div class="metric">
-                        <label data-i18n="miner_detail.firmware">Firmware</label>
-                        <div class="val" style="font-size:0.95rem" id="md-info-fw">—</div>
-                        <div class="hint" id="md-info-api">—</div>
-                      </div>
-                      <div class="metric">
-                        <label data-i18n="fleet.col.ip">IP</label>
-                        <div class="val" style="font-size:0.95rem" id="md-info-host">—</div>
-                        <div class="hint" id="md-info-mac">—</div>
-                      </div>
-                      <div class="metric">
-                        <label data-i18n="miner_detail.serial">Serial</label>
-                        <div class="val info-sn-val" id="md-info-sn">—</div>
-                        <div class="hint" id="md-info-sn-src">—</div>
-                      </div>
-                      <div class="metric">
-                        <label data-i18n="fleet.col.vendor">Vendor</label>
-                        <div class="val" style="font-size:0.95rem" id="md-info-vendor">—</div>
-                        <div class="hint" id="md-info-cooling">—</div>
-                      </div>
-                      <div class="metric">
-                        <label data-i18n="mp.col.algo">Algorithm</label>
-                        <div class="val" style="font-size:0.95rem" id="md-info-algo">—</div>
-                        <div class="hint" id="md-info-coin">—</div>
-                      </div>
+                  <div class="stack" id="miner-detail-info-stack" style="gap:14px">
+<div class="card">
+          <div class="card-h">
+            <div>
+              <h2>Whatsminer</h2>
+              <div class="sub">model · fw · serial · PSU</div>
+            </div>
+            <div class="btn-row" style="gap:8px;margin-top:0;align-items:center">
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-miner-info-refresh"
+                title="Refresh miner identity (model, FW, SN, PSU, boards)"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh_miner_info"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
+              <button
+                class="btn danger"
+                type="button"
+                id="btn-factory-reset"
+                title="Whatsminer factory_reset — reset ASIC settings to factory"
+              >
+                Factory reset
+              </button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:14px">
+            <div class="grid-3">
+              <div class="metric highlight-accent">
+                <label>Model · Hashrate</label>
+                <div class="val" style="font-size:1.05rem" id="info-miner-type">—</div>
+                <div class="hint" id="info-miner-platform">—</div>
+              </div>
+              <div class="metric">
+                <label>Firmware</label>
+                <div class="val" style="font-size:1.0rem" id="info-miner-fw">—</div>
+                <div class="hint" id="info-miner-api">api —</div>
+              </div>
+              <div class="metric">
+                <label>Host · MAC</label>
+                <div class="val" style="font-size:0.95rem" id="info-miner-host">—</div>
+                <div class="hint" id="info-miner-mac">mac —</div>
+              </div>
+            </div>
+            <div class="grid-3">
+              <div class="metric">
+                <label>ASIC SN</label>
+                <div class="val info-sn-val" id="info-miner-sn">—</div>
+                <div class="hint" id="info-miner-sn-src">minersn · CustomerSn</div>
+                <div class="btn-row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+                  <button
+                    class="btn"
+                    type="button"
+                    id="btn-set-customer-sn"
+                    data-i18n="btn.set_customer_sn"
+                    data-i18n-title="btn.set_customer_sn_title"
+                    title="Write CustomerSn to ASIC EEPROM (when factory minersn is empty)"
+                    style="padding:4px 10px;font-size:0.75rem"
+                  >Set Customer SN</button>
+                  <button
+                    class="btn"
+                    type="button"
+                    id="btn-clear-customer-sn"
+                    data-i18n="btn.clear_customer_sn"
+                    title="Clear CustomerSn on ASIC"
+                    style="padding:4px 10px;font-size:0.75rem"
+                  >Clear</button>
+                </div>
+              </div>
+              <div class="metric">
+                <label>PSU SN</label>
+                <div class="val info-sn-val" id="info-psu-sn">—</div>
+                <div class="hint" id="info-psu-model">model —</div>
+              </div>
+              <div class="metric">
+                <label>Chip</label>
+                <div class="val info-chip-val" id="info-miner-chip">—</div>
+                <div class="hint">chip data</div>
+              </div>
+            </div>
+            <div class="grid-3" id="info-model-profile-row">
+              <div class="metric">
+                <label>Manufacturer</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-mfr">—</div>
+                <div class="hint" id="info-model-family">family —</div>
+              </div>
+              <div class="metric">
+                <label>Cooling · boards</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-cooling">—</div>
+                <div class="hint" id="info-model-boards">—</div>
+              </div>
+              <div class="metric">
+                <label data-i18n="mp.col.algo">Algorithm</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-algo">—</div>
+                <div class="hint" id="info-model-coin">coin —</div>
+              </div>
+              <div class="metric">
+                <label>Chip layout</label>
+                <div class="val" style="font-size:0.95rem" id="info-model-layout">—</div>
+                <div class="hint" id="info-model-sensors">sensors —</div>
+              </div>
+            </div>
+            <p style="font-size:0.78rem;color:var(--muted);margin:0" id="info-miner-err" hidden></p>
+            <div class="grid-3" id="info-antminer-6060" hidden>
+              <div class="metric">
+                <label>SearchFreq :6060</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-status">—</div>
+                <div class="hint" id="info-6060-board">board —</div>
+              </div>
+              <div class="metric">
+                <label>Rate · ideal · max</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-rate">—</div>
+                <div class="hint" id="info-6060-ideal">ideal —</div>
+              </div>
+              <div class="metric">
+                <label>Voltage · PSU</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-volt">—</div>
+                <div class="hint" id="info-6060-psu">psu —</div>
+              </div>
+              <div class="metric">
+                <label>ASIC crosses · nonce</label>
+                <div class="val" style="font-size:0.95rem" id="info-6060-cross">—</div>
+                <div class="hint" id="info-6060-chips">chips —</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="panel-miner-fw-flash">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.fw_flash">Firmware update</h2>
+              <div class="sub" data-i18n="sub.fw_flash">from USB library · compatible models only</div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-fw-flash-refresh"
+                title="Refresh"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <p id="fw-flash-hint" style="font-size:0.78rem;color:var(--muted);margin:0;line-height:1.45">—</p>
+            <label class="field">
+              <span data-i18n="fw.flash_select">Compatible firmware</span>
+              <select id="fw-flash-select" style="width:100%">
+                <option value="">—</option>
+              </select>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="fw-flash-force" />
+              <span data-i18n="fw.flash_force">Allow incompatible (not in model map)</span>
+            </label>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn danger" type="button" id="btn-fw-flash" data-i18n="fw.flash_btn">Flash to miner</button>
+              <span id="fw-flash-status" style="font-size:0.78rem;color:var(--muted)"></span>
+            </div>
+            <div id="fw-flash-progress-wrap" style="display:none">
+              <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:var(--muted);margin-bottom:4px">
+                <span id="fw-flash-stage">—</span>
+                <span id="fw-flash-pct">0%</span>
+              </div>
+              <div style="height:8px;border-radius:4px;background:var(--border);overflow:hidden">
+                <div id="fw-flash-bar" style="height:100%;width:0%;background:var(--accent);transition:width 0.15s linear"></div>
+              </div>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.45" data-i18n="fw.flash_warn">
+              After the update the miner will reboot. Do not cut power or network during flashing.
+            </p>
+            <hr style="border:none;border-top:1px solid var(--border);margin:12px 0" />
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn ghost" type="button" id="btn-miner-export-log" data-i18n="fw.export_log">Export miner log</button>
+              <span id="miner-export-log-status" style="font-size:0.78rem;color:var(--muted)"></span>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:6px 0 0;line-height:1.45" data-i18n="fw.export_log_hint">
+              Pulls ASIC diagnostic log via miner-poller (NetPacket). File saved on router under export_logs/.
+            </p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.boards_pcb">Hashboards · PCB SN · Tagged</h2>
+              <div class="sub" data-i18n="sub.boards_pcb">
+                PCB SN + Tagged from EEPROM (v3 get.device.info) · chips from V2 devs · available in Suspend
+              </div>
+            </div>
+            <div class="btn-row" style="gap:8px">
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-boards-info-refresh"
+                title="Refresh hashboards / PCB SN / tagged"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh_miner_info"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
+            </div>
+          </div>
+          <div class="card-b" style="padding-top:8px">
+            <p
+              id="info-boards-source-hint"
+              style="font-size:0.72rem;color:var(--dim);margin:0 0 8px;line-height:1.45"
+              data-i18n="hint.boards_sources"
+            >
+              Slot · PCB SN · Tagged Hashrate · Chip Data ← API v3 get.device.info (EEPROM: pcbsnN, detect-hash-rate, chipdataN).
+              t°C · chips ← API v2 devs (Temperature, Effective Chips). In Suspend only v3 fields are filled.
+            </p>
+            <div style="overflow:auto">
+              <table class="err-table" id="info-boards-table">
+                <thead>
+                  <tr>
+                    <th>Slot</th>
+                    <th>PCB SN</th>
+                    <th>Tagged Hashrate</th>
+                    <th>Chip Data</th>
+                    <th>t°C</th>
+                    <th title="Effective Chips from V2 devs">chips</th>
+                  </tr>
+                </thead>
+                <tbody id="info-boards-body">
+                  <tr><td colspan="6" style="color:var(--muted)">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+                    <div class="miner-detail-section" style="margin-top:4px">
+                      <h3 data-i18n="miner_detail.inventory">Inventory</h3>
+                      <dl class="miner-detail-kv" id="miner-detail-inv"></dl>
                     </div>
                   </div>
-                  <div class="miner-detail-section">
-                    <h3 data-i18n="miner_detail.inventory">Inventory</h3>
-                    <dl class="miner-detail-kv" id="miner-detail-inv"></dl>
-                  </div>
                 </div><!-- /pane-info -->
+
+                <!-- Tab: Chips = former /chips (disk-cached chipmap) -->
+                <div class="miner-detail-pane" id="miner-detail-pane-chips" role="tabpanel" data-md-pane="chips" hidden>
+                  <div class="stack" id="miner-detail-chips-stack" style="gap:14px">
+<div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.chipmap">Chip map</h2>
+              <div class="sub" id="chipmap-mode-hint" style="line-height:1.45;max-width:52rem">
+                —
+              </div>
+            </div>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <label class="field" style="margin:0;min-width:180px">Map mode
+                <select id="chipmap-metric">
+                  <option value="temp">Temperature</option>
+                  <option value="gradient">Gradient (hotspots)</option>
+                  <option value="outliers">Outliers (cross-slot)</option>
+                  <option value="nonce_def">Nonce deficit</option>
+                  <option value="est_th">Hash est (TH/s)</option>
+                  <option value="nonce">Hash (nonce)</option>
+                  <option value="nonce_rate">Nonce/s (elapsed)</option>
+                  <option value="freq">Frequency</option>
+                </select>
+              </label>
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-chipmap-refresh"
+                title="Refresh"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
+            </div>
+          </div>
+          <div class="card-b">
+            <p id="chipmap-status" style="font-size:0.8rem;color:var(--muted);margin:0 0 12px">—</p>
+            <div class="chip-legend" id="chipmap-legend"></div>
+            <div id="chipmap-boards" style="margin-top:14px"></div>
+          </div>
+        </div>
+
+        <div class="card" id="panel-chipmap-glossary">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.chip_params">Chip parameters</h2>
+              <div class="sub">brief · what you see on the map and in tooltips</div>
+            </div>
+          </div>
+          <div class="card-b" style="font-size:0.78rem;color:var(--muted);line-height:1.5">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px 18px">
+              <div><strong style="color:var(--text)">#</strong> — chip number on board (C0…)</div>
+              <div><strong style="color:var(--text)">temp / °C</strong> — chip temperature</div>
+              <div><strong style="color:var(--text)">Freq</strong> — frequency, MHz</div>
+              <div><strong style="color:var(--text)">Vol</strong> — domain voltage, mV (Frequency mode only; from Miner API Log)</div>
+              <div><strong style="color:var(--text)">Nonce</strong> — nonce count found since mining start</div>
+              <div><strong style="color:var(--text)">Nonce/s</strong> — nonce / mining elapsed</div>
+              <div><strong style="color:var(--text)">Hash est</strong> — TH/s estimate: nonce share × ASIC hashrate</div>
+              <div><strong style="color:var(--text)">Nonce deficit</strong> — % below slot average nonce (−12% = weaker)</div>
+              <div><strong style="color:var(--text)">Gradient</strong> — °C hotter than upstream neighbors (local hotspot)</div>
+              <div><strong style="color:var(--text)">Outliers</strong> — hotter than same geometry on other boards (z-score; hydro M53/M63: mirrored boards reverse C#)</div>
+              <div><strong style="color:var(--text)">err</strong> — chip errors (API log)</div>
+              <div><strong style="color:var(--text)">crc</strong> — CRC link errors</div>
+              <div><strong style="color:var(--text)">x</strong> — xfer / transfer errors</div>
+              <div><strong style="color:var(--text)">r / repeat</strong> — repeat errors / repeats</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.chip_poll">Chip map polling</h2>
+              <div class="sub" data-i18n="sub.chip_poll">own interval · web admin · separate from live poll</div>
+            </div>
+            <button class="btn primary" type="button" id="btn-chipmap-cfg-save" data-i18n="btn.save">Save</button>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <label class="check">
+              <input type="checkbox" id="chipmap-enabled" checked />
+              <span>Enable background polling
+                <span class="desc">parse /cgi-bin/luci/admin/status/btminerapi</span>
+              </span>
+            </label>
+            <div class="row" style="grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
+              <label class="field">Interval, sec
+                <input type="number" id="chipmap-interval" value="30" min="10" max="600" step="5" />
+              </label>
+              <label class="field">Web user
+                <input type="text" id="chipmap-user" value="admin" autocomplete="off" />
+              </label>
+              <label class="field">Web password
+                <span class="pw-wrap">
+                  <input type="password" id="chipmap-password" placeholder="empty = API password" autocomplete="off" />
+                  <button type="button" class="pw-eye" data-pw-for="chipmap-password" title="Show password" aria-label="Show password" aria-pressed="false">👁</button>
+                </span>
+              </label>
+              <label class="field">Scheme
+                <select id="chipmap-scheme">
+                  <option value="https">https</option>
+                  <option value="http">http</option>
+                </select>
+              </label>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:0;line-height:1.45">
+              Data from <strong>Miner API Log</strong> (not TCP :4028). Typically 4×264 chips.
+              Empty password → miner API password is used. Server cache; UI reads cache.
+            </p>
+          </div>
+        </div>
+                  </div>
+                  <div class="chip-tip" id="chipmap-tip"></div>
+                </div><!-- /pane-chips -->
+
+                <!-- Tab: Pools = former /pools (presets filtered by miner algo) -->
+                <div class="miner-detail-pane" id="miner-detail-pane-pools" role="tabpanel" data-md-pane="pools" hidden>
+                  <div class="stack" id="miner-detail-pools-stack" style="gap:14px">
+<div class="card" id="panel-miner-pools">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.pools">Pools</h2>
+              <div class="sub" data-i18n="sub.pools_card">stratum · Active · shares · Whatsminer pools</div>
+            </div>
+            <button
+              class="btn energy-chart-refresh"
+              type="button"
+              id="btn-pools-refresh"
+              title="Refresh"
+              aria-label="Refresh"
+              data-i18n-title="btn.refresh"
+              data-i18n-aria="btn.refresh"
+            >
+              <span class="ico-refresh" aria-hidden="true">↻</span>
+            </button>
+          </div>
+          <div class="card-b" style="padding-top:8px">
+            <div style="overflow:auto">
+              <table class="err-table pools-table" id="miner-pools-table">
+                <thead>
+                  <tr>
+                    <th>Pool</th>
+                    <th>URL</th>
+                    <th>Active</th>
+                    <th>User</th>
+                    <th>Status</th>
+                    <th>Difficulty</th>
+                    <th>GetWorks</th>
+                    <th>Accepted</th>
+                    <th>Rejected</th>
+                    <th>Stale</th>
+                    <th>LST</th>
+                  </tr>
+                </thead>
+                <tbody id="miner-pools-body">
+                  <tr><td colspan="11" style="color:var(--muted);text-align:center">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:0.75rem;color:var(--dim);margin:8px 0 0" id="miner-pools-status">—</p>
+          </div>
+        </div>
+
+        <div class="card" id="panel-pool-presets">
+          <div class="card-h">
+            <div>
+              <h2 data-i18n="h2.pool_presets">Pool presets</h2>
+              <div class="sub" data-i18n="sub.pool_presets">save current · apply to ASIC · edit url/user/pass</div>
+            </div>
+          </div>
+          <div class="card-b stack" style="gap:12px">
+            <div class="row" style="grid-template-columns:1fr minmax(7rem,9rem) auto;gap:10px;align-items:end">
+              <label class="field" style="margin:0">Preset
+                <select id="pool-preset-select">
+                  <option value="">— select —</option>
+                </select>
+              </label>
+              <label class="field" style="margin:0" data-i18n="field.coin_type">Coin Type
+                <input type="text" id="pool-preset-coin" list="pool-coin-types" placeholder="BTC" maxlength="32" autocomplete="off" />
+                <datalist id="pool-coin-types">
+                  <option value="BTC"></option>
+                  <option value="BCH"></option>
+                  <option value="BSV"></option>
+                  <option value="FB"></option>
+                  <option value="LTC"></option>
+                  <option value="DOGE"></option>
+                  <option value="BEL"></option>
+                  <option value="KAS"></option>
+                  <option value="ALPH"></option>
+                </datalist>
+              </label>
+              <button class="btn primary" type="button" id="btn-pool-preset-apply" title="Write preset pools to the miner" data-i18n="btn.apply_asic">
+                Apply to ASIC
+              </button>
+            </div>
+            <p id="pool-preset-meta" style="font-size:0.75rem;color:var(--dim);margin:0">—</p>
+            <div class="btn-row" style="gap:8px;flex-wrap:wrap">
+              <button class="btn" type="button" id="btn-pool-preset-save" title="Save current pools from ASIC as a new preset" data-i18n="btn.save_current">
+                Save current…
+              </button>
+              <button class="btn" type="button" id="btn-pool-preset-update" title="Overwrite selected preset with current ASIC pools" data-i18n="btn.overwrite_asic">
+                Overwrite from ASIC
+              </button>
+              <button class="btn ghost" type="button" id="btn-pool-preset-rename" title="Rename" data-i18n="btn.rename">
+                Rename
+              </button>
+              <button class="btn" type="button" id="btn-pool-preset-save-edit" title="Save url/user/pass + Coin Type edits" data-i18n="btn.save_edits">
+                Save edits
+              </button>
+              <button class="btn danger" type="button" id="btn-pool-preset-delete" title="Delete preset" data-i18n="btn.delete">
+                Delete
+              </button>
+            </div>
+            <div style="overflow:auto">
+              <table class="err-table pools-table" id="pool-preset-edit-table">
+                <thead>
+                  <tr>
+                    <th style="width:3rem">#</th>
+                    <th>URL</th>
+                    <th>User / worker</th>
+                    <th>Password</th>
+                  </tr>
+                </thead>
+                <tbody id="pool-preset-edit-body">
+                  <tr><td colspan="4" style="color:var(--muted);text-align:center">select a preset to edit</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style="font-size:0.72rem;color:var(--dim);margin:0;line-height:1.4">
+              <strong>Coin Type</strong> is saved with the preset and written to LuCI on Apply
+              (Whatsminer pools form). Pool password in ASIC status is
+              <strong>not provided</strong> — set when using “Save current” as <code>x</code>
+              if it was not saved earlier for the same url+user.
+            </p>
+          </div>
+        </div>
+                  </div>
+                </div><!-- /pane-pools -->
               </div>
             </div>
           </div>
@@ -10121,7 +10202,7 @@
             <label class="field"><span data-i18n="mp.col.algo">Algorithm</span>
               <select id="mp-edit-algo">
                 <option value="">—</option>
-                <option value="sha256">SHA-256 · TH/s · J/T</option>
+                <option value="sha256ab">SHA-256ab · TH/s · J/T</option>
                 <option value="scrypt">Scrypt · GH/s · J/G</option>
                 <option value="eaglesong">Eaglesong · TH/s · J/T</option>
                 <option value="ethash">Ethash · MH/s · J/M</option>
@@ -11176,9 +11257,16 @@
         "dash.chart_bind_miner": "Miner (hashrate · power)",
         "dash.chart_bind_none": "— not set —",
         "dash.add_weather": "Weather (city)",
+        "dash.add_power": "Power (miner)",
         "dash.weather_settings": "Weather city",
         "dash.weather_settings_sub": "City for this outdoor card. Default is the first circuit city (or site weather).",
         "dash.weather_max": "Max weather widgets reached",
+        "dash.power_settings": "Power miner",
+        "dash.power_settings_sub": "Bind this card to a managed miner. Design switches by vendor (Whatsminer / Antminer).",
+        "dash.power_bind_miner": "Miner",
+        "dash.power_bind_none": "— active polled miner —",
+        "dash.power_max": "Max power widgets reached",
+        "dash.power_saved": "Power widget updated",
         "circuit.field_city": "City (weather default)",
         "fleet.hint": "Live metrics are shown for the active polled miner. Standby rows show inventory until multi-poll is enabled.",
         "fleet.status.online": "Online",
@@ -11206,6 +11294,15 @@
         "miner_detail.tab_info": "Info",
         "miner_detail.identity": "Identity",
         "miner_detail.firmware": "Firmware",
+        "miner_detail.info_moved": "Miner Info moved to each miner page: Miners → open ASIC → Info.",
+        "miner_detail.open_info": "Open miner Info",
+        "miner_detail.chips_moved": "Chip map moved to each miner page: Miners → open ASIC → Chips.",
+        "miner_detail.open_chips": "Open miner Chips",
+        "miner_detail.tab_chips": "Chips",
+        "miner_detail.tab_pools": "Pools",
+        "miner_detail.pools_moved": "Pools moved to each miner page: Miners → open ASIC → Pools.",
+        "miner_detail.open_pools": "Open miner Pools",
+        "miner_detail.no_active": "No managed miner — open Miners",
         "fleet.edit": "Edit",
         "fleet.reboot": "Reboot",
         "fleet.reboot_confirm": "Reboot {name}?\n\nFull device reboot · offline for several minutes.",
@@ -12251,9 +12348,16 @@
         "dash.chart_bind_miner": "Майнер (хешрейт · мощность)",
         "dash.chart_bind_none": "— не выбран —",
         "dash.add_weather": "Погода (город)",
+        "dash.add_power": "Мощность (майнер)",
         "dash.weather_settings": "Город погоды",
         "dash.weather_settings_sub": "Город для этой карточки. По умолчанию — город первого контура (или погода объекта).",
         "dash.weather_max": "Достигнут лимит виджетов погоды",
+        "dash.power_settings": "Майнер мощности",
+        "dash.power_settings_sub": "Привязка карточки к managed-майнеру. Дизайн зависит от вендора (Whatsminer / Antminer).",
+        "dash.power_bind_miner": "Майнер",
+        "dash.power_bind_none": "— активный polled-майнер —",
+        "dash.power_max": "Достигнут лимит виджетов мощности",
+        "dash.power_saved": "Виджет мощности обновлён",
         "circuit.field_city": "Город (погода по умолчанию)",
         "fleet.hint": "Live-метрики — у active-майнера (poller). Standby показывают inventory, пока нет multi-poll.",
         "fleet.status.online": "Online",
@@ -12281,6 +12385,15 @@
         "miner_detail.tab_info": "Инфо",
         "miner_detail.identity": "Идентификация",
         "miner_detail.firmware": "Прошивка",
+        "miner_detail.info_moved": "Info майнера перенесён: Miners → ASIC → вкладка Инфо.",
+        "miner_detail.open_info": "Открыть Info майнера",
+        "miner_detail.chips_moved": "Карта чипов перенесена: Miners → ASIC → вкладка Чипы.",
+        "miner_detail.open_chips": "Открыть Чипы майнера",
+        "miner_detail.tab_chips": "Чипы",
+        "miner_detail.tab_pools": "Пулы",
+        "miner_detail.pools_moved": "Пулы перенесены: Miners → ASIC → вкладка Пулы.",
+        "miner_detail.open_pools": "Открыть Пулы майнера",
+        "miner_detail.no_active": "Нет managed-майнера — откройте Miners",
         "fleet.edit": "Редактировать",
         "fleet.reboot": "Перезагрузить",
         "fleet.reboot_confirm": "Перезагрузить {name}?\n\nПолный reboot устройства · offline несколько минут.",
@@ -14853,8 +14966,8 @@
 
     /**
      * Parse /{lang}/{tab} · /{lang}/miners/{managed|unmanaged|id} ·
-     * /{lang}/circuits/{id} · /{tab} · #tab
-     * Returns { lang, tab, circuitId, minerId }
+     * /{lang}/miners/{id}/info · /{lang}/circuits/{id} · /{tab} · #tab
+     * Returns { lang, tab, circuitId, minerId, minerDetailTab }
      */
     function parseLocationRoute() {
       const parts = location.pathname
@@ -14870,18 +14983,21 @@
       let tab = null;
       let circuitId = null;
       let minerId = null;
-      // Nested Miners: /miners/managed · /miners/unmanaged · /miners/{id}
+      let minerDetailTab = null;
+      // Nested Miners: /miners/managed · /miners/unmanaged · /miners/{id} · /miners/{id}/info
       // Circuits edit: /circuits/{id}
       if (tabSegs.length >= 2) {
         const a = String(tabSegs[0] || "").toLowerCase();
         const bRaw = String(tabSegs[1] || "").trim();
         const b = bRaw.toLowerCase();
+        const cRaw = tabSegs.length >= 3 ? String(tabSegs[2] || "").trim() : "";
+        const c = cRaw.toLowerCase();
         if (a === "miners" || a === "fleet" || a === "asics") {
           if (b === "unmanaged" || b === "discovered") tab = "unmanaged";
           else if (b === "managed" || b === "inventory" || b === "" || b === "list" || b === "main") {
             tab = "managed";
           } else if (bRaw && !MINERS_PATH_RESERVED[b]) {
-            // freeform miner id: /miners/12 · /miners/cell_a1
+            // freeform miner id: /miners/12 · /miners/12/info · /miners/12/miner
             tab = "managed";
             try {
               minerId = decodeURIComponent(bRaw);
@@ -14889,6 +15005,18 @@
               minerId = bRaw;
             }
             if (!minerId) minerId = null;
+            if (c === "info" || c === "identity" || c === "about") {
+              minerDetailTab = "info";
+            } else if (c === "chips" || c === "chipmap" || c === "chip") {
+              minerDetailTab = "chips";
+            } else if (c === "pools" || c === "pool") {
+              minerDetailTab = "pools";
+            } else if (c === "miner" || c === "main" || c === "live" || c === "") {
+              minerDetailTab = minerId ? "miner" : null;
+            } else if (c) {
+              // unknown third segment → still miner page
+              minerDetailTab = "miner";
+            }
           } else {
             tab = "managed";
           }
@@ -14916,7 +15044,15 @@
         tab = resolveTabId(location.hash);
       }
       if (!tab) tab = "dash";
-      return { lang, tab, circuitId, minerId };
+      // legacy /minerinfo · /chips → resolve later to /miners/{active}/…
+      if (tab === "minerinfo") {
+        minerDetailTab = "info";
+      } else if (tab === "chips") {
+        minerDetailTab = "chips";
+      } else if (tab === "pools") {
+        minerDetailTab = "pools";
+      }
+      return { lang, tab, circuitId, minerId, minerDetailTab };
     }
 
     function tabFromLocation() {
@@ -14942,11 +15078,29 @@
       if (
         id === "managed" ||
         id === "miners-managed" ||
-        id === "miners"
+        id === "miners" ||
+        id === "minerinfo" ||
+        id === "chips" ||
+        id === "pools"
       ) {
         const mid = opts.minerId != null ? String(opts.minerId).trim() : "";
         if (mid) {
-          return "/" + L + "/miners/" + encodeURIComponent(mid);
+          let sub = "";
+          const dt = opts.minerDetailTab;
+          if (dt === "info" || id === "minerinfo") sub = "/info";
+          else if (dt === "chips" || id === "chips") sub = "/chips";
+          else if (dt === "pools" || id === "pools") sub = "/pools";
+          return "/" + L + "/miners/" + encodeURIComponent(mid) + sub;
+        }
+        if (id === "minerinfo") {
+          // no id yet — keep legacy path until redirect finds active
+          return "/" + L + "/minerinfo";
+        }
+        if (id === "chips") {
+          return "/" + L + "/chips";
+        }
+        if (id === "pools") {
+          return "/" + L + "/pools";
         }
         return "/" + L + "/miners/managed";
       }
@@ -14987,7 +15141,12 @@
         minerDetailOpen &&
         selectedMinerId
       ) {
-        opts = Object.assign({}, opts, { minerId: selectedMinerId });
+        opts = Object.assign({}, opts, {
+          minerId: selectedMinerId,
+          minerDetailTab:
+            opts.minerDetailTab ||
+            (typeof minerDetailTab !== "undefined" ? minerDetailTab : "miner"),
+        });
       }
       const url = buildAppPath(tabId, lang, opts);
       try {
@@ -15030,19 +15189,33 @@
       } catch (_) { /* ignore */ }
     }
 
-    /** Sync /{lang}/miners[/{id}] when opening/closing miner detail. */
-    function setMinerDetailUrl(minerId, mode) {
+    /** Sync /{lang}/miners[/{id}[/info]] when opening/closing miner detail. */
+    function setMinerDetailUrl(minerId, mode, opts) {
+      opts = opts || {};
       const lang = typeof getUiLang === "function" ? getUiLang() : "en";
       const mid = minerId != null ? String(minerId).trim() : "";
-      const url = mid
-        ? "/" + lang + "/miners/" + encodeURIComponent(mid)
-        : "/" + lang + "/miners/managed";
+      const detailTab =
+        opts.minerDetailTab != null
+          ? opts.minerDetailTab
+          : typeof minerDetailTab !== "undefined"
+            ? minerDetailTab
+            : "miner";
+      let url = "/" + lang + "/miners/managed";
+      if (mid) {
+        let sub = "";
+        if (detailTab === "info") sub = "/info";
+        else if (detailTab === "chips") sub = "/chips";
+        else if (detailTab === "pools") sub = "/pools";
+        url =
+          "/" + lang + "/miners/" + encodeURIComponent(mid) + sub;
+      }
       try {
         const cur = location.pathname.replace(/\/+$/, "") || "/";
         const want = url.replace(/\/+$/, "") || "/";
         if (cur === want && !location.hash) return;
         const state = { tab: "managed", lang: lang };
         if (mid) state.minerId = mid;
+        if (detailTab) state.minerDetailTab = detailTab;
         if (mode === "replace") history.replaceState(state, "", url);
         else history.pushState(state, "", url);
       } catch (_) { /* ignore */ }
@@ -15063,15 +15236,30 @@
         mainTab = "info";
         infoSub = "logs";
       } else if (tabId === "chips") {
+        // Legacy /chips → /miners/{active}/chips (disk-cached chipmap)
+        if (typeof openActiveMinerChips === "function") {
+          openActiveMinerChips({ replaceUrl: !!opts.replaceUrl });
+          return "chips";
+        }
         mainTab = "miner";
         minerSub = "chips";
       } else if (tabId === "pools") {
+        // Legacy /pools → /miners/{active}/pools
+        if (typeof openActiveMinerPools === "function") {
+          openActiveMinerPools({ replaceUrl: !!opts.replaceUrl });
+          return "pools";
+        }
         mainTab = "miner";
         minerSub = "pools";
       } else if (tabId === "energy") {
         mainTab = "miner";
         minerSub = "energy";
       } else if (tabId === "minerinfo") {
+        // Legacy /minerinfo → /miners/{active}/info (full Info UI lives there)
+        if (typeof openActiveMinerInfo === "function") {
+          openActiveMinerInfo({ replaceUrl: !!opts.replaceUrl });
+          return "minerinfo";
+        }
         mainTab = "miner";
         minerSub = "info";
       } else if (tabId === "advanced") {
@@ -15202,10 +15390,19 @@
         }
       }
       if (mainTab === "miner" && minerSub === "pools") {
+        if (typeof openActiveMinerPools === "function" && !opts.skipRedirect) {
+          openActiveMinerPools({ replaceUrl: !!opts.replaceUrl });
+          return "pools";
+        }
         if (typeof loadMiningPools === "function") loadMiningPools(false);
         if (typeof loadPoolPresets === "function") loadPoolPresets();
       }
       if (mainTab === "miner" && minerSub === "chips") {
+        // Prefer per-miner Chips tab (disk cache); legacy subview is a stub
+        if (typeof openActiveMinerChips === "function" && !opts.skipRedirect) {
+          openActiveMinerChips({ replaceUrl: !!opts.replaceUrl });
+          return "chips";
+        }
         if (typeof loadChipmapConfig === "function") loadChipmapConfig();
         if (typeof loadChipmap === "function") loadChipmap(false);
       }
@@ -15551,8 +15748,29 @@
       if (route.lang && typeof applyUiLang === "function") {
         applyUiLang(route.lang, { persist: true, syncUrl: false });
       }
-      if (route.minerId) {
-        void applyMinerRouteFromUrl(route.minerId, { replaceUrl: true });
+      if (route.tab === "minerinfo" && !route.minerId) {
+        if (typeof openActiveMinerInfo === "function") {
+          openActiveMinerInfo({ replaceUrl: true });
+        } else {
+          activateTab("minerinfo", { skipUrl: true });
+        }
+      } else if (route.tab === "chips" && !route.minerId) {
+        if (typeof openActiveMinerChips === "function") {
+          openActiveMinerChips({ replaceUrl: true });
+        } else {
+          activateTab("chips", { skipUrl: true });
+        }
+      } else if (route.tab === "pools" && !route.minerId) {
+        if (typeof openActiveMinerPools === "function") {
+          openActiveMinerPools({ replaceUrl: true });
+        } else {
+          activateTab("pools", { skipUrl: true });
+        }
+      } else if (route.minerId) {
+        void applyMinerRouteFromUrl(route.minerId, {
+          replaceUrl: true,
+          minerDetailTab: route.minerDetailTab || "miner",
+        });
       } else {
         if (typeof minerDetailOpen !== "undefined" && minerDetailOpen) {
           closeMinerDetail({ skipUrl: true });
@@ -15585,20 +15803,34 @@
         const want = buildAppPath(t, lang, {
           circuitId: route.circuitId || null,
           minerId: route.minerId || null,
+          minerDetailTab: route.minerDetailTab || null,
         });
         const cur = (location.pathname.replace(/\/+$/, "") || "/") + (location.hash || "");
-        if (cur !== want) {
+        if (cur !== want && !(t === "minerinfo" && !route.minerId)) {
           const st = { tab: t, lang: lang };
           if (route.circuitId) st.circuitId = route.circuitId;
           if (route.minerId) st.minerId = route.minerId;
+          if (route.minerDetailTab) st.minerDetailTab = route.minerDetailTab;
           history.replaceState(st, "", want);
         }
       } catch (_) { /* ignore */ }
-      if (route.minerId) {
-        // Deep-link /miners/{id}: open detail after fleet is ready
+      if (t === "minerinfo" && !route.minerId) {
+        // legacy /ru/minerinfo → /ru/miners/{active}/info
+        openActiveMinerInfo({ replaceUrl: true });
+      } else if (t === "chips" && !route.minerId) {
+        // legacy /ru/chips → /ru/miners/{active}/chips
+        openActiveMinerChips({ replaceUrl: true });
+      } else if (t === "pools" && !route.minerId) {
+        openActiveMinerPools({ replaceUrl: true });
+      } else if (route.minerId) {
+        // Deep-link /miners/{id}[/info|/chips|/pools]
         window.__pendingMinerId = String(route.minerId);
+        if (route.minerDetailTab) minerDetailTab = route.minerDetailTab;
         activateTab("managed", { skipUrl: true, minerDetail: true });
-        void applyMinerRouteFromUrl(route.minerId, { replaceUrl: true });
+        void applyMinerRouteFromUrl(route.minerId, {
+          replaceUrl: true,
+          minerDetailTab: route.minerDetailTab || "miner",
+        });
       } else {
         activateTab(t, { skipUrl: false, replaceUrl: true });
       }
@@ -18664,7 +18896,22 @@
     }
 
     function updateWorkBadge(r) {
-      const el = document.getElementById("pm-work-badge");
+      // multi power widgets: prefer scoped paint; keep primary fallback
+      try {
+        if (typeof updateWorkBadgeOnCard === "function") {
+          const card =
+            (typeof powerWidgetCard === "function" && powerWidgetCard("power")) ||
+            document.getElementById("card-power-meas");
+          if (card) {
+            updateWorkBadgeOnCard(card, r);
+            return;
+          }
+        }
+      } catch (_) { /* fall through */ }
+      const el =
+        document.querySelector(
+          '#card-power-meas [data-bind="workBadge"], #pm-work-badge'
+        ) || document.getElementById("pm-work-badge");
       const card = document.getElementById("card-power-meas");
       const st = inferWorkState(r);
       if (el) {
@@ -18679,7 +18926,6 @@
           el.textContent = "—";
         }
       }
-      // left tab gradient: animate while mining
       if (card) {
         card.classList.toggle("is-mining", st === "resume");
         card.classList.toggle(
@@ -18724,6 +18970,14 @@
       const s = String(id || "");
       return s === "weather" || /^weather_\d+$/.test(s);
     }
+    /** Power measured widgets: power · power_2 · power_3… (per-miner bind) */
+    const DASH_POWER_MAX = 8;
+    function isPowerWidgetId(id) {
+      const s = String(id || "");
+      return s === "power" || /^power_\d+$/.test(s);
+    }
+    /** @type {Record<string, {miner_id:?string}>} */
+    let dashboardPowerWidgets = { power: { miner_id: null } };
     /** Charts + errors band — reorder only within this zone */
     const DASH_CHART_ORDER = [
       "errors",
@@ -18815,6 +19069,7 @@
           },
         },
         weather_widgets: dashboardWeatherWidgets || {},
+        power_widgets: dashboardPowerWidgets || {},
         chart_sync: !!dashboardChartSync,
       };
     }
@@ -18860,11 +19115,17 @@
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
         order = order.filter(
-          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+          (id) =>
+            DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+            isWeatherWidgetId(id) ||
+            isPowerWidgetId(id)
         );
         order = normalizeDashZoneOrder(order);
         hidden = hidden.filter(
-          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+          (id) =>
+            DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+            isWeatherWidgetId(id) ||
+            isPowerWidgetId(id)
         );
         half = half.filter(
           (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
@@ -18966,9 +19227,28 @@
           };
         });
       }
-      // ensure DOM for extra weather cards from layout/config
+      if (cfg.power_widgets && typeof cfg.power_widgets === "object") {
+        dashboardPowerWidgets = {};
+        Object.keys(cfg.power_widgets).forEach((wid) => {
+          if (!isPowerWidgetId(wid)) return;
+          const p = cfg.power_widgets[wid];
+          if (!p || typeof p !== "object") return;
+          const mid =
+            p.miner_id != null && String(p.miner_id).trim()
+              ? String(p.miner_id).trim()
+              : null;
+          dashboardPowerWidgets[wid] = { miner_id: mid };
+        });
+        if (!dashboardPowerWidgets.power) {
+          dashboardPowerWidgets.power = { miner_id: null };
+        }
+      }
+      // ensure DOM for extra weather / power cards from layout/config
       try {
         ensureAllWeatherWidgetDoms();
+      } catch (_) { /* ignore */ }
+      try {
+        ensureAllPowerWidgetDoms();
       } catch (_) { /* ignore */ }
     }
 
@@ -19643,7 +19923,12 @@
     }
 
     function isDashWidgetId(id) {
-      return !!(id && (DASH_WIDGET_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)));
+      return !!(
+        id &&
+        (DASH_WIDGET_ORDER.indexOf(id) >= 0 ||
+          isWeatherWidgetId(id) ||
+          isPowerWidgetId(id))
+      );
     }
 
     function isDashChartZoneId(id) {
@@ -19668,7 +19953,9 @@
       (orderIn || []).forEach((id) => {
         if (!id) return;
         const known =
-          DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id);
+          DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+          isWeatherWidgetId(id) ||
+          isPowerWidgetId(id);
         if (!known) return;
         if (isDashChartZoneId(id)) {
           if (!seenC[id]) {
@@ -19701,6 +19988,31 @@
             ? t("dash.widget.weather", "Weather")
             : "Weather";
         return city ? base + " · " + city : base;
+      }
+      if (isPowerWidgetId(id)) {
+        const conf =
+          (dashboardPowerWidgets && dashboardPowerWidgets[id]) || null;
+        const mid = conf && conf.miner_id ? String(conf.miner_id) : "";
+        const base =
+          typeof t === "function"
+            ? t("dash.widget.power", "Power measured")
+            : "Power measured";
+        if (!mid) return base;
+        const m =
+          (typeof findMinerById === "function"
+            ? findMinerById(managedMinersCache || [], mid) ||
+              findMinerById(
+                (fleetCache && fleetCache.miners) || [],
+                mid
+              )
+            : null) || null;
+        const name = m
+          ? (m.alias && String(m.alias).trim()) ||
+            (m.name && String(m.name).trim()) ||
+            m.host ||
+            mid
+          : mid;
+        return base + " · " + name;
       }
       return typeof t === "function"
         ? t("dash.widget." + id, id)
@@ -19755,11 +20067,17 @@
           if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
         });
         order = order.filter(
-          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+          (id) =>
+            DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+            isWeatherWidgetId(id) ||
+            isPowerWidgetId(id)
         );
         order = normalizeDashZoneOrder(order);
         hidden = hidden.filter(
-          (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+          (id) =>
+            DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+            isWeatherWidgetId(id) ||
+            isPowerWidgetId(id)
         );
         half = half.filter(
           (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
@@ -19921,24 +20239,30 @@
       const id = item.getAttribute("data-dash-id") || "";
       const chartKind = dashChartSettingsKind(id);
       const isWx = isWeatherWidgetId(id);
+      const isPw = isPowerWidgetId(id);
       let tools = item.querySelector(".dash-item-tools");
       if (!tools) {
         tools = document.createElement("div");
         tools.className = "dash-item-tools";
         let html =
           '<span class="dash-grip" title="Drag" aria-hidden="true"></span>';
-        if (chartKind || isWx) {
+        if (chartKind || isWx || isPw) {
+          const stitle = isWx
+            ? typeof t === "function"
+              ? t("dash.weather_settings", "Weather city")
+              : "Weather city"
+            : isPw
+              ? typeof t === "function"
+                ? t("dash.power_settings", "Power miner")
+                : "Power miner"
+              : typeof t === "function"
+                ? t("dash.chart_series", "Chart series")
+                : "Chart series";
           html +=
             '<button type="button" class="dash-settings-btn' +
             (DASH_RESIZABLE[id] ? " is-with-width" : "") +
             '" title="' +
-            (isWx
-              ? typeof t === "function"
-                ? t("dash.weather_settings", "Weather city")
-                : "Weather city"
-              : typeof t === "function"
-                ? t("dash.chart_series", "Chart series")
-                : "Chart series") +
+            stitle +
             '" aria-label="Settings">' +
             dashGearIconHtml() +
             "</button>";
@@ -19968,6 +20292,7 @@
         const sbtn = tools.querySelector(".dash-settings-btn");
         if (sbtn && chartKind) bindDashChartSettingsBtn(sbtn, chartKind);
         if (sbtn && isWx) bindWeatherWidgetSettingsBtn(sbtn, id);
+        if (sbtn && isPw) bindPowerWidgetSettingsBtn(sbtn, id);
         item.appendChild(tools);
       } else {
         if (DASH_RESIZABLE[id] && !tools.querySelector(".dash-width-btn")) {
@@ -19980,7 +20305,7 @@
           if (hideBtn) tools.insertBefore(wbtn, hideBtn);
           else tools.appendChild(wbtn);
         }
-        if ((chartKind || isWx) && !tools.querySelector(".dash-settings-btn")) {
+        if ((chartKind || isWx || isPw) && !tools.querySelector(".dash-settings-btn")) {
           const wbtn = tools.querySelector(".dash-width-btn");
           const hideBtn = tools.querySelector(".dash-hide-btn");
           const sbtn = document.createElement("button");
@@ -19992,12 +20317,17 @@
             ? typeof t === "function"
               ? t("dash.weather_settings", "Weather city")
               : "Weather city"
-            : typeof t === "function"
-              ? t("dash.chart_series", "Chart series")
-              : "Chart series";
+            : isPw
+              ? typeof t === "function"
+                ? t("dash.power_settings", "Power miner")
+                : "Power miner"
+              : typeof t === "function"
+                ? t("dash.chart_series", "Chart series")
+                : "Chart series";
           sbtn.setAttribute("aria-label", "Settings");
           if (chartKind) bindDashChartSettingsBtn(sbtn, chartKind);
           if (isWx) bindWeatherWidgetSettingsBtn(sbtn, id);
+          if (isPw) bindPowerWidgetSettingsBtn(sbtn, id);
           const before = wbtn || hideBtn;
           if (before) tools.insertBefore(sbtn, before);
           else tools.appendChild(sbtn);
@@ -20005,6 +20335,11 @@
           bindDashChartSettingsBtn(
             tools.querySelector(".dash-settings-btn"),
             chartKind
+          );
+        } else if (isPw) {
+          bindPowerWidgetSettingsBtn(
+            tools.querySelector(".dash-settings-btn"),
+            id
           );
         }
       }
@@ -20143,6 +20478,9 @@
       try {
         ensureAllWeatherWidgetDoms();
       } catch (_) { /* ignore */ }
+      try {
+        ensureAllPowerWidgetDoms();
+      } catch (_) { /* ignore */ }
       flattenDashChartPacks(board);
       const items = {};
       board.querySelectorAll(".dash-item[data-dash-id]").forEach((el) => {
@@ -20211,12 +20549,30 @@
     function hideDashWidget(id) {
       id = String(id || "");
       if (!id) return;
-      if (DASH_DEFAULT_ORDER.indexOf(id) < 0 && !isWeatherWidgetId(id)) return;
+      if (
+        DASH_DEFAULT_ORDER.indexOf(id) < 0 &&
+        !isWeatherWidgetId(id) &&
+        !isPowerWidgetId(id)
+      )
+        return;
       // extra weather cards: remove entirely (not just hide)
       if (isWeatherWidgetId(id) && id !== "weather") {
         dashLayout.order = (dashLayout.order || []).filter((x) => x !== id);
         dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
         if (dashboardWeatherWidgets) delete dashboardWeatherWidgets[id];
+        const board = document.getElementById("dash-board");
+        const el = board && board.querySelector('.dash-item[data-dash-id="' + id + '"]');
+        if (el) el.remove();
+        saveDashLayout();
+        applyDashLayout();
+        if (dashEditMode) renderDashAddMenu();
+        return;
+      }
+      // extra power cards: remove entirely
+      if (isPowerWidgetId(id) && id !== "power") {
+        dashLayout.order = (dashLayout.order || []).filter((x) => x !== id);
+        dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
+        if (dashboardPowerWidgets) delete dashboardPowerWidgets[id];
         const board = document.getElementById("dash-board");
         const el = board && board.querySelector('.dash-item[data-dash-id="' + id + '"]');
         if (el) el.remove();
@@ -20236,8 +20592,14 @@
     function showDashWidget(id) {
       id = String(id || "");
       if (!id) return;
-      if (DASH_DEFAULT_ORDER.indexOf(id) < 0 && !isWeatherWidgetId(id)) return;
+      if (
+        DASH_DEFAULT_ORDER.indexOf(id) < 0 &&
+        !isWeatherWidgetId(id) &&
+        !isPowerWidgetId(id)
+      )
+        return;
       if (isWeatherWidgetId(id)) ensureWeatherWidgetDom(id);
+      if (isPowerWidgetId(id)) ensurePowerWidgetDom(id);
       dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
       if (dashLayout.order.indexOf(id) < 0) dashLayout.order.push(id);
       saveDashLayout();
@@ -20301,13 +20663,18 @@
         .filter(
           (id) =>
             id &&
-            (DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id))
+            (DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+              isWeatherWidgetId(id) ||
+              isPowerWidgetId(id))
         );
       dashLayout.order = normalizeDashZoneOrder(ids);
       // never drop hidden / half flags here
       if (!Array.isArray(dashLayout.hidden)) dashLayout.hidden = [];
       dashLayout.hidden = dashLayout.hidden.filter(
-        (id) => DASH_DEFAULT_ORDER.indexOf(id) >= 0 || isWeatherWidgetId(id)
+        (id) =>
+          DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
+          isWeatherWidgetId(id) ||
+          isPowerWidgetId(id)
       );
       if (!Array.isArray(dashLayout.half)) dashLayout.half = [];
       dashLayout.half = dashLayout.half.filter(
@@ -20321,7 +20688,8 @@
       if (!addBtn) return;
       const n = (dashLayout.hidden || []).length;
       const canAddWx = countWeatherWidgets() < DASH_WEATHER_MAX;
-      if (dashEditMode && (n > 0 || canAddWx)) {
+      const canAddPw = countPowerWidgets() < DASH_POWER_MAX;
+      if (dashEditMode && (n > 0 || canAddWx || canAddPw)) {
         addBtn.hidden = false;
         addBtn.title =
           typeof t === "function"
@@ -20373,6 +20741,15 @@
             "</button>"
         );
       }
+      if (countPowerWidgets() < DASH_POWER_MAX) {
+        bits.push(
+          '<button type="button" data-add-power="1">+ ' +
+            (typeof t === "function"
+              ? t("dash.add_power", "Power (miner)")
+              : "Power (miner)") +
+            "</button>"
+        );
+      }
       hidden.forEach((id) => {
         bits.push(
           '<button type="button" data-show-id="' +
@@ -20408,6 +20785,16 @@
           e.preventDefault();
           e.stopPropagation();
           void addWeatherWidget();
+          hideDashAddMenu();
+        };
+        btn.addEventListener("mousedown", onPick);
+        btn.addEventListener("click", onPick);
+      });
+      menu.querySelectorAll("button[data-add-power]").forEach((btn) => {
+        const onPick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void addPowerWidget();
           hideDashAddMenu();
         };
         btn.addEventListener("mousedown", onPick);
@@ -20729,7 +21116,21 @@
      * SUSPEND → hide entirely (Tuning is not meaningful when not mining).
      */
     function updateUpfreqBadge(r) {
-      const el = document.getElementById("pm-upfreq-badge");
+      try {
+        if (typeof updateUpfreqBadgeOnCard === "function") {
+          const card =
+            (typeof powerWidgetCard === "function" && powerWidgetCard("power")) ||
+            document.getElementById("card-power-meas");
+          if (card) {
+            updateUpfreqBadgeOnCard(card, r);
+            return;
+          }
+        }
+      } catch (_) { /* fall through */ }
+      const el =
+        document.querySelector(
+          '#card-power-meas [data-bind="upfreqBadge"], #pm-upfreq-badge, #card-power-meas .pm-upfreq'
+        ) || document.getElementById("pm-upfreq-badge");
       if (!el) return;
       const ico = el.querySelector(".pm-uf-ico");
       const txt = el.querySelector(".pm-uf-txt");
@@ -21091,54 +21492,11 @@
       // T_ctrl = selected sensor, T_safe = chip max
       setText("[data-bind=tctrl]", fmt(resolveTctrl(r)));
       setText("[data-bind=tsafe]", fmt(r.chip_max));
-      {
-        const est =
-          isPowerEstimated(r) ||
-          isPowerEstimated(typeof live !== "undefined" ? live : null);
-        setText(
-          "[data-bind=pw]",
-          Number.isFinite(r.power) ? formatPowerW(r.power, est) : "—"
-        );
-        const pwEl = document.querySelector("[data-bind=pw]");
-        const unitEl = pwEl && pwEl.nextElementSibling;
-        if (unitEl && unitEl.tagName === "SMALL") {
-          unitEl.hidden = Number.isFinite(r.power);
-        }
-      }
+      // Power measured widgets (multi-instance · miner bind · vendor skins)
       try {
-        const card = document.getElementById("card-power-meas");
-        if (card)
-          card.classList.toggle(
-            "is-estimated",
-            !!(isPowerEstimated(r) || isPowerEstimated(typeof live !== "undefined" ? live : null))
-          );
-        const lab = card && card.querySelector("[data-i18n='dash.power_measured']");
-        if (lab && typeof t === "function") {
-          const est = isPowerEstimated(r) || isPowerEstimated(typeof live !== "undefined" ? live : null);
-          lab.textContent = est
-            ? t("dash.power_estimated", "Power estimated")
-            : t("dash.power_measured", "Power measured");
-        }
+        if (typeof paintAllPowerWidgets === "function") paintAllPowerWidgets(r);
       } catch (_) { /* ignore */ }
-      setText("[data-bind=pwMode]", r.mode || "—");
-      setText("[data-bind=freq]", fmt(r.freq, 0));
-      setText("[data-bind=hr]", fmt(r.hashrate_th, 1));
-      // PowerVin / PowerIin · PSU °C · rpm
-      setText(
-        "[data-bind=psuVin]",
-        Number.isFinite(r.psu_vin)
-          ? (r.psu_vin >= 100 ? Math.round(r.psu_vin) : r.psu_vin.toFixed(1)) + " V"
-          : "—"
-      );
-      setText(
-        "[data-bind=psuIin]",
-        Number.isFinite(r.psu_iin)
-          ? (r.psu_iin >= 10 ? r.psu_iin.toFixed(1) : r.psu_iin.toFixed(2)) + " A"
-          : "—"
-      );
-      setText("[data-bind=psuTemp]", Number.isFinite(r.psu_temp) ? fmt(r.psu_temp, 0) + "°C" : "—");
-      setText("[data-bind=psuFan]", Number.isFinite(r.psu_fan) ? Math.round(r.psu_fan) + " rpm" : "—");
-      // ASIC uptime / elapsed (Whatsminer summary.Uptime / Elapsed, seconds)
+      // Keep non-card dash IDs (mining control strip) in sync with active live
       {
         const fmtSec = (raw) => {
           if (raw == null || raw === "") return "—";
@@ -21146,7 +21504,6 @@
           if (!Number.isFinite(sec) || sec < 0) return String(raw);
           const ru =
             typeof getUiLang === "function" && getUiLang() === "ru";
-          // EN: 18h 29m · RU: 18ч 29м (keep words uptime/mining via labels)
           const uD = ru ? "д" : "d";
           const uH = ru ? "ч" : "h";
           const uM = ru ? "м" : "m";
@@ -21169,12 +21526,8 @@
         };
         const upStr = fmtSec(pick("uptime"));
         const elStr = fmtSec(pick("elapsed"));
-        setText("[data-bind=asicUptime]", upStr);
         setId("dash-asic-uptime", upStr);
-        setText("[data-bind=asicElapsed]", elStr);
         setId("dash-asic-elapsed", elStr);
-        // Label: "mining Xm" while resume; "suspend Xm" while suspend
-        // (Elapsed still from summary — session timer; label reflects work state)
         {
           const workSt =
             typeof inferWorkState === "function" ? inferWorkState(r) : null;
@@ -21205,21 +21558,8 @@
             }
           }
         }
-        // upfreq shown only as Tuning/Tuned badge (not · upfreq 0/1)
       }
-      try {
-        if (typeof updateWorkBadge === "function") updateWorkBadge(r);
-      } catch (_) { /* ignore */ }
-      try {
-        if (typeof updateUpfreqBadge === "function") updateUpfreqBadge(r);
-      } catch (_) { /* ignore */ }
       updateHeatLoss();
-      // J/TH = W / (TH/s)
-      let eff = "—";
-      if (Number.isFinite(r.power) && Number.isFinite(r.hashrate_th) && r.hashrate_th > 0) {
-        eff = fmt(r.power / r.hashrate_th, 1);
-      }
-      setText("[data-bind=eff]", eff);
 
       // ── measured from miner API (not last command) ──
       const src = live && live.ok !== false ? live : r;
@@ -22812,17 +23152,26 @@
       if (!meta) return;
       const p = selectedPoolPresetMeta();
       const coinEl = document.getElementById("pool-preset-coin");
+      const algoHint =
+        (poolPresetsCache && poolPresetsCache.algo) ||
+        (typeof resolveDetailMinerAlgo === "function"
+          ? resolveDetailMinerAlgo()
+          : "sha256ab");
       if (!p) {
         meta.textContent = (poolPresetsCache.presets || []).length
-          ? "Select a preset · “Save current” — snapshot from ASIC (+ Coin Type)"
-          : "Presets empty — “Save current…”";
+          ? "Select a preset · algo " +
+            algoHint +
+            " · “Save current” — snapshot from ASIC"
+          : "No presets for algo " + algoHint + " — “Save current…”";
         if (coinEl && document.activeElement !== coinEl) coinEl.value = "";
         return;
       }
       const act = p.id === poolPresetsCache.active_id ? " · active" : "";
       const coin = (p.coin_type || "").trim();
+      const palgo = (p.algo || algoHint || "").trim();
       meta.textContent =
         (p.name || p.id) +
+        (palgo ? " · " + palgo : "") +
         (coin ? " · Coin " + coin : "") +
         (p.summary ? " · " + p.summary : "") +
         (p.updated_ts ? " · " + String(p.updated_ts).replace("T", " ") : "") +
@@ -22902,13 +23251,21 @@
 
     async function loadPoolPresets() {
       try {
-        const res = await fetch("/api/miner/pools/presets", { cache: "no-store" });
+        const algo =
+          typeof resolveDetailMinerAlgo === "function"
+            ? resolveDetailMinerAlgo()
+            : "sha256ab";
+        const q = algo ? "?algo=" + encodeURIComponent(algo) : "";
+        const res = await fetch("/api/miner/pools/presets" + q, {
+          cache: "no-store",
+        });
         const body = await res.json();
         if (!body.ok && body.presets == null)
           throw new Error(body.error || "presets fail");
         poolPresetsCache = {
           presets: body.presets || [],
           active_id: body.active_id || null,
+          algo: body.algo_filter || algo,
         };
         renderPoolPresetSelect();
         return poolPresetsCache;
@@ -22921,10 +23278,15 @@
     }
 
     async function poolPresetApi(payload) {
+      payload = payload || {};
+      // Always stamp miner algo so presets stay scoped (sha256ab, scrypt, …)
+      if (payload.algo == null && typeof resolveDetailMinerAlgo === "function") {
+        payload.algo = resolveDetailMinerAlgo();
+      }
       const res = await fetch("/api/miner/pools/presets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload || {}),
+        body: JSON.stringify(payload),
       });
       const body = await res.json();
       if (!res.ok || body.ok === false)
@@ -22941,10 +23303,15 @@
       }
       try {
         const coin = readPoolPresetCoinType();
+        const algo =
+          typeof resolveDetailMinerAlgo === "function"
+            ? resolveDetailMinerAlgo()
+            : "sha256ab";
         const payload = {
           action: "save",
           name: String(name).trim(),
           from_live: true,
+          algo: algo,
         };
         // optional override if user already typed Coin Type
         if (coin) payload.coin_type = coin;
@@ -23677,6 +24044,12 @@
         console.warn("recompute", e);
         markDashLiveReady();
       }
+      // Bound power widgets need fleet live slices for non-active miners
+      try {
+        if (typeof maybeRefreshFleetForPowerWidgets === "function") {
+          void maybeRefreshFleetForPowerWidgets();
+        }
+      } catch (_) { /* ignore */ }
       // Policy control runs server-side (serve.py policy_loop) — no client auto-write
       if (live && live.policy && live.policy.last_event) {
         const ev = live.policy.last_event;
@@ -27774,6 +28147,14 @@
           live_host: body.live_host || null,
         };
         renderFleetTable();
+        // Power widgets bound to non-active miners need fleet live slices
+        try {
+          if (typeof paintAllPowerWidgets === "function") {
+            paintAllPowerWidgets(
+              typeof getReading === "function" ? getReading() : (typeof live !== "undefined" ? live : null)
+            );
+          }
+        } catch (_) { /* ignore */ }
         // Keep open miner detail page in sync with fleet live
         if (minerDetailOpen && selectedMinerId && typeof renderMinerDetail === "function") {
           renderMinerDetail();
@@ -27809,11 +28190,19 @@
           } catch (_) { /* ignore */ }
         }
       }
-      // soft poll while tab open
+      // soft poll while Miners tab open, or when power widgets bind specific miners
       if (fleetTimer) clearInterval(fleetTimer);
       fleetTimer = setInterval(() => {
         const v = document.getElementById("view-miners");
-        if (v && v.classList.contains("active")) {
+        const minersActive = !!(v && v.classList.contains("active"));
+        let needPw = false;
+        try {
+          needPw = Object.keys(dashboardPowerWidgets || {}).some((id) => {
+            const c = dashboardPowerWidgets[id];
+            return c && c.miner_id;
+          });
+        } catch (_) { /* ignore */ }
+        if (minersActive || needPw) {
           void refreshFleetTable();
         }
       }, 8000);
@@ -28251,7 +28640,14 @@
           if (!s) return "";
           // normalize short ids for display
           const low = s.toLowerCase();
-          if (low === "sha256" || low === "sha-256") return "SHA-256";
+          if (
+            low === "sha256" ||
+            low === "sha-256" ||
+            low === "sha256ab" ||
+            low === "sha-256ab" ||
+            low === "asicboost"
+          )
+            return "SHA-256ab";
           if (low === "scrypt") return "Scrypt";
           if (low === "eaglesong") return "Eaglesong";
           if (low === "ethash" || low === "etchash") return "Ethash";
@@ -28841,9 +29237,15 @@
       if (el.textContent !== s) el.textContent = s;
     }
 
-    /** Switch Miner / Info panes inside /miners/{id} card header. */
-    function setMinerDetailTab(tabId) {
-      const tab = tabId === "info" ? "info" : "miner";
+    /** Switch Miner / Chips / Info panes; sync URL …/chips · …/info. */
+    function setMinerDetailTab(tabId, opts) {
+      opts = opts || {};
+      let tab = "miner";
+      if (tabId === "info") tab = "info";
+      else if (tabId === "chips" || tabId === "chipmap") tab = "chips";
+      else if (tabId === "pools" || tabId === "pool") tab = "pools";
+      const prev = minerDetailTab;
+      const changed = prev !== tab;
       minerDetailTab = tab;
       document.querySelectorAll("#miner-detail-tabs [data-md-tab]").forEach((btn) => {
         const on = btn.getAttribute("data-md-tab") === tab;
@@ -28855,99 +29257,117 @@
         const on = id === tab;
         pane.hidden = !on;
       });
+      if (opts.skipUrl !== true && selectedMinerId) {
+        setMinerDetailUrl(selectedMinerId, opts.replaceUrl ? "replace" : "push", {
+          minerDetailTab: tab,
+        });
+      }
+      // Full Info UI is the former /minerinfo — load on enter (not every refresh)
+      if (
+        tab === "info" &&
+        (changed || opts.forceLoad) &&
+        typeof loadSystemInfo === "function"
+      ) {
+        void loadSystemInfo({ forceLive: true });
+        if (typeof loadMinerFirmwareFlashOptions === "function") {
+          setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
+        }
+      }
+      // Chip map (disk cache via /api/chipmap) — former /chips
+      if (
+        tab === "chips" &&
+        (changed || opts.forceLoad) &&
+        typeof loadChipmap === "function"
+      ) {
+        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+        void loadChipmap(false);
+      }
+      // Pools + algo-filtered presets — former /pools
+      if (tab === "pools" && (changed || opts.forceLoad)) {
+        if (typeof loadMiningPools === "function") loadMiningPools(false);
+        if (typeof loadPoolPresets === "function") loadPoolPresets();
+      }
     }
 
-    function renderMinerDetailIdentity(m, liveSrc) {
-      const live = liveSrc || (m && m.live) || {};
-      const model =
-        (m && (m.model_display || m.model || m.model_code)) ||
-        live.model_display ||
-        live.miner_type ||
-        live.model ||
-        "—";
-      const modelSub =
-        (m && m.model_display_full) ||
-        live.model_display_full ||
-        live.miner_type ||
-        (m && m.model_code) ||
-        "";
-      setMdText("md-info-model", model);
-      setMdText("md-info-model-sub", modelSub || "—");
+    /** Active managed miner id (for legacy /minerinfo · /chips · /pools redirect). */
+    function resolveActiveMinerId() {
+      const list =
+        (fleetCache && fleetCache.miners) ||
+        managedMinersCache ||
+        [];
+      const active = list.find((m) => m && m.role === "active");
+      if (active && active.id != null) return String(active.id);
+      if (list.length === 1 && list[0] && list[0].id != null)
+        return String(list[0].id);
+      return selectedMinerId ? String(selectedMinerId) : null;
+    }
 
-      const fw =
-        (m && (m.fw_ver || m.firmware || m.fw)) ||
-        live.fw_ver ||
-        live.firmware ||
-        live.fw ||
-        "—";
-      setMdText("md-info-fw", fw);
-      const api =
-        live.api_ver ||
-        live.api_version ||
-        (live.miner_type ? "type " + live.miner_type : "");
-      setMdText("md-info-api", api || "—");
-
-      const host =
-        (m && m.host && String(m.host).split(":")[0]) ||
-        (live.host && String(live.host).split(":")[0]) ||
-        "—";
-      const port = m && m.port != null ? m.port : live.port;
-      setMdText(
-        "md-info-host",
-        host + (port != null && host !== "—" ? ":" + port : "")
-      );
-      const mac = (m && m.mac) || live.mac || "";
-      setMdText("md-info-mac", mac ? "mac " + mac : "mac —");
-
-      const sn =
-        (m && (m.serial || m.sn || m.minersn)) ||
-        live.serial ||
-        live.minersn ||
-        live.customer_sn ||
-        "—";
-      setMdText("md-info-sn", sn);
-      const snSrc =
-        live.sn_source ||
-        (live.minersn
-          ? "minersn"
-          : live.customer_sn
-            ? "CustomerSn"
-            : m && m.serial
-              ? "inventory"
-              : "—");
-      setMdText("md-info-sn-src", snSrc);
-
-      const vendorName =
-        (m && m.vendor_name) ||
-        (typeof vendorDisplayName === "function"
-          ? vendorDisplayName((m && m.vendor) || live.vendor || "")
-          : (m && m.vendor) || live.vendor || "—");
-      setMdText("md-info-vendor", vendorName || "—");
-      const cooling =
-        (m && (m.cooling_name || m.cooling)) ||
-        live.cooling_name ||
-        live.cooling ||
-        "";
-      const nB =
-        live.board_count != null
-          ? live.board_count
-          : Array.isArray(live.boards)
-            ? live.boards.length
-            : "";
-      setMdText(
-        "md-info-cooling",
-        (cooling ? String(cooling) : "—") +
-          (nB !== "" ? " · " + nB + " boards" : "")
-      );
-
-      const algo =
-        (m && (m.algo_display || m.algo)) ||
-        live.algo_display ||
+    /** Algo for current detail miner (or active) — for pool preset filter. */
+    function resolveDetailMinerAlgo() {
+      const mid = selectedMinerId || resolveActiveMinerId();
+      const m = mid ? resolveMinerForDetail(mid) : null;
+      const live = m ? minerDetailLiveSource(m) || m.live || {} : {};
+      let a =
+        (m && (m.algo || m.algorithm)) ||
         live.algo ||
-        "—";
-      setMdText("md-info-algo", algo);
-      const coin = (m && m.coin) || live.coin || "";
-      setMdText("md-info-coin", coin ? "coin " + coin : "—");
+        live.algorithm ||
+        live.algo_display ||
+        "";
+      a = String(a || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "");
+      if (
+        !a ||
+        a === "sha256" ||
+        a === "sha2" ||
+        a === "sha256d" ||
+        a === "btc" ||
+        a === "bitcoin"
+      ) {
+        a = "sha256ab";
+      }
+      if (a === "sha256ab" || a.indexOf("sha256") === 0) a = "sha256ab";
+      return a || "sha256ab";
+    }
+
+    /** Open /miners/{id}/{tab} (replaces legacy /minerinfo · /chips · /pools). */
+    function openActiveMinerDetailTab(tab, opts) {
+      opts = opts || {};
+      let want = "miner";
+      if (tab === "chips") want = "chips";
+      else if (tab === "info") want = "info";
+      else if (tab === "pools") want = "pools";
+      const mid = resolveActiveMinerId();
+      if (!mid) {
+        if (typeof toastWarn === "function") {
+          toastWarn(
+            typeof t === "function"
+              ? t("miner_detail.no_active", "No managed miner — open Miners")
+              : "No managed miner — open Miners"
+          );
+        }
+        if (typeof activateTab === "function") {
+          activateTab("managed", { skipUrl: false });
+        }
+        return;
+      }
+      openMinerDetail(mid, {
+        tab: want,
+        replaceUrl: opts.replaceUrl !== false,
+        skipUrl: false,
+      });
+    }
+
+    function openActiveMinerInfo(opts) {
+      openActiveMinerDetailTab("info", opts);
+    }
+
+    function openActiveMinerChips(opts) {
+      openActiveMinerDetailTab("chips", opts);
+    }
+
+    function openActiveMinerPools(opts) {
+      openActiveMinerDetailTab("pools", opts);
     }
 
     /** Read-only mode strip (same fields as /miner). */
@@ -29512,16 +29932,9 @@
         console.warn("miner detail wm blocks", e);
       }
 
-      // Info tab: identity cards
+      // Keep current inner tab (Miner / Info) — no URL thrash on live refresh
       try {
-        renderMinerDetailIdentity(m, liveSrc || live);
-      } catch (e) {
-        console.warn("miner detail identity", e);
-      }
-
-      // Keep current inner tab (Miner / Info)
-      try {
-        setMinerDetailTab(minerDetailTab || "miner");
+        setMinerDetailTab(minerDetailTab || "miner", { skipUrl: true });
       } catch (_) { /* ignore */ }
 
       // Inventory
@@ -29579,8 +29992,16 @@
       selectedMinerId = mid;
       minerDetailOpen = true;
       // default to Miner tab when opening a miner page
-      if (opts.tab) minerDetailTab = opts.tab === "info" ? "info" : "miner";
-      else if (!opts.keepTab) minerDetailTab = "miner";
+      if (
+        opts.tab === "info" ||
+        opts.tab === "chips" ||
+        opts.tab === "pools" ||
+        opts.tab === "miner"
+      ) {
+        minerDetailTab = opts.tab;
+      } else if (!opts.keepTab) {
+        minerDetailTab = "miner";
+      }
       // show detail subview under Miners tab
       if (typeof activateTab === "function") {
         activateTab("managed", {
@@ -29592,7 +30013,23 @@
       }
       renderMinerDetail();
       if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
-        setMinerDetailUrl(mid, opts.replaceUrl ? "replace" : "push");
+        setMinerDetailUrl(mid, opts.replaceUrl ? "replace" : "push", {
+          minerDetailTab: minerDetailTab,
+        });
+      }
+      if (minerDetailTab === "info" && typeof loadSystemInfo === "function") {
+        void loadSystemInfo({ forceLive: true });
+        if (typeof loadMinerFirmwareFlashOptions === "function") {
+          setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
+        }
+      }
+      if (minerDetailTab === "chips") {
+        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+        if (typeof loadChipmap === "function") void loadChipmap(false);
+      }
+      if (minerDetailTab === "pools") {
+        if (typeof loadMiningPools === "function") loadMiningPools(false);
+        if (typeof loadPoolPresets === "function") loadPoolPresets();
       }
       // ensure fleet data is fresh
       if (typeof refreshFleetTable === "function") {
@@ -29618,6 +30055,15 @@
       }
       selectedMinerId = mid;
       minerDetailOpen = true;
+      if (opts.tab === "info" || opts.minerDetailTab === "info") {
+        minerDetailTab = "info";
+      } else if (opts.tab === "chips" || opts.minerDetailTab === "chips") {
+        minerDetailTab = "chips";
+      } else if (opts.tab === "pools" || opts.minerDetailTab === "pools") {
+        minerDetailTab = "pools";
+      } else if (opts.tab === "miner" || opts.minerDetailTab === "miner") {
+        minerDetailTab = "miner";
+      }
       if (typeof activateTab === "function") {
         activateTab("managed", { skipUrl: true, minerDetail: true });
       }
@@ -29634,7 +30080,23 @@
       } catch (_) { /* ignore */ }
       renderMinerDetail();
       if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
-        setMinerDetailUrl(mid, "replace");
+        setMinerDetailUrl(mid, "replace", {
+          minerDetailTab: minerDetailTab,
+        });
+      }
+      if (minerDetailTab === "info" && typeof loadSystemInfo === "function") {
+        void loadSystemInfo({ forceLive: true });
+        if (typeof loadMinerFirmwareFlashOptions === "function") {
+          setTimeout(() => void loadMinerFirmwareFlashOptions(), 400);
+        }
+      }
+      if (minerDetailTab === "chips") {
+        if (typeof loadChipmapConfig === "function") loadChipmapConfig();
+        if (typeof loadChipmap === "function") void loadChipmap(false);
+      }
+      if (minerDetailTab === "pools") {
+        if (typeof loadMiningPools === "function") loadMiningPools(false);
+        if (typeof loadPoolPresets === "function") loadPoolPresets();
       }
     }
 
@@ -29655,6 +30117,25 @@
       if (typeof refreshFleetTable === "function") {
         void refreshFleetTable({ manual: true });
       }
+      if (minerDetailTab === "info" && typeof loadSystemInfo === "function") {
+        void loadSystemInfo({ forceLive: true });
+      }
+      if (minerDetailTab === "chips" && typeof loadChipmap === "function") {
+        void loadChipmap(true);
+      }
+      if (minerDetailTab === "pools") {
+        if (typeof loadMiningPools === "function") loadMiningPools(true);
+        if (typeof loadPoolPresets === "function") loadPoolPresets();
+      }
+    });
+    document.getElementById("btn-minerinfo-goto-detail")?.addEventListener("click", () => {
+      openActiveMinerInfo({ replaceUrl: false });
+    });
+    document.getElementById("btn-chips-goto-detail")?.addEventListener("click", () => {
+      openActiveMinerChips({ replaceUrl: false });
+    });
+    document.getElementById("btn-pools-goto-detail")?.addEventListener("click", () => {
+      openActiveMinerPools({ replaceUrl: false });
     });
     document.getElementById("btn-miner-detail-edit")?.addEventListener("click", () => {
       if (selectedMinerId && typeof fleetDoAction === "function") {
@@ -34294,6 +34775,719 @@
         if (isWeatherWidgetId(id)) ids.add(id);
       });
       ids.forEach((id) => ensureWeatherWidgetDom(id));
+    }
+
+
+    /* ── Multi power widgets (per-miner bind + vendor skins) ─────────── */
+    function bindPowerWidgetSettingsBtn(sbtn, widgetId) {
+      if (!sbtn || sbtn._pwSettingsBound) return;
+      sbtn._pwSettingsBound = true;
+      sbtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        void openPowerWidgetSettings(widgetId);
+      });
+      sbtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    }
+
+    function ensurePowerWidgetDom(widgetId) {
+      const board = document.getElementById("dash-board");
+      if (!board) return null;
+      widgetId = String(widgetId || "power");
+      let item = board.querySelector('.dash-item[data-dash-id="' + widgetId + '"]');
+      if (item) return item;
+      const proto = board.querySelector('.dash-item[data-dash-id="power"]');
+      if (!proto) return null;
+      if (widgetId === "power") return proto;
+      item = proto.cloneNode(true);
+      item.setAttribute("data-dash-id", widgetId);
+      item.setAttribute("data-power-widget", widgetId);
+      item.querySelectorAll("[id]").forEach((el) => {
+        const oid = el.getAttribute("id");
+        if (!oid) return;
+        const base = oid.replace(/--power(_\d+)?$/, "").replace(/--power$/, "");
+        el.setAttribute("id", base + "--" + widgetId);
+      });
+      const card = item.querySelector(".temp-card.power-meas, .temp-card");
+      if (card) {
+        card.id = "card-power-meas--" + widgetId;
+        card.setAttribute("data-power-card", widgetId);
+      }
+      board.appendChild(item);
+      ensureDashItemTools(item);
+      return item;
+    }
+
+    function ensureAllPowerWidgetDoms() {
+      const ids = new Set(["power"]);
+      (dashLayout.order || []).forEach((id) => {
+        if (isPowerWidgetId(id)) ids.add(id);
+      });
+      Object.keys(dashboardPowerWidgets || {}).forEach((id) => {
+        if (isPowerWidgetId(id)) ids.add(id);
+      });
+      ids.forEach((id) => ensurePowerWidgetDom(id));
+    }
+
+    function nextPowerWidgetId() {
+      const used = new Set(
+        (dashLayout.order || [])
+          .concat(Object.keys(dashboardPowerWidgets || {}))
+          .filter(isPowerWidgetId)
+      );
+      if (!used.has("power")) return "power";
+      for (let i = 2; i <= DASH_POWER_MAX; i++) {
+        const id = "power_" + i;
+        if (!used.has(id)) return id;
+      }
+      return null;
+    }
+
+    function countPowerWidgets() {
+      const ids = new Set();
+      (dashLayout.order || []).forEach((id) => {
+        if (isPowerWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      Object.keys(dashboardPowerWidgets || {}).forEach((id) => {
+        if (isPowerWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      if (!ids.size) ids.add("power");
+      return ids.size;
+    }
+
+    async function addPowerWidget() {
+      const id = nextPowerWidgetId();
+      if (!id) {
+        if (typeof toastWarn === "function")
+          toastWarn(
+            typeof t === "function"
+              ? t("dash.power_max", "Max power widgets reached")
+              : "Max power widgets"
+          );
+        return;
+      }
+      if (!dashboardPowerWidgets) dashboardPowerWidgets = {};
+      if (!dashboardPowerWidgets[id]) {
+        dashboardPowerWidgets[id] = { miner_id: null };
+      }
+      ensurePowerWidgetDom(id);
+      dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
+      if ((dashLayout.order || []).indexOf(id) < 0) {
+        const order = dashLayout.order || [];
+        let lastPw = -1;
+        order.forEach((x, i) => {
+          if (isPowerWidgetId(x)) lastPw = i;
+        });
+        if (lastPw >= 0) order.splice(lastPw + 1, 0, id);
+        else {
+          const pi = order.indexOf("power");
+          if (pi >= 0) order.splice(pi + 1, 0, id);
+          else order.unshift(id);
+        }
+        dashLayout.order = order;
+      }
+      saveDashLayout();
+      applyDashLayout();
+      try {
+        paintAllPowerWidgets(
+          typeof getReading === "function" ? getReading() : null
+        );
+      } catch (_) { /* ignore */ }
+      void openPowerWidgetSettings(id);
+    }
+
+    async function openPowerWidgetSettings(widgetId) {
+      widgetId = String(widgetId || "power");
+      let backdrop = document.getElementById("pw-widget-settings-modal");
+      if (!backdrop) {
+        backdrop = document.createElement("div");
+        backdrop.id = "pw-widget-settings-modal";
+        backdrop.className = "chart-series-modal-backdrop";
+        backdrop.hidden = true;
+        backdrop.innerHTML =
+          '<div class="chart-series-modal" role="dialog" aria-modal="true">' +
+          '<h3 id="pw-widget-settings-title">' +
+          (typeof t === "function"
+            ? t("dash.power_settings", "Power miner")
+            : "Power miner") +
+          "</h3>" +
+          '<p class="sub" id="pw-widget-settings-sub">' +
+          (typeof t === "function"
+            ? t(
+                "dash.power_settings_sub",
+                "Bind this card to a managed miner. Design switches by vendor (Whatsminer / Antminer)."
+              )
+            : "Bind this card to a managed miner.") +
+          "</p>" +
+          '<label class="field" style="margin-top:10px"><span id="pw-widget-bind-label">' +
+          (typeof t === "function"
+            ? t("dash.power_bind_miner", "Miner")
+            : "Miner") +
+          "</span>" +
+          '<select id="pw-widget-bind-select"></select></label>' +
+          '<div class="modal-actions" style="margin-top:14px">' +
+          '<button type="button" class="btn" id="btn-pw-widget-cancel" data-i18n="btn.cancel">Cancel</button>' +
+          '<button type="button" class="btn primary" id="btn-pw-widget-save" data-i18n="btn.save">Save</button>' +
+          "</div></div>";
+        document.body.appendChild(backdrop);
+        backdrop.addEventListener("click", (e) => {
+          if (e.target === backdrop) closePowerWidgetSettings();
+        });
+        backdrop
+          .querySelector("#btn-pw-widget-cancel")
+          ?.addEventListener("click", () => closePowerWidgetSettings());
+        backdrop
+          .querySelector("#btn-pw-widget-save")
+          ?.addEventListener("click", () => {
+            const bd = document.getElementById("pw-widget-settings-modal");
+            const wid = bd && bd._pwWidgetId;
+            if (!wid) return;
+            const sel = document.getElementById("pw-widget-bind-select");
+            const mid = sel && (sel.value || "").trim() ? sel.value.trim() : null;
+            if (!dashboardPowerWidgets) dashboardPowerWidgets = {};
+            dashboardPowerWidgets[wid] = { miner_id: mid };
+            scheduleSaveDashboardConfig();
+            try {
+              paintAllPowerWidgets(
+                typeof getReading === "function" ? getReading() : null
+              );
+            } catch (_) { /* ignore */ }
+            closePowerWidgetSettings();
+            if (typeof toastSuccess === "function") {
+              toastSuccess(
+                typeof t === "function"
+                  ? t("dash.power_saved", "Power widget updated")
+                  : "Power widget updated"
+              );
+            }
+          });
+      }
+      // refresh miners list
+      try {
+        if (!(managedMinersCache || []).length) {
+          const r = await fetch("/api/miner/managed", { cache: "no-store" });
+          const b = await r.json();
+          if (r.ok && Array.isArray(b.miners)) managedMinersCache = b.miners;
+        }
+      } catch (_) { /* ignore */ }
+      backdrop._pwWidgetId = widgetId;
+      const sel = document.getElementById("pw-widget-bind-select");
+      if (sel) {
+        sel.innerHTML = "";
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent =
+          typeof t === "function"
+            ? t("dash.power_bind_none", "— active polled miner —")
+            : "— active polled miner —";
+        sel.appendChild(opt0);
+        const miners =
+          (managedMinersCache && managedMinersCache.length
+            ? managedMinersCache
+            : null) ||
+          (fleetCache && fleetCache.miners) ||
+          [];
+        miners.forEach((m) => {
+          if (!m || m.id == null) return;
+          const o = document.createElement("option");
+          o.value = String(m.id);
+          const name =
+            (m.alias && String(m.alias).trim()) ||
+            (m.name && String(m.name).trim()) ||
+            m.host ||
+            String(m.id);
+          const vend = m.vendor ? " · " + m.vendor : "";
+          o.textContent = name + (m.host ? " · " + m.host : "") + vend;
+          sel.appendChild(o);
+        });
+        const conf =
+          (dashboardPowerWidgets && dashboardPowerWidgets[widgetId]) || {};
+        sel.value = conf.miner_id || "";
+      }
+      const title = document.getElementById("pw-widget-settings-title");
+      if (title) {
+        title.textContent =
+          (typeof t === "function"
+            ? t("dash.power_settings", "Power miner")
+            : "Power miner") +
+          (widgetId !== "power" ? " · " + widgetId : "");
+      }
+      const sub = document.getElementById("pw-widget-settings-sub");
+      if (sub && typeof t === "function") {
+        sub.textContent = t(
+          "dash.power_settings_sub",
+          "Bind this card to a managed miner. Design switches by vendor (Whatsminer / Antminer)."
+        );
+      }
+      try {
+        if (typeof applyI18n === "function") applyI18n(backdrop);
+      } catch (_) { /* ignore */ }
+      backdrop.hidden = false;
+    }
+
+    function closePowerWidgetSettings() {
+      const backdrop = document.getElementById("pw-widget-settings-modal");
+      if (backdrop) backdrop.hidden = true;
+    }
+
+    function powerWidgetCard(widgetId) {
+      widgetId = String(widgetId || "power");
+      const board = document.getElementById("dash-board");
+      if (board) {
+        const scoped = board.querySelector(
+          '.dash-item[data-dash-id="' +
+            widgetId +
+            '"] .temp-card.power-meas, .dash-item[data-dash-id="' +
+            widgetId +
+            '"] [data-power-card]'
+        );
+        if (scoped) return scoped;
+      }
+      if (widgetId === "power") {
+        return document.getElementById("card-power-meas");
+      }
+      return document.getElementById("card-power-meas--" + widgetId);
+    }
+
+    function pwSetBind(card, name, text) {
+      if (!card) return;
+      const el = card.querySelector('[data-bind="' + name + '"]');
+      if (el) el.textContent = text == null ? "—" : String(text);
+    }
+
+    function powerVendorOf(m, live) {
+      const raw =
+        (m && (m.vendor || m.api_vendor)) ||
+        (live && (live.vendor || live.api_vendor)) ||
+        "";
+      const v = String(raw).toLowerCase();
+      if (v.indexOf("ant") >= 0 || v === "bitmain") return "antminer";
+      if (v.indexOf("whats") >= 0 || v === "microbt") return "whatsminer";
+      // model heuristic
+      const model = String(
+        (m && (m.model || m.model_code || m.model_display)) ||
+          (live && (live.model || live.model_code || live.model_display)) ||
+          ""
+      ).toLowerCase();
+      if (/^s\d|^t\d|^l\d|antminer|s19|s21|t21|l7|l9/.test(model))
+        return "antminer";
+      if (/m\d{2}|whatsminer|m33|m53|m63|m64|m73|m74/.test(model))
+        return "whatsminer";
+      return "whatsminer";
+    }
+
+    function applyPowerVendorSkin(card, vendor) {
+      if (!card) return;
+      card.classList.remove("vendor-whatsminer", "vendor-antminer");
+      card.classList.add(
+        vendor === "antminer" ? "vendor-antminer" : "vendor-whatsminer"
+      );
+    }
+
+    function updateWorkBadgeOnCard(card, r) {
+      if (!card) return;
+      const el = card.querySelector('[data-bind="workBadge"]');
+      const st = inferWorkState(r);
+      if (el) {
+        el.classList.remove("is-mining", "is-suspend");
+        if (st === "suspend" || st === "sleep") {
+          el.textContent = "Suspend";
+          el.classList.add("is-suspend");
+        } else if (st === "resume") {
+          el.textContent = "Mining";
+          el.classList.add("is-mining");
+        } else {
+          el.textContent = "—";
+        }
+      }
+      card.classList.toggle("is-mining", st === "resume");
+      card.classList.toggle(
+        "is-suspend",
+        st === "suspend" || st === "sleep"
+      );
+    }
+
+    function updateUpfreqBadgeOnCard(card, r) {
+      if (!card) return;
+      const el = card.querySelector(
+        '[data-bind="upfreqBadge"], .pm-upfreq'
+      );
+      if (!el) return;
+      const ico = el.querySelector(".pm-uf-ico");
+      const txt =
+        el.querySelector('[data-bind="upfreqTxt"]') ||
+        el.querySelector(".pm-uf-txt");
+      const flag = resolveUpfreqFlag(r);
+      const work =
+        typeof inferWorkState === "function" ? inferWorkState(r) : null;
+      const mining = work === "resume";
+      el.classList.remove("is-tuning", "is-tuned", "is-unknown", "is-spinning");
+      if (!mining) {
+        el.hidden = true;
+        el.style.display = "none";
+        el.setAttribute("aria-hidden", "true");
+        if (txt) txt.textContent = "";
+        el.title = "";
+        el.setAttribute("aria-label", "");
+        return;
+      }
+      el.hidden = false;
+      el.style.display = "";
+      el.removeAttribute("aria-hidden");
+      if (flag === 1) {
+        el.classList.add("is-tuned");
+        if (ico) ico.textContent = "✓";
+        if (txt) txt.textContent = "Tuned";
+        el.title = "Tuned: upfreq complete";
+        el.setAttribute("aria-label", "Tuned: upfreq complete");
+      } else if (flag === 0) {
+        el.classList.add("is-tuning", "is-spinning");
+        if (ico) ico.textContent = "⟳";
+        if (txt) txt.textContent = "Tuning";
+        el.title = "Tuning: resume mining · upfreq incomplete";
+        el.setAttribute("aria-label", "Tuning while mining");
+      } else {
+        el.classList.add("is-unknown");
+        if (ico) ico.textContent = "·";
+        if (txt) txt.textContent = "—";
+        el.title = "upfreq —";
+        el.setAttribute("aria-label", "upfreq unknown");
+      }
+    }
+
+    function resolvePowerWidgetReading(widgetId, defaultReading) {
+      widgetId = String(widgetId || "power");
+      const conf =
+        (dashboardPowerWidgets && dashboardPowerWidgets[widgetId]) || null;
+      const mid = conf && conf.miner_id ? String(conf.miner_id) : null;
+      let m = null;
+      let liveR = null;
+      if (mid) {
+        m =
+          (typeof findMinerById === "function"
+            ? findMinerById(
+                (fleetCache && fleetCache.miners) || [],
+                mid
+              ) || findMinerById(managedMinersCache || [], mid)
+            : null) || null;
+        if (m && m.live) liveR = m.live;
+        // If bound miner is the active polled host, prefer full /api/live
+        try {
+          const host = m && m.host ? String(m.host).trim() : "";
+          const liveHost =
+            (fleetCache && fleetCache.live_host) ||
+            (typeof live !== "undefined" && live && (live.host || live.ip)) ||
+            null;
+          if (
+            host &&
+            liveHost &&
+            String(liveHost).trim() === host &&
+            typeof live !== "undefined" &&
+            live
+          ) {
+            liveR = live;
+          }
+          // role active + no fleet live yet
+          if (
+            !liveR &&
+            m &&
+            m.role === "active" &&
+            typeof live !== "undefined" &&
+            live
+          ) {
+            liveR = live;
+          }
+        } catch (_) { /* ignore */ }
+      } else if (widgetId === "power") {
+        // primary unbound → active polled miner
+        liveR = defaultReading || (typeof live !== "undefined" ? live : null);
+        try {
+          if (fleetCache && fleetCache.miners && fleetCache.miners.length) {
+            m =
+              fleetCache.miners.find((x) => x && x.role === "active") ||
+              fleetCache.miners.find((x) => x && x.live) ||
+              null;
+          }
+        } catch (_) { /* ignore */ }
+      }
+      return { miner: m, reading: liveR, miner_id: mid };
+    }
+
+    function paintPowerWidget(widgetId, defaultReading) {
+      widgetId = String(widgetId || "power");
+      ensurePowerWidgetDom(widgetId);
+      const card = powerWidgetCard(widgetId);
+      if (!card) return;
+      const resolved = resolvePowerWidgetReading(widgetId, defaultReading);
+      const m = resolved.miner;
+      const r = resolved.reading || {};
+      const vendor = powerVendorOf(m, r);
+      applyPowerVendorSkin(card, vendor);
+
+      // miner tag
+      const tag = card.querySelector('[data-bind="minerTag"]');
+      if (tag) {
+        const label = m
+          ? (m.alias && String(m.alias).trim()) ||
+            (m.name && String(m.name).trim()) ||
+            m.host ||
+            (resolved.miner_id || "")
+          : resolved.miner_id || "";
+        if (label) {
+          tag.hidden = false;
+          tag.textContent = label;
+          tag.title = label + (m && m.host ? " · " + m.host : "");
+        } else {
+          tag.hidden = true;
+          tag.textContent = "";
+        }
+      }
+
+      const fmt = (v, d) => {
+        if (v == null || v === "" || !Number.isFinite(Number(v))) return "—";
+        const n = Number(v);
+        return d == null ? String(n) : n.toFixed(d);
+      };
+
+      const est =
+        typeof isPowerEstimated === "function"
+          ? isPowerEstimated(r) ||
+            isPowerEstimated(typeof live !== "undefined" ? live : null)
+          : false;
+      card.classList.toggle("is-estimated", !!est && Number.isFinite(r.power));
+
+      const lab = card.querySelector("[data-i18n='dash.power_measured']");
+      if (lab && typeof t === "function") {
+        lab.textContent = est
+          ? t("dash.power_estimated", "Power estimated")
+          : t("dash.power_measured", "Power measured");
+      }
+
+      // formatPowerW includes unit ("1234 W" / "1234 W≈"); hide separate unit label
+      {
+        const unitEl = card.querySelector('[data-bind="pwUnit"]');
+        if (Number.isFinite(r.power) && typeof formatPowerW === "function") {
+          pwSetBind(card, "pw", formatPowerW(r.power, est));
+          if (unitEl) unitEl.hidden = true;
+        } else if (Number.isFinite(r.power)) {
+          pwSetBind(card, "pw", String(Math.round(r.power)));
+          if (unitEl) {
+            unitEl.hidden = false;
+            unitEl.textContent = "W";
+          }
+        } else {
+          pwSetBind(card, "pw", "—");
+          if (unitEl) {
+            unitEl.hidden = false;
+            unitEl.textContent = "W";
+          }
+        }
+      }
+
+      // hashrate
+      {
+        let hrTxt = "—";
+        let hrUnit = "TH/s";
+        if (r && (r.hashrate_th != null || r.rate_th != null)) {
+          const th =
+            r.hashrate_th != null ? Number(r.hashrate_th) : Number(r.rate_th);
+          const unit = r.hashrate_unit || (m && m.hashrate_unit) || "TH/s";
+          if (Number.isFinite(th) && typeof formatTh === "function") {
+            const full = formatTh(th, unit);
+            const mm = String(full).match(/^([\d.,\s]+)\s*(.*)$/);
+            if (mm) {
+              hrTxt = mm[1].trim();
+              hrUnit = (mm[2] || unit).trim() || unit;
+            } else {
+              hrTxt = full;
+            }
+          } else if (Number.isFinite(th)) {
+            hrTxt = th.toFixed(1);
+          }
+        }
+        pwSetBind(card, "hr", hrTxt);
+        const hu = card.querySelector('[data-bind="hrUnit"]');
+        if (hu) hu.textContent = hrUnit;
+      }
+
+      pwSetBind(card, "pwMode", r.mode || r.work || "—");
+      pwSetBind(card, "freq", fmt(r.freq, 0));
+
+      // efficiency
+      let eff = "—";
+      let effUnit = "J/T";
+      if (r.efficiency_value != null && r.efficiency_unit) {
+        const n = Number(r.efficiency_value);
+        if (Number.isFinite(n)) {
+          eff = n.toFixed(1);
+          effUnit = String(r.efficiency_unit);
+        }
+      } else if (
+        Number.isFinite(r.power) &&
+        Number.isFinite(r.hashrate_th) &&
+        r.hashrate_th > 0
+      ) {
+        eff = (r.power / r.hashrate_th).toFixed(1);
+      } else if (r.efficiency_jth != null) {
+        eff = Number(r.efficiency_jth).toFixed(1);
+      }
+      pwSetBind(card, "eff", eff);
+      const eu = card.querySelector('[data-bind="effUnit"]');
+      if (eu) eu.textContent = effUnit;
+
+      // PSU
+      pwSetBind(
+        card,
+        "psuVin",
+        Number.isFinite(r.psu_vin)
+          ? (r.psu_vin >= 100 ? Math.round(r.psu_vin) : r.psu_vin.toFixed(1)) +
+              " V"
+          : "—"
+      );
+      pwSetBind(
+        card,
+        "psuIin",
+        Number.isFinite(r.psu_iin)
+          ? (r.psu_iin >= 10 ? r.psu_iin.toFixed(1) : r.psu_iin.toFixed(2)) +
+              " A"
+          : "—"
+      );
+      pwSetBind(
+        card,
+        "psuTemp",
+        Number.isFinite(r.psu_temp) ? fmt(r.psu_temp, 0) + "°C" : "—"
+      );
+      pwSetBind(
+        card,
+        "psuFan",
+        Number.isFinite(r.psu_fan) ? Math.round(r.psu_fan) + " rpm" : "—"
+      );
+
+      // uptime / elapsed
+      {
+        const fmtSec = (raw) => {
+          if (raw == null || raw === "") return "—";
+          const sec = Number(raw);
+          if (!Number.isFinite(sec) || sec < 0) return String(raw);
+          const ru =
+            typeof getUiLang === "function" && getUiLang() === "ru";
+          const uD = ru ? "д" : "d";
+          const uH = ru ? "ч" : "h";
+          const uM = ru ? "м" : "m";
+          const uS = ru ? "с" : "s";
+          let s0 = Math.floor(sec);
+          const d = Math.floor(s0 / 86400);
+          s0 %= 86400;
+          const h = Math.floor(s0 / 3600);
+          s0 %= 3600;
+          const m0 = Math.floor(s0 / 60);
+          if (d > 0) return d + uD + " " + h + uH;
+          if (h > 0) return h + uH + " " + m0 + uM;
+          if (m0 > 0) return m0 + uM;
+          return s0 + uS;
+        };
+        pwSetBind(card, "asicUptime", fmtSec(r.uptime));
+        pwSetBind(card, "asicElapsed", fmtSec(r.elapsed));
+        const workSt =
+          typeof inferWorkState === "function" ? inferWorkState(r) : null;
+        const lbl = card.querySelector('[data-bind="elapsedLbl"]');
+        if (lbl) {
+          const isSus = workSt === "suspend" || workSt === "sleep";
+          lbl.textContent = isSus ? "suspend" : "mining";
+        }
+      }
+
+      // Antminer rate / ideal / max
+      if (vendor === "antminer") {
+        const unit = r.hashrate_unit || (m && m.hashrate_unit) || "TH/s";
+        const fmtR = (th) => {
+          if (th == null || !Number.isFinite(Number(th))) return "—";
+          if (typeof formatTh === "function") return formatTh(Number(th), unit);
+          return Number(th).toFixed(1) + " " + unit;
+        };
+        pwSetBind(
+          card,
+          "antRate",
+          fmtR(r.rate_th != null ? r.rate_th : r.hashrate_th)
+        );
+        pwSetBind(card, "antIdeal", fmtR(r.ideal_rate_th));
+        pwSetBind(card, "antMax", fmtR(r.max_rate_th));
+      } else {
+        pwSetBind(card, "antRate", "—");
+        pwSetBind(card, "antIdeal", "—");
+        pwSetBind(card, "antMax", "—");
+      }
+
+      updateWorkBadgeOnCard(card, r);
+      updateUpfreqBadgeOnCard(card, r);
+    }
+
+    let _pwFleetSoftAt = 0;
+    async function maybeRefreshFleetForPowerWidgets() {
+      try {
+        const need = Object.keys(dashboardPowerWidgets || {}).some((id) => {
+          const c = dashboardPowerWidgets[id];
+          return c && c.miner_id;
+        });
+        if (!need) return;
+        const now = Date.now();
+        if (now - _pwFleetSoftAt < 8000) return;
+        _pwFleetSoftAt = now;
+        if (typeof fetchJsonApi !== "function") return;
+        const body = await fetchJsonApi("/api/miners/fleet");
+        if (!body || body.ok === false) return;
+        fleetCache = {
+          miners: Array.isArray(body.miners) ? body.miners : [],
+          summary: body.summary || {},
+          live_host: body.live_host || null,
+        };
+        if (typeof paintAllPowerWidgets === "function") {
+          paintAllPowerWidgets(
+            typeof getReading === "function"
+              ? getReading()
+              : typeof live !== "undefined"
+                ? live
+                : null
+          );
+        }
+      } catch (_) { /* ignore */ }
+    }
+
+    function paintAllPowerWidgets(defaultReading) {
+      try {
+        ensureAllPowerWidgetDoms();
+      } catch (_) { /* ignore */ }
+      const ids = new Set(["power"]);
+      (dashLayout.order || []).forEach((id) => {
+        if (isPowerWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      Object.keys(dashboardPowerWidgets || {}).forEach((id) => {
+        if (isPowerWidgetId(id) && !dashLayoutIsHidden(id)) ids.add(id);
+      });
+      // also paint any DOM cards present
+      try {
+        document
+          .querySelectorAll(
+            "#dash-board .dash-item[data-power-widget], #dash-board .dash-item[data-dash-id^='power']"
+          )
+          .forEach((el) => {
+            const id = el.getAttribute("data-dash-id");
+            if (isPowerWidgetId(id)) ids.add(id);
+          });
+      } catch (_) { /* ignore */ }
+      if (!dashboardPowerWidgets) dashboardPowerWidgets = {};
+      if (!dashboardPowerWidgets.power) {
+        dashboardPowerWidgets.power = { miner_id: null };
+      }
+      ids.forEach((id) => {
+        try {
+          paintPowerWidget(id, defaultReading);
+        } catch (e) {
+          try {
+            console.warn("[power-widget]", id, e);
+          } catch (_) { /* ignore */ }
+        }
+      });
     }
 
     function bindWeatherWidgetSettingsBtn(sbtn, widgetId) {
