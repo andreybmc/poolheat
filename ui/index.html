@@ -2828,6 +2828,153 @@
       background: rgba(99, 102, 241, 0.08);
     }
     .fleet-table tr.fleet-row-offline td { opacity: 0.85; }
+    .fleet-table tbody tr[data-fleet-id] { cursor: pointer; }
+    .fleet-table tbody tr[data-fleet-id]:hover td {
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+    }
+    .fleet-table tbody tr.fleet-row-active:hover td {
+      background: rgba(99, 102, 241, 0.12);
+    }
+
+    /* —— Miner detail page (/miners/{id}) —— */
+    .miner-detail-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 12px 16px;
+    }
+    .miner-detail-head .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      flex: 1 1 14rem;
+    }
+    .miner-detail-logo {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      border-radius: 10px;
+      background: var(--panel2);
+      border: 1px solid var(--border);
+      flex: 0 0 auto;
+    }
+    .miner-detail-title {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      line-height: 1.25;
+      word-break: break-word;
+    }
+    .miner-detail-sub {
+      margin: 3px 0 0;
+      font-size: 0.78rem;
+      color: var(--dim);
+      line-height: 1.35;
+    }
+    .miner-detail-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .miner-detail-status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--dim);
+    }
+    .miner-detail-status.st-online { color: var(--ok); }
+    .miner-detail-status.st-online .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .miner-detail-status.st-offline,
+    .miner-detail-status.st-unknown { color: var(--danger); }
+    .miner-detail-status.st-offline .dot,
+    .miner-detail-status.st-unknown .dot { background: var(--danger); }
+    .miner-detail-status.st-freeze,
+    .miner-detail-status.st-warn { color: var(--warn); }
+    .miner-detail-status.st-freeze .dot,
+    .miner-detail-status.st-warn .dot { background: var(--warn); }
+    .miner-detail-status.st-lowhash { color: #eab308; }
+    .miner-detail-status.st-lowhash .dot { background: #eab308; }
+    .miner-detail-status.st-error { color: var(--danger); }
+    .miner-detail-status.st-error .dot { background: var(--danger); }
+    .miner-detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .miner-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .miner-detail-metric {
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--panel2) 88%, transparent);
+    }
+    .miner-detail-metric label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin: 0 0 6px;
+    }
+    .miner-detail-metric .val {
+      font-size: 1.05rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      line-height: 1.25;
+      word-break: break-word;
+    }
+    .miner-detail-metric .hint {
+      margin-top: 4px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      line-height: 1.3;
+    }
+    .miner-detail-section {
+      margin-top: 4px;
+    }
+    .miner-detail-section h3 {
+      margin: 0 0 10px;
+      font-size: 0.82rem;
+      font-weight: 650;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .miner-detail-kv {
+      display: grid;
+      grid-template-columns: minmax(7rem, 10rem) 1fr;
+      gap: 6px 12px;
+      font-size: 0.86rem;
+    }
+    .miner-detail-kv dt {
+      margin: 0;
+      color: var(--dim);
+      font-weight: 500;
+    }
+    .miner-detail-kv dd {
+      margin: 0;
+      color: var(--text);
+      word-break: break-word;
+      font-variant-numeric: tabular-nums;
+    }
+    .miner-detail-empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
     /* First col: left status strip + cell/IP — no text badge */
     .fleet-table tbody tr {
       position: relative;
@@ -6080,6 +6227,29 @@
       background-repeat: no-repeat;
     }
     .lang-select:focus { outline: none; border-color: var(--accent); }
+    /* Header lang select: same height as notification bell (2rem) */
+    .header-meta .lang-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: 2px;
+    }
+    .header-meta .lang-select {
+      height: 2rem;
+      box-sizing: border-box;
+      padding: 0 1.75rem 0 0.65rem;
+      border-radius: 10px;
+      font-size: 0.75rem;
+      font-weight: 550;
+      line-height: 1;
+      background-position: calc(100% - 12px) calc(50% - 1px), calc(100% - 7px) calc(50% - 1px);
+    }
+    .header-meta .pill {
+      min-height: 2rem;
+      box-sizing: border-box;
+      padding-top: 0;
+      padding-bottom: 0;
+    }
   </style>
 </head>
 <body>
@@ -6146,9 +6316,10 @@
         </div>
       </div>
       <div class="header-meta">
-        <span class="pill ok tip" id="pill-api" data-tip-key="api_live"><span class="dot"></span> API …</span>
+        <span class="pill tip" id="pill-miner-poller" data-tip-key="miner_poller" title="miner-poller"><span class="dot"></span> miner-poller</span>
+        <span class="pill tip" id="pill-devices-poller" data-tip-key="devices_poller" title="devices-poller" style="display:none" hidden><span class="dot"></span> devices-poller</span>
         <span class="pill warn tip" id="pill-warmup" style="display:none" data-tip-key="warmup"><span class="dot"></span> warmup</span>
-        <label class="lang-wrap" style="display:inline-flex;align-items:center;gap:6px;margin-left:2px" title="Language / Lang">
+        <label class="lang-wrap" title="Language / Lang">
           <span style="font-size:0.72rem;color:var(--dim)" data-i18n="lang.label_short">Lang</span>
           <select id="ui-lang-select" class="lang-select" aria-label="Language">
             <option value="en" selected>EN</option>
@@ -8640,6 +8811,45 @@
         </div>
       </div>
       </div><!-- /subview-miners-unmanaged -->
+
+      <!-- Single miner page: /{lang}/miners/{id} -->
+      <div class="subview" id="subview-miners-detail">
+        <div class="stack">
+          <div class="card fleet-card" id="miner-detail-card">
+            <div class="card-h miner-detail-head">
+              <div class="brand-row">
+                <button type="button" class="btn ghost" id="btn-miner-detail-back" data-i18n="miner_detail.back">← Fleet</button>
+                <img class="miner-detail-logo" id="miner-detail-logo" alt="" width="40" height="40" hidden />
+                <div style="min-width:0">
+                  <h2 class="miner-detail-title" id="miner-detail-title">Miner</h2>
+                  <p class="miner-detail-sub" id="miner-detail-sub">—</p>
+                  <div class="miner-detail-status" id="miner-detail-status"><span class="dot"></span> <span id="miner-detail-status-text">—</span></div>
+                </div>
+              </div>
+              <div class="miner-detail-actions btn-row">
+                <button type="button" class="btn" id="btn-miner-detail-refresh" data-i18n="btn.refresh">Refresh</button>
+                <button type="button" class="btn" id="btn-miner-detail-edit" data-i18n="fleet.edit">Edit</button>
+                <button type="button" class="btn" id="btn-miner-detail-active" data-i18n="fleet.make_active">Make active</button>
+                <button type="button" class="btn primary" id="btn-miner-detail-controls" data-i18n="miner_detail.controls">Controls</button>
+                <button type="button" class="btn" id="btn-miner-detail-reboot" data-i18n="fleet.reboot">Reboot</button>
+              </div>
+            </div>
+            <div class="card-b stack" style="gap:18px" id="miner-detail-body">
+              <p class="miner-detail-empty" id="miner-detail-empty" hidden data-i18n="miner_detail.not_found">Miner not found</p>
+              <div id="miner-detail-content">
+                <div class="miner-detail-section">
+                  <h3 data-i18n="miner_detail.live">Live</h3>
+                  <div class="miner-detail-grid" id="miner-detail-live-grid"></div>
+                </div>
+                <div class="miner-detail-section">
+                  <h3 data-i18n="miner_detail.inventory">Inventory</h3>
+                  <dl class="miner-detail-kv" id="miner-detail-inv"></dl>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /subview-miners-detail -->
     </section>
 
     <!-- ========== PERIPHERALS ========== -->
@@ -10763,6 +10973,16 @@
         "fleet.status.error": "Error",
         "fleet.make_active": "Make active",
         "fleet.open": "Open",
+        "miner_detail.back": "← Fleet",
+        "miner_detail.controls": "Controls",
+        "miner_detail.live": "Live",
+        "miner_detail.inventory": "Inventory",
+        "miner_detail.not_found": "Miner not found",
+        "miner_detail.serial": "Serial",
+        "miner_detail.cell": "Cell",
+        "miner_detail.cooling": "Cooling",
+        "miner_detail.role": "Role",
+        "miner_detail.enabled": "Enabled",
         "fleet.edit": "Edit",
         "fleet.reboot": "Reboot",
         "fleet.reboot_confirm": "Reboot {name}?\n\nFull device reboot · offline for several minutes.",
@@ -11185,6 +11405,11 @@
         "notif.yesterday": "Yesterday",
         "notif.close": "Close",
         "notif.close_all_toasts": "Close all",
+        "pill.miner_poller": "miner-poller",
+        "pill.devices_poller": "devices-poller",
+        "pill.poller_ready": "ready",
+        "pill.poller_starting": "starting",
+        "pill.poller_down": "down",
         "banner.dry_span": "Auto zones not written · Safety active · log only",
         "banner.warmup_span": "Miner still warming up — upward blocked. Downward and Critical allowed.",
         "banner.override_span": "Auto zones Z0–Z2 paused · Safety Critical active · left",
@@ -11817,6 +12042,16 @@
         "fleet.status.error": "Error",
         "fleet.make_active": "Сделать active",
         "fleet.open": "Открыть",
+        "miner_detail.back": "← Флот",
+        "miner_detail.controls": "Управление",
+        "miner_detail.live": "Live",
+        "miner_detail.inventory": "Инвентарь",
+        "miner_detail.not_found": "Майнер не найден",
+        "miner_detail.serial": "Серийный №",
+        "miner_detail.cell": "Ячейка",
+        "miner_detail.cooling": "Охлаждение",
+        "miner_detail.role": "Роль",
+        "miner_detail.enabled": "Включён",
         "fleet.edit": "Редактировать",
         "fleet.reboot": "Перезагрузить",
         "fleet.reboot_confirm": "Перезагрузить {name}?\n\nПолный reboot устройства · offline несколько минут.",
@@ -12239,6 +12474,11 @@
         "notif.yesterday": "Вчера",
         "notif.close": "Закрыть",
         "notif.close_all_toasts": "Закрыть все",
+        "pill.miner_poller": "miner-poller",
+        "pill.devices_poller": "devices-poller",
+        "pill.poller_ready": "готов",
+        "pill.poller_starting": "запуск",
+        "pill.poller_down": "стоп",
         "banner.dry_span": "Авто-зоны не пишутся · Safety работает · только лог",
         "banner.warmup_span": "Майнер ещё выходит на режим — upward заблокирован. Downward и Critical разрешены.",
         "banner.override_span": "Авто-зоны Z0–Z2 на паузе · Safety Critical работает · осталось",
@@ -13323,6 +13563,14 @@
         title: "API live",
         body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe / offline.\nLive checkbox off = UI stops auto-refresh (last snapshot stays).",
       },
+      miner_poller: {
+        title: "miner-poller",
+        body: "Go edge process that polls ASICs (:4028) and writes live_cache.\nready — process up + fresh snapshot.\nstarting — process up, waiting for cache.\ndown — process not running (UI cannot get live data).",
+      },
+      devices_poller: {
+        title: "devices-poller",
+        body: "Go edge process for Tapo / Tuya / Shelly / … peripherals.\nShown only when Devices poller is enabled in Advanced.\nready — process up · down — enabled but not running.",
+      },
       lan_token: {
         title: "LAN · token",
         body: "UI on LAN; Bearer token recommended for API/UI.\nRemote via VPN / Keenetic Cloud — never raw :8787 to the Internet.",
@@ -13452,6 +13700,14 @@
           title: "API live",
           body: "Whatsminer TCP :4028 via serve.py.\nOK = last poll succeeded.\nFail → fail-safe / offline.\nLive off = UI stops auto-refresh.",
         },
+        miner_poller: {
+          title: "miner-poller",
+          body: "Go edge process that polls ASICs (:4028) and writes live_cache.\nready — process up + fresh snapshot.\nstarting — process up, waiting for cache.\ndown — process not running (UI cannot get live data).",
+        },
+        devices_poller: {
+          title: "devices-poller",
+          body: "Go edge process for Tapo / Tuya / Shelly / … peripherals.\nShown only when Devices poller is enabled in Advanced.\nready — process up · down — enabled but not running.",
+        },
         lan_token: {
           title: "LAN · token",
           body: "UI on LAN; Bearer token recommended for API/UI.\nRemote via VPN / Keenetic Cloud — never raw :8787 to the Internet.",
@@ -13526,6 +13782,14 @@
           title: "API live",
           body: "Whatsminer TCP :4028 через serve.py.\nOK = последний опрос успешен.\nFail → fail-safe / offline.\nLive выкл = UI не автообновляется.",
         },
+        miner_poller: {
+          title: "miner-poller",
+          body: "Go-процесс edge: опрос ASIC (:4028) и запись live_cache.\nready — процесс жив + свежий снимок.\nstarting — процесс жив, ждём cache.\ndown — процесс не запущен (live недоступен).",
+        },
+        devices_poller: {
+          title: "devices-poller",
+          body: "Go-процесс edge: периферия Tapo / Tuya / Shelly / …\nПоказывается только если поллер включён в Advanced.\nready — процесс жив · down — включён, но не запущен.",
+        },
         warmup: {
           title: "Прогрев / upfreq",
           body: "Пока Upfreq Complete ≠ 1 (и прогрев включён):\n· Z0 / вверх заблокированы\n· при «только вниз» — mode↑/limit↑/resume режутся\n· Critical и Z2/Suspend — можно\n· После макс. ожидания — вверх снова можно, даже если upfreq=0.",
@@ -13584,6 +13848,9 @@
     let selectedHeatPoolId = null;
     let minerModelsCache = { families: [], manufacturers: [] };
     let fleetCache = { miners: [], summary: {} };
+    /** Miner detail page: /{lang}/miners/{id} (must be before initTabRoute) */
+    let selectedMinerId = null;
+    let minerDetailOpen = false;
     /** Site facility: topology_enabled default false → hide miner cells */
     let siteConfigCache = { topology_enabled: false };
     let fleetTimer = null;
@@ -14260,7 +14527,22 @@
     }
 
     function setMinersSubtab(subId) {
+      // detail = /miners/{id} page; managed/unmanaged = list tabs
+      if (subId === "detail") {
+        document.querySelectorAll("#view-miners nav.subtabs button").forEach((b) => {
+          b.classList.toggle("active", b.dataset.subtab === "managed");
+        });
+        document.querySelectorAll("#view-miners .subview").forEach((v) => {
+          v.classList.toggle("active", v.id === "subview-miners-detail");
+        });
+        return "detail";
+      }
       const sub = subId === "unmanaged" ? "unmanaged" : "managed";
+      // leaving detail page when switching list tabs
+      if (typeof minerDetailOpen !== "undefined" && minerDetailOpen) {
+        minerDetailOpen = false;
+        selectedMinerId = null;
+      }
       document.querySelectorAll("#view-miners nav.subtabs button").forEach((b) => {
         b.classList.toggle("active", b.dataset.subtab === sub);
       });
@@ -14328,10 +14610,20 @@
       return String(tabId);
     }
 
+    /** Reserved second segments under /miners/… (not a miner id). */
+    const MINERS_PATH_RESERVED = {
+      managed: 1,
+      unmanaged: 1,
+      inventory: 1,
+      discovered: 1,
+      list: 1,
+      main: 1,
+    };
+
     /**
-     * Parse /{lang}/{tab} · /{lang}/miners/{managed|unmanaged} ·
+     * Parse /{lang}/{tab} · /{lang}/miners/{managed|unmanaged|id} ·
      * /{lang}/circuits/{id} · /{tab} · #tab
-     * Returns { lang, tab, circuitId }
+     * Returns { lang, tab, circuitId, minerId }
      */
     function parseLocationRoute() {
       const parts = location.pathname
@@ -14346,15 +14638,29 @@
       }
       let tab = null;
       let circuitId = null;
-      // Nested Miners: /miners/managed · /miners/unmanaged · /fleet/managed
+      let minerId = null;
+      // Nested Miners: /miners/managed · /miners/unmanaged · /miners/{id}
       // Circuits edit: /circuits/{id}
       if (tabSegs.length >= 2) {
         const a = String(tabSegs[0] || "").toLowerCase();
-        const b = String(tabSegs[1] || "").toLowerCase();
+        const bRaw = String(tabSegs[1] || "").trim();
+        const b = bRaw.toLowerCase();
         if (a === "miners" || a === "fleet" || a === "asics") {
           if (b === "unmanaged" || b === "discovered") tab = "unmanaged";
-          else if (b === "managed" || b === "inventory" || b === "") tab = "managed";
-          else tab = "managed";
+          else if (b === "managed" || b === "inventory" || b === "" || b === "list" || b === "main") {
+            tab = "managed";
+          } else if (bRaw && !MINERS_PATH_RESERVED[b]) {
+            // freeform miner id: /miners/12 · /miners/cell_a1
+            tab = "managed";
+            try {
+              minerId = decodeURIComponent(bRaw);
+            } catch (_) {
+              minerId = bRaw;
+            }
+            if (!minerId) minerId = null;
+          } else {
+            tab = "managed";
+          }
         } else if (a === "circuits" || a === "circuit") {
           tab = "circuits";
           // reserved subtabs under circuits plane
@@ -14379,7 +14685,7 @@
         tab = resolveTabId(location.hash);
       }
       if (!tab) tab = "dash";
-      return { lang, tab, circuitId };
+      return { lang, tab, circuitId, minerId };
     }
 
     function tabFromLocation() {
@@ -14393,9 +14699,10 @@
     }
 
     /**
-     * Canonical path: /en/dashboard · /ru/miners/managed · /ru/circuits/{id}
+     * Canonical path: /en/dashboard · /ru/miners/managed · /ru/miners/{id} · /ru/circuits/{id}
      * Bare "miners" normalizes to managed subtab.
-     * opts.circuitId → /{lang}/circuits/{id} (edit plane)
+     * opts.circuitId → /{lang}/circuits/{id}
+     * opts.minerId → /{lang}/miners/{id}
      */
     function buildAppPath(tabId, lang, opts) {
       const L = lang === "ru" ? "ru" : "en";
@@ -14406,6 +14713,10 @@
         id === "miners-managed" ||
         id === "miners"
       ) {
+        const mid = opts.minerId != null ? String(opts.minerId).trim() : "";
+        if (mid) {
+          return "/" + L + "/miners/" + encodeURIComponent(mid);
+        }
         return "/" + L + "/miners/managed";
       }
       if (id === "unmanaged" || id === "miners-unmanaged") {
@@ -14423,7 +14734,7 @@
     }
 
     function setTabUrl(tabId, mode, opts) {
-      // Path-based: /en/dashboard · /ru/miners/managed · /ru/circuits/{id}
+      // Path-based: /en/dashboard · /ru/miners/managed · /ru/miners/{id} · /ru/circuits/{id}
       if (!TAB_IDS.includes(tabId)) tabId = "dash";
       const lang = typeof getUiLang === "function" ? getUiLang() : "en";
       opts = opts || {};
@@ -14437,6 +14748,16 @@
       ) {
         opts = Object.assign({}, opts, { circuitId: selectedCircuitId });
       }
+      // Keep open miner detail URL when staying on managed/miners
+      if (
+        (tabId === "managed" || tabId === "miners" || tabId === "miners-managed") &&
+        opts.minerId == null &&
+        typeof minerDetailOpen !== "undefined" &&
+        minerDetailOpen &&
+        selectedMinerId
+      ) {
+        opts = Object.assign({}, opts, { minerId: selectedMinerId });
+      }
       const url = buildAppPath(tabId, lang, opts);
       try {
         const cur =
@@ -14447,6 +14768,7 @@
         if (cur === want && !location.hash) return;
         const state = { tab: tabId, lang: lang };
         if (opts.circuitId) state.circuitId = String(opts.circuitId);
+        if (opts.minerId) state.minerId = String(opts.minerId);
         if (mode === "replace") {
           history.replaceState(state, "", full);
         } else {
@@ -14472,6 +14794,24 @@
         if (cur === want && !location.hash) return;
         const state = { tab: "circuits", lang: lang };
         if (cid) state.circuitId = cid;
+        if (mode === "replace") history.replaceState(state, "", url);
+        else history.pushState(state, "", url);
+      } catch (_) { /* ignore */ }
+    }
+
+    /** Sync /{lang}/miners[/{id}] when opening/closing miner detail. */
+    function setMinerDetailUrl(minerId, mode) {
+      const lang = typeof getUiLang === "function" ? getUiLang() : "en";
+      const mid = minerId != null ? String(minerId).trim() : "";
+      const url = mid
+        ? "/" + lang + "/miners/" + encodeURIComponent(mid)
+        : "/" + lang + "/miners/managed";
+      try {
+        const cur = location.pathname.replace(/\/+$/, "") || "/";
+        const want = url.replace(/\/+$/, "") || "/";
+        if (cur === want && !location.hash) return;
+        const state = { tab: "managed", lang: lang };
+        if (mid) state.minerId = mid;
         if (mode === "replace") history.replaceState(state, "", url);
         else history.pushState(state, "", url);
       } catch (_) { /* ignore */ }
@@ -14586,11 +14926,22 @@
       if (mainTab === "periph") setPeriphSubtab(periphSub);
       if (mainTab === "circuits") setCircuitsSubtab(circuitsSub);
       if (mainTab === "miners") {
-        const ms =
-          tabId === "unmanaged" || tabId === "miners-unmanaged"
-            ? "unmanaged"
-            : "managed";
-        setMinersSubtab(ms);
+        // Detail only when explicitly requested (openMinerDetail / deep-link).
+        // Subtab clicks clear minerDetailOpen first so Managed/Unmanaged show lists.
+        if (
+          opts.minerDetail === true &&
+          typeof minerDetailOpen !== "undefined" &&
+          minerDetailOpen &&
+          selectedMinerId
+        ) {
+          setMinersSubtab("detail");
+        } else {
+          const ms =
+            tabId === "unmanaged" || tabId === "miners-unmanaged"
+              ? "unmanaged"
+              : "managed";
+          setMinersSubtab(ms);
+        }
       }
       if (tabId === "dash") {
         try {
@@ -14833,6 +15184,11 @@
     document.querySelectorAll("#view-miners nav.subtabs button").forEach((btn) => {
       btn.addEventListener("click", () => {
         const s = btn.dataset.subtab === "unmanaged" ? "unmanaged" : "managed";
+        // Leaving miner detail page → list (Managed / Unmanaged)
+        if (typeof minerDetailOpen !== "undefined" && minerDetailOpen) {
+          minerDetailOpen = false;
+          selectedMinerId = null;
+        }
         activateTab(s);
       });
     });
@@ -14964,7 +15320,14 @@
       if (route.lang && typeof applyUiLang === "function") {
         applyUiLang(route.lang, { persist: true, syncUrl: false });
       }
-      activateTab(route.tab, { skipUrl: true });
+      if (route.minerId) {
+        void applyMinerRouteFromUrl(route.minerId, { replaceUrl: true });
+      } else {
+        if (typeof minerDetailOpen !== "undefined" && minerDetailOpen) {
+          closeMinerDetail({ skipUrl: true });
+        }
+        activateTab(route.tab, { skipUrl: true });
+      }
       if (typeof applyCircuitRouteFromUrl === "function") {
         if (route.circuitId) {
           void applyCircuitRouteFromUrl(route.circuitId, { replaceUrl: true });
@@ -14977,7 +15340,7 @@
         }
       }
     });
-    // initial route: /en/dashboard · /ru/circuits/{id} · /ru/miners/managed
+    // initial route: /en/dashboard · /ru/circuits/{id} · /ru/miners/{id}
     (function initTabRoute() {
       const route = parseLocationRoute();
       // Language from path wins over localStorage on first paint
@@ -14985,20 +15348,29 @@
         applyUiLang(route.lang, { persist: true, syncUrl: false });
       }
       const t = route.tab || "dash";
-      // Normalize to /{lang}/{tab}[/{sub}] (drop hash; keep /circuits/{id})
+      // Normalize to /{lang}/{tab}[/{sub}] (drop hash; keep /circuits/{id} · /miners/{id})
       try {
         const lang = typeof getUiLang === "function" ? getUiLang() : "en";
         const want = buildAppPath(t, lang, {
           circuitId: route.circuitId || null,
+          minerId: route.minerId || null,
         });
         const cur = (location.pathname.replace(/\/+$/, "") || "/") + (location.hash || "");
         if (cur !== want) {
           const st = { tab: t, lang: lang };
           if (route.circuitId) st.circuitId = route.circuitId;
+          if (route.minerId) st.minerId = route.minerId;
           history.replaceState(st, "", want);
         }
       } catch (_) { /* ignore */ }
-      activateTab(t, { skipUrl: false, replaceUrl: true });
+      if (route.minerId) {
+        // Deep-link /miners/{id}: open detail after fleet is ready
+        window.__pendingMinerId = String(route.minerId);
+        activateTab("managed", { skipUrl: true, minerDetail: true });
+        void applyMinerRouteFromUrl(route.minerId, { replaceUrl: true });
+      } else {
+        activateTab(t, { skipUrl: false, replaceUrl: true });
+      }
       // Deep-link /circuits/{id}: apply after circuits UI is ready (see initCircuitsUi)
       if (route.circuitId) {
         window.__pendingCircuitId = String(route.circuitId);
@@ -15315,6 +15687,13 @@
           c.setAttribute("aria-label", label);
           c.setAttribute("title", label);
         }
+        try {
+          if (typeof updatePollerPills === "function") {
+            updatePollerPills(
+              typeof live !== "undefined" && live ? live : null
+            );
+          }
+        } catch (_) { /* ignore */ }
       });
     }
 
@@ -22475,6 +22854,91 @@
       while (log.children.length > 80) log.removeChild(log.lastChild);
     }
 
+    /**
+     * Header pills: miner-poller (always) + devices-poller (if enabled).
+     * Color = readiness: ok ready · warn starting/stale · danger down.
+     * @param {object|null} r live reading (may include .pollers from /api/live)
+     */
+    function updatePollerPills(r) {
+      const tr = (k, fb) => (typeof t === "function" ? t(k, fb) : fb);
+      const pollers =
+        (r && r.pollers) ||
+        (typeof live !== "undefined" && live && live.pollers) ||
+        null;
+
+      const mp = (pollers && pollers.miner) || null;
+      const dp = (pollers && pollers.devices) || null;
+
+      // Fallback when older serve has no pollers field
+      let mpState = mp && mp.state ? String(mp.state) : null;
+      if (!mpState) {
+        if (typeof liveError === "string" && /miner-poller not running/i.test(liveError)) {
+          mpState = "down";
+        } else if (r && r.ok === false && /miner-poller not running/i.test(String(r.error || ""))) {
+          mpState = "down";
+        } else if (r && (r.ok || r.online)) {
+          mpState = "ready";
+        } else if (r && r.stale) {
+          mpState = "starting";
+        } else if (!useLive || !useLive.checked) {
+          mpState = "starting";
+        } else {
+          mpState = "down";
+        }
+      }
+
+      const mpPill = document.getElementById("pill-miner-poller");
+      if (mpPill) {
+        let cls = "pill tip";
+        let label = tr("pill.miner_poller", "miner-poller");
+        let status = tr("pill.poller_ready", "ready");
+        if (mpState === "ready") {
+          cls += " ok";
+          status = tr("pill.poller_ready", "ready");
+        } else if (mpState === "starting") {
+          cls += " warn";
+          status = tr("pill.poller_starting", "starting");
+        } else {
+          cls += " danger";
+          status = tr("pill.poller_down", "down");
+        }
+        mpPill.className = cls;
+        mpPill.innerHTML =
+          '<span class="dot"></span> ' + label + " · " + status;
+        mpPill.setAttribute("data-tip-key", "miner_poller");
+      }
+
+      const dpPill = document.getElementById("pill-devices-poller");
+      if (dpPill) {
+        const enabled = dp ? dp.enabled !== false : false;
+        if (!enabled) {
+          dpPill.style.display = "none";
+          dpPill.hidden = true;
+        } else {
+          dpPill.hidden = false;
+          dpPill.style.display = "inline-flex";
+          let dState = dp && dp.state ? String(dp.state) : (dp && dp.ready ? "ready" : "down");
+          let cls = "pill tip";
+          let label = tr("pill.devices_poller", "devices-poller");
+          let status = tr("pill.poller_ready", "ready");
+          if (dState === "ready") {
+            cls += " ok";
+            status = tr("pill.poller_ready", "ready");
+          } else if (dState === "starting") {
+            cls += " warn";
+            status = tr("pill.poller_starting", "starting");
+          } else {
+            cls += " danger";
+            status = tr("pill.poller_down", "down");
+          }
+          dpPill.className = cls;
+          dpPill.innerHTML =
+            '<span class="dot"></span> ' + label + " · " + status;
+          dpPill.setAttribute("data-tip-key", "devices_poller");
+        }
+      }
+    }
+
     function recompute() {
       const th = getThresholds();
       validateThresholds(th);
@@ -22531,18 +22995,10 @@
         }
       }
 
-      // API pill
-      const apiPill = document.getElementById("pill-api");
-      if (!useLive.checked) {
-        apiPill.className = "pill warn";
-        apiPill.innerHTML = '<span class="dot"></span> Paused';
-      } else if (!r.online) {
-        apiPill.className = "pill danger";
-        apiPill.innerHTML = '<span class="dot"></span> Offline';
-      } else {
-        apiPill.className = "pill ok";
-        apiPill.innerHTML = '<span class="dot"></span> API live';
-      }
+      // Edge poller readiness pills (miner-poller always; devices-poller if enabled)
+      try {
+        updatePollerPills(r);
+      } catch (_) { /* ignore */ }
 
       updateSrcBar(r);
 
@@ -26971,6 +27427,10 @@
           live_host: body.live_host || null,
         };
         renderFleetTable();
+        // Keep open miner detail page in sync with fleet live
+        if (minerDetailOpen && selectedMinerId && typeof renderMinerDetail === "function") {
+          renderMinerDetail();
+        }
         if (opts.manual && typeof toastSuccess === "function") {
           toastSuccess(
             fleetT("fleet.online", "online") +
@@ -27851,12 +28311,12 @@
         return;
       }
       if (action === "open") {
-        // switch active if needed then open miner tab
-        const m = (fleetCache.miners || []).find((x) => x.id === mid);
-        if (m && m.role !== "active") {
-          await fleetDoAction("active", mid);
+        // Dedicated page: /{lang}/miners/{id}
+        if (typeof openMinerDetail === "function") {
+          openMinerDetail(mid);
+        } else {
+          activateTab("managed");
         }
-        activateTab("miner");
         return;
       }
       if (action === "reboot") {
@@ -27947,8 +28407,399 @@
         } catch (e) {
           if (typeof toastError === "function") toastError(e.message);
         }
+        // If removed miner was open, go back to fleet list
+        if (minerDetailOpen && minerIdEq(selectedMinerId, mid)) {
+          closeMinerDetail();
+        }
       }
     }
+
+    /* ── Miner detail page: /{lang}/miners/{id} ───────────────── */
+
+    function resolveMinerForDetail(mid) {
+      return (
+        findMinerById((fleetCache && fleetCache.miners) || [], mid) ||
+        findMinerById(managedMinersCache || [], mid) ||
+        null
+      );
+    }
+
+    function minerDetailMetric(label, val, hint) {
+      return (
+        '<div class="miner-detail-metric">' +
+        "<label>" +
+        escapeLogHtml(label) +
+        "</label>" +
+        '<div class="val">' +
+        escapeLogHtml(val == null || val === "" ? "—" : String(val)) +
+        "</div>" +
+        (hint
+          ? '<div class="hint">' + escapeLogHtml(String(hint)) + "</div>"
+          : "") +
+        "</div>"
+      );
+    }
+
+    function minerDetailKvRow(k, v) {
+      return (
+        "<dt>" +
+        escapeLogHtml(k) +
+        "</dt><dd>" +
+        escapeLogHtml(v == null || v === "" ? "—" : String(v)) +
+        "</dd>"
+      );
+    }
+
+    function renderMinerDetail() {
+      const mid = selectedMinerId;
+      const emptyEl = document.getElementById("miner-detail-empty");
+      const contentEl = document.getElementById("miner-detail-content");
+      const titleEl = document.getElementById("miner-detail-title");
+      const subEl = document.getElementById("miner-detail-sub");
+      const stEl = document.getElementById("miner-detail-status");
+      const stTxt = document.getElementById("miner-detail-status-text");
+      const logoEl = document.getElementById("miner-detail-logo");
+      const liveGrid = document.getElementById("miner-detail-live-grid");
+      const invEl = document.getElementById("miner-detail-inv");
+      const actBtn = document.getElementById("btn-miner-detail-active");
+
+      if (!mid) {
+        if (emptyEl) emptyEl.hidden = false;
+        if (contentEl) contentEl.hidden = true;
+        return;
+      }
+
+      const m = resolveMinerForDetail(mid);
+      if (!m) {
+        if (emptyEl) {
+          emptyEl.hidden = false;
+          emptyEl.textContent =
+            typeof t === "function"
+              ? t("miner_detail.not_found", "Miner not found")
+              : "Miner not found";
+        }
+        if (contentEl) contentEl.hidden = true;
+        if (titleEl) titleEl.textContent = String(mid);
+        if (subEl) subEl.textContent = "id · " + String(mid);
+        return;
+      }
+
+      if (emptyEl) emptyEl.hidden = true;
+      if (contentEl) contentEl.hidden = false;
+
+      const live = m.live || null;
+      const st = typeof fleetStatusOf === "function" ? fleetStatusOf(m) : "unknown";
+      const name =
+        (m.alias && String(m.alias).trim()) ||
+        (m.name && String(m.name).trim()) ||
+        m.host ||
+        String(m.id || mid);
+      const model =
+        m.model_display ||
+        (live && live.model_display) ||
+        m.model ||
+        m.model_code ||
+        "—";
+      const host = (m.host && String(m.host).trim()) || "—";
+      const vendorName =
+        m.vendor_name ||
+        (typeof vendorDisplayName === "function"
+          ? vendorDisplayName(m.vendor || "")
+          : m.vendor || "—");
+
+      if (titleEl) titleEl.textContent = name;
+      if (subEl) {
+        const bits = [host];
+        if (model && model !== "—" && model !== name) bits.push(model);
+        if (vendorName && vendorName !== "—") bits.push(vendorName);
+        if (m.role === "active") bits.push("★ active");
+        subEl.textContent = bits.join(" · ");
+      }
+      if (stEl) {
+        stEl.className = "miner-detail-status st-" + st;
+      }
+      if (stTxt) {
+        stTxt.textContent =
+          typeof fleetStatusLabel === "function"
+            ? fleetStatusLabel(st)
+            : st;
+      }
+      if (logoEl) {
+        const src =
+          typeof absAssetUrl === "function"
+            ? absAssetUrl(
+                m.vendor_logo ||
+                  (typeof vendorLogoSrc === "function"
+                    ? vendorLogoSrc(m.vendor || "")
+                    : "")
+              )
+            : m.vendor_logo || "";
+        if (src) {
+          logoEl.hidden = false;
+          if (logoEl.getAttribute("src") !== src) logoEl.setAttribute("src", src);
+          logoEl.alt = vendorName || "";
+        } else {
+          logoEl.hidden = true;
+        }
+      }
+      if (actBtn) {
+        actBtn.disabled = m.role === "active";
+      }
+
+      // Live metrics
+      if (liveGrid) {
+        const hrThEff = live ? fleetEffectiveHashrateTh(live) : null;
+        const hr = live
+          ? formatTh(
+              hrThEff != null ? hrThEff : live.hashrate_th,
+              live.hashrate_unit || m.hashrate_unit
+            )
+          : "—";
+        let algo = "";
+        if (live || m) {
+          const raw =
+            m.algo_display ||
+            (live && live.algo_display) ||
+            m.algo ||
+            (live && live.algo) ||
+            "";
+          algo = String(raw || "").trim();
+        }
+        let pw = "—";
+        if (live && live.power != null && Number(live.power) > 0) {
+          pw = formatPowerW(live.power, isPowerEstimated(live));
+        }
+        let eff = "—";
+        if (live) {
+          if (live.efficiency_value != null && live.efficiency_unit) {
+            const n = Number(live.efficiency_value);
+            if (Number.isFinite(n)) {
+              eff = n.toFixed(1) + " " + live.efficiency_unit;
+            }
+          } else if (live.efficiency_jth != null) {
+            eff = Number(live.efficiency_jth).toFixed(1) + " J/T";
+          }
+        }
+        const temp = live
+          ? formatTemp(live.temp ?? live.liquid ?? live.chip_avg)
+          : "—";
+        const mode = live && live.work ? String(live.work) : "—";
+        const elapsed = live ? formatElapsedSec(live.elapsed) : "—";
+        let boards = "—";
+        const det =
+          live && Array.isArray(live.boards_detail) ? live.boards_detail : null;
+        if (det && det.length) {
+          boards = det
+            .map((b, i) => {
+              const id =
+                (b && (b.id || b.name)) ||
+                (live.board_labels && live.board_labels[i]) ||
+                String(i + 1);
+              const t =
+                b && b.temp != null
+                  ? Number(b.temp).toFixed(0) + "°"
+                  : b && b.hashrate_th != null
+                    ? Number(b.hashrate_th).toFixed(1) + "T"
+                    : "";
+              return t ? id + " " + t : id;
+            })
+            .join(" · ");
+        } else if (live && Array.isArray(live.boards) && live.boards.length) {
+          boards = live.boards
+            .map((x, i) => {
+              const id =
+                (live.board_labels && live.board_labels[i]) || String(i + 1);
+              return id + " " + Number(x).toFixed(0) + "°";
+            })
+            .join(" · ");
+        }
+        let fans = "—";
+        if (live) {
+          const fl =
+            Array.isArray(live.fans) && live.fans.length
+              ? live.fans
+              : live.fan != null
+                ? [live.fan]
+                : live.psu_fan != null
+                  ? [live.psu_fan]
+                  : [];
+          if (fl.length) {
+            fans = fl.map((x) => Math.round(Number(x) || 0) + " rpm").join(" · ");
+          }
+        }
+        let poolLine = "—";
+        if (live && Array.isArray(live.pools) && live.pools.length) {
+          poolLine = live.pools
+            .map((p) => {
+              if (!p) return "";
+              if (typeof p === "string") return p;
+              return p.url || p.pool || p.host || "";
+            })
+            .filter(Boolean)
+            .join(" · ");
+          if (!poolLine) poolLine = "—";
+        } else if (live && live.pool) {
+          poolLine = String(live.pool);
+        }
+
+        const L = (k, fb) =>
+          typeof t === "function" ? t(k, fb) : fb;
+        liveGrid.innerHTML =
+          minerDetailMetric(L("fleet.col.hash", "Hashrate"), hr, algo || "") +
+          minerDetailMetric(L("fleet.col.power", "Power"), pw, "") +
+          minerDetailMetric(L("fleet.col.eff", "Eff"), eff, "") +
+          minerDetailMetric(L("fleet.col.temp", "Temp"), temp, "") +
+          minerDetailMetric(L("fleet.col.mode", "Mode"), mode, "") +
+          minerDetailMetric(L("fleet.col.elapsed", "Elapsed"), elapsed, "") +
+          minerDetailMetric(L("fleet.col.boards_fans", "Boards"), boards, fans) +
+          minerDetailMetric(L("fleet.col.pool", "Pool"), poolLine, "");
+      }
+
+      // Inventory
+      if (invEl) {
+        const L = (k, fb) =>
+          typeof t === "function" ? t(k, fb) : fb;
+        invEl.innerHTML =
+          minerDetailKvRow("ID", m.id) +
+          minerDetailKvRow(L("fleet.col.ip", "IP"), host) +
+          minerDetailKvRow(L("mp.col.port", "Port"), m.port != null ? m.port : 4028) +
+          minerDetailKvRow(L("fleet.col.model", "Model"), model) +
+          minerDetailKvRow(L("fleet.col.vendor", "Vendor"), vendorName) +
+          minerDetailKvRow(
+            L("miner_detail.serial", "Serial"),
+            m.serial || m.sn || "—"
+          ) +
+          minerDetailKvRow(L("miner_detail.cell", "Cell"), m.cell || "—") +
+          minerDetailKvRow(
+            L("miner_detail.cooling", "Cooling"),
+            m.cooling_name ||
+              (typeof coolingLabel === "function"
+                ? coolingLabel(m.cooling)
+                : m.cooling) ||
+              "—"
+          ) +
+          minerDetailKvRow(
+            L("miner_detail.role", "Role"),
+            m.role === "active" ? "active" : "standby"
+          ) +
+          minerDetailKvRow(
+            L("miner_detail.enabled", "Enabled"),
+            m.enabled === false ? "no" : "yes"
+          );
+      }
+    }
+
+    function closeMinerDetail(opts) {
+      opts = opts || {};
+      minerDetailOpen = false;
+      selectedMinerId = null;
+      if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
+        setMinerDetailUrl(null, opts.replaceUrl ? "replace" : "push");
+      }
+      if (opts.skipActivate !== true && typeof activateTab === "function") {
+        activateTab("managed", { skipUrl: true });
+      } else if (typeof setMinersSubtab === "function") {
+        setMinersSubtab("managed");
+      }
+    }
+
+    function openMinerDetail(minerId, opts) {
+      opts = opts || {};
+      const mid = minerId != null ? String(minerId).trim() : "";
+      if (!mid) return;
+      selectedMinerId = mid;
+      minerDetailOpen = true;
+      // show detail subview under Miners tab
+      if (typeof activateTab === "function") {
+        activateTab("managed", {
+          skipUrl: true,
+          minerDetail: true,
+        });
+      } else if (typeof setMinersSubtab === "function") {
+        setMinersSubtab("detail");
+      }
+      renderMinerDetail();
+      if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
+        setMinerDetailUrl(mid, opts.replaceUrl ? "replace" : "push");
+      }
+      // ensure fleet data is fresh
+      if (typeof refreshFleetTable === "function") {
+        void refreshFleetTable().then(() => {
+          if (minerDetailOpen && minerIdEq(selectedMinerId, mid)) {
+            renderMinerDetail();
+          }
+        });
+      }
+      try {
+        document
+          .getElementById("miner-detail-card")
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (_) { /* ignore */ }
+    }
+
+    async function applyMinerRouteFromUrl(minerId, opts) {
+      opts = opts || {};
+      const mid = minerId != null ? String(minerId).trim() : "";
+      if (!mid) {
+        if (minerDetailOpen) closeMinerDetail({ skipUrl: true });
+        return;
+      }
+      selectedMinerId = mid;
+      minerDetailOpen = true;
+      if (typeof activateTab === "function") {
+        activateTab("managed", { skipUrl: true, minerDetail: true });
+      }
+      // load fleet if empty
+      try {
+        if (!(fleetCache.miners || []).length && typeof refreshFleetTable === "function") {
+          await refreshFleetTable();
+        } else if (
+          !resolveMinerForDetail(mid) &&
+          typeof refreshFleetTable === "function"
+        ) {
+          await refreshFleetTable();
+        }
+      } catch (_) { /* ignore */ }
+      renderMinerDetail();
+      if (opts.skipUrl !== true && typeof setMinerDetailUrl === "function") {
+        setMinerDetailUrl(mid, "replace");
+      }
+    }
+
+    // Wire miner detail toolbar
+    document.getElementById("btn-miner-detail-back")?.addEventListener("click", () => {
+      closeMinerDetail();
+    });
+    document.getElementById("btn-miner-detail-refresh")?.addEventListener("click", () => {
+      if (typeof refreshFleetTable === "function") {
+        void refreshFleetTable({ manual: true });
+      }
+    });
+    document.getElementById("btn-miner-detail-edit")?.addEventListener("click", () => {
+      if (selectedMinerId && typeof fleetDoAction === "function") {
+        void fleetDoAction("edit", selectedMinerId);
+      }
+    });
+    document.getElementById("btn-miner-detail-active")?.addEventListener("click", () => {
+      if (selectedMinerId && typeof fleetDoAction === "function") {
+        void fleetDoAction("active", selectedMinerId);
+      }
+    });
+    document.getElementById("btn-miner-detail-reboot")?.addEventListener("click", () => {
+      if (selectedMinerId && typeof fleetDoAction === "function") {
+        void fleetDoAction("reboot", selectedMinerId);
+      }
+    });
+    document.getElementById("btn-miner-detail-controls")?.addEventListener("click", async () => {
+      const mid = selectedMinerId;
+      if (!mid) return;
+      const m = resolveMinerForDetail(mid);
+      // Make active first so Miner tab shows this ASIC, then open controls
+      if (m && m.role !== "active" && typeof fleetDoAction === "function") {
+        await fleetDoAction("active", mid);
+      }
+      if (typeof activateTab === "function") activateTab("miner");
+    });
 
     document.getElementById("fleet-body")?.addEventListener("click", (ev) => {
       const t = ev.target;
@@ -27965,6 +28816,14 @@
           openFleetCtx(menuBtn, mid);
         }
         return;
+      }
+      // Click row (not menu) → open miner page
+      const tr = t.closest("tr[data-fleet-id]");
+      if (tr) {
+        const mid = tr.getAttribute("data-fleet-id");
+        if (mid && typeof openMinerDetail === "function") {
+          openMinerDetail(mid);
+        }
       }
     });
 

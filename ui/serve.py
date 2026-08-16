@@ -15076,6 +15076,56 @@ def devices_poller_process_alive() -> bool:
         return False
 
 
+def edge_pollers_status() -> dict:
+    """
+    Lightweight poller readiness for UI header pills.
+    miner: ready when process is up and live_cache is fresh enough.
+    devices: shown only when poller.enabled; ready when process is up.
+    """
+    mp_alive = bool(miner_poller_process_alive())
+    cache_age: float | None = None
+    try:
+        if LIVE_CACHE_FILE.is_file():
+            cache_age = max(0.0, time.time() - float(LIVE_CACHE_FILE.stat().st_mtime))
+    except Exception:
+        cache_age = None
+    # ready = process alive + snapshot within ~2× soft window (45s soft, 90s grace)
+    mp_ready = bool(mp_alive and cache_age is not None and cache_age <= 90.0)
+    # still starting: alive but no cache yet
+    mp_state = (
+        "ready"
+        if mp_ready
+        else ("starting" if mp_alive else "down")
+    )
+
+    try:
+        dev_cfg = get_devices_poller_cfg()
+    except Exception:
+        dev_cfg = dict(DEFAULT_DEVICES_POLLER)
+    dev_enabled = bool(dev_cfg.get("enabled", True))
+    dev_alive = bool(devices_poller_process_alive()) if dev_enabled else False
+    dev_state = (
+        "disabled"
+        if not dev_enabled
+        else ("ready" if dev_alive else "down")
+    )
+
+    return {
+        "miner": {
+            "alive": mp_alive,
+            "ready": mp_ready,
+            "state": mp_state,
+            "cache_age_sec": round(cache_age, 1) if cache_age is not None else None,
+        },
+        "devices": {
+            "enabled": dev_enabled,
+            "alive": dev_alive,
+            "ready": bool(dev_enabled and dev_alive),
+            "state": dev_state,
+        },
+    }
+
+
 def _load_json(path: Path, default: dict | None = None) -> dict:
     """Load JSON object from path; missing/invalid → copy of default (or {})."""
     base = dict(default) if isinstance(default, dict) else {}
@@ -38668,11 +38718,13 @@ class Handler(SimpleHTTPRequestHandler):
             "fleet",
             "asics",
         }
-        # Nested SPA under known parents: /miners/managed · /circuits/{id}
+        # Nested SPA under known parents:
+        #   /miners/managed · /miners/{id} · /circuits/{id}
+        # freeform child (None) = any second segment (reserved list tabs or entity id)
         spa_nested = {
-            "miners": {"managed", "unmanaged", "inventory", "discovered"},
-            "fleet": {"managed", "unmanaged", "inventory", "discovered"},
-            "asics": {"managed", "unmanaged", "inventory", "discovered"},
+            "miners": None,
+            "fleet": None,
+            "asics": None,
             # freeform circuit id: /circuits/pool_default · /circuits/circuit_ab12
             "circuits": None,
             "circuit": None,
@@ -39692,6 +39744,24 @@ class Handler(SimpleHTTPRequestHandler):
             body["t_ctrl_sensor"] = t_sens
         except Exception:
             pass
+        # Header pills: miner-poller / devices-poller readiness
+        try:
+            body["pollers"] = edge_pollers_status()
+        except Exception as e:
+            body["pollers"] = {
+                "miner": {
+                    "alive": False,
+                    "ready": False,
+                    "state": "down",
+                    "error": str(e)[:120],
+                },
+                "devices": {
+                    "enabled": False,
+                    "alive": False,
+                    "ready": False,
+                    "state": "disabled",
+                },
+            }
         self._json_response(200 if body.get("ok") else 502, body)
 
     def _api_set(self) -> None:
