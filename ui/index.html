@@ -3453,6 +3453,247 @@
       }
     }
 
+    /* —— macOS-style Notification Center (right drawer) —— */
+    .notif-bell {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 2rem;
+      height: 2rem;
+      margin-left: 4px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel2);
+      color: var(--text);
+      cursor: pointer;
+      flex: 0 0 auto;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .notif-bell:hover {
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+      color: var(--accent);
+    }
+    .notif-bell[aria-expanded="true"] {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 12%, var(--panel2));
+    }
+    .notif-bell svg { width: 16px; height: 16px; display: block; }
+    .notif-bell__badge {
+      position: absolute;
+      top: -4px;
+      right: -4px;
+      min-width: 1.05rem;
+      height: 1.05rem;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: #ef4444;
+      color: #fff;
+      font-size: 0.62rem;
+      font-weight: 700;
+      line-height: 1.05rem;
+      text-align: center;
+      box-shadow: 0 0 0 2px var(--bg, #0b0f14);
+      pointer-events: none;
+    }
+    .notif-bell__badge[hidden] { display: none !important; }
+
+    .notif-center-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 1390;
+      background: rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.22s ease;
+    }
+    .notif-center-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .notif-center {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 1400;
+      width: min(22.5rem, 100vw);
+      height: 100vh;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      background: color-mix(in srgb, var(--panel) 88%, transparent);
+      backdrop-filter: saturate(1.4) blur(22px);
+      -webkit-backdrop-filter: saturate(1.4) blur(22px);
+      border-left: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      box-shadow: -12px 0 40px rgba(0, 0, 0, 0.35);
+      transform: translateX(105%);
+      transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      pointer-events: none;
+    }
+    .notif-center.open {
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+    .notif-center__head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 14px 12px 16px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    }
+    .notif-center__title {
+      flex: 1 1 auto;
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .notif-center__actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .notif-center__btn {
+      border: 0;
+      background: transparent;
+      color: var(--accent, #3d9cf0);
+      font-size: 0.8rem;
+      font-weight: 550;
+      cursor: pointer;
+      padding: 6px 8px;
+      border-radius: 8px;
+    }
+    .notif-center__btn:hover {
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+    }
+    .notif-center__btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+      pointer-events: none;
+    }
+    .notif-center__close {
+      width: 1.85rem;
+      height: 1.85rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--panel2);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .notif-center__close:hover { color: var(--text); border-color: var(--muted); }
+    .notif-center__list {
+      flex: 1 1 auto;
+      overflow: auto;
+      padding: 12px 12px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overscroll-behavior: contain;
+    }
+    .notif-center__empty {
+      margin: 2.5rem 1rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+    .notif-center__day {
+      margin: 6px 4px 2px;
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--dim);
+    }
+    .notif-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.65rem;
+      padding: 0.78rem 0.85rem;
+      background: color-mix(in srgb, var(--panel2) 92%, transparent);
+      border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+      border-radius: 14px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+      cursor: default;
+      transition: opacity 0.15s, border-color 0.15s;
+    }
+    .notif-card--unread {
+      border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.22),
+        inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+    .notif-card__icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.45rem;
+      height: 1.45rem;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      color: #fff;
+      margin-top: 0.05rem;
+    }
+    .notif-card--success .notif-card__icon { background: #22c55e; }
+    .notif-card--error .notif-card__icon { background: #ef4444; }
+    .notif-card--warn .notif-card__icon { background: #f0b429; color: #1a1a1a; }
+    .notif-card--info .notif-card__icon { background: #3d9cf0; }
+    .notif-card__body { flex: 1 1 auto; min-width: 0; }
+    .notif-card__app {
+      font-size: 0.7rem;
+      font-weight: 650;
+      color: var(--muted);
+      margin: 0 0 0.2rem;
+      letter-spacing: 0.01em;
+    }
+    .notif-card__msg {
+      margin: 0;
+      font-size: 0.88rem;
+      line-height: 1.35;
+      color: var(--text);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .notif-card__time {
+      display: block;
+      margin-top: 0.35rem;
+      font-size: 0.7rem;
+      color: var(--dim);
+    }
+    .notif-card__dismiss {
+      flex: 0 0 auto;
+      width: 1.4rem;
+      height: 1.4rem;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--dim);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      opacity: 0.55;
+    }
+    .notif-card__dismiss:hover { opacity: 1; color: var(--text); background: rgba(255,255,255,0.06); }
+    body.notif-center-open .staff-toast-stack {
+      right: calc(min(22.5rem, 100vw) + 0.75rem);
+    }
+    @media (max-width: 720px) {
+      .notif-center { width: min(100vw, 22.5rem); }
+      body.notif-center-open .staff-toast-stack {
+        right: 0.65rem;
+        opacity: 0.35;
+        pointer-events: none;
+      }
+    }
+
     /* tooltips for implicit terms */
     .tip {
       cursor: help;
@@ -5914,6 +6155,13 @@
             <option value="ru">RU</option>
           </select>
         </label>
+        <button type="button" class="notif-bell" id="btn-notif-center" aria-expanded="false" aria-controls="notif-center" title="Notifications" data-i18n-title="notif.center_title">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3a5.5 5.5 0 0 0-5.5 5.5v2.1c0 .7-.22 1.38-.63 1.95L4.6 14.3c-.7.96-.02 2.3 1.17 2.3h12.46c1.19 0 1.87-1.34 1.17-2.3l-1.27-1.75a3.4 3.4 0 0 1-.63-1.95V8.5A5.5 5.5 0 0 0 12 3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M9.5 18.2a2.6 2.6 0 0 0 5 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+          <span class="notif-bell__badge" id="notif-bell-badge" hidden>0</span>
+        </button>
       </div>
     </header>
 
@@ -10224,6 +10472,17 @@
   </div>
 
   <div class="staff-toast-stack" id="toast-stack" aria-live="polite" aria-relevant="additions removals"></div>
+  <div class="notif-center-backdrop" id="notif-center-backdrop" hidden></div>
+  <aside class="notif-center" id="notif-center" role="dialog" aria-modal="true" aria-labelledby="notif-center-title" hidden>
+    <div class="notif-center__head">
+      <h2 class="notif-center__title" id="notif-center-title" data-i18n="notif.center_title">Notifications</h2>
+      <div class="notif-center__actions">
+        <button type="button" class="notif-center__btn" id="notif-center-clear" data-i18n="notif.clear_all">Clear All</button>
+        <button type="button" class="notif-center__close" id="notif-center-close" aria-label="Close" title="Close">×</button>
+      </div>
+    </div>
+    <div class="notif-center__list" id="notif-center-list"></div>
+  </aside>
   <div class="tip-bubble" id="tip-bubble" role="tooltip" hidden>
     <strong id="tip-title"></strong>
     <div class="tip-body" id="tip-body"></div>
@@ -10918,6 +11177,14 @@
         "lang.extension": "Русский (extension)",
         "toast.lang_saved": "Language saved",
         "toast.region_saved": "Language & region saved",
+        "notif.center_title": "Notifications",
+        "notif.clear_all": "Clear All",
+        "notif.empty": "No notifications yet",
+        "notif.app": "Poolheat",
+        "notif.today": "Today",
+        "notif.yesterday": "Yesterday",
+        "notif.close": "Close",
+        "notif.close_all_toasts": "Close all",
         "banner.dry_span": "Auto zones not written · Safety active · log only",
         "banner.warmup_span": "Miner still warming up — upward blocked. Downward and Critical allowed.",
         "banner.override_span": "Auto zones Z0–Z2 paused · Safety Critical active · left",
@@ -11964,6 +12231,14 @@
         "lang.extension": "Русский (расширение)",
         "toast.lang_saved": "Язык сохранён",
         "toast.region_saved": "Язык и регион сохранены",
+        "notif.center_title": "Уведомления",
+        "notif.clear_all": "Очистить все",
+        "notif.empty": "Пока нет уведомлений",
+        "notif.app": "Poolheat",
+        "notif.today": "Сегодня",
+        "notif.yesterday": "Вчера",
+        "notif.close": "Закрыть",
+        "notif.close_all_toasts": "Закрыть все",
         "banner.dry_span": "Авто-зоны не пишутся · Safety работает · только лог",
         "banner.warmup_span": "Майнер ещё выходит на режим — upward заблокирован. Downward и Critical разрешены.",
         "banner.override_span": "Авто-зоны Z0–Z2 на паузе · Safety Critical работает · осталось",
@@ -14730,8 +15005,10 @@
       }
     })();
 
-    /* —— toast stack (hash2cash admin style) —— */
-    const toastState = { items: [], seq: 0, timers: new Map() };
+    /* —— toast stack + macOS-style Notification Center —— */
+    const NOTIF_HISTORY_KEY = "poolheat_notif_history_v1";
+    const NOTIF_HISTORY_MAX = 120;
+    const toastState = { items: [], seq: 0, timers: new Map(), history: [], open: false };
 
     function toastIcon(type) {
       if (type === "error") {
@@ -14747,6 +15024,300 @@
       return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none"><path d="M3.5 8.2 6.4 11l6.1-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     }
 
+    function loadNotifHistory() {
+      try {
+        const raw = localStorage.getItem(NOTIF_HISTORY_KEY);
+        if (!raw) {
+          toastState.history = [];
+          return;
+        }
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) {
+          toastState.history = [];
+          return;
+        }
+        toastState.history = arr
+          .filter((h) => h && typeof h === "object" && h.message != null)
+          .map((h) => ({
+            id: String(h.id || ("h" + Math.random().toString(36).slice(2, 9))),
+            message: String(h.message),
+            type: ["success", "error", "warn", "info"].includes(h.type) ? h.type : "info",
+            createdAt: Number(h.createdAt) || Date.now(),
+            read: !!h.read,
+          }))
+          .slice(0, NOTIF_HISTORY_MAX);
+      } catch (_) {
+        toastState.history = [];
+      }
+    }
+
+    function saveNotifHistory() {
+      try {
+        localStorage.setItem(
+          NOTIF_HISTORY_KEY,
+          JSON.stringify(
+            toastState.history.slice(0, NOTIF_HISTORY_MAX).map((h) => ({
+              id: h.id,
+              message: h.message,
+              type: h.type,
+              createdAt: h.createdAt,
+              read: !!h.read,
+            }))
+          )
+        );
+      } catch (_) { /* ignore quota */ }
+    }
+
+    function notifUnreadCount() {
+      return toastState.history.filter((h) => !h.read).length;
+    }
+
+    function updateNotifBadge() {
+      const badge = document.getElementById("notif-bell-badge");
+      if (!badge) return;
+      const n = notifUnreadCount();
+      if (n <= 0) {
+        badge.hidden = true;
+        badge.textContent = "0";
+        return;
+      }
+      badge.hidden = false;
+      badge.textContent = n > 99 ? "99+" : String(n);
+    }
+
+    function pushNotifHistory(message, type) {
+      const id = "h" + (++toastState.seq) + "_" + Date.now().toString(36);
+      const entry = {
+        id,
+        message: String(message),
+        type: type || "info",
+        createdAt: Date.now(),
+        read: !!toastState.open,
+      };
+      toastState.history.unshift(entry);
+      while (toastState.history.length > NOTIF_HISTORY_MAX) toastState.history.pop();
+      saveNotifHistory();
+      updateNotifBadge();
+      if (toastState.open) renderNotifCenterList();
+      return id;
+    }
+
+    function notifDayKey(ms) {
+      const d = new Date(ms);
+      return d.getFullYear() + "-" + _pad2(d.getMonth() + 1) + "-" + _pad2(d.getDate());
+    }
+
+    function notifDayLabel(ms) {
+      const d = new Date(ms);
+      const now = new Date();
+      const todayKey = notifDayKey(now.getTime());
+      const yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      const key = notifDayKey(ms);
+      if (key === todayKey) return t("notif.today", "Today");
+      if (key === notifDayKey(yest.getTime())) return t("notif.yesterday", "Yesterday");
+      try {
+        if (typeof formatUiDateTime === "function") {
+          return formatUiDateTime(d, { dateOnly: true });
+        }
+      } catch (_) { /* ignore */ }
+      return _pad2(d.getDate()) + "." + _pad2(d.getMonth() + 1) + "." + d.getFullYear();
+    }
+
+    function notifTimeLabel(ms) {
+      try {
+        if (typeof formatUiDateTime === "function") {
+          return formatUiDateTime(new Date(ms), { timeOnly: true });
+        }
+      } catch (_) { /* ignore */ }
+      const d = new Date(ms);
+      return _pad2(d.getHours()) + ":" + _pad2(d.getMinutes());
+    }
+
+    function renderNotifCenterList() {
+      const list = document.getElementById("notif-center-list");
+      const clearBtn = document.getElementById("notif-center-clear");
+      if (!list) return;
+      const items = toastState.history;
+      if (clearBtn) clearBtn.disabled = !items.length;
+      if (!items.length) {
+        list.innerHTML =
+          '<p class="notif-center__empty">' +
+          (typeof t === "function" ? t("notif.empty", "No notifications yet") : "No notifications yet") +
+          "</p>";
+        return;
+      }
+      const appName = typeof t === "function" ? t("notif.app", "Poolheat") : "Poolheat";
+      let html = "";
+      let lastDay = "";
+      items.forEach((h) => {
+        const day = notifDayKey(h.createdAt);
+        if (day !== lastDay) {
+          lastDay = day;
+          html +=
+            '<div class="notif-center__day">' +
+            notifDayLabel(h.createdAt) +
+            "</div>";
+        }
+        const unread = h.read ? "" : " notif-card--unread";
+        html +=
+          '<article class="notif-card notif-card--' +
+          h.type +
+          unread +
+          '" data-hid="' +
+          h.id +
+          '">' +
+          '<span class="notif-card__icon" aria-hidden="true">' +
+          toastIcon(h.type) +
+          "</span>" +
+          '<div class="notif-card__body">' +
+          '<p class="notif-card__app">' +
+          appName +
+          "</p>" +
+          '<p class="notif-card__msg"></p>' +
+          '<time class="notif-card__time" datetime="' +
+          new Date(h.createdAt).toISOString() +
+          '">' +
+          notifTimeLabel(h.createdAt) +
+          "</time>" +
+          "</div>" +
+          '<button type="button" class="notif-card__dismiss" data-dismiss-hid="' +
+          h.id +
+          '" aria-label="Dismiss" title="×">×</button>' +
+          "</article>";
+      });
+      list.innerHTML = html;
+      items.forEach((h) => {
+        const el = list.querySelector('.notif-card[data-hid="' + h.id + '"] .notif-card__msg');
+        if (el) el.textContent = h.message;
+      });
+      list.querySelectorAll("[data-dismiss-hid]").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          removeNotifHistory(btn.getAttribute("data-dismiss-hid"));
+        });
+      });
+    }
+
+    function removeNotifHistory(id) {
+      if (!id) return;
+      toastState.history = toastState.history.filter((h) => h.id !== id);
+      saveNotifHistory();
+      updateNotifBadge();
+      renderNotifCenterList();
+    }
+
+    function clearNotifHistory() {
+      toastState.history = [];
+      saveNotifHistory();
+      updateNotifBadge();
+      renderNotifCenterList();
+    }
+
+    function markAllNotifsRead() {
+      let changed = false;
+      toastState.history.forEach((h) => {
+        if (!h.read) {
+          h.read = true;
+          changed = true;
+        }
+      });
+      if (changed) saveNotifHistory();
+      updateNotifBadge();
+    }
+
+    function openNotifCenter() {
+      const panel = document.getElementById("notif-center");
+      const backdrop = document.getElementById("notif-center-backdrop");
+      const btn = document.getElementById("btn-notif-center");
+      if (!panel || !backdrop) return;
+      toastState.open = true;
+      panel.hidden = false;
+      backdrop.hidden = false;
+      // reflow so CSS transition runs
+      void panel.offsetWidth;
+      panel.classList.add("open");
+      backdrop.classList.add("open");
+      document.body.classList.add("notif-center-open");
+      if (btn) btn.setAttribute("aria-expanded", "true");
+      markAllNotifsRead();
+      renderNotifCenterList();
+      // banners dismiss when Notification Center opens (macOS-like)
+      try { dismissAllToasts(); } catch (_) { /* ignore */ }
+      try {
+        const closeBtn = document.getElementById("notif-center-close");
+        if (closeBtn) closeBtn.focus({ preventScroll: true });
+      } catch (_) { /* ignore */ }
+    }
+
+    function closeNotifCenter() {
+      const panel = document.getElementById("notif-center");
+      const backdrop = document.getElementById("notif-center-backdrop");
+      const btn = document.getElementById("btn-notif-center");
+      if (!panel || !backdrop) return;
+      toastState.open = false;
+      panel.classList.remove("open");
+      backdrop.classList.remove("open");
+      document.body.classList.remove("notif-center-open");
+      if (btn) btn.setAttribute("aria-expanded", "false");
+      setTimeout(() => {
+        if (!toastState.open) {
+          panel.hidden = true;
+          backdrop.hidden = true;
+        }
+      }, 300);
+      try {
+        if (btn) btn.focus({ preventScroll: true });
+      } catch (_) { /* ignore */ }
+    }
+
+    function toggleNotifCenter() {
+      if (toastState.open) closeNotifCenter();
+      else openNotifCenter();
+    }
+
+    function wireNotifCenter() {
+      loadNotifHistory();
+      updateNotifBadge();
+      const bell = document.getElementById("btn-notif-center");
+      const backdrop = document.getElementById("notif-center-backdrop");
+      const closeBtn = document.getElementById("notif-center-close");
+      const clearBtn = document.getElementById("notif-center-clear");
+      if (bell) {
+        bell.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleNotifCenter();
+        });
+      }
+      if (backdrop) {
+        backdrop.addEventListener("click", () => closeNotifCenter());
+      }
+      if (closeBtn) {
+        closeBtn.addEventListener("click", () => closeNotifCenter());
+        const closeLabel = typeof t === "function" ? t("notif.close", "Close") : "Close";
+        closeBtn.setAttribute("aria-label", closeLabel);
+        closeBtn.setAttribute("title", closeLabel);
+      }
+      if (clearBtn) {
+        clearBtn.addEventListener("click", () => clearNotifHistory());
+      }
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && toastState.open) {
+          e.preventDefault();
+          closeNotifCenter();
+        }
+      });
+      document.addEventListener("poolheat:lang", () => {
+        if (toastState.open) renderNotifCenterList();
+        const c = document.getElementById("notif-center-close");
+        if (c && typeof t === "function") {
+          const label = t("notif.close", "Close");
+          c.setAttribute("aria-label", label);
+          c.setAttribute("title", label);
+        }
+      });
+    }
+
     function renderToastStack() {
       const stack = document.getElementById("toast-stack");
       if (!stack) return;
@@ -14755,12 +15326,15 @@
         stack.innerHTML = "";
         return;
       }
-      stack.innerHTML = items.map((t) => {
-        const time = t.createdAt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-        const hide = t.hiding ? " staff-toast--hiding" : "";
+      stack.innerHTML = items.map((tItem) => {
+        const time =
+          typeof formatUiDateTime === "function"
+            ? formatUiDateTime(tItem.createdAt, { timeOnly: true })
+            : tItem.createdAt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+        const hide = tItem.hiding ? " staff-toast--hiding" : "";
         return (
-          '<div class="staff-toast staff-toast--' + t.type + hide + '" data-id="' + t.id + '" role="alert" tabindex="0">' +
-            '<span class="staff-toast__icon" aria-hidden="true">' + toastIcon(t.type) + "</span>" +
+          '<div class="staff-toast staff-toast--' + tItem.type + hide + '" data-id="' + tItem.id + '" role="alert" tabindex="0">' +
+            '<span class="staff-toast__icon" aria-hidden="true">' + toastIcon(tItem.type) + "</span>" +
             '<div class="staff-toast__body">' +
               '<p class="staff-toast__message"></p>' +
               '<time class="staff-toast__time">' + time + "</time>" +
@@ -14768,13 +15342,15 @@
           "</div>"
         );
       }).join("") + (items.length > 1
-        ? '<button type="button" class="staff-toast-stack__close-all" id="toast-close-all">Close all</button>'
+        ? '<button type="button" class="staff-toast-stack__close-all" id="toast-close-all">' +
+          (typeof t === "function" ? t("notif.close_all_toasts", "Close all") : "Close all") +
+          "</button>"
         : "");
 
       // set message text safely
-      items.forEach((t) => {
-        const el = stack.querySelector('.staff-toast[data-id="' + t.id + '"] .staff-toast__message');
-        if (el) el.textContent = t.message;
+      items.forEach((tItem) => {
+        const el = stack.querySelector('.staff-toast[data-id="' + tItem.id + '"] .staff-toast__message');
+        if (el) el.textContent = tItem.message;
       });
 
       stack.querySelectorAll(".staff-toast").forEach((el) => {
@@ -14785,21 +15361,21 @@
     }
 
     function dismissToast(id) {
-      const item = toastState.items.find((t) => t.id === id);
+      const item = toastState.items.find((tItem) => tItem.id === id);
       if (!item || item.hiding) return;
       item.hiding = true;
       renderToastStack();
       const old = toastState.timers.get(id);
       if (old) clearTimeout(old);
       setTimeout(() => {
-        toastState.items = toastState.items.filter((t) => t.id !== id);
+        toastState.items = toastState.items.filter((tItem) => tItem.id !== id);
         toastState.timers.delete(id);
         renderToastStack();
       }, 220);
     }
 
     function dismissAllToasts() {
-      [...toastState.items].forEach((t) => dismissToast(t.id));
+      [...toastState.items].forEach((tItem) => dismissToast(tItem.id));
     }
 
     /**
@@ -14809,22 +15385,24 @@
      */
     function toast(message, type, ttlMs) {
       // auto-detect type from message if not set
-      let t = type || "info";
+      let tType = type || "info";
       if (!type) {
         const m = String(message).toLowerCase();
-        if (m.includes("fail") || m.includes("err") || m.includes("error") || m.includes("deficit")) t = "error";
-        else if (m.includes("⚠") || m.includes("warn") || m.includes("reboot") || m.includes("low_hash") || m.includes("careful")) t = "warn";
-        else if (m.includes("saved") || m.includes("ok") || m.includes("appl") || m.includes("upd") || m.includes("ok")) t = "success";
+        if (m.includes("fail") || m.includes("err") || m.includes("error") || m.includes("deficit")) tType = "error";
+        else if (m.includes("⚠") || m.includes("warn") || m.includes("reboot") || m.includes("low_hash") || m.includes("careful")) tType = "warn";
+        else if (m.includes("saved") || m.includes("ok") || m.includes("appl") || m.includes("upd") || m.includes("ok")) tType = "success";
       }
       const id = "t" + (++toastState.seq);
       const item = {
         id,
         message: String(message),
-        type: t,
+        type: tType,
         createdAt: new Date(),
         hiding: false,
       };
       toastState.items.unshift(item);
+      // history (Notification Center) — keeps toasts after they fade
+      pushNotifHistory(item.message, tType);
       // cap stack
       while (toastState.items.length > 6) {
         const dropped = toastState.items.pop();
@@ -14832,10 +15410,13 @@
         if (tm) clearTimeout(tm);
         toastState.timers.delete(dropped.id);
       }
-      renderToastStack();
-      const ttl = ttlMs != null ? ttlMs : (t === "error" ? 6000 : 3200);
-      const timer = setTimeout(() => dismissToast(id), ttl);
-      toastState.timers.set(id, timer);
+      // when center is open, skip ephemeral banners (already in list)
+      if (!toastState.open) {
+        renderToastStack();
+        const ttl = ttlMs != null ? ttlMs : (tType === "error" ? 6000 : 3200);
+        const timer = setTimeout(() => dismissToast(id), ttl);
+        toastState.timers.set(id, timer);
+      }
       return id;
     }
 
@@ -14843,6 +15424,13 @@
     function toastError(msg, ttl) { return toast(msg, "error", ttl); }
     function toastWarn(msg, ttl) { return toast(msg, "warn", ttl); }
     function toastInfo(msg, ttl) { return toast(msg, "info", ttl); }
+
+    // init Notification Center after DOM is ready
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", wireNotifCenter);
+    } else {
+      wireNotifCenter();
+    }
 
     function syncAct(checkbox) {
       const act = checkbox.closest(".act");
