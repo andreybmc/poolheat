@@ -275,7 +275,7 @@ type ManagedMiner struct {
 	Port       int        `json:"port"`
 	Password   string     `json:"password,omitempty"`
 	Enabled    bool       `json:"enabled"`
-	Role       string     `json:"role"` // active | standby
+	Role       string     `json:"role,omitempty"` // deprecated empty — peers, no active
 	Alias      string     `json:"alias,omitempty"`
 	Name       string     `json:"name,omitempty"`       // display name
 	Cell       string     `json:"cell,omitempty"`       // location / rack cell
@@ -355,40 +355,20 @@ func SaveManaged(dataDir string, f ManagedFile) error {
 	if f.Miners == nil {
 		f.Miners = []ManagedMiner{}
 	}
-	// ensure exactly one active if any enabled
-	active := 0
-	for _, m := range f.Miners {
-		if m.Role == "active" {
-			active++
-		}
-	}
-	if active == 0 && len(f.Miners) > 0 {
-		f.Miners[0].Role = "active"
-	}
-	if active > 1 {
-		seen := false
-		for i := range f.Miners {
-			if f.Miners[i].Role == "active" {
-				if !seen {
-					seen = true
-				} else {
-					f.Miners[i].Role = "standby"
-				}
-			}
-		}
+	// No active/standby role — clear leftover flags
+	for i := range f.Miners {
+		f.Miners[i].Role = ""
 	}
 	return jsonutil.SaveAtomic(filepath.Join(dataDir, managedFile), f)
 }
 
-// ActiveManaged returns the active managed miner, or nil.
-// Only returns a miner with role=="active" (enabled). Does NOT fall back to
-// "first enabled" — that silently pointed the live poller at a standby ASIC
-// (e.g. iPollo 172.16.100.195) while inventory showed Whatsminer 192.168.1.10
-// as active after miners.db migration left miners_managed.json stale.
-func ActiveManaged(dataDir string) *ManagedMiner {
+// FirstEnabledManaged returns the first enabled managed miner.
+// Peers are equal for multi-live; this pick is only for deep-poll / chipmap /
+// write IPC target (single TCP focus), not a product "active" role.
+func FirstEnabledManaged(dataDir string) *ManagedMiner {
 	f := LoadManaged(dataDir)
 	for i := range f.Miners {
-		if strings.EqualFold(strings.TrimSpace(f.Miners[i].Role), "active") && f.Miners[i].Enabled {
+		if f.Miners[i].Enabled && strings.TrimSpace(f.Miners[i].Host) != "" {
 			m := f.Miners[i]
 			return &m
 		}
@@ -396,12 +376,22 @@ func ActiveManaged(dataDir string) *ManagedMiner {
 	return nil
 }
 
-// ActiveID returns the managed id string of the active miner.
-func (m *ManagedMiner) ActiveID() string {
+// ActiveManaged is a deprecated alias for FirstEnabledManaged.
+func ActiveManaged(dataDir string) *ManagedMiner {
+	return FirstEnabledManaged(dataDir)
+}
+
+// ManagedID returns the managed id string for this row.
+func (m *ManagedMiner) ManagedID() string {
 	if m == nil {
 		return ""
 	}
 	return strings.TrimSpace(m.ID.String())
+}
+
+// ActiveID is a deprecated alias for ManagedID.
+func (m *ManagedMiner) ActiveID() string {
+	return m.ManagedID()
 }
 
 // EnsureManagedFromSettings seeds inventory from single-host config if empty.
@@ -425,7 +415,7 @@ func EnsureManagedFromSettings(dataDir string, s Settings) {
 		Port:       port,
 		Password:   s.Password,
 		Enabled:    true,
-		Role:       "active",
+		Role:       "",
 		Alias:      "primary",
 		ImportedAt: time.Now().Format("2006-01-02T15:04:05"),
 		Source:     "manual",
@@ -434,9 +424,10 @@ func EnsureManagedFromSettings(dataDir string, s Settings) {
 	_ = SaveManaged(dataDir, f)
 }
 
-// ApplyActiveToSettings copies active managed host into Settings for live loop.
-func ApplyActiveToSettings(dataDir string, s *Settings) {
-	m := ActiveManaged(dataDir)
+// ApplyPrimaryToSettings copies first-enabled managed host into Settings for
+// the deep live loop (chipmap / writes). Not a product "active miner" role.
+func ApplyPrimaryToSettings(dataDir string, s *Settings) {
+	m := FirstEnabledManaged(dataDir)
 	if m == nil {
 		return
 	}
@@ -449,6 +440,11 @@ func ApplyActiveToSettings(dataDir string, s *Settings) {
 	if strings.TrimSpace(m.Password) != "" {
 		s.Password = m.Password
 	}
+}
+
+// ApplyActiveToSettings is a deprecated alias for ApplyPrimaryToSettings.
+func ApplyActiveToSettings(dataDir string, s *Settings) {
+	ApplyPrimaryToSettings(dataDir, s)
 }
 
 func newManagedID() string {

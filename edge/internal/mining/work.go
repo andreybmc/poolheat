@@ -84,10 +84,7 @@ func WorkForMiner(snap Snapshot, minerID string) string {
 	if e, ok := snap.ByMiner[mid]; ok && e.Work != "" {
 		return e.Work
 	}
-	// fallback: active miner top-level work
-	if snap.ActiveMinerID == mid && snap.Work != "" {
-		return snap.Work
-	}
+	// No active_miner_id fallback — peers are equal; only by_miner[id] is authoritative.
 	return ""
 }
 

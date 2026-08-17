@@ -4232,6 +4232,26 @@
       border-color: rgba(240, 180, 41, 0.45);
       background: rgba(240, 180, 41, 0.12);
     }
+    /* Per-ASIC Dry Run · heat zone (policy) on Power card */
+    .pm-badge.is-dry {
+      color: #7dd3fc;
+      border-color: rgba(125, 211, 252, 0.5);
+      background: rgba(125, 211, 252, 0.12);
+      letter-spacing: 0.06em;
+    }
+    .pm-badge.is-zone {
+      color: #c4b5fd;
+      border-color: rgba(196, 181, 253, 0.45);
+      background: rgba(196, 181, 253, 0.12);
+    }
+    .pm-badge.is-zone.is-zone-safety {
+      color: #f07178;
+      border-color: rgba(240, 113, 120, 0.5);
+      background: rgba(240, 113, 120, 0.12);
+    }
+    .pm-badge[hidden] {
+      display: none !important;
+    }
     /* Upfreq badge: right of work badge */
     .pm-badge.pm-upfreq {
       display: inline-flex;
@@ -6441,6 +6461,12 @@
                 var raw = localStorage.getItem("poolheat_wm_info_cache");
                 if (!raw) return;
                 var d = JSON.parse(raw);
+                // Seed miner model for LIVE strip before main script (live_cache omits type)
+                try {
+                  var m0 = (d && d.miner) || (d && d.body && d.body.miner) || {};
+                  var mt = String(m0.miner_type || m0.model_code || m0.model || "").trim();
+                  if (mt) window.__poolheatMinerType = mt;
+                } catch (_) {}
                 var el = document.getElementById("brand-devices");
                 var kn = "";
                 if (el) {
@@ -6508,11 +6534,8 @@
       </div>
     </header>
 
-    <div class="banner dry" id="banner-dry">
-      <strong>DRY RUN</strong>
-      <span data-i18n="banner.dry_span">Auto zones not written · Safety active · log only</span>
-      <button class="btn ghost" type="button" style="margin-left:auto" id="btn-dry-goto" data-i18n="btn.dry_goto">Miner · Dry Run</button>
-    </div>
+    <!-- Global dry-run page banner removed: Dry Run is per-ASIC (Power widget + Miner → Circuit) -->
+    <div class="banner dry" id="banner-dry" hidden style="display:none!important" aria-hidden="true"></div>
 
     <div class="banner warmup" id="banner-warmup" style="display:none">
       <strong class="tip" data-tip-key="warmup">WARMUP / upfreq</strong>
@@ -6687,6 +6710,8 @@
                   <span class="pm-uf-ico" aria-hidden="true">·</span>
                   <span class="pm-uf-txt" data-bind="upfreqTxt">—</span>
                 </span>
+                <span class="pm-badge is-dry" data-bind="dryBadge" hidden title="Dry Run">DR</span>
+                <span class="pm-badge is-zone" data-bind="zoneBadge" hidden title="Heat zone">—</span>
               </div>
               <div class="tc-val-row">
                 <div class="tc-val tc-val-dual">
@@ -7857,7 +7882,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.miners_managed">Managed miners</h2>
-              <div class="sub" data-i18n="sub.miners_managed">imported · fleet · live for active</div>
+              <div class="sub" data-i18n="sub.miners_managed">imported · fleet · multi-poll live</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" id="btn-fleet-refresh" data-i18n="btn.refresh">Refresh</button>
@@ -7948,14 +7973,13 @@
               <div class="fleet-pager-pages" id="fleet-pager-pages" role="navigation" aria-label="Pages"></div>
             </div>
             <p class="fleet-hint" data-i18n="fleet.hint">
-              Live metrics are shown for the <strong>active</strong> polled miner. Standby rows show inventory until multi-poll is enabled.
+              Live metrics from fleet multi-poll for all managed ASICs.
             </p>
           </div>
           <!-- Floating context menu (one instance) -->
           <div class="fleet-ctx" id="fleet-ctx" hidden>
             <button type="button" class="fleet-ctx-item" data-ctx="open" data-i18n="fleet.open">Open</button>
             <button type="button" class="fleet-ctx-item" data-ctx="edit" data-i18n="fleet.edit">Edit</button>
-            <button type="button" class="fleet-ctx-item" data-ctx="active" data-i18n="fleet.make_active">Make active</button>
             <button type="button" class="fleet-ctx-item" data-ctx="reboot" data-i18n="fleet.reboot">Reboot</button>
             <div class="fleet-ctx-sep"></div>
             <button type="button" class="fleet-ctx-item danger" data-ctx="remove" data-i18n="fleet.remove">Remove</button>
@@ -8029,7 +8053,6 @@
                 <div class="miner-detail-actions btn-row">
                   <button type="button" class="btn" id="btn-miner-detail-refresh" data-i18n="btn.refresh">Refresh</button>
                   <button type="button" class="btn" id="btn-miner-detail-edit" data-i18n="fleet.edit">Edit</button>
-                  <button type="button" class="btn" id="btn-miner-detail-active" data-i18n="fleet.make_active">Make active</button>
                   <button type="button" class="btn primary" id="btn-miner-detail-controls" data-i18n="miner_detail.controls">Controls</button>
                   <button type="button" class="btn" id="btn-miner-detail-reboot" data-i18n="fleet.reboot">Reboot</button>
                 </div>
@@ -9960,7 +9983,7 @@
           <div class="card-h">
             <div>
               <h2 data-i18n="h2.connection">Active miner connection</h2>
-              <div class="sub" data-i18n="sub.connection">TCP · active managed · saved to config.json</div>
+              <div class="sub" data-i18n="sub.connection">TCP · managed inventory · saved to config.json</div>
             </div>
             <div class="btn-row" style="gap:8px;flex-wrap:wrap">
               <button class="btn" type="button" id="btn-test-conn" data-i18n="btn.test">Test</button>
@@ -10037,7 +10060,7 @@
               <span data-i18n="mp.auto_scan">Auto-scan on interval</span>
             </label>
             <label class="field"><span data-i18n="mp.ranges">Scan ranges (CIDR / start-end / IP, one per line)</span>
-              <textarea id="mp-disc-ranges" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem" placeholder="192.168.1.0/24&#10;192.168.1.1-192.168.1.50&#10;(empty = auto LAN of active miner)"></textarea>
+              <textarea id="mp-disc-ranges" rows="3" style="width:100%;font-family:ui-monospace,monospace;font-size:0.82rem" placeholder="192.168.1.0/24&#10;192.168.1.1-192.168.1.50&#10;(empty = auto LAN of managed miners)"></textarea>
             </label>
             <div class="row" style="margin-top:12px;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:12px">
               <label class="field"><span data-i18n="mp.interval">Interval, sec</span>
@@ -11073,12 +11096,12 @@
         "sub.map_pool": "Pool",
         "h2.miners": "Miners",
         "sub.miners": "fleet · managed / unmanaged",
-        "miners.placeholder": "Fleet of managed ASICs with live metrics for the active miner.",
+        "miners.placeholder": "Fleet of managed ASICs with multi-poll live metrics.",
         "miners.goto_managed": "Inventory settings",
         "miners.tab.managed": "Managed",
         "miners.tab.unmanaged": "Unmanaged",
         "h2.miners_managed": "Managed miners",
-        "sub.miners_managed": "imported · fleet · live for active",
+        "sub.miners_managed": "imported · fleet · multi-poll live",
         "h2.miners_unmanaged": "Unmanaged miners",
         "sub.miners_unmanaged": "discovered on LAN · not in inventory",
         "miners.scan_now": "Scan now",
@@ -11176,11 +11199,11 @@
         "dash.thermal_saved": "Circuit binding saved",
         "dash.power_settings_sub": "Bind this card to a managed miner. Design switches by vendor (Whatsminer / Antminer).",
         "dash.power_bind_miner": "Miner",
-        "dash.power_bind_none": "— active polled miner —",
+        "dash.power_bind_none": "— select miner —",
         "dash.power_max": "Max power widgets reached",
         "dash.power_saved": "Power widget updated",
         "circuit.field_city": "City (weather default)",
-        "fleet.hint": "Live metrics are shown for the active polled miner. Standby rows show inventory until multi-poll is enabled.",
+        "fleet.hint": "Live metrics from fleet multi-poll for all managed ASICs.",
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
         "fleet.status.standby": "Standby",
@@ -11356,7 +11379,7 @@
         "mp.discovered_title": "Discovered",
         "mp.discovered_sub": "Found on LAN · not yet in system",
         "mp.managed_title": "In system (managed)",
-        "mp.managed_sub": "Imported · polling candidates · one active",
+        "mp.managed_sub": "Imported · multi-poll fleet",
         "mp.lists_moved": "Discovered / managed lists live under Miners (Managed · Unmanaged).",
         "mp.col.id": "ID",
         "mp.col.alias": "Alias",
@@ -12188,7 +12211,7 @@
         "miners.tab.managed": "В системе",
         "miners.tab.unmanaged": "Не в системе",
         "h2.miners_managed": "В системе (managed)",
-        "sub.miners_managed": "импортированные · флот · live для active",
+        "sub.miners_managed": "импортированные · флот · multi-poll live",
         "h2.miners_unmanaged": "Не в системе (unmanaged)",
         "sub.miners_unmanaged": "найдены в LAN · не импортированы",
         "miners.scan_now": "Сканировать",
@@ -12286,11 +12309,11 @@
         "dash.thermal_saved": "Привязка к контуру сохранена",
         "dash.power_settings_sub": "Привязка карточки к managed-майнеру. Дизайн зависит от вендора (Whatsminer / Antminer).",
         "dash.power_bind_miner": "Майнер",
-        "dash.power_bind_none": "— активный polled-майнер —",
+        "dash.power_bind_none": "— выберите майнер —",
         "dash.power_max": "Достигнут лимит виджетов мощности",
         "dash.power_saved": "Виджет мощности обновлён",
         "circuit.field_city": "Город (погода по умолчанию)",
-        "fleet.hint": "Live-метрики — у active-майнера (poller). Standby показывают inventory, пока нет multi-poll.",
+        "fleet.hint": "Live-метрики fleet multi-poll для всех managed ASIC.",
         "fleet.status.online": "Online",
         "fleet.status.offline": "Offline",
         "fleet.status.standby": "Standby",
@@ -12466,7 +12489,7 @@
         "mp.discovered_title": "Найденные",
         "mp.discovered_sub": "В LAN · ещё не в системе",
         "mp.managed_title": "В системе (managed)",
-        "mp.managed_sub": "Импортированные · кандидаты на опрос · один active",
+        "mp.managed_sub": "Импортированные · multi-poll флот",
         "mp.lists_moved": "Списки «Найденные» / «В системе» — во вкладке Miners (В системе · Не в системе).",
         "mp.col.id": "ID",
         "mp.col.alias": "Alias",
@@ -18364,6 +18387,37 @@ function getUiLang() {
 
     let lastLiveStatusTime = "";
 
+    /** Resolve miner model for LIVE strip (live → window → Info cache). */
+    function resolveMinerTypeLabel(r) {
+      let minerType =
+        (r && (r.miner_type || r.model || r.model_code)) ||
+        (typeof live !== "undefined" &&
+          live &&
+          (live.miner_type || live.model || live.model_code)) ||
+        (typeof window !== "undefined" && window.__poolheatMinerType) ||
+        "";
+      minerType = String(minerType || "").trim();
+      if (!minerType) {
+        // Info tab cache (last known model) — live_cache often omits miner_type
+        try {
+          const raw = localStorage.getItem("poolheat_wm_info_cache");
+          if (raw) {
+            const d = JSON.parse(raw);
+            const m = (d && d.miner) || (d && d.body && d.body.miner) || {};
+            minerType = String(
+              m.miner_type || m.model_code || m.model || ""
+            ).trim();
+            if (minerType && typeof window !== "undefined") {
+              window.__poolheatMinerType = minerType;
+            }
+          }
+        } catch (_) { /* ignore */ }
+      }
+      if (!minerType) return "Whatsminer";
+      if (/^whatsminer/i.test(minerType)) return minerType;
+      return "Whatsminer " + minerType;
+    }
+
     /** LIVE line: IP · Whatsminer model · updated HH:MM:SS · Online */
     function updateSrcBar(r) {
       const tag = document.getElementById("src-tag");
@@ -18386,18 +18440,7 @@ function getUiLang() {
       }
       const online = !!(r && r.online);
       if (tag) tag.textContent = online ? "LIVE" : "OFFLINE";
-      let minerType =
-        (r && r.miner_type) ||
-        (live && live.miner_type) ||
-        (typeof window !== "undefined" && window.__poolheatMinerType) ||
-        "";
-      minerType = String(minerType || "").trim();
-      let minerLabel = "Whatsminer —";
-      if (minerType) {
-        minerLabel = /^whatsminer/i.test(minerType)
-          ? minerType
-          : "Whatsminer " + minerType;
-      }
+      const minerLabel = resolveMinerTypeLabel(r);
       if (!det) return;
       const hostDisp = minerHostDisplay();
       const rest =
@@ -18860,7 +18903,7 @@ function getUiLang() {
     }
 
     // ── Dashboard layout (reorder / hide / show) ─────────────────────────
-    const DASH_LAYOUT_KEY = "poolheat_dash_layout_v1";
+    // Layout is server-only (/api/dashboard/config). No localStorage mirror.
     /** Top metric widgets (3-col grid) — reorder only within this zone */
     const DASH_WIDGET_ORDER = [
       "t_ctrl",
@@ -18927,7 +18970,7 @@ function getUiLang() {
 
     /* ── Dashboard config on router (not browser) ──
        layout + chart series/display/bands + circuit/miner bindings.
-       localStorage is only used once to migrate old browser prefs. */
+       Source of truth: /api/dashboard/config (server). No localStorage. */
     let dashboardCfgLoaded = false;
     let dashboardCfgSaveTimer = null;
     let dashboardChartSync = true;
@@ -19136,7 +19179,7 @@ function getUiLang() {
           const p = cfg.weather_widgets[wid];
           if (!p || typeof p !== "object") return;
           if (p.latitude == null || p.longitude == null) return;
-          dashboardWeatherWidgets[wid] = {
+          const row = {
             city: String(p.city || ""),
             country: String(p.country || ""),
             admin1: String(p.admin1 || ""),
@@ -19144,6 +19187,18 @@ function getUiLang() {
             longitude: Number(p.longitude),
             timezone: String(p.timezone || "auto"),
           };
+          // English city + place_id for localization (Москва ↔ Moscow)
+          const pid =
+            p.place_id != null
+              ? p.place_id
+              : p.id != null
+                ? p.id
+                : null;
+          if (pid != null && pid !== "") {
+            const n = Number(pid);
+            row.place_id = Number.isFinite(n) ? n : pid;
+          }
+          dashboardWeatherWidgets[wid] = row;
         });
       }
       if (cfg.power_widgets && typeof cfg.power_widgets === "object") {
@@ -19156,6 +19211,8 @@ function getUiLang() {
             p.miner_id != null && String(p.miner_id).trim()
               ? String(p.miner_id).trim()
               : null;
+          // Drop orphan extras with no miner bind (leftovers from failed deletes)
+          if (wid !== "power" && !mid) return;
           dashboardPowerWidgets[wid] = { miner_id: mid };
         });
         if (!dashboardPowerWidgets.power) {
@@ -19200,115 +19257,12 @@ function getUiLang() {
       } catch (_) { /* ignore */ }
     }
 
-    function collectLocalDashboardMigrateBlob() {
-      // one-shot import of browser prefs when server is empty
-      const blob = {
-        layout: null,
-        charts: { temps: {}, power: {}, energy: {} },
-        chart_sync: true,
-      };
-      try {
-        const raw = localStorage.getItem(DASH_LAYOUT_KEY);
-        if (raw) {
-          const j = JSON.parse(raw);
-          if (j && typeof j === "object") {
-            blob.layout = {
-              order: Array.isArray(j.order) ? j.order : [],
-              hidden: Array.isArray(j.hidden) ? j.hidden : [],
-              half: Array.isArray(j.half) ? j.half : [],
-            };
-          }
-        }
-      } catch (_) { /* ignore */ }
-      try {
-        const raw = localStorage.getItem(TEMP_CHART_SERIES_KEY);
-        if (raw) blob.charts.temps.series = JSON.parse(raw);
-      } catch (_) { /* ignore */ }
-      try {
-        const raw = localStorage.getItem(POWER_CHART_SERIES_KEY);
-        if (raw) blob.charts.power.series = JSON.parse(raw);
-      } catch (_) { /* ignore */ }
-      try {
-        const raw = localStorage.getItem(ENERGY_CHART_SERIES_KEY);
-        if (raw) blob.charts.energy.series = JSON.parse(raw);
-      } catch (_) { /* ignore */ }
-      try {
-        const raw = localStorage.getItem(CHART_DISPLAY_KEY);
-        if (raw) {
-          const j = JSON.parse(raw);
-          if (j && typeof j === "object") {
-            if (j.temps) blob.charts.temps.display = j.temps;
-            if (j.power) blob.charts.power.display = j.power;
-            if (j.energy) blob.charts.energy.display = j.energy;
-          }
-        }
-      } catch (_) { /* ignore */ }
-      try {
-        const raw = localStorage.getItem(CHART_STATUS_BANDS_KEY);
-        if (raw) {
-          const j = JSON.parse(raw);
-          if (j && typeof j === "object") {
-            if (j.temps) blob.charts.temps.status_bands = j.temps;
-            if (j.power) blob.charts.power.status_bands = j.power;
-          }
-        }
-      } catch (_) { /* ignore */ }
-      try {
-        const v = localStorage.getItem(CHART_SYNC_KEY);
-        if (v === "0" || v === "1") blob.chart_sync = v === "1";
-      } catch (_) { /* ignore */ }
-      return blob;
-    }
-
-    function dashboardServerLooksEmpty(cfg) {
-      if (!cfg || typeof cfg !== "object") return true;
-      const lay = cfg.layout || {};
-      const hasLayout =
-        (Array.isArray(lay.order) && lay.order.length > 0) ||
-        (Array.isArray(lay.hidden) && lay.hidden.length > 0);
-      const charts = cfg.charts || {};
-      const hasSeries = ["temps", "power", "energy"].some((k) => {
-        const s = charts[k] && charts[k].series;
-        return s && typeof s === "object" && Object.keys(s).length > 0;
-      });
-      const hasBind =
-        (charts.temps && charts.temps.circuit_id) ||
-        (charts.power && charts.power.miner_id) ||
-        (charts.energy && charts.energy.miner_id);
-      return !hasLayout && !hasSeries && !hasBind && !cfg.updated_ts;
-    }
-
     async function loadDashboardConfigFromServer() {
       try {
         const res = await fetch("/api/dashboard/config", { cache: "no-store" });
         const body = await res.json();
         if (!res.ok || body.ok === false) {
           throw new Error((body && body.error) || "HTTP " + res.status);
-        }
-        if (dashboardServerLooksEmpty(body)) {
-          const mig = collectLocalDashboardMigrateBlob();
-          const hasLocal =
-            (mig.layout &&
-              ((mig.layout.order && mig.layout.order.length) ||
-                (mig.layout.hidden && mig.layout.hidden.length))) ||
-            Object.keys(mig.charts.temps.series || {}).length ||
-            Object.keys(mig.charts.power.series || {}).length;
-          if (hasLocal) {
-            const saveRes = await fetch("/api/dashboard/config", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(mig),
-            });
-            const saved = await saveRes.json();
-            if (saveRes.ok && saved && saved.ok !== false) {
-              applyDashboardConfigObject(saved);
-              dashboardCfgLoaded = true;
-              try {
-                if (typeof applyDashLayout === "function") applyDashLayout();
-              } catch (_) { /* ignore */ }
-              return saved;
-            }
-          }
         }
         applyDashboardConfigObject(body);
         dashboardCfgLoaded = true;
@@ -19317,11 +19271,7 @@ function getUiLang() {
         } catch (_) { /* ignore */ }
         return body;
       } catch (e) {
-        console.warn("[dashboard] load failed, using local fallback", e);
-        // offline fallback: keep previous localStorage loaders
-        try {
-          loadDashLayoutFromLocalOnly();
-        } catch (_) { /* ignore */ }
+        console.warn("[dashboard] load failed — keep defaults until server is back", e);
         dashboardCfgLoaded = false;
         return null;
       }
@@ -20003,47 +19953,9 @@ function getUiLang() {
       };
     }
 
-    function loadDashLayoutFromLocalOnly() {
-      try {
-        const raw = localStorage.getItem(DASH_LAYOUT_KEY);
-        if (!raw) return;
-        const j = JSON.parse(raw);
-        if (!j || typeof j !== "object") return;
-        let order = Array.isArray(j.order) ? j.order.map(String) : [];
-        let hidden = Array.isArray(j.hidden) ? j.hidden.map(String) : [];
-        let half = Array.isArray(j.half) ? j.half.map(String) : [];
-        ({ order, hidden } = migrateDashHistoryWidget(order, hidden));
-        if (half.indexOf("history") >= 0) {
-          half = half.filter((id) => id !== "history");
-          if (half.indexOf("chart_temps") < 0) half.push("chart_temps");
-          if (half.indexOf("chart_power") < 0) half.push("chart_power");
-        }
-        DASH_DEFAULT_ORDER.forEach((id) => {
-          if (order.indexOf(id) < 0 && hidden.indexOf(id) < 0) order.push(id);
-        });
-        order = order.filter(
-          (id) =>
-            DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
-            isWeatherWidgetId(id) ||
-            isPowerWidgetId(id)
-        );
-        order = normalizeDashZoneOrder(order);
-        hidden = hidden.filter(
-          (id) =>
-            DASH_DEFAULT_ORDER.indexOf(id) >= 0 ||
-            isWeatherWidgetId(id) ||
-            isPowerWidgetId(id)
-        );
-        half = half.filter(
-          (id) => DASH_RESIZABLE[id] && DASH_DEFAULT_ORDER.indexOf(id) >= 0
-        );
-        dashLayout = { order, hidden, half };
-      } catch (_) { /* ignore */ }
-    }
-
     function loadDashLayout() {
-      // Prefer router config; local only as offline fallback before server load
-      if (!dashboardCfgLoaded) loadDashLayoutFromLocalOnly();
+      // Server config applied via loadDashboardConfigFromServer / applyDashboardConfigObject.
+      // Defaults stay in dashLayout until then.
     }
 
     function dashLayoutIsHalf(id) {
@@ -20123,10 +20035,7 @@ function getUiLang() {
     }
 
     function saveDashLayout() {
-      // mirror to localStorage as cache only; source of truth = router
-      try {
-        localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashLayout));
-      } catch (_) { /* ignore */ }
+      // source of truth = router (/api/dashboard/config)
       scheduleSaveDashboardConfig();
     }
 
@@ -20618,7 +20527,7 @@ function getUiLang() {
         if (dashEditMode) renderDashAddMenu();
         return;
       }
-      // extra power cards: remove entirely
+      // extra power cards: remove entirely (and persist full power_widgets set)
       if (isPowerWidgetId(id) && id !== "power") {
         dashLayout.order = (dashLayout.order || []).filter((x) => x !== id);
         dashLayout.hidden = (dashLayout.hidden || []).filter((x) => x !== id);
@@ -20626,7 +20535,11 @@ function getUiLang() {
         const board = document.getElementById("dash-board");
         const el = board && board.querySelector('.dash-item[data-dash-id="' + id + '"]');
         if (el) el.remove();
+        // Force immediate full replace on server (don't wait 450ms debounce only)
         saveDashLayout();
+        if (typeof persistDashboardConfig === "function") {
+          void persistDashboardConfig();
+        }
         applyDashLayout();
         if (dashEditMode) renderDashAddMenu();
         return;
@@ -23787,10 +23700,14 @@ function getUiLang() {
       const needleEl = document.getElementById("needle");
       if (needleEl) needleEl.style.left = pct + "%";
 
+      // Global page Dry Run banner retired — Dry Run is per-ASIC (power widget badge)
       const bannerDry = document.getElementById("banner-dry");
-      if (bannerDry) bannerDry.style.display = dry ? "flex" : "none";
+      if (bannerDry) {
+        bannerDry.hidden = true;
+        bannerDry.style.display = "none";
+      }
       const pillDry = document.getElementById("pill-dry");
-      if (pillDry) pillDry.style.display = dry ? "inline-flex" : "none";
+      if (pillDry) pillDry.style.display = "none";
       updateWouldApplyLabels(dry);
 
       // WARMUP only when mining is active (not Suspend)
@@ -24122,7 +24039,19 @@ function getUiLang() {
       const tstr = new Date().toLocaleTimeString();
       lastLiveStatusTime = tstr;
       try {
-        const res = await fetch("/api/live?t=" + Date.now(), { cache: "no-store" });
+        // Multi-live: optional context miner_id (detail / bind / first online)
+        let liveUrl = "/api/live?t=" + Date.now();
+        try {
+          const ctxMid =
+            typeof resolveContextMinerId === "function"
+              ? resolveContextMinerId()
+              : null;
+          if (ctxMid != null && String(ctxMid).trim()) {
+            liveUrl +=
+              "&miner_id=" + encodeURIComponent(String(ctxMid).trim());
+          }
+        } catch (_) { /* ignore */ }
+        const res = await fetch(liveUrl, { cache: "no-store" });
         let body = null;
         try {
           body = await res.json();
@@ -24167,7 +24096,7 @@ function getUiLang() {
         console.warn("recompute", e);
         markDashLiveReady();
       }
-      // Bound power widgets need fleet live slices for non-active miners
+      // Bound power widgets need fleet live slices for other miners
       try {
         if (typeof maybeRefreshFleetForPowerWidgets === "function") {
           void maybeRefreshFleetForPowerWidgets();
@@ -28087,7 +28016,7 @@ function getUiLang() {
           const res = await fetch("/api/miner/import", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ip: imp, make_active: false }),
+            body: JSON.stringify({ ip: imp }),
           });
           const body = await res.json();
           if (body.error) throw new Error(body.error);
@@ -28445,7 +28374,7 @@ function getUiLang() {
           live_host: body.live_host || null,
         };
         renderFleetTable();
-        // Power widgets bound to non-active miners need fleet live slices
+        // Power widgets bound to miners need fleet live slices
         try {
           if (typeof paintAllPowerWidgets === "function") {
             paintAllPowerWidgets(
@@ -28684,11 +28613,11 @@ function getUiLang() {
       const m = findMinerById(fleetCache.miners || [], mid);
       closeFleetCtx();
       menu.dataset.mid = mid != null ? String(mid) : "";
-      // disable Make active if already active
+      // Make active removed (equal multi-live peers)
       const actBtn = menu.querySelector('[data-ctx="active"]');
       if (actBtn) {
-        if (m && m.role === "active") actBtn.setAttribute("disabled", "disabled");
-        else actBtn.removeAttribute("disabled");
+        actBtn.hidden = true;
+        actBtn.style.display = "none";
       }
       menu.hidden = false;
       btn.classList.add("open");
@@ -29078,10 +29007,8 @@ function getUiLang() {
               )
             : m.vendor_logo || "";
         const trClass =
-          (m.role === "active" ? "fleet-row-active " : "") +
-          (st === "offline" || st === "unknown" ? "fleet-row-offline" : "");
-        const roleHtml =
-          m.role === "active" ? '<span class="cell-role">★ active</span>' : "";
+          st === "offline" || st === "unknown" ? "fleet-row-offline" : "";
+        const roleHtml = "";
 
         let tr = byId.get(id);
         // rebuild if missing or old layout (name column / pre name-in-model)
@@ -29304,27 +29231,8 @@ function getUiLang() {
 
     async function fleetDoAction(action, mid) {
       if (!mid) return;
-      if (action === "active") {
-        try {
-          const res = await fetch("/api/miner/managed", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "set_active", id: mid }),
-          });
-          const body = await res.json();
-          if (!res.ok || body.ok === false || body.error)
-            throw new Error((body && body.error) || "HTTP " + res.status);
-          if (typeof toastSuccess === "function") toastSuccess("Active → " + mid);
-          if (typeof loadMinerConfig === "function") {
-            try {
-              await loadMinerConfig();
-            } catch (_) { /* ignore */ }
-          }
-          await refreshFleetTable();
-          if (typeof refreshManagedTable === "function") void refreshManagedTable();
-        } catch (e) {
-          if (typeof toastError === "function") toastError(e.message);
-        }
+      // active / set_active / make_active removed (equal multi-live peers)
+      if (action === "active" || action === "set_active" || action === "make_active") {
         return;
       }
       if (action === "edit") {
@@ -29499,8 +29407,8 @@ function getUiLang() {
     }
 
     /**
-     * Richest live for miner detail: prefer full /api/live when this host is
-     * the active polled ASIC; else fleet row live slice.
+     * Richest live for miner detail: merge /api/live when host matches,
+     * else fleet row live slice. No "managed" role.
      */
     function minerDetailLiveSource(m) {
       if (!m) return null;
@@ -29527,9 +29435,7 @@ function getUiLang() {
           .toLowerCase();
       }
       const matchHost = !!(host && fullHost && host === fullHost);
-      const isActive = m.role === "active" || matchHost;
-      if (isActive && full && full.ok !== false) {
-        // full snapshot wins (temps catalog, upfreq, mode…)
+      if (matchHost && full && full.ok !== false) {
         return Object.assign({}, rowLive || {}, full);
       }
       return rowLive;
@@ -29736,20 +29642,50 @@ function getUiLang() {
       }
     }
 
-    /** Active managed miner id (for legacy /minerinfo · /chips · /pools redirect). */
-    function resolveActiveMinerId() {
+    /**
+     * Context miner for Overview /api/live (not product "active" role).
+     * Priority: detail open → power widget bind → chart power bind → first online → first enabled.
+     */
+    function resolveContextMinerId() {
+      if (selectedMinerId) return String(selectedMinerId);
+      try {
+        const pw =
+          dashboardPowerWidgets &&
+          dashboardPowerWidgets.power &&
+          dashboardPowerWidgets.power.miner_id;
+        if (pw != null && String(pw).trim()) return String(pw).trim();
+      } catch (_) { /* ignore */ }
+      try {
+        const cb =
+          dashboardChartBind &&
+          dashboardChartBind.power &&
+          dashboardChartBind.power.miner_id;
+        if (cb != null && String(cb).trim()) return String(cb).trim();
+      } catch (_) { /* ignore */ }
       const list =
         (fleetCache && fleetCache.miners) ||
         managedMinersCache ||
         [];
-      const active = list.find((m) => m && m.role === "active");
-      if (active && active.id != null) return String(active.id);
-      if (list.length === 1 && list[0] && list[0].id != null)
+      const online = list.find(
+        (m) =>
+          m &&
+          m.id != null &&
+          (m.online === true ||
+            (m.live && m.live.ok !== false && !m.live.error))
+      );
+      if (online) return String(online.id);
+      const en = list.find((m) => m && m.id != null && m.enabled !== false);
+      if (en) return String(en.id);
+      if (list.length && list[0] && list[0].id != null)
         return String(list[0].id);
-      return selectedMinerId ? String(selectedMinerId) : null;
+      return null;
+    }
+    /** @deprecated use resolveContextMinerId */
+    function resolveActiveMinerId() {
+      return resolveContextMinerId();
     }
 
-    /** Algo for current detail miner (or active) — for pool preset filter. */
+    /** Algo for current detail miner — for pool preset filter. */
     function resolveDetailMinerAlgo() {
       const mid = selectedMinerId || resolveActiveMinerId();
       const m = mid ? resolveMinerForDetail(mid) : null;
@@ -30235,7 +30171,6 @@ function getUiLang() {
         const bits = [host];
         if (model && model !== "—" && model !== name) bits.push(model);
         if (vendorName && vendorName !== "—") bits.push(vendorName);
-        if (m.role === "active") bits.push("★ active");
         subEl.textContent = bits.join(" · ");
       }
       if (stEl) {
@@ -30266,7 +30201,7 @@ function getUiLang() {
         }
       }
       if (actBtn) {
-        actBtn.disabled = m.role === "active";
+        actBtn.hidden = true;
       }
 
       // Live metrics summary grid
@@ -30430,7 +30365,7 @@ function getUiLang() {
           ) +
           minerDetailKvRow(
             L("miner_detail.role", "Role"),
-            m.role === "active" ? "active" : "standby"
+            m.enabled === false ? "off" : "on"
           ) +
           minerDetailKvRow(
             L("miner_detail.enabled", "Enabled"),
@@ -30701,11 +30636,7 @@ function getUiLang() {
         void fleetDoAction("edit", selectedMinerId);
       }
     });
-    document.getElementById("btn-miner-detail-active")?.addEventListener("click", () => {
-      if (selectedMinerId && typeof fleetDoAction === "function") {
-        void fleetDoAction("active", selectedMinerId);
-      }
-    });
+    /* btn-miner-detail-active removed */
     document.getElementById("btn-miner-detail-reboot")?.addEventListener("click", () => {
       if (selectedMinerId && typeof fleetDoAction === "function") {
         void fleetDoAction("reboot", selectedMinerId);
@@ -30714,12 +30645,10 @@ function getUiLang() {
     document.getElementById("btn-miner-detail-controls")?.addEventListener("click", async () => {
       const mid = selectedMinerId;
       if (!mid) return;
-      const m = resolveMinerForDetail(mid);
-      // Make active first so Miner tab shows this ASIC, then open controls
-      if (m && m.role !== "active" && typeof fleetDoAction === "function") {
-        await fleetDoAction("active", mid);
+      // Stay on this miner's detail — no "make active" hop
+      if (typeof setMinerDetailTab === "function") {
+        setMinerDetailTab("miner", { forceLoad: true });
       }
-      if (typeof activateTab === "function") activateTab("managed");
     });
 
     // Whatsminer power settings on /miners/{id}
@@ -31261,7 +31190,7 @@ function getUiLang() {
         tbody.innerHTML = miners
           .map((m) => {
             const id = m.id || "";
-            const role = m.role === "active" ? "★ active" : "standby";
+            const role = m.enabled === false ? "off" : "on";
             return (
               "<tr data-mp-id=\"" +
               escapeLogHtml(id) +
@@ -31310,11 +31239,6 @@ function getUiLang() {
               '" style="padding:4px 8px;font-size:0.75rem">' +
               escapeLogHtml(editL) +
               "</button> " +
-              (m.role === "active"
-                ? ""
-                : '<button type="button" class="btn" data-mp-active="' +
-                  escapeLogHtml(id) +
-                  '" style="padding:4px 8px;font-size:0.75rem">Make active</button> ') +
               '<button type="button" class="btn danger" data-mp-remove="' +
               escapeLogHtml(id) +
               '" style="padding:4px 8px;font-size:0.75rem">Remove</button>' +
@@ -31488,7 +31412,6 @@ function getUiLang() {
       const sub = document.getElementById("mp-edit-sub");
       if (sub) {
         sub.textContent =
-          (m.role === "active" ? "★ active · " : "standby · ") +
           vendorDisplayName(m.vendor) +
           " · " +
           coolingLabel(m.cooling) +
@@ -31937,7 +31860,6 @@ function getUiLang() {
             action: "add",
             host: host.trim(),
             vendor: vendor.trim().toLowerCase(),
-            make_active: true,
           }),
         });
         const body = await res.json();
@@ -31984,7 +31906,7 @@ function getUiLang() {
           const res = await fetch("/api/miner/import", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ip: imp, make_active: false }),
+            body: JSON.stringify({ ip: imp }),
           });
           const body = await res.json();
           if (body.error) throw new Error(body.error);
@@ -32029,21 +31951,7 @@ function getUiLang() {
         return;
       }
       if (act) {
-        try {
-          const res = await fetch("/api/miner/managed", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "set_active", id: act }),
-          });
-          const body = await res.json();
-          if (!res.ok || body.ok === false || body.error)
-            throw new Error((body && body.error) || "HTTP " + res.status);
-          toastSuccess("Active miner updated");
-          await loadMinerConfig();
-          await refreshManagedTable();
-        } catch (e) {
-          toastError(e.message);
-        }
+        // set_active removed — equal peers, no product "active" miner
         return;
       }
       if (rem) {
@@ -33322,10 +33230,7 @@ function getUiLang() {
     if (typeof isLogsSubtabActive === "function" && isLogsSubtabActive()) {
       void loadActionLog();
     }
-    document.getElementById("btn-dry-goto")?.addEventListener("click", () => {
-      if (typeof activateTab === "function") activateTab("managed");
-      document.getElementById("panel-dry-run")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    // Global Dry Run banner/button removed — use Miner → Circuit Dry Run (per-ASIC)
 
     // ─── System Info tab ────────────────────────────────────────────────────
     function fmtRouterBrand(r) {
@@ -33345,8 +33250,9 @@ function getUiLang() {
       return vendor + " " + name;
     }
     function fmtMinerBrand(m) {
-      if (!m || !m.miner_type) return "Whatsminer —";
-      const t = String(m.miner_type).trim();
+      if (!m) return "Whatsminer";
+      const t = String(m.miner_type || m.model_code || m.model || "").trim();
+      if (!t) return "Whatsminer";
       if (/^whatsminer/i.test(t)) return t;
       return "Whatsminer " + t;
     }
@@ -35572,8 +35478,8 @@ function getUiLang() {
         opt0.value = "";
         opt0.textContent =
           typeof t === "function"
-            ? t("dash.power_bind_none", "— active polled miner —")
-            : "— active polled miner —";
+            ? t("dash.power_bind_none", "— select miner —")
+            : "— select miner —";
         sel.appendChild(opt0);
         const miners =
           (managedMinersCache && managedMinersCache.length
@@ -35701,6 +35607,97 @@ function getUiLang() {
       );
     }
 
+    /**
+     * Per-ASIC Dry Run (DR) + heat zone (Z0…Z3 / Safety) on Power widget.
+     * Shown when the card is bound to a managed miner (or active fleet role).
+     */
+    function formatPowerZoneBadge(pol, r) {
+      const raw =
+        (pol && (pol.heat_zone_title || pol.heat_zone || pol.zone)) ||
+        (r && (r.heat_zone_title || r.heat_zone || r.zone)) ||
+        "";
+      let s = String(raw || "").trim();
+      if (!s) return null;
+      const low = s.toLowerCase();
+      if (
+        low === "critical" ||
+        low === "safety" ||
+        low.indexOf("safety") >= 0 ||
+        low.indexOf("crit") >= 0
+      ) {
+        return { text: "Safety", safety: true, title: s };
+      }
+      // normalize "z0" / "Z0 · High Heat" / "zone_z1" → Z0 / Z1
+      const m = s.match(/\bz\s*([0-3])\b/i) || s.match(/^([0-3])$/);
+      if (m) {
+        return { text: "Z" + m[1], safety: false, title: s };
+      }
+      if (/^z[0-3]/i.test(s)) {
+        return {
+          text: "Z" + s.charAt(1),
+          safety: false,
+          title: s,
+        };
+      }
+      // short label already like "Z1"
+      if (/^Z[0-3]$/i.test(s)) {
+        return { text: s.toUpperCase(), safety: false, title: s };
+      }
+      return { text: s.length > 10 ? s.slice(0, 10) : s, safety: false, title: s };
+    }
+
+    function updatePolicyBadgesOnCard(card, r, miner) {
+      if (!card) return;
+      const dryEl = card.querySelector('[data-bind="dryBadge"]');
+      const zoneEl = card.querySelector('[data-bind="zoneBadge"]');
+      const managed = !!(
+        miner &&
+        (miner.id != null || miner.enabled !== false)
+      );
+      // unbound primary card still "managed" if we have live policy for active ASIC
+      const hasPolicy =
+        (r && r.policy && typeof r.policy === "object") ||
+        (typeof live !== "undefined" &&
+          live &&
+          live.policy &&
+          typeof live.policy === "object");
+      const show = managed || hasPolicy;
+      const pol =
+        (r && r.policy) ||
+        (typeof live !== "undefined" && live && live.policy) ||
+        {};
+      // Dry Run — per-ASIC policy (not global page banner)
+      let dryOn = false;
+      if (pol && typeof pol.dry_run === "boolean") dryOn = !!pol.dry_run;
+      else if (r && typeof r.dry_run === "boolean") dryOn = !!r.dry_run;
+      if (dryEl) {
+        if (show && dryOn) {
+          dryEl.hidden = false;
+          dryEl.textContent = "DR";
+          dryEl.title =
+            typeof t === "function"
+              ? t("dash.badge_dry_run", "Dry Run — zones not written to ASIC")
+              : "Dry Run — zones not written to ASIC";
+        } else {
+          dryEl.hidden = true;
+          dryEl.textContent = "DR";
+        }
+      }
+      const z = formatPowerZoneBadge(pol, r);
+      if (zoneEl) {
+        if (show && z && z.text) {
+          zoneEl.hidden = false;
+          zoneEl.textContent = z.text;
+          zoneEl.title = z.title || z.text;
+          zoneEl.classList.toggle("is-zone-safety", !!z.safety);
+        } else {
+          zoneEl.hidden = true;
+          zoneEl.textContent = "—";
+          zoneEl.classList.remove("is-zone-safety");
+        }
+      }
+    }
+
     function updateUpfreqBadgeOnCard(card, r) {
       if (!card) return;
       const el = card.querySelector(
@@ -35765,27 +35762,20 @@ function getUiLang() {
               ) || findMinerById(managedMinersCache || [], mid)
             : null) || null;
         if (m && m.live) liveR = m.live;
-        // If bound miner is the active polled host, prefer full /api/live
+        // If host matches /api/live snapshot, merge full live
         try {
-          const host = m && m.host ? String(m.host).trim() : "";
-          const liveHost =
-            (fleetCache && fleetCache.live_host) ||
+          const host = m && m.host ? String(m.host).trim().split(":")[0] : "";
+          const liveHost = String(
             (typeof live !== "undefined" && live && (live.host || live.ip)) ||
-            null;
+              (fleetCache && fleetCache.live_host) ||
+              ""
+          )
+            .trim()
+            .split(":")[0];
           if (
             host &&
             liveHost &&
-            String(liveHost).trim() === host &&
-            typeof live !== "undefined" &&
-            live
-          ) {
-            liveR = live;
-          }
-          // role active + no fleet live yet
-          if (
-            !liveR &&
-            m &&
-            m.role === "active" &&
+            host === liveHost &&
             typeof live !== "undefined" &&
             live
           ) {
@@ -35793,16 +35783,20 @@ function getUiLang() {
           }
         } catch (_) { /* ignore */ }
       } else if (widgetId === "power") {
-        // primary unbound → active polled miner
-        liveR = defaultReading || (typeof live !== "undefined" ? live : null);
+        // unbound primary: prefer first fleet miner with live (no active role)
         try {
           if (fleetCache && fleetCache.miners && fleetCache.miners.length) {
             m =
-              fleetCache.miners.find((x) => x && x.role === "active") ||
+              fleetCache.miners.find((x) => x && x.live && x.live.ok !== false) ||
               fleetCache.miners.find((x) => x && x.live) ||
+              fleetCache.miners[0] ||
               null;
+            if (m && m.live) liveR = m.live;
           }
         } catch (_) { /* ignore */ }
+        if (!liveR) {
+          liveR = defaultReading || (typeof live !== "undefined" ? live : null);
+        }
       }
       return { miner: m, reading: liveR, miner_id: mid };
     }
@@ -36034,6 +36028,7 @@ function getUiLang() {
 
       updateWorkBadgeOnCard(card, r);
       updateUpfreqBadgeOnCard(card, r);
+      updatePolicyBadgesOnCard(card, r, m);
     }
 
     let _pwFleetSoftAt = 0;
@@ -36170,21 +36165,17 @@ function getUiLang() {
         backdrop.hidden = true;
         backdrop.innerHTML =
           '<div class="chart-series-modal" role="dialog" aria-modal="true">' +
-          '<h3 id="wx-widget-settings-title">' +
-          (typeof t === "function"
-            ? t("dash.weather_settings", "Weather city")
-            : "Weather city") +
-          "</h3>" +
-          '<p class="sub" data-i18n="dash.weather_settings_sub">City for this outdoor card. Default is the first circuit city (or site weather).</p>' +
+          '<h3 id="wx-widget-settings-title"></h3>' +
+          '<p class="sub" id="wx-widget-settings-sub"></p>' +
           '<div class="ac-wrap" style="margin-top:8px">' +
-          '<label class="field" style="margin:0"><span data-i18n="field.city_search">City search</span>' +
+          '<label class="field" style="margin:0"><span id="wx-widget-search-label"></span>' +
           '<input type="text" id="wx-widget-search" autocomplete="off" spellcheck="false" placeholder="Moscow / Москва" />' +
           "</label>" +
           '<div class="weather-results" id="wx-widget-results" hidden></div>' +
           "</div>" +
           '<p style="font-size:0.78rem;color:var(--muted);margin:10px 0 0" id="wx-widget-current">—</p>' +
           '<div class="modal-actions">' +
-          '<button type="button" class="btn" id="btn-wx-widget-cancel" data-i18n="btn.cancel">Cancel</button>' +
+          '<button type="button" class="btn" id="btn-wx-widget-cancel"></button>' +
           "</div></div>";
         document.body.appendChild(backdrop);
         backdrop.addEventListener("click", (e) => {
@@ -36193,7 +36184,7 @@ function getUiLang() {
         backdrop
           .querySelector("#btn-wx-widget-cancel")
           ?.addEventListener("click", () => closeWeatherWidgetSettings());
-        // system-wide city autocomplete
+        // system-wide city autocomplete (stores EN city + place_id via onSelect)
         bindCityAutocomplete("wx-widget-search", "wx-widget-results", {
           onSelect: (r) => {
             const bd = document.getElementById("wx-widget-settings-modal");
@@ -36205,34 +36196,62 @@ function getUiLang() {
         });
       }
       backdrop._wxWidgetId = widgetId;
+      // Apply current UI language every open (dynamic modal is not in static DOM)
+      const title = document.getElementById("wx-widget-settings-title");
+      if (title) {
+        title.textContent =
+          t("dash.weather_settings", "Weather city") +
+          (widgetId !== "weather" ? " · " + widgetId : "");
+      }
+      const sub = document.getElementById("wx-widget-settings-sub");
+      if (sub) {
+        sub.textContent = t(
+          "dash.weather_settings_sub",
+          "City for this outdoor card. Default is the first circuit city (or site weather)."
+        );
+      }
+      const lab = document.getElementById("wx-widget-search-label");
+      if (lab) lab.textContent = t("field.city_search", "City search");
+      const cancelBtn = document.getElementById("btn-wx-widget-cancel");
+      if (cancelBtn) cancelBtn.textContent = t("btn.cancel", "Cancel");
+
       const place =
         (dashboardWeatherWidgets && dashboardWeatherWidgets[widgetId]) ||
         defaultWeatherPlace();
+      // Prefer localized display from last weather fetch; storage city is English
+      const cached =
+        window.weatherWidgetDataCache && window.weatherWidgetDataCache[widgetId];
+      const displayCity =
+        (cached && (cached.city_display || cached.city)) ||
+        place.city ||
+        "—";
       const cur = document.getElementById("wx-widget-current");
       if (cur) {
+        // Localized name; if EN storage differs, append English in parens
+        let line = String(displayCity);
+        if (
+          place.city &&
+          displayCity &&
+          String(place.city).toLowerCase() !== String(displayCity).toLowerCase()
+        ) {
+          line = displayCity + " (" + place.city + ")";
+        }
         cur.textContent =
-          (place.city || "—") +
+          line +
           (place.latitude != null
             ? " · " +
               Number(place.latitude).toFixed(3) +
               ", " +
               Number(place.longitude).toFixed(3)
-            : "");
+            : "") +
+          (place.place_id != null ? " · id " + place.place_id : "");
       }
       const inp = document.getElementById("wx-widget-search");
-      if (inp) inp.value = place.city || "";
+      if (inp) inp.value = "";
       const box = document.getElementById("wx-widget-results");
       if (box) {
         box.hidden = true;
         box.innerHTML = "";
-      }
-      const title = document.getElementById("wx-widget-settings-title");
-      if (title) {
-        title.textContent =
-          (typeof t === "function"
-            ? t("dash.weather_settings", "Weather city")
-            : "Weather city") +
-          (widgetId !== "weather" ? " · " + widgetId : "");
       }
       backdrop.hidden = false;
     }
@@ -36782,18 +36801,17 @@ function getUiLang() {
             ? findMinerById(fleet, mid)
             : fleet.find((x) => x && String(x.id) === mid);
         const live = m && m.live ? m.live : null;
-        // active host full live
         let pw = null;
         if (live && live.power != null) pw = Number(live.power);
-        if (
-          !Number.isFinite(pw) &&
-          m &&
-          m.role === "active" &&
-          typeof live !== "undefined" &&
-          live &&
-          live.power != null
-        ) {
-          pw = Number(live.power);
+        // host match with /api/live snapshot
+        if (!Number.isFinite(pw) && m && typeof live !== "undefined" && live) {
+          try {
+            const h = String(m.host || "").split(":")[0].trim();
+            const lh = String(live.host || live.ip || "")
+              .split(":")[0]
+              .trim();
+            if (h && lh && h === lh && live.power != null) pw = Number(live.power);
+          } catch (_) { /* ignore */ }
         }
         if (Number.isFinite(pw) && pw >= 0) {
           P_W += pw;
@@ -36836,7 +36854,7 @@ function getUiLang() {
     }
 
     function resolveCircuitLive(c) {
-      // Prefer first bound miner with live, else active live
+      // Prefer first bound miner with fleet live; else host-match /api/live
       const ids = (c && Array.isArray(c.miner_ids) ? c.miner_ids : []).map(String);
       const fleet = (fleetCache && fleetCache.miners) || [];
       for (let i = 0; i < ids.length; i++) {
@@ -36845,8 +36863,16 @@ function getUiLang() {
             ? findMinerById(fleet, ids[i])
             : null;
         if (m && m.live) return m.live;
-        if (m && m.role === "active" && typeof live !== "undefined" && live)
-          return live;
+        if (m && typeof live !== "undefined" && live) {
+          try {
+            const h = String(m.host || "").split(":")[0].trim().toLowerCase();
+            const lh = String(live.host || live.ip || "")
+              .split(":")[0]
+              .trim()
+              .toLowerCase();
+            if (h && lh && h === lh) return live;
+          } catch (_) { /* ignore */ }
+        }
       }
       return typeof live !== "undefined" ? live : null;
     }
@@ -37444,7 +37470,18 @@ function getUiLang() {
           list.forEach((r) => {
             const b = document.createElement("button");
             b.type = "button";
-            const label = r.label || r.city || "—";
+            // Prefer bilingual label from API (e.g. "Москва (Moscow), RU")
+            let label = r.label || r.city || "—";
+            if (
+              !r.label &&
+              r.city_en &&
+              r.city &&
+              String(r.city_en).toLowerCase() !== String(r.city).toLowerCase()
+            ) {
+              label = r.city + " (" + r.city_en + ")";
+              if (r.admin1) label += ", " + r.admin1;
+              if (r.country) label += ", " + r.country;
+            }
             const sub =
               (r.timezone ? r.timezone + " · " : "") +
               Number(r.latitude).toFixed(3) +
@@ -37459,7 +37496,8 @@ function getUiLang() {
               "</span>";
             b.addEventListener("mousedown", (ev) => {
               ev.preventDefault();
-              inp.value = r.city || r.label || "";
+              // Keep localized name in the input; storage uses EN via canonicalize
+              inp.value = r.city || r.city_en || r.label || "";
               if (opts && typeof opts.onSelect === "function") opts.onSelect(r);
               hide();
             });
@@ -37897,7 +37935,7 @@ function getUiLang() {
             escapeLogHtml(m.host || "") +
             " · " +
             escapeLogHtml(cool) +
-            (m.role === "active" ? " · ★" : "") +
+            "" +
             "</span></label>"
           );
         })
@@ -43120,7 +43158,7 @@ function getUiLang() {
         const host = String(m.host || "").trim();
         const role = String(m.role || "").trim();
         let lab = alias && host ? alias + " · " + host : alias || host || id;
-        if (role === "active") lab += " ★";
+        
         const selAttr = id === want ? " selected" : "";
         html +=
           '<option value="' +

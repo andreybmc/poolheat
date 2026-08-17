@@ -7442,7 +7442,7 @@ def read_mining_work_snapshot(max_age_sec: float = 180.0) -> str | None:
 def read_mining_work_by_miner(
     miner_id: str | None, max_age_sec: float = 180.0
 ) -> str | None:
-    """Per-miner resume|suspend from mining_work.json by_miner map."""
+    """Per-miner resume|suspend from mining_work.json by_miner map only."""
     mid = str(miner_id or "").strip()
     if not mid:
         return None
@@ -7453,9 +7453,6 @@ def read_mining_work_by_miner(
         by = raw.get("by_miner") if isinstance(raw.get("by_miner"), dict) else {}
         ent = by.get(mid)
         if not isinstance(ent, dict):
-            # fallback: if this is the active miner, use top-level work
-            if str(raw.get("active_miner_id") or "").strip() == mid:
-                return read_mining_work_snapshot(max_age_sec=max_age_sec)
             return None
         try:
             ts = float(ent.get("ts") or 0)
@@ -7470,8 +7467,8 @@ def read_mining_work_by_miner(
 
 def _default_bind_miner_id() -> str:
     """
-    Soft-migration target: active managed miner, else sole enabled miner.
-    Empty if ambiguous / none.
+    Soft default when a single peer is unambiguous: sole enabled managed miner.
+    Multi-peer fleets return empty (caller must bind explicitly). No role=active.
     """
     try:
         managed = get_miners_managed()
@@ -7482,16 +7479,123 @@ def _default_bind_miner_id() -> str:
         for m in (managed.get("miners") or [])
         if isinstance(m, dict) and m.get("enabled", True)
     ]
-    if not miners:
-        return ""
-    for m in miners:
-        if str(m.get("role") or "").lower() == "active":
-            mid = str(m.get("id") or "").strip()
-            if mid:
-                return mid
     if len(miners) == 1:
         return str(miners[0].get("id") or "").strip()
     return ""
+
+
+def _first_enabled_managed() -> dict | None:
+    """First enabled managed peer (deep-poll / seed helper). Not product 'active'."""
+    try:
+        managed = get_miners_managed()
+    except Exception:
+        return None
+    for m in managed.get("miners") or []:
+        if isinstance(m, dict) and m.get("enabled", True) and str(m.get("host") or "").strip():
+            return m
+    return None
+
+
+def resolve_live_for_request(
+    *,
+    miner_id: str | None = None,
+    host: str | None = None,
+    max_age_sec: float = 180.0,
+) -> dict:
+    """
+    Equal multi-live resolve: fleet_live[host] preferred; live_cache only when
+    its host matches the chosen peer (deep-poll cache), never because HOST_MINER.
+    """
+    mid_q = str(miner_id or "").strip()
+    host_q = _fleet_host_key(host) if host else ""
+    fleet_map = _load_fleet_live_map(max_age_sec=max_age_sec)
+    managed_list: list[dict] = []
+    try:
+        managed_list = [
+            m
+            for m in (get_miners_managed().get("miners") or [])
+            if isinstance(m, dict) and m.get("enabled", True)
+        ]
+    except Exception:
+        managed_list = []
+
+    def _mid_of(m: dict) -> str:
+        return str(m.get("id") or "").strip()
+
+    def _host_of(m: dict) -> str:
+        return _fleet_host_key(m.get("host"))
+
+    # Map id → managed row
+    by_id: dict[str, dict] = {}
+    by_host: dict[str, dict] = {}
+    for m in managed_list:
+        i = _mid_of(m)
+        h = _host_of(m)
+        if i:
+            by_id[i] = m
+        if h:
+            by_host[h] = m
+
+    chosen_mid = mid_q
+    chosen_host = host_q
+    if chosen_mid and not chosen_host and chosen_mid in by_id:
+        chosen_host = _host_of(by_id[chosen_mid])
+    if chosen_host and not chosen_mid and chosen_host in by_host:
+        chosen_mid = _mid_of(by_host[chosen_host])
+
+    # No explicit target → first online in fleet, else first enabled
+    if not chosen_host and not chosen_mid:
+        for h, live in fleet_map.items():
+            if isinstance(live, dict) and live.get("ok") and not live.get("error"):
+                chosen_host = h
+                if h in by_host:
+                    chosen_mid = _mid_of(by_host[h])
+                break
+        if not chosen_host:
+            m0 = _first_enabled_managed()
+            if m0:
+                chosen_host = _host_of(m0)
+                chosen_mid = _mid_of(m0)
+
+    deep = hydrate_live_from_disk(max_age_sec=max_age_sec)
+    deep_ip = ""
+    if isinstance(deep, dict):
+        deep_ip = _fleet_host_key(_live_host_ip(deep) or deep.get("host"))
+
+    body: dict | None = None
+    if chosen_host and chosen_host in fleet_map:
+        fl = fleet_map[chosen_host]
+        if isinstance(fl, dict):
+            # Prefer healthy fleet; if fail stamp but deep cache is this host — use deep
+            fleet_ok = bool(fl.get("ok") and not fl.get("error"))
+            if fleet_ok:
+                body = dict(fl)
+            elif deep_ip and deep_ip == chosen_host and isinstance(deep, dict) and deep.get("ok"):
+                body = dict(deep)
+                body["source"] = body.get("source") or "live_cache"
+            else:
+                body = dict(fl)
+    if body is None and chosen_host and deep_ip and deep_ip == chosen_host and isinstance(deep, dict):
+        body = dict(deep)
+        body["source"] = body.get("source") or "live_cache"
+    if body is None and not chosen_host and isinstance(deep, dict) and deep.get("ok"):
+        # empty inventory but deep poller running
+        body = dict(deep)
+        chosen_host = deep_ip or _fleet_host_key(deep.get("host"))
+    if body is None:
+        body = {
+            "ok": False,
+            "error": "no live snapshot for peer",
+            "ts": datetime.now().isoformat(timespec="seconds"),
+            "host": chosen_host or "",
+        }
+
+    if chosen_host and not body.get("host"):
+        body["host"] = chosen_host
+    if chosen_mid:
+        body["miner_id"] = chosen_mid
+    body["multi_live"] = True
+    return body
 
 
 def _device_needs_miner_bind_migration(d: dict) -> bool:
@@ -11678,9 +11782,8 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         port = int(m.get("port") or vinfo.get("default_port") or 4028)
     except (TypeError, ValueError):
         port = int(vinfo.get("default_port") or 4028)
-    role = str(m.get("role") or "standby").strip().lower()
-    if role not in ("active", "standby"):
-        role = "standby"
+    # role field removed from product (was active|standby)
+    role = ""
     miner_type = str(m.get("miner_type") or m.get("type") or "").strip()
     model_code = str(
         m.get("model_code") or m.get("modelCode") or miner_type or ""
@@ -12012,13 +12115,17 @@ def get_miners_managed() -> dict:
             if not isinstance(jminers, list) or len(jminers) != len(clean):
                 need_mirror = True
             else:
-                def _act(ms):
+                # mirror when host set differs (no role=active — peers equal)
+                def _hosts(ms):
+                    out = []
                     for x in ms or []:
-                        if isinstance(x, dict) and str(x.get("role") or "") == "active":
-                            return str(x.get("host") or "").strip()
-                    return ""
+                        if isinstance(x, dict):
+                            h = str(x.get("host") or "").strip()
+                            if h:
+                                out.append(h)
+                    return sorted(out)
 
-                if _act(jminers) != _act(clean):
+                if _hosts(jminers) != _hosts(clean):
                     need_mirror = True
         if need_mirror and clean:
             _save_json_atomic(
@@ -12561,9 +12668,9 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
     Poll a single managed miner for fleet_live. Always returns (host, live)
     — never raises. Hard timeout so one dead/slow host cannot block the fleet.
 
-    Active host with a fresh live_cache (Go miner-poller) is reused — a second
-    TCP session to Whatsminer often hits "over max connect" and stamps offline
-    even though the miner is up (classic 192.168.1.10 sticky offline).
+    When Go deep-poller has a fresh live_cache for *this* host, reuse it —
+    a second TCP session to Whatsminer often hits "over max connect".
+    Match by host IP only (equal peers; not HOST_MINER / active role).
     """
     host = _fleet_host_key(m.get("host") if isinstance(m, dict) else "")
     if not host:
@@ -12573,21 +12680,19 @@ def _poll_one_managed_host(m: dict, *, timeout: float = 15.0) -> tuple[str, dict
     except (TypeError, ValueError):
         port = 4028
 
-    # Reuse fresh live_cache when this is the active ASIC host
+    # Reuse fresh live_cache when deep poller is focused on this peer host
     try:
-        active_ip = _fleet_host_key(HOST_MINER)
-        if host and active_ip and host == active_ip:
-            cached = hydrate_live_from_disk(max_age_sec=90.0)
-            if isinstance(cached, dict) and cached.get("ok"):
-                hip = _fleet_host_key(_live_host_ip(cached) or cached.get("host"))
-                if not hip or hip == host:
-                    out = dict(cached)
-                    out.setdefault("host", f"{host}:{port}")
-                    out["ok"] = True
-                    out.pop("error", None)
-                    out.pop("sticky_online", None)
-                    out["source"] = out.get("source") or "live_cache"
-                    return host, out
+        cached = hydrate_live_from_disk(max_age_sec=90.0)
+        if isinstance(cached, dict) and cached.get("ok"):
+            hip = _fleet_host_key(_live_host_ip(cached) or cached.get("host"))
+            if hip and hip == host:
+                out = dict(cached)
+                out.setdefault("host", f"{host}:{port}")
+                out["ok"] = True
+                out.pop("error", None)
+                out.pop("sticky_online", None)
+                out["source"] = out.get("source") or "live_cache"
+                return host, out
     except Exception:
         pass
 
@@ -12855,8 +12960,8 @@ def _poll_managed_fleet_live() -> None:
 
 def get_miners_fleet() -> dict:
     """
-    Managed inventory + live overlay.
-    Prefers multi-host fleet_live.json; falls back to single active live_cache.
+    Managed inventory + live overlay (equal multi-live peers).
+    Prefers fleet_live.json; merges deep live_cache only when host IPs match.
     """
     _seed_managed_from_active()
     managed = get_miners_managed()
@@ -12871,13 +12976,12 @@ def get_miners_fleet() -> dict:
                     live = dict(_cache)
         except Exception:
             live = None
-    live_ip = _fleet_host_key(_live_host_ip(live) or (HOST_MINER if live else ""))
-    # One slice for active live_cache (records 30m HR under live_ip when known)
+    # Deep poller cache host only (never invent from HOST_MINER)
+    live_ip = _fleet_host_key(_live_host_ip(live) or (live.get("host") if isinstance(live, dict) else ""))
     live_slice = (
         _fleet_live_slice(live, host=live_ip) if isinstance(live, dict) else None
     )
-    # Also accept live_cache ok even when fleet map has a fail stamp
-    active_live_ok = bool(
+    deep_live_ok = bool(
         isinstance(live, dict)
         and live.get("ok")
         and not live.get("error")
@@ -12892,16 +12996,13 @@ def get_miners_fleet() -> dict:
             continue
         row = dict(m)
         host = _fleet_host_key(m.get("host"))
-        role = str(m.get("role") or "standby")
-        # Prefer per-host fleet live, then active live_cache match.
-        # Important: multi-host poll can stamp ok:false (timeout) while the Go
-        # miner-poller still has a fresh live_cache for the *active* host —
-        # never let a failed fleet stamp permanently hide a healthy active live.
+        row["role"] = ""  # product: no active/standby role
+        # Prefer per-host fleet live, then deep live_cache when same host.
         host_live = fleet_map.get(host) if host else None
         match = bool(live_ip and host and host == live_ip)
-        active_ok = bool(
+        deep_ok = bool(
             match
-            and active_live_ok
+            and deep_live_ok
             and isinstance(live_slice, dict)
             and (live_slice.get("ok") is not False)
         )
@@ -12979,8 +13080,8 @@ def get_miners_fleet() -> dict:
             )
             if fleet_ok:
                 _apply_live_ok(host_live, sl)
-            elif active_ok:
-                # Recover from multi-poll timeout/offline stamp using active live
+            elif deep_ok:
+                # Recover from multi-poll fail stamp using deep live_cache for same host
                 _apply_live_ok(live if isinstance(live, dict) else {}, live_slice)
             else:
                 row["online"] = False
@@ -12993,24 +13094,21 @@ def get_miners_fleet() -> dict:
             rows.append(row)
             continue
         if match and live_slice and live_slice.get("ok"):
-            # no fleet_live row yet — still show active live_cache
+            # no fleet_live row yet — deep cache for this peer
             _apply_live_ok(live if isinstance(live, dict) else {}, live_slice)
         elif match and live_slice and not live_slice.get("ok"):
             row["online"] = False
             row["live"] = live_slice
             row["last_error"] = live_slice.get("error") or row.get("last_error")
-        elif role == "active":
-            # active but no fresh live
-            row["online"] = False
-            row["live"] = None
         else:
-            row["online"] = None  # unknown / not polled
+            row["online"] = None
             row["live"] = None
         rows.append(row)
     return {
         "ok": True,
         "miners": rows,
-        "live_host": live_ip or None,
+        "live_host": live_ip or None,  # deep-poll host if any (not product active)
+        "deep_poll_host": live_ip or None,
         "fleet_hosts": list(fleet_map.keys()),
         "summary": {
             "total": len(rows),
@@ -13032,14 +13130,10 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
         _normalize_managed_miner(m) for m in (miners or []) if isinstance(m, dict)
     ]
     clean = _assign_managed_ids(clean)
-    # exactly one active
-    actives = [i for i, m in enumerate(clean) if m.get("role") == "active"]
-    if not actives and clean:
-        clean[0]["role"] = "active"
-    elif len(actives) > 1:
-        for i, m in enumerate(clean):
-            if m.get("role") == "active" and i != actives[0]:
-                m["role"] = "standby"
+    # Product: no "active polled miner" — all managed peers are equal (fleet multi-poll)
+    for m in clean:
+        if isinstance(m, dict):
+            m["role"] = ""
 
     cols = (
         "id",
@@ -13088,7 +13182,7 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
                         int(m.get("port") or 4028),
                         str(m.get("password") if m.get("password") is not None else ""),
                         1 if m.get("enabled", True) else 0,
-                        str(m.get("role") or "standby"),
+                        "",
                         str(m.get("alias") or "")[:64],
                         str(m.get("name") or "")[:64],
                         str(m.get("cell") or "")[:64],
@@ -13202,7 +13296,7 @@ def _seed_managed_from_active() -> None:
                 "port": int(PORT_MINER or 4028),
                 "password": DEFAULT_API_PASSWORD or "admin",
                 "enabled": True,
-                "role": "active",
+                "role": "",
                 "alias": seed_name,
                 "name": seed_name,
                 "cell": "",
@@ -13265,7 +13359,7 @@ def import_discovered_miner(
         "port": port,
         "password": DEFAULT_API_PASSWORD or "admin",
         "enabled": True,
-        "role": "standby",
+        "role": "",
         "alias": display[:64],
         "name": display[:64],
         "cell": "",
@@ -13280,8 +13374,8 @@ def import_discovered_miner(
         "imported_at": datetime.now().isoformat(timespec="seconds"),
     }
     if prev is not None:
-        # keep role/password/inventory labels if already managed
-        row["role"] = prev.get("role") or "standby"
+        # keep password/inventory labels if already managed
+        row["role"] = ""
         if prev.get("password"):
             row["password"] = prev["password"]
         for k in (
@@ -13299,17 +13393,7 @@ def import_discovered_miner(
         managed[idx] = row
     else:
         managed.append(row)
-    if make_active or not any(m.get("role") == "active" for m in managed):
-        for m in managed:
-            m["role"] = "standby"
-        row["role"] = "active"
-        # sync active connection
-        apply_miner_settings(
-            host=row["host"],
-            port=int(row["port"]),
-            password=row.get("password"),
-            persist=True,
-        )
+    # make_active ignored — product has no active polled miner
     return _save_miners_managed(managed)
 
 
@@ -13319,7 +13403,7 @@ def add_managed_manual(
     port: int | None = None,
     vendor: str = "whatsminer",
     password: str | None = None,
-    make_active: bool = True,
+    make_active: bool = False,
     alias: str | None = None,
 ) -> dict:
     host = str(host or "").strip()
@@ -13344,7 +13428,7 @@ def add_managed_manual(
         "port": port,
         "password": password or DEFAULT_API_PASSWORD or "admin",
         "enabled": True,
-        "role": "standby",
+        "role": "",
         "alias": display[:64],
         "name": display[:64],
         "cell": "",
@@ -13356,16 +13440,7 @@ def add_managed_manual(
         "imported_at": datetime.now().isoformat(timespec="seconds"),
     }
     managed.append(row)
-    if make_active or not any(m.get("role") == "active" for m in managed):
-        for m in managed:
-            m["role"] = "standby"
-        row["role"] = "active"
-        apply_miner_settings(
-            host=row["host"],
-            port=int(row["port"]),
-            password=row.get("password"),
-            persist=True,
-        )
+    # make_active ignored — no active polled miner in product
     return _save_miners_managed(managed)
 
 
@@ -13467,45 +13542,25 @@ def update_managed(mid: str, fields: dict | None) -> dict:
     if "algo" not in fields and "algorithm" not in fields:
         if any(k in fields for k in ("model", "model_code", "miner_type", "vendor")):
             found["algo"] = ""
-    was_active = found.get("role") == "active"
     out = _save_miners_managed(managed)
-    # if active connection fields changed — re-apply
-    if was_active and any(k in fields for k in ("host", "port", "password")):
-        try:
-            apply_miner_settings(
-                host=found.get("host"),
-                port=int(found.get("port") or 4028),
-                password=found.get("password"),
-                persist=True,
-            )
-        except Exception as e:
-            print(f"[managed] re-apply after edit: {e}", flush=True)
     out["updated"] = mid
     out["ok"] = True
     return out
 
 
 def set_managed_active(mid: str) -> dict:
+    """Removed product concept — kept as no-op so old clients don't 500."""
     mid = str(mid or "").strip()
     managed = list(get_miners_managed().get("miners") or [])
-    found = None
-    for m in managed:
-        if str(m.get("id") or "") == mid:
-            found = m
-            m["role"] = "active"
-            m["enabled"] = True
-        else:
-            if m.get("role") == "active":
-                m["role"] = "standby"
-    if not found:
+    if not any(str(m.get("id") or "") == mid for m in managed):
         raise ValueError("miner not found")
-    apply_miner_settings(
-        host=found["host"],
-        port=int(found.get("port") or 4028),
-        password=found.get("password"),
-        persist=True,
-    )
-    return _save_miners_managed(managed)
+    # clear any leftover role flags
+    for m in managed:
+        m["role"] = ""
+    out = _save_miners_managed(managed)
+    out["ok"] = True
+    out["note"] = "active polled miner removed from product"
+    return out
 
 
 def remove_managed(mid: str) -> dict:
@@ -13516,17 +13571,6 @@ def remove_managed(mid: str) -> dict:
     managed = [m for m in before if str(m.get("id") or "") != mid]
     if len(managed) == len(before):
         raise ValueError(f"miner not found: {mid}")
-    if managed and not any(m.get("role") == "active" for m in managed):
-        managed[0]["role"] = "active"
-        try:
-            apply_miner_settings(
-                host=managed[0]["host"],
-                port=int(managed[0].get("port") or 4028),
-                password=managed[0].get("password"),
-                persist=True,
-            )
-        except Exception as e:
-            print(f"[managed] promote after remove: {e}", flush=True)
     out = _save_miners_managed(managed)
     out["removed"] = mid
     out["ok"] = True
@@ -16656,30 +16700,26 @@ def weather_search_cities(
                 pid_i = int(pid) if pid is not None else None
             except (TypeError, ValueError):
                 pid_i = None
+            name = r.get("name") or q
+            admin1 = r.get("admin1") or ""
+            country = r.get("country_code") or r.get("country") or ""
             out.append(
                 {
-                    "city": r.get("name") or q,
-                    "country": r.get("country_code") or r.get("country") or "",
-                    "admin1": r.get("admin1") or "",
+                    "city": name,
+                    "country": country,
+                    "admin1": admin1,
                     "latitude": lat,
                     "longitude": lon,
                     "timezone": r.get("timezone") or "auto",
                     "place_id": pid_i,
                     "id": pid_i,  # alias for clients
-                    "label": ", ".join(
-                        x
-                        for x in [
-                            r.get("name"),
-                            r.get("admin1"),
-                            r.get("country_code") or r.get("country"),
-                        ]
-                        if x
-                    ),
+                    "label": ", ".join(x for x in [name, admin1, country] if x),
                 }
             )
         return out
 
     last_err: Exception | None = None
+    hits: list[dict] = []
     for lang in langs:
         url = (
             "https://geocoding-api.open-meteo.com/v1/search?"
@@ -16689,15 +16729,39 @@ def weather_search_cities(
         )
         try:
             data = _http_get_json(url)
-            out = _parse(data if isinstance(data, dict) else {})
-            if out:
-                return out
+            hits = _parse(data if isinstance(data, dict) else {})
+            if hits:
+                break
         except Exception as e:
             last_err = e
             continue
-    if last_err is not None:
-        raise last_err
-    return []
+    if not hits:
+        if last_err is not None:
+            raise last_err
+        return []
+
+    # When UI lang ≠ English, attach English city name for bilingual hints
+    # and storage-friendly city_en (UI still stores EN via place_id).
+    if not str(lang0).startswith("en"):
+        for row in hits:
+            pid = row.get("place_id")
+            if pid is None:
+                continue
+            en = weather_place_by_id(pid, "en")
+            if not en or not en.get("city"):
+                continue
+            city_en = str(en["city"])
+            row["city_en"] = city_en
+            loc = str(row.get("city") or "")
+            if loc and city_en and loc.casefold() != city_en.casefold():
+                # "Москва (Moscow), admin, RU"
+                parts = [f"{loc} ({city_en})"]
+                if row.get("admin1"):
+                    parts.append(str(row["admin1"]))
+                if row.get("country"):
+                    parts.append(str(row["country"]))
+                row["label"] = ", ".join(parts)
+    return hits
 
 
 # place_id → {lang: {city, country, admin1, ...}} short TTL cache
@@ -17570,15 +17634,34 @@ def _normalize_dashboard_cfg(raw: dict | None) -> dict:
                 plon = float(place.get("longitude"))
             except (TypeError, ValueError):
                 continue
-            out_ww[sid] = {
-                "city": str(place.get("city") or "").strip()[:80],
-                "country": str(place.get("country") or "").strip()[:8],
-                "admin1": str(place.get("admin1") or "").strip()[:64],
-                "latitude": plat,
-                "longitude": plon,
-                "timezone": str(place.get("timezone") or "auto").strip()[:64]
+            # Store English city + place_id so UI can localize on language switch
+            canon = weather_canonicalize_place(
+                city=place.get("city"),
+                country=place.get("country"),
+                admin1=place.get("admin1"),
+                latitude=plat,
+                longitude=plon,
+                timezone=place.get("timezone"),
+                place_id=place.get("place_id", place.get("id")),
+            )
+            if canon.get("latitude") is None or canon.get("longitude") is None:
+                continue
+            row = {
+                "city": str(canon.get("city") or "").strip()[:80],
+                "country": str(canon.get("country") or "").strip()[:8],
+                "admin1": str(canon.get("admin1") or "").strip()[:64],
+                "latitude": float(canon["latitude"]),
+                "longitude": float(canon["longitude"]),
+                "timezone": str(canon.get("timezone") or "auto").strip()[:64]
                 or "auto",
             }
+            pid = canon.get("place_id")
+            if pid is not None:
+                try:
+                    row["place_id"] = int(pid)
+                except (TypeError, ValueError):
+                    pass
+            out_ww[sid] = row
         base["weather_widgets"] = out_ww
     pw = raw.get("power_widgets")
     if isinstance(pw, dict):
@@ -17687,7 +17770,7 @@ def save_dashboard_cfg(req: dict) -> dict:
         if "chart_sync" in req:
             cur["chart_sync"] = bool(req.get("chart_sync"))
         if "weather_widgets" in req and isinstance(req.get("weather_widgets"), dict):
-            # merge / replace per-id places
+            # merge / replace per-id places (English city + place_id)
             ww = dict(cur.get("weather_widgets") or {})
             for wid, place in (req.get("weather_widgets") or {}).items():
                 sid = str(wid or "").strip()
@@ -17703,24 +17786,43 @@ def save_dashboard_cfg(req: dict) -> dict:
                     plon = float(place.get("longitude"))
                 except (TypeError, ValueError):
                     continue
-                ww[sid] = {
-                    "city": str(place.get("city") or "").strip()[:80],
-                    "country": str(place.get("country") or "").strip()[:8],
-                    "admin1": str(place.get("admin1") or "").strip()[:64],
-                    "latitude": plat,
-                    "longitude": plon,
-                    "timezone": str(place.get("timezone") or "auto").strip()[:64]
+                canon = weather_canonicalize_place(
+                    city=place.get("city"),
+                    country=place.get("country"),
+                    admin1=place.get("admin1"),
+                    latitude=plat,
+                    longitude=plon,
+                    timezone=place.get("timezone"),
+                    place_id=place.get("place_id", place.get("id")),
+                )
+                if canon.get("latitude") is None or canon.get("longitude") is None:
+                    continue
+                row = {
+                    "city": str(canon.get("city") or "").strip()[:80],
+                    "country": str(canon.get("country") or "").strip()[:8],
+                    "admin1": str(canon.get("admin1") or "").strip()[:64],
+                    "latitude": float(canon["latitude"]),
+                    "longitude": float(canon["longitude"]),
+                    "timezone": str(canon.get("timezone") or "auto").strip()[:64]
                     or "auto",
                 }
+                pid = canon.get("place_id")
+                if pid is not None:
+                    try:
+                        row["place_id"] = int(pid)
+                    except (TypeError, ValueError):
+                        pass
+                ww[sid] = row
             cur["weather_widgets"] = ww
         if "power_widgets" in req and isinstance(req.get("power_widgets"), dict):
-            pww = dict(cur.get("power_widgets") or {})
+            # Full replace (not merge): client owns the set of cards.
+            # Merge previously kept deleted power_2 forever after UI × hide.
+            pww: dict = {}
             for wid, conf in (req.get("power_widgets") or {}).items():
                 sid = str(wid or "").strip()
                 if not (sid == "power" or sid.startswith("power_")):
                     continue
                 if conf is None:
-                    pww.pop(sid, None)
                     continue
                 if not isinstance(conf, dict):
                     continue
@@ -17730,6 +17832,8 @@ def save_dashboard_cfg(req: dict) -> dict:
                         str(mid).strip() if mid not in (None, "") else None
                     )
                 }
+            if "power" not in pww:
+                pww["power"] = {"miner_id": None}
             cur["power_widgets"] = pww
         if "thermal_widgets" in req and isinstance(req.get("thermal_widgets"), dict):
             tw = dict(cur.get("thermal_widgets") or {})
@@ -19454,14 +19558,6 @@ def _resolve_managed_id_from_live(live: dict | None) -> str | None:
         except Exception:
             if mh and hip and mh.split(":")[0] == hip and m.get("id") is not None:
                 return str(m.get("id")).strip()
-    # active fallback
-    try:
-        for m in managed:
-            if isinstance(m, dict) and str(m.get("role") or "").lower() == "active":
-                if m.get("id") is not None:
-                    return str(m.get("id")).strip()
-    except Exception:
-        pass
     return None
 
 
@@ -20650,14 +20746,9 @@ def resolve_energy_meter_id(
     if want != VIRTUAL_METER_ID and fallback_legacy:
         # historical samples lived on virtual_miner before per-miner meters
         if _energy_sample_count(want) == 0 and _energy_sample_count(VIRTUAL_METER_ID) > 0:
-            # only fall back when this miner is the active one
+            # sole enabled peer may still read legacy virtual meter history
             try:
-                active = None
-                for m in (get_miners_managed().get("miners") or []):
-                    if isinstance(m, dict) and str(m.get("role") or "").lower() == "active":
-                        active = str(m.get("id") or "").strip()
-                        break
-                if active and str(miner_id or "").strip() == active:
+                if _default_bind_miner_id() and str(miner_id or "").strip() == _default_bind_miner_id():
                     return VIRTUAL_METER_ID
             except Exception:
                 pass
@@ -40392,78 +40483,38 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _api_live(self) -> None:
         """
-        Live snapshot for the UI.
+        Live snapshot for the UI (multi-live peers).
 
-        Critical: never hold ``_cache_lock`` across ``fetch_live()`` (miner I/O
-        can take many seconds). Concurrent clients share a single in-flight
-        poll; if it is slow, return last-good cache quickly so the UI does not
-        look like the service is down.
+        Query: optional ``miner_id`` / ``host`` / ``id`` selects a managed peer.
+        Without params: first online fleet peer, else deep live_cache host match.
+        Serve never opens ASIC TCP — reads fleet_live + live_cache only.
         """
         global _cache, _cache_ts, _live_fetch_future
-        now = time.time()
-        body: dict | None = None
-        stale: dict | None = None
-        stale_age = 0.0
-
-        # Prefer disk snapshot from miner-poller process (keeps UI off :4028)
-        disk_live = hydrate_live_from_disk(max_age_sec=LIVE_DISK_MAX_AGE_SEC)
-        if isinstance(disk_live, dict) and disk_live.get("ok"):
-            body = dict(disk_live)
-
-        with _cache_lock:
-            if body is None and (
-                _cache is not None
-                and (now - _cache_ts) < CACHE_TTL
-                and _cache.get("ok")
-            ):
-                body = dict(_cache)
-            elif body is None and _cache is not None:
-                stale = dict(_cache)
-                stale_age = max(0.0, now - float(_cache_ts or 0))
-
-        if body is None:
-            # Miner-poller owns ASIC polls when running — do not double-hit :4028
-            if miner_poller_process_alive():
-                disk2 = hydrate_live_from_disk(max_age_sec=LIVE_STALE_MAX_SEC)
-                if isinstance(disk2, dict) and disk2.get("ok"):
-                    body = dict(disk2)
-                    body["stale"] = True
-                    body["error"] = "waiting for miner-poller snapshot"
-                elif stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
-                    body = dict(stale)
-                    body["stale"] = True
-                    body["stale_age_sec"] = round(stale_age, 1)
-                else:
-                    body = {
-                        "ok": False,
-                        "error": "miner-poller has no live snapshot yet",
-                        "ts": datetime.now().isoformat(timespec="seconds"),
-                        "host": f"{HOST_MINER}:{PORT_MINER}",
-                    }
-            else:
-                # Poller not running — serve does not open ASIC TCP.
-                if stale and stale.get("ok") and stale_age <= LIVE_STALE_MAX_SEC:
-                    body = dict(stale)
-                    body["stale"] = True
-                    body["error"] = "miner-poller not running · last good snapshot"
-                    body["stale_age_sec"] = round(stale_age, 1)
-                else:
-                    body = {
-                        "ok": False,
-                        "error": (
-                            "miner-poller not running — start poolheat-miner-poller "
-                            "(serve does not open ASIC TCP)"
-                        ),
-                        "ts": datetime.now().isoformat(timespec="seconds"),
-                        "host": f"{HOST_MINER}:{PORT_MINER}",
-                    }
+        qs = parse_qs(urlparse(self.path).query)
+        mid = (qs.get("miner_id") or qs.get("id") or [None])[0]
+        host_q = (qs.get("host") or qs.get("ip") or [None])[0]
+        try:
+            body = resolve_live_for_request(
+                miner_id=str(mid).strip() if mid else None,
+                host=str(host_q).strip() if host_q else None,
+                max_age_sec=float(LIVE_STALE_MAX_SEC or 180),
+            )
+        except Exception as e:
+            body = {
+                "ok": False,
+                "error": str(e)[:200],
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "host": "",
+                "multi_live": True,
+            }
 
         if not isinstance(body, dict):
             body = {
                 "ok": False,
                 "error": "no live data",
                 "ts": datetime.now().isoformat(timespec="seconds"),
-                "host": f"{HOST_MINER}:{PORT_MINER}",
+                "host": "",
+                "multi_live": True,
             }
 
         # ASIC I/O (incl. liquid V3) is miner-poller only — serve never hits :4028/:4433 for live.

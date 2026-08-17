@@ -24,7 +24,8 @@ func Run(s Settings) error {
 
 	// Seed managed inventory from single-host config if empty.
 	EnsureManagedFromSettings(s.DataDir, s)
-	ApplyActiveToSettings(s.DataDir, &s)
+	// Deep-poll target = first enabled managed (IPC/chipmap focus), not product "active".
+	ApplyPrimaryToSettings(s.DataDir, &s)
 
 	hostLabel := fmt.Sprintf("%s:%d", s.Host, s.Port)
 	log.Printf("[miner-poller] go pid=%d data=%s miner=%s interval=%ds",
@@ -41,7 +42,7 @@ func Run(s Settings) error {
 		t0 := time.Now()
 		// reload host/interval each tick (config may change via UI)
 		s = LoadSettings()
-		ApplyActiveToSettings(s.DataDir, &s)
+		ApplyPrimaryToSettings(s.DataDir, &s)
 		hostLabel = fmt.Sprintf("%s:%d", s.Host, s.Port)
 
 		// Manual network scan (does not block long-term — runs to completion then continues).
@@ -97,12 +98,13 @@ func Run(s Settings) error {
 				work = "suspend"
 			}
 			mid, mhost := "", s.Host
-			if am := ActiveManaged(s.DataDir); am != nil {
+			if am := FirstEnabledManaged(s.DataDir); am != nil {
 				mid = strings.TrimSpace(am.ID.String())
 				if am.Host != "" {
 					mhost = am.Host
 				}
 			}
+			// by_miner[id] only; top-level work is a mirror for legacy readers
 			if err := WriteMiningWorkEx(s.DataDir, work, "miner-poller", mid, mhost); err != nil {
 				log.Printf("[miner-poller] mining_work: %v", err)
 			}

@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// PublishLive writes live_cache.json (same shape as Python publish_live_snapshot).
-// When live is OK, also merges this host into fleet_live.json so a multi-host
-// poll timeout cannot keep the active miner stuck offline in the fleet table.
+// PublishLive writes live_cache.json (deep-poll cache for this host).
+// When live is OK (or fail), also merges this host into fleet_live.json so a
+// multi-host poll timeout cannot stamp this peer offline while deep poll is fine.
 func PublishLive(dataDir string, live map[string]any, host string, pid int) error {
 	if live == nil {
 		return nil
@@ -146,17 +146,18 @@ func WriteMiningWorkEx(dataDir string, work string, source string, minerID strin
 			"host": host,
 		}
 	}
-	activeID := mid
-	if activeID == "" {
+	// Keep active_miner_id as last-written mirror only (deprecated; by_miner is source of truth)
+	lastID := mid
+	if lastID == "" {
 		if s, ok := prev["active_miner_id"].(string); ok {
-			activeID = strings.TrimSpace(s)
+			lastID = strings.TrimSpace(s)
 		}
 	}
 	payload := map[string]any{
 		"work":            nil,
 		"ts":              now,
 		"source":          source,
-		"active_miner_id": activeID,
+		"active_miner_id": lastID, // deprecated mirror
 		"by_miner":        by,
 	}
 	if w != "" {
