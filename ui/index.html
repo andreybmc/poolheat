@@ -15019,7 +15019,7 @@ function getUiLang() {
     }
 
     /**
-     * Canonical path: /en/dashboard · /ru/miners/managed · /ru/miners/{id} · /ru/circuits/{id}
+     * Canonical path: /en/dashboard · /ru/miners/managed · /ru/miners/{id} · /ru/circuits/{n}
      * Bare "miners" normalizes to managed subtab.
      * opts.circuitId → /{lang}/circuits/{id}
      * opts.minerId → /{lang}/miners/{id}
@@ -15292,11 +15292,34 @@ function getUiLang() {
       }
       if (tabId === "dash") {
         try {
-          if (typeof loadHistoryCharts === "function") loadHistoryCharts();
-          if (typeof chartTemp !== "undefined" && chartTemp) chartTemp.resize();
-          if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
+          // Avoid re-fetching history on every Overview click (Peak: history is heavy).
+          // Use window flag only — histPoints is declared later (avoid TDZ on first route).
+          if (
+            typeof loadHistoryCharts === "function" &&
+            !window.__dashHistoryLoaded
+          ) {
+            void loadHistoryCharts(null, null, { light: true });
+          } else {
+            if (typeof chartTemp !== "undefined" && chartTemp) chartTemp.resize();
+            if (typeof chartPower !== "undefined" && chartPower) chartPower.resize();
+            if (typeof renderCharts === "function" && window.__dashHistoryLoaded) {
+              try {
+                renderCharts();
+              } catch (_) { /* ignore */ }
+            }
+          }
           if (typeof bindEnergyChartControls === "function") bindEnergyChartControls();
-          if (typeof loadEnergyChart === "function") void loadEnergyChart();
+          // Energy chart only if widget visible / not yet loaded
+          if (
+            typeof loadEnergyChart === "function" &&
+            !window.__dashEnergyLoaded &&
+            typeof dashLayoutIsHidden === "function" &&
+            !dashLayoutIsHidden("chart_energy")
+          ) {
+            void loadEnergyChart().then(() => {
+              window.__dashEnergyLoaded = true;
+            });
+          }
           if (typeof resizeEnergyCharts === "function") {
             requestAnimationFrame(() => resizeEnergyCharts());
           }
@@ -20335,6 +20358,72 @@ function getUiLang() {
     }
 
     /**
+     * DOM order must stay widgets… then charts… (never power under charts).
+     * Packs are flattened first; non-.dash-item nodes stay at the end.
+     */
+    function enforceDashZoneDomOrder(board) {
+      if (!board) return;
+      flattenDashChartPacks(board);
+      const widgets = [];
+      const charts = [];
+      const other = [];
+      Array.from(board.children).forEach((ch) => {
+        if (!ch || !ch.getAttribute) {
+          other.push(ch);
+          return;
+        }
+        if (!ch.classList || !ch.classList.contains("dash-item")) {
+          other.push(ch);
+          return;
+        }
+        const id = ch.getAttribute("data-dash-id") || "";
+        if (id && isDashChartZoneId(id)) charts.push(ch);
+        else widgets.push(ch);
+      });
+      widgets.concat(charts).concat(other).forEach((el) => {
+        try {
+          board.appendChild(el);
+        } catch (_) { /* ignore */ }
+      });
+    }
+
+    /**
+     * Insert a metric widget before the charts band (never board tail after pack).
+     */
+    function insertDashMetricWidget(board, item) {
+      if (!board || !item) return;
+      let lastWidget = null;
+      let firstChart = null;
+      Array.from(board.children).forEach((ch) => {
+        if (!ch || ch === item) return;
+        if (ch.classList && ch.classList.contains("dash-charts-pack")) {
+          if (!firstChart) firstChart = ch;
+          return;
+        }
+        if (!ch.classList || !ch.classList.contains("dash-item")) return;
+        const id = ch.getAttribute("data-dash-id") || "";
+        if (id && isDashChartZoneId(id)) {
+          if (!firstChart) firstChart = ch;
+        } else {
+          lastWidget = ch;
+        }
+      });
+      if (lastWidget && lastWidget.parentNode === board) {
+        if (lastWidget.nextSibling) {
+          board.insertBefore(item, lastWidget.nextSibling);
+        } else {
+          board.appendChild(item);
+        }
+        return;
+      }
+      if (firstChart) {
+        board.insertBefore(item, firstChart);
+        return;
+      }
+      board.appendChild(item);
+    }
+
+    /**
      * Pack consecutive narrow (half) band widgets into 2-col column-major grid.
      * Includes half charts and half errors. Full [N] breaks the run.
      *
@@ -20342,7 +20431,8 @@ function getUiLang() {
      */
     function packDashHalfCharts(board) {
       if (!board) return;
-      flattenDashChartPacks(board);
+      // Keep power/weather/… above charts even if something appended to board tail
+      enforceDashZoneDomOrder(board);
       // 1-col viewport: keep linear top→bottom (no pack)
       const narrow =
         typeof window.matchMedia === "function" &&
@@ -20437,10 +20527,10 @@ function getUiLang() {
         items[id] = el;
         ensureDashItemTools(el);
         applyDashItemSpan(el, id);
-        // clear any stale inline grid placement from older logic
+        // clear pack !important placement ("" does not remove setProperty important)
         if (el.style) {
-          el.style.gridColumn = "";
-          el.style.gridRow = "";
+          el.style.removeProperty("grid-column");
+          el.style.removeProperty("grid-row");
         }
       });
       // ensure every known widget is in order exactly once; zones never interleave
@@ -20451,8 +20541,17 @@ function getUiLang() {
       order.forEach((id) => {
         if (items[id]) board.appendChild(items[id]);
       });
+      // orphans: widgets before charts band, charts at end (never power after pack)
       Object.keys(items).forEach((id) => {
-        if (order.indexOf(id) < 0) board.appendChild(items[id]);
+        if (order.indexOf(id) >= 0) return;
+        const el = items[id];
+        if (!el) return;
+        if (isDashChartZoneId(id)) board.appendChild(el);
+        else if (typeof insertDashMetricWidget === "function") {
+          insertDashMetricWidget(board, el);
+        } else {
+          board.appendChild(el);
+        }
       });
       // visibility + separate order badges per zone (widgets 1…n, charts 1…m)
       let widgetN = 0;
@@ -20486,7 +20585,10 @@ function getUiLang() {
         const el = items[id];
         if (el) {
           el.removeAttribute("data-order-n");
-          el.removeAttribute("data-order-zone");
+          el.setAttribute(
+            "data-order-zone",
+            isDashChartZoneId(id) ? "charts" : "widgets"
+          );
         }
       });
       // half charts: column-major pack from linear order (charts zone only)
@@ -21036,9 +21138,13 @@ function getUiLang() {
         window.addEventListener("resize", () => {
           if (t) clearTimeout(t);
           t = setTimeout(() => {
-            const board = document.getElementById("dash-board");
-            if (board && typeof packDashHalfCharts === "function") {
-              packDashHalfCharts(board);
+            // Full re-layout: zone order + pack (pack alone left power under charts)
+            if (typeof applyDashLayout === "function") applyDashLayout();
+            else {
+              const board = document.getElementById("dash-board");
+              if (board && typeof packDashHalfCharts === "function") {
+                packDashHalfCharts(board);
+              }
             }
           }, 120);
         });
@@ -27250,17 +27356,33 @@ function getUiLang() {
       return Array.isArray(body.points) ? body.points : [];
     }
 
-    async function loadHistoryCharts(preset, key) {
-      await loadHistoryConfig();
-      bindBrushScroll();
+    let _histConfigLoaded = false;
+    let _histLoadGen = 0;
+    /**
+     * Load dash history charts.
+     * opts.light — first paint: short window + few points (Peak RAM / single-thread serve).
+     * opts.quiet — no toast on error.
+     */
+    async function loadHistoryCharts(preset, key, opts) {
+      opts = opts || {};
+      const light = opts.light === true || opts.light === 1;
+      // Skip config form fill on every dash paint (settings fields may be absent)
+      if (!_histConfigLoaded) {
+        try {
+          await loadHistoryConfig();
+          _histConfigLoaded = true;
+        } catch (_) { /* ignore */ }
+      }
+      if (typeof bindBrushScroll === "function") bindBrushScroll();
       const zoomEl = document.getElementById("chart-zoom");
       let z =
         preset ||
         (zoomEl && zoomEl.value) ||
         zoomByKey[key || "temps"] ||
-        "1d";
+        (light ? "6h" : "1d");
       if (z === "7d") z = "1w";
       if (z === "2d") z = "1d";
+      if (light && (z === "1d" || z === "1w" || z === "all")) z = "6h";
       if (zoomEl && [...zoomEl.options].some((o) => o.value === z)) zoomEl.value = z;
       // seed zoom keys before computing load hours
       if (isChartsSync() || !key) {
@@ -27270,16 +27392,22 @@ function getUiLang() {
         zoomByKey[key] = z;
       }
       setZoomUi(z, key);
-      const nextLoad = neededLoadHours();
+      const nextLoad = light
+        ? Math.min(12, neededLoadHours())
+        : neededLoadHours();
       loadHours = nextLoad;
+      const gen = ++_histLoadGen;
       try {
-        // Peak ~500MB RAM: keep first history payload small (cols + low max)
-        const maxPts = Math.min(
-          900,
-          Math.max(180, Math.floor(Number(loadHours || 24) * 18))
-        );
-        const hours = Math.min(Number(loadHours) || 24, 48);
-        // P2: dash columns + columnar JSON (much smaller than chart=all objects)
+        // Peak: light first paint ≤300 pts / ≤12h; full later on demand
+        const maxPts = light
+          ? Math.min(300, Math.max(120, Math.floor(Number(loadHours || 6) * 25)))
+          : Math.min(
+              900,
+              Math.max(180, Math.floor(Number(loadHours || 24) * 18))
+            );
+        const hours = light
+          ? Math.min(Number(loadHours) || 6, 12)
+          : Math.min(Number(loadHours) || 24, 48);
         const res = await fetch(
           "/api/history?hours=" +
             hours +
@@ -27288,14 +27416,15 @@ function getUiLang() {
             "&chart=dash&fmt=cols",
           { cache: "no-store" }
         );
+        if (gen !== _histLoadGen) return; // superseded
         const body = await res.json();
         if (!body.ok) throw new Error(body.error || "history fail");
         histPoints = historyBodyToPoints(body);
-        // Peripherals sensors with History on → Temperatures °C series
+        // Prefer sensor_series from history payload; skip extra /api/sensors on light paint
         try {
           if (Array.isArray(body.sensor_series) && body.sensor_series.length) {
             setTempSensorSeriesFromApi(body.sensor_series);
-          } else {
+          } else if (!light && typeof refreshTempSensorSeriesFromSensorsApi === "function") {
             await refreshTempSensorSeriesFromSensorsApi();
           }
         } catch (_) { /* ignore */ }
@@ -27304,7 +27433,6 @@ function getUiLang() {
           applyViewFromPreset(z, "temps");
         } else {
           applyViewFromPreset(z, key);
-          // ensure other chart still has a valid window
           const other = key === "power" ? "temps" : "power";
           const ov = getView(other);
           if (!ov.end || ov.end <= ov.start) {
@@ -27312,8 +27440,24 @@ function getUiLang() {
           }
         }
         renderCharts();
+        window.__dashHistoryLoaded = true;
+        // Upgrade light paint to fuller series when idle (non-blocking)
+        if (light && !opts.noUpgrade) {
+          const upgrade = () => {
+            try {
+              void loadHistoryCharts(z, key, { light: false, quiet: true, noUpgrade: true });
+            } catch (_) { /* ignore */ }
+          };
+          if (typeof requestIdleCallback === "function") {
+            requestIdleCallback(upgrade, { timeout: 12000 });
+          } else {
+            setTimeout(upgrade, 8000);
+          }
+        }
       } catch (e) {
-        toastError("History: " + e.message);
+        if (!opts.quiet && typeof toastError === "function") {
+          toastError("History: " + (e && e.message ? e.message : e));
+        }
       }
     }
 
@@ -35202,7 +35346,11 @@ function getUiLang() {
       if (card) {
         card.id = "card-weather--" + widgetId;
       }
-      board.appendChild(item);
+      if (typeof insertDashMetricWidget === "function") {
+        insertDashMetricWidget(board, item);
+      } else {
+        board.appendChild(item);
+      }
       ensureDashItemTools(item);
       return item;
     }
@@ -35254,7 +35402,12 @@ function getUiLang() {
         card.id = "card-power-meas--" + widgetId;
         card.setAttribute("data-power-card", widgetId);
       }
-      board.appendChild(item);
+      // Never append after charts pack — power must stay in metric widgets zone
+      if (typeof insertDashMetricWidget === "function") {
+        insertDashMetricWidget(board, item);
+      } else {
+        board.appendChild(item);
+      }
       ensureDashItemTools(item);
       return item;
     }
@@ -35886,13 +36039,20 @@ function getUiLang() {
     let _pwFleetSoftAt = 0;
     async function maybeRefreshFleetForPowerWidgets() {
       try {
+        // Only when Overview is active — fleet is ~60KB+ and blocks live on Peak
+        const dashOn =
+          document.getElementById("view-dash")?.classList.contains("active");
+        if (!dashOn) return;
         const need = Object.keys(dashboardPowerWidgets || {}).some((id) => {
+          if (typeof dashLayoutIsHidden === "function" && dashLayoutIsHidden(id))
+            return false;
           const c = dashboardPowerWidgets[id];
           return c && c.miner_id;
         });
         if (!need) return;
         const now = Date.now();
-        if (now - _pwFleetSoftAt < 8000) return;
+        // 20s throttle (was 8s) — live already paints active miner
+        if (now - _pwFleetSoftAt < 20000) return;
         _pwFleetSoftAt = now;
         if (typeof fetchJsonApi !== "function") return;
         const body = await fetchJsonApi("/api/miners/fleet");
@@ -38136,18 +38296,45 @@ function getUiLang() {
     });
 
     initTooltips();
-    loadMinerConfig();
-    void loadSiteConfig();
     if (typeof initCircuitsUi === "function") initCircuitsUi();
+    // Parallel boot: miner config · site · circuits · dashboard layout (independent APIs)
     void (async () => {
-      try {
-        await loadCircuits();
-      } catch (_) { /* ignore */ }
-      try {
-        await loadDashboardConfigFromServer();
-      } catch (_) { /* ignore */ }
+      const tasks = [];
+      if (typeof loadMinerConfig === "function") {
+        tasks.push(
+          Promise.resolve()
+            .then(() => loadMinerConfig())
+            .catch((e) => console.warn("boot loadMinerConfig", e))
+        );
+      }
+      if (typeof loadSiteConfig === "function") {
+        tasks.push(
+          Promise.resolve()
+            .then(() => loadSiteConfig())
+            .catch((e) => console.warn("boot loadSiteConfig", e))
+        );
+      }
+      if (typeof loadCircuits === "function") {
+        tasks.push(
+          Promise.resolve()
+            .then(() => loadCircuits())
+            .catch((e) => console.warn("boot loadCircuits", e))
+        );
+      }
+      if (typeof loadDashboardConfigFromServer === "function") {
+        tasks.push(
+          Promise.resolve()
+            .then(() => loadDashboardConfigFromServer())
+            .catch((e) => console.warn("boot loadDashboardConfig", e))
+        );
+      }
+      await Promise.allSettled(tasks);
       try {
         if (typeof applyDashLayout === "function") applyDashLayout();
+      } catch (_) { /* ignore */ }
+      // Paint thermal/power widgets once layout + circuits known
+      try {
+        if (typeof recompute === "function") recompute();
       } catch (_) { /* ignore */ }
     })();
 
@@ -44276,59 +44463,125 @@ function getUiLang() {
     });
 
     if (typeof initDashLayout === "function") initDashLayout();
-    // Live immediately — do not wait for poll interval (dashboard was empty until first tick)
-    try {
-      if (typeof fetchLive === "function") void fetchLive(false);
-    } catch (e) {
-      console.warn("boot fetchLive", e);
-    }
-    // Live first (clears dash skeleton); heavy charts/chipmap deferred so Overview paints
-    // (history can be ~1MB+ and blocks main thread / single-threaded serve.py)
-    const deferHeavy = (fn, ms) => {
-      const run = () => {
+
+    /**
+     * Parallel async boot of Overview widgets.
+     * Wave 0: /api/live alone (clears skeleton) — start first, don't await before others.
+     * Wave 1 (parallel, immediately): pool · weather · light history (independent).
+     * Wave 2 (idle/late): energy chart · luci/sniffer.
+     * Heavy /api/history full series upgrades inside loadHistoryCharts idle callback.
+     */
+    (function bootDashboardParallel() {
+      const safe = (label, fn) => {
         try {
-          fn();
+          const r = fn();
+          return Promise.resolve(r).catch((e) => {
+            console.warn("boot", label, e);
+          });
         } catch (e) {
-          console.warn("deferred init", e);
+          console.warn("boot", label, e);
+          return Promise.resolve();
         }
       };
-      if (typeof requestIdleCallback === "function") {
-        requestIdleCallback(run, { timeout: ms + 800 });
-      } else {
-        setTimeout(run, ms);
-      }
-    };
-    // History after live paints — Peak history is slow & blocks other API calls
-    deferHeavy(() => {
-      if (typeof loadHistoryCharts === "function") loadHistoryCharts();
-    }, 1800);
-    deferHeavy(() => {
-      if (typeof bindEnergyChartControls === "function") bindEnergyChartControls();
-      if (typeof loadEnergyChart === "function") void loadEnergyChart();
-    }, 2500);
-    deferHeavy(() => {
-      if (typeof loadChipmapConfig === "function") loadChipmapConfig();
-      if (typeof scheduleChipmapPoll === "function") scheduleChipmapPoll();
-    }, 3200);
-    deferHeavy(() => {
-      if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
-      if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
-      if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
-    }, 2800);
-    // Load pool + weather together, then recompute heat loss (avoids race of empty "—")
-    Promise.all([
-      loadPoolConfig(),
-      loadWeatherConfig().then(() => loadWeather(false)).then(() => scheduleWeatherRefresh()),
-    ])
-      .then(() => {
-        updateHeatLoss();
-        if (typeof recompute === "function") recompute();
-      })
-      .catch(() => { updateHeatLoss(); });
-    // weather poll interval from config (default 10 min) — see scheduleWeatherRefresh()
-    // refresh error journal periodically (collector may add rows)
+      const afterIdle = (fn, ms) => {
+        if (typeof requestIdleCallback === "function") {
+          requestIdleCallback(
+            () => {
+              try {
+                fn();
+              } catch (e) {
+                console.warn("boot idle", e);
+              }
+            },
+            { timeout: ms + 1500 }
+          );
+        } else {
+          setTimeout(() => {
+            try {
+              fn();
+            } catch (e) {
+              console.warn("boot idle", e);
+            }
+          }, ms);
+        }
+      };
+
+      // Wave 0 — live (priority): paints temps/power/zone ASAP
+      const liveP =
+        typeof fetchLive === "function"
+          ? safe("fetchLive", () => fetchLive(false))
+          : Promise.resolve();
+
+      // Wave 1 — kick off in parallel with live (browser multiplexes HTTP/1.1 ~6)
+      // Keep each request small so Peak serve is not buried under one 13s history.
+      const wave1 = [
+        safe("pool", () =>
+          typeof loadPoolConfig === "function" ? loadPoolConfig() : null
+        ),
+        safe("weather", () =>
+          typeof loadWeatherConfig === "function"
+            ? loadWeatherConfig().then(() =>
+                typeof loadWeather === "function" ? loadWeather(false) : null
+              )
+            : null
+        ),
+        // slight delay so live gets first connection slot on Peak
+        new Promise((resolve) => {
+          setTimeout(() => {
+            safe("history-light", () =>
+              typeof loadHistoryCharts === "function"
+                ? loadHistoryCharts(null, null, { light: true })
+                : null
+            ).then(resolve);
+          }, 400);
+        }),
+      ];
+
+      Promise.allSettled([liveP, ...wave1]).then(() => {
+        try {
+          if (typeof scheduleWeatherRefresh === "function") scheduleWeatherRefresh();
+        } catch (_) { /* ignore */ }
+        try {
+          if (typeof updateHeatLoss === "function") updateHeatLoss();
+        } catch (_) { /* ignore */ }
+        try {
+          if (typeof recompute === "function") recompute();
+        } catch (_) { /* ignore */ }
+      });
+
+      // Wave 2 — energy (optional widget), then rare settings proxies
+      afterIdle(() => {
+        if (
+          typeof dashLayoutIsHidden === "function" &&
+          dashLayoutIsHidden("chart_energy")
+        ) {
+          return;
+        }
+        if (typeof bindEnergyChartControls === "function") bindEnergyChartControls();
+        if (typeof loadEnergyChart === "function") {
+          void loadEnergyChart().then(() => {
+            window.__dashEnergyLoaded = true;
+          });
+        }
+      }, 4500);
+
+      afterIdle(() => {
+        if (typeof loadLuciProxyConfig === "function") void loadLuciProxyConfig();
+        if (typeof loadSnifferConfig === "function") void loadSnifferConfig();
+      }, 14000);
+    })();
+
+    // Error log only while Logs subtab visible
     setInterval(() => {
-      if (typeof loadMinerErrorLog === "function") loadMinerErrorLog();
+      try {
+        if (
+          typeof isLogsSubtabActive === "function" &&
+          isLogsSubtabActive() &&
+          typeof loadMinerErrorLog === "function"
+        ) {
+          loadMinerErrorLog();
+        }
+      } catch (_) { /* ignore */ }
     }, 60 * 1000);
   </script>
 </body>

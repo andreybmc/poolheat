@@ -17036,14 +17036,172 @@ _circuits: dict = {"version": 1, "circuits": []}
 _CIRCUIT_TYPES = ("house", "pool", "dhw", "custom")
 
 
-def _new_circuit_id() -> str:
-    return "circuit_" + uuid.uuid4().hex[:10]
+def _circuit_id_is_numeric(raw) -> bool:
+    """Positive integer id (miners-style: 1, 2, …)."""
+    s = str(raw if raw is not None else "").strip()
+    if not s or not s.isdigit():
+        return False
+    try:
+        return int(s) > 0
+    except (TypeError, ValueError):
+        return False
 
 
-def _coerce_circuit(raw: dict | None) -> dict | None:
+def _new_circuit_id(circuits: list | None = None) -> int:
+    """Next free positive int circuit id (1, 2, 3, …)."""
+    used: set[int] = set()
+    for c in circuits or []:
+        if not isinstance(c, dict):
+            continue
+        if _circuit_id_is_numeric(c.get("id")):
+            used.add(int(str(c.get("id")).strip()))
+    n = 1
+    while n in used:
+        n += 1
+    return n
+
+
+def _migrate_circuits_to_numeric_ids(
+    circuits: list[dict],
+) -> tuple[list[dict], dict[str, int], bool]:
+    """
+    Ensure every circuit.id is a positive int (JSON number).
+    Returns (circuits, old_str→new_int map, changed).
+    Legacy: pool_default → 1, circuit_ab12 → 2, …
+    """
+    if not circuits:
+        return [], {}, False
+    used: set[int] = set()
+    # Reserve unique numeric ids already present
+    for c in circuits:
+        if not isinstance(c, dict):
+            continue
+        if _circuit_id_is_numeric(c.get("id")):
+            n = int(str(c.get("id")).strip())
+            if n not in used:
+                used.add(n)
+    next_n = 1
+
+    def _alloc() -> int:
+        nonlocal next_n
+        while next_n in used:
+            next_n += 1
+        n = next_n
+        used.add(n)
+        next_n += 1
+        return n
+
+    id_map: dict[str, int] = {}
+    out: list[dict] = []
+    changed = False
+    seen_num: set[int] = set()
+    for c in circuits:
+        if not isinstance(c, dict):
+            continue
+        c2 = dict(c)
+        old = str(c2.get("id") or "").strip()
+        if _circuit_id_is_numeric(old) and int(old) not in seen_num:
+            n = int(old)
+            seen_num.add(n)
+            if type(c2.get("id")) is not int:
+                changed = True
+        else:
+            n = _alloc()
+            if old != str(n):
+                changed = True
+        if old:
+            id_map[old] = n
+        id_map[str(n)] = n
+        c2["id"] = n
+        out.append(c2)
+    return out, id_map, changed
+
+
+def _remap_dashboard_circuit_ids(id_map: dict[str, int]) -> bool:
+    """Rewrite circuit_id refs in dashboard config after circuit id migration.
+
+    Loads from disk (dashboard may not be in memory yet during _load_circuits).
+    """
+    if not id_map:
+        return False
+    global _dashboard_cfg
+    changed = False
+
+    def _map_cid(raw) -> str | None:
+        if raw in (None, ""):
+            return None
+        s = str(raw).strip()
+        if not s:
+            return None
+        if s in id_map:
+            return str(id_map[s])
+        if _circuit_id_is_numeric(s):
+            return str(int(s))
+        return s  # unknown legacy — leave; UI will show unbound
+
+    # Prefer file on disk — _load_circuits runs before _load_dashboard_cfg
+    try:
+        raw_file = _load_json(DASHBOARD_CFG_FILE, None)
+    except Exception:
+        raw_file = None
+    with _dashboard_cfg_lock:
+        if isinstance(raw_file, dict):
+            cfg = _normalize_dashboard_cfg(raw_file)
+        else:
+            cfg = _normalize_dashboard_cfg(
+                _dashboard_cfg if isinstance(_dashboard_cfg, dict) else None
+            )
+        # charts.temps.circuit_id
+        try:
+            temps = cfg.setdefault("charts", {}).setdefault("temps", {})
+            old = temps.get("circuit_id")
+            new = _map_cid(old)
+            old_s = str(old).strip() if old not in (None, "") else None
+            if new != old_s:
+                temps["circuit_id"] = new
+                changed = True
+        except Exception:
+            pass
+        # thermal_widgets.*.circuit_id
+        try:
+            tw = cfg.setdefault("thermal_widgets", {})
+            if isinstance(tw, dict):
+                for wid, conf in list(tw.items()):
+                    if not isinstance(conf, dict):
+                        continue
+                    old = conf.get("circuit_id")
+                    new = _map_cid(old)
+                    old_s = str(old).strip() if old not in (None, "") else None
+                    if new != old_s:
+                        conf = dict(conf)
+                        conf["circuit_id"] = new
+                        tw[wid] = conf
+                        changed = True
+        except Exception:
+            pass
+        if changed:
+            cfg["updated_ts"] = datetime.now().isoformat(timespec="seconds")
+            _dashboard_cfg = cfg
+            try:
+                _save_json(DASHBOARD_CFG_FILE, _dashboard_cfg)
+            except Exception:
+                pass
+    return changed
+
+
+def _coerce_circuit(
+    raw: dict | None, *, circuits_for_alloc: list | None = None
+) -> dict | None:
     if not isinstance(raw, dict):
         return None
-    cid = str(raw.get("id") or "").strip() or _new_circuit_id()
+    raw_id = raw.get("id")
+    if _circuit_id_is_numeric(raw_id):
+        cid: int | str = int(str(raw_id).strip())
+    elif raw_id in (None, ""):
+        cid = _new_circuit_id(circuits_for_alloc)
+    else:
+        # legacy string id kept only until migrate; prefer int when possible
+        cid = str(raw_id).strip()
     name = str(raw.get("name") or "").strip()[:64] or "Circuit"
     ctype = str(raw.get("type") or "house").strip().lower()
     if ctype not in _CIRCUIT_TYPES:
@@ -17116,7 +17274,7 @@ def _default_circuits() -> dict:
             circuits.append(
                 _coerce_circuit(
                     {
-                        "id": str(p.get("id") or "").strip() or _new_circuit_id(),
+                        "id": p.get("id"),
                         "name": str(p.get("name") or "Pool").strip() or "Pool",
                         "type": "pool",
                         "enabled": bool(p.get("enabled", True)),
@@ -17124,14 +17282,15 @@ def _default_circuits() -> dict:
                         "pool_geometry": p.get("config"),
                         "miner_ids": [],
                         "updated_ts": p.get("updated_ts"),
-                    }
+                    },
+                    circuits_for_alloc=circuits,
                 )
             )
     if not circuits:
         circuits = [
             _coerce_circuit(
                 {
-                    "id": "circuit_default",
+                    "id": 1,
                     "name": "Main",
                     "type": "house",
                     "enabled": True,
@@ -17141,11 +17300,15 @@ def _default_circuits() -> dict:
             )
         ]
     circuits = [c for c in circuits if c]
+    # normalize to int ids (pool_default / circuit_* → 1, 2, …)
+    circuits, _, _ = _migrate_circuits_to_numeric_ids(circuits)
     return {"version": 1, "circuits": circuits}
 
 
 def _load_circuits() -> None:
     global _circuits
+    id_map: dict[str, int] = {}
+    migrated = False
     with _circuits_lock:
         raw = _load_json(CIRCUITS_FILE, None)
         if not isinstance(raw, dict) or not isinstance(raw.get("circuits"), list):
@@ -17157,7 +17320,9 @@ def _load_circuits() -> None:
             return
         out: list[dict] = []
         for c in raw.get("circuits") or []:
-            coerced = _coerce_circuit(c if isinstance(c, dict) else None)
+            coerced = _coerce_circuit(
+                c if isinstance(c, dict) else None, circuits_for_alloc=out
+            )
             if coerced:
                 out.append(coerced)
         if not out:
@@ -17167,7 +17332,19 @@ def _load_circuits() -> None:
             except Exception:
                 pass
             return
+        out, id_map, migrated = _migrate_circuits_to_numeric_ids(out)
         _circuits = {"version": 1, "circuits": out}
+        if migrated:
+            try:
+                _save_json(CIRCUITS_FILE, _circuits)
+            except Exception:
+                pass
+    # Remap dashboard thermal/chart binds outside circuits lock (avoids deadlock)
+    if migrated and id_map:
+        try:
+            _remap_dashboard_circuit_ids(id_map)
+        except Exception:
+            pass
 
 
 def _save_circuits() -> None:
@@ -17211,11 +17388,14 @@ def save_circuits_payload(req: dict) -> dict:
         if "circuits" in req and isinstance(req.get("circuits"), list) and not action:
             out: list[dict] = []
             for c in req.get("circuits") or []:
-                coerced = _coerce_circuit(c if isinstance(c, dict) else None)
+                coerced = _coerce_circuit(
+                    c if isinstance(c, dict) else None, circuits_for_alloc=out
+                )
                 if coerced:
                     out.append(coerced)
             if not out:
                 raise ValueError("circuits list empty")
+            out, _, _ = _migrate_circuits_to_numeric_ids(out)
             _circuits = {"version": 1, "circuits": out}
             _save_json(CIRCUITS_FILE, _circuits)
             return {
@@ -17225,23 +17405,32 @@ def save_circuits_payload(req: dict) -> dict:
             }
 
         if action == "create":
-            c = _coerce_circuit(
+            body = (
                 req.get("circuit") if isinstance(req.get("circuit"), dict) else req
             )
+            if isinstance(body, dict):
+                body = dict(body)
+                body.pop("id", None)  # always allocate fresh numeric id
+            c = _coerce_circuit(body if isinstance(body, dict) else None, circuits_for_alloc=circuits)
             if not c:
                 raise ValueError("invalid circuit")
-            if any(str(x.get("id")) == c["id"] for x in circuits):
-                c["id"] = _new_circuit_id()
+            c["id"] = _new_circuit_id(circuits)
             c["updated_ts"] = datetime.now().isoformat(timespec="seconds")
             circuits.append(c)
         elif action == "update":
             body = req.get("circuit") if isinstance(req.get("circuit"), dict) else req
-            c = _coerce_circuit(body if isinstance(body, dict) else None)
+            c = _coerce_circuit(
+                body if isinstance(body, dict) else None, circuits_for_alloc=circuits
+            )
             if not c:
                 raise ValueError("invalid circuit")
+            # keep id comparable as string (client may send "1" or 1)
             found = False
             for i, x in enumerate(circuits):
-                if str(x.get("id")) == c["id"]:
+                if str(x.get("id")) == str(c["id"]):
+                    # preserve numeric type
+                    if _circuit_id_is_numeric(x.get("id")):
+                        c["id"] = int(str(x.get("id")).strip())
                     c["updated_ts"] = datetime.now().isoformat(timespec="seconds")
                     circuits[i] = c
                     found = True
@@ -17282,6 +17471,7 @@ def save_circuits_payload(req: dict) -> dict:
                 "unknown action (create|update|remove|set_miners) or pass circuits[]"
             )
 
+        circuits, _, _ = _migrate_circuits_to_numeric_ids(circuits)
         _circuits = {"version": 1, "circuits": circuits}
         _save_json(CIRCUITS_FILE, _circuits)
         return {
@@ -39274,7 +39464,7 @@ class Handler(SimpleHTTPRequestHandler):
             "miners": None,
             "fleet": None,
             "asics": None,
-            # freeform circuit id: /circuits/pool_default · /circuits/circuit_ab12
+            # freeform circuit id: /circuits/1 · /circuits/2 (numeric, miners-style)
             "circuits": None,
             "circuit": None,
         }
