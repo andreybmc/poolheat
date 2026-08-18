@@ -6461,7 +6461,7 @@
                 var raw = localStorage.getItem("poolheat_wm_info_cache");
                 if (!raw) return;
                 var d = JSON.parse(raw);
-                // Seed miner model for LIVE strip before main script (live_cache omits type)
+                // Seed miner model cache (detail / info; not LIVE strip)
                 try {
                   var m0 = (d && d.miner) || (d && d.body && d.body.miner) || {};
                   var mt = String(m0.miner_type || m0.model_code || m0.model || "").trim();
@@ -6470,7 +6470,7 @@
                 var el = document.getElementById("brand-devices");
                 var kn = "";
                 if (el) {
-                  // header: only Keenetic (never Whatsminer — that is LIVE strip)
+                  // header: only Keenetic (router brand)
                   var bt = (d && d.brandText) ? String(d.brandText) : "";
                   bt = bt.split(/\s*·\s*/)[0].replace(/\s*Whatsminer.*$/i, "").trim();
                   if (d && d.router) {
@@ -6555,7 +6555,7 @@
 
     <div class="live-bar">
       <span class="tag" id="src-tag">LIVE</span>
-      <span class="src" id="src-detail">— · Whatsminer — · updated —</span>
+      <span class="src" id="src-detail">updated —</span>
       <span class="src" id="src-updated" hidden></span>
       <button class="btn ghost" type="button" id="btn-refresh" onclick="fetchLive(true)" data-i18n="btn.refresh">Refresh</button>
       <label class="check" style="margin:0 0 0 auto">
@@ -11684,6 +11684,7 @@
         "banner.override_span": "Auto zones Z0–Z2 paused · Safety Critical active · left",
         "live.paused": "updates paused · last ",
         "live.updated_sep": " · updated ",
+        "live.updated_word": "updated",
         "live.online": "Online",
         "live.offline": "Offline",
         "live.luci_proxy_title": "Open LuCI via proxy",
@@ -12794,6 +12795,7 @@
         "banner.override_span": "Авто-зоны Z0–Z2 на паузе · Safety Critical работает · осталось",
         "live.paused": "обновления на паузе · последнее ",
         "live.updated_sep": " · обновлено ",
+        "live.updated_word": "обновлено",
         "live.online": "Online",
         "live.offline": "Offline",
         "live.luci_proxy_title": "Открыть LuCI через proxy",
@@ -18387,38 +18389,11 @@ function getUiLang() {
 
     let lastLiveStatusTime = "";
 
-    /** Resolve miner model for LIVE strip (live → window → Info cache). */
-    function resolveMinerTypeLabel(r) {
-      let minerType =
-        (r && (r.miner_type || r.model || r.model_code)) ||
-        (typeof live !== "undefined" &&
-          live &&
-          (live.miner_type || live.model || live.model_code)) ||
-        (typeof window !== "undefined" && window.__poolheatMinerType) ||
-        "";
-      minerType = String(minerType || "").trim();
-      if (!minerType) {
-        // Info tab cache (last known model) — live_cache often omits miner_type
-        try {
-          const raw = localStorage.getItem("poolheat_wm_info_cache");
-          if (raw) {
-            const d = JSON.parse(raw);
-            const m = (d && d.miner) || (d && d.body && d.body.miner) || {};
-            minerType = String(
-              m.miner_type || m.model_code || m.model || ""
-            ).trim();
-            if (minerType && typeof window !== "undefined") {
-              window.__poolheatMinerType = minerType;
-            }
-          }
-        } catch (_) { /* ignore */ }
-      }
-      if (!minerType) return "Whatsminer";
-      if (/^whatsminer/i.test(minerType)) return minerType;
-      return "Whatsminer " + minerType;
-    }
-
-    /** LIVE line: IP · Whatsminer model · updated HH:MM:SS · Online */
+    /**
+     * LIVE bar = dashboard live refresh (not miner identity).
+     * Tag LIVE/PAUSED = auto-update of page content on/off.
+     * Detail = API status: "updated HH:MM:SS · Online|Offline".
+     */
     function updateSrcBar(r) {
       const tag = document.getElementById("src-tag");
       const det = document.getElementById("src-detail");
@@ -18428,7 +18403,7 @@ function getUiLang() {
         upd.textContent = "";
       }
       const tstr = lastLiveStatusTime || new Date().toLocaleTimeString();
-      if (!useLive.checked) {
+      if (!useLive || !useLive.checked) {
         if (tag) tag.textContent = "PAUSED";
         if (det) {
           det.textContent =
@@ -18438,39 +18413,16 @@ function getUiLang() {
         }
         return;
       }
-      const online = !!(r && r.online);
-      if (tag) tag.textContent = online ? "LIVE" : "OFFLINE";
-      const minerLabel = resolveMinerTypeLabel(r);
+      if (tag) tag.textContent = "LIVE";
       if (!det) return;
-      const hostDisp = minerHostDisplay();
-      const rest =
-        " · " +
-        minerLabel +
-        (typeof t === "function" ? t("live.updated_sep") : " · updated ") +
-        tstr +
-        " · " +
-        (online ? t("live.online", "Online") : t("live.offline", "Offline"));
-      // When LuCI proxy is listening — make miner IP a link to :8788
-      if (isLuciProxyActive() && hostDisp && hostDisp !== "—") {
-        const url = luciProxyUrl();
-        det.innerHTML = "";
-        const a = document.createElement("a");
-        a.className = "src-detail-host";
-        a.href = url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.textContent = hostDisp;
-        a.title =
-          (typeof t === "function"
-            ? t("live.luci_proxy_title", "Open LuCI via proxy")
-            : "Open LuCI via proxy") +
-          " · " +
-          url;
-        det.appendChild(a);
-        det.appendChild(document.createTextNode(rest));
-      } else {
-        det.textContent = hostDisp + rest;
-      }
+      // Last /api/* poll ok (fleet multi-live snapshot)
+      const apiOk = !!(r && r.ok !== false && !liveError);
+      const updatedWord =
+        typeof t === "function" ? t("live.updated_word", "updated") : "updated";
+      const status = apiOk
+        ? t("live.online", "Online")
+        : t("live.offline", "Offline");
+      det.textContent = updatedWord + " " + tstr + " · " + status;
     }
 
     function getReading() {
@@ -28219,6 +28171,28 @@ function getUiLang() {
       return n.toFixed(1) + "°";
     }
 
+    /**
+     * Efficiency magnitude rounding for fleet / detail:
+     *   ≤1   → 0.01 (0.763 → 0.76)
+     *   ≤100 → 0.1  (34.413 → 34.4)
+     *   >100 → 1    (128.7 → 129)
+     */
+    function formatEfficiencyNumber(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return null;
+      const a = Math.abs(n);
+      if (a <= 1) return n.toFixed(2);
+      if (a <= 100) return n.toFixed(1);
+      return String(Math.round(n));
+    }
+
+    function formatEfficiencyLine(value, unit) {
+      const s = formatEfficiencyNumber(value);
+      if (s == null) return "—";
+      const u = unit != null && String(unit).trim() ? " " + String(unit).trim() : "";
+      return s + u;
+    }
+
     function shortPoolUrl(u) {
       const s = String(u || "").trim();
       if (!s) return "—";
@@ -28910,18 +28884,13 @@ function getUiLang() {
         const eff = (() => {
           if (!live) return "—";
           if (live.efficiency_value != null && live.efficiency_unit) {
-            const n = Number(live.efficiency_value);
-            if (!Number.isFinite(n)) return "—";
-            const u = String(live.efficiency_unit);
-            const ul = u.toUpperCase();
-            const dig =
-              ul.indexOf("G") >= 0 || ul === "J/M" || ul.indexOf("MH") >= 0
-                ? 3
-                : 1;
-            return n.toFixed(dig) + " " + u;
+            return formatEfficiencyLine(
+              live.efficiency_value,
+              live.efficiency_unit
+            );
           }
           if (live.efficiency_jth != null) {
-            return Number(live.efficiency_jth).toFixed(1) + " J/T";
+            return formatEfficiencyLine(live.efficiency_jth, "J/T");
           }
           return "—";
         })();
@@ -30230,12 +30199,12 @@ function getUiLang() {
         let eff = "—";
         if (live) {
           if (live.efficiency_value != null && live.efficiency_unit) {
-            const n = Number(live.efficiency_value);
-            if (Number.isFinite(n)) {
-              eff = n.toFixed(1) + " " + live.efficiency_unit;
-            }
+            eff = formatEfficiencyLine(
+              live.efficiency_value,
+              live.efficiency_unit
+            );
           } else if (live.efficiency_jth != null) {
-            eff = Number(live.efficiency_jth).toFixed(1) + " J/T";
+            eff = formatEfficiencyLine(live.efficiency_jth, "J/T");
           }
         }
         const temp = live
@@ -35914,13 +35883,13 @@ function getUiLang() {
       pwSetBind(card, "pwMode", r.mode || r.work || "—");
       pwSetBind(card, "freq", fmt(r.freq, 0));
 
-      // efficiency
+      // efficiency (same magnitude rounding as fleet table)
       let eff = "—";
       let effUnit = "J/T";
       if (r.efficiency_value != null && r.efficiency_unit) {
-        const n = Number(r.efficiency_value);
-        if (Number.isFinite(n)) {
-          eff = n.toFixed(1);
+        const s = formatEfficiencyNumber(r.efficiency_value);
+        if (s != null) {
+          eff = s;
           effUnit = String(r.efficiency_unit);
         }
       } else if (
@@ -35929,15 +35898,18 @@ function getUiLang() {
         Number.isFinite(r.hashrate_th) &&
         r.hashrate_th > 0
       ) {
-        eff = (Number(pwShow) / r.hashrate_th).toFixed(1);
+        const s = formatEfficiencyNumber(Number(pwShow) / r.hashrate_th);
+        if (s != null) eff = s;
       } else if (
         Number.isFinite(r.power) &&
         Number.isFinite(r.hashrate_th) &&
         r.hashrate_th > 0
       ) {
-        eff = (r.power / r.hashrate_th).toFixed(1);
+        const s = formatEfficiencyNumber(r.power / r.hashrate_th);
+        if (s != null) eff = s;
       } else if (r.efficiency_jth != null) {
-        eff = Number(r.efficiency_jth).toFixed(1);
+        const s = formatEfficiencyNumber(r.efficiency_jth);
+        if (s != null) eff = s;
       }
       pwSetBind(card, "eff", eff);
       const eu = card.querySelector('[data-bind="effUnit"]');
@@ -40876,7 +40848,7 @@ function getUiLang() {
                 ? "var(--ok, #3ecf8e)"
                 : "var(--dim)";
         }
-        // LIVE strip: IP → LuCI proxy link when listening
+        // LIVE bar = page refresh status (not miner host)
         if (typeof updateSrcBar === "function") {
           try {
             updateSrcBar(typeof live !== "undefined" ? live : null);
