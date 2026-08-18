@@ -8720,18 +8720,28 @@
             <div>
               <h2 data-i18n="h2.energy">Energy accounting</h2>
             </div>
-            <button
-              class="btn energy-chart-refresh"
-              type="button"
-              id="btn-energy-refresh"
-              title="Refresh"
-              aria-label="Refresh"
-              data-i18n-title="btn.refresh"
-              data-i18n-aria="btn.refresh"
-            >
-              <span class="ico-refresh" aria-hidden="true">↻</span>
-            </button>
+            <div class="btn-row" style="flex-wrap:wrap;align-items:flex-end;gap:8px">
+              <label class="field" style="margin:0;min-width:12rem;max-width:18rem">
+                <span data-i18n="energy.meter_source">Energy meter</span>
+                <select id="md-energy-meter" class="ui-pill-control" style="width:100%">
+                  <option value="" data-i18n="energy.meter_asic">ASIC power (virtual)</option>
+                </select>
+              </label>
+              <button
+                class="btn energy-chart-refresh"
+                type="button"
+                id="btn-energy-refresh"
+                title="Refresh"
+                aria-label="Refresh"
+                data-i18n-title="btn.refresh"
+                data-i18n-aria="btn.refresh"
+              >
+                <span class="ico-refresh" aria-hidden="true">↻</span>
+              </button>
+            </div>
           </div>
+          <p style="font-size:0.72rem;color:var(--dim);margin:0 0 8px;line-height:1.4" id="md-energy-meter-hint" hidden
+            data-i18n="energy.meter_none_hint">Bind a peripheral with a built-in power meter to this miner to use it here.</p>
           <div class="energy-live-row">
             <div class="energy-live-item">
               <div class="energy-live-label" data-i18n="energy.live_power">Live power</div>
@@ -11287,6 +11297,10 @@
         "opt.energy_bucket_month": "Months",
         "h2.energy_tariff": "Electricity tariff",
         "energy.live_power": "Live power",
+        "energy.meter_source": "Energy meter",
+        "energy.meter_asic": "ASIC power (virtual)",
+        "energy.meter_none_hint": "Bind a peripheral with a built-in power meter to this miner to use it here.",
+        "energy.meter_saved": "Energy meter updated",
         "energy.chart_power": "Avg power W",
         "energy.chart_full_power": "Peak power W",
         "energy.chart_min_power": "Min power W",
@@ -12398,6 +12412,10 @@
         "opt.energy_bucket_month": "Месяцы",
         "h2.energy_tariff": "Тариф на электроэнергию",
         "energy.live_power": "Мощность сейчас",
+        "energy.meter_source": "Счётчик энергии",
+        "energy.meter_asic": "Мощность ASIC (виртуальный)",
+        "energy.meter_none_hint": "Привяжите к майнеру peripheral со встроенным измерителем мощности, чтобы выбрать его здесь.",
+        "energy.meter_saved": "Счётчик энергии обновлён",
         "energy.chart_power": "Средняя мощность W",
         "energy.chart_full_power": "Пиковая мощность W",
         "energy.chart_min_power": "Мин. мощность W",
@@ -22945,9 +22963,120 @@ function getUiLang() {
       syncEnergyChartRangeOptions(energyChartBucket || "hour");
     }
 
+    async function loadEnergyMeterOptions() {
+      const sel = document.getElementById("md-energy-meter");
+      const hint = document.getElementById("md-energy-meter-hint");
+      if (!sel) return null;
+      const mid = resolveEnergyQueryMinerId();
+      if (!mid) {
+        sel.innerHTML =
+          '<option value="">' +
+          (typeof t === "function"
+            ? t("energy.meter_asic", "ASIC power (virtual)")
+            : "ASIC power (virtual)") +
+          "</option>";
+        if (hint) hint.hidden = true;
+        return null;
+      }
+      try {
+        const res = await fetch(
+          "/api/energy/meter-options?miner_id=" + encodeURIComponent(mid),
+          { cache: "no-store" }
+        );
+        const body = await res.json();
+        if (!body.ok) throw new Error(body.error || "options fail");
+        const opts = body.options || [];
+        const selected = body.selected_device_id
+          ? String(body.selected_device_id)
+          : "";
+        const ru = typeof getUiLang === "function" && getUiLang() === "ru";
+        sel.innerHTML = "";
+        let deviceCount = 0;
+        opts.forEach((o) => {
+          const opt = document.createElement("option");
+          const did =
+            o.device_id != null && String(o.device_id).trim()
+              ? String(o.device_id).trim()
+              : "";
+          opt.value = did;
+          if (!did) {
+            opt.textContent = ru
+              ? o.name_ru ||
+                (typeof t === "function"
+                  ? t("energy.meter_asic", "ASIC power (virtual)")
+                  : "ASIC power (virtual)")
+              : o.name ||
+                (typeof t === "function"
+                  ? t("energy.meter_asic", "ASIC power (virtual)")
+                  : "ASIC power (virtual)");
+          } else {
+            deviceCount++;
+            let label =
+              (o.icon ? o.icon + " " : "") + (o.name || did);
+            if (o.last_power_w != null && Number.isFinite(Number(o.last_power_w))) {
+              label += " · " + Math.round(Number(o.last_power_w)) + " W";
+            }
+            if (o.online === false) label += " · offline";
+            opt.textContent = label;
+          }
+          sel.appendChild(opt);
+        });
+        sel.value = selected;
+        if (hint) hint.hidden = deviceCount > 0;
+        return body;
+      } catch (e) {
+        console.warn("[energy] meter options", e);
+        return null;
+      }
+    }
+
+    async function saveEnergyMeterDevice(deviceId) {
+      const mid = resolveEnergyQueryMinerId();
+      if (!mid) return;
+      try {
+        const res = await fetch("/api/miner/managed", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update",
+            id: mid,
+            energy_meter_device_id: deviceId || "",
+          }),
+        });
+        const body = await res.json();
+        if (!res.ok || body.ok === false || body.error)
+          throw new Error((body && body.error) || "HTTP " + res.status);
+        toastSuccess(
+          typeof t === "function"
+            ? t("energy.meter_saved", "Energy meter updated")
+            : "Energy meter updated"
+        );
+        // refresh managed cache if present
+        try {
+          if (typeof refreshManagedTable === "function")
+            void refreshManagedTable();
+        } catch (_) { /* ignore */ }
+        await loadEnergyPanel();
+      } catch (e) {
+        toastError("Energy meter: " + (e.message || e));
+        void loadEnergyMeterOptions();
+      }
+    }
+
+    function bindEnergyMeterSelect() {
+      const sel = document.getElementById("md-energy-meter");
+      if (!sel || sel._energyMeterBound) return;
+      sel._energyMeterBound = true;
+      sel.addEventListener("change", () => {
+        void saveEnergyMeterDevice(sel.value || "");
+      });
+    }
+
     async function loadEnergyPanel() {
       bindEnergyChartControls();
+      bindEnergyMeterSelect();
       try {
+        await loadEnergyMeterOptions();
         const res = await fetch("/api/energy" + energyApiQs(), {
           cache: "no-store",
         });

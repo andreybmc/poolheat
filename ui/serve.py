@@ -4552,6 +4552,7 @@ DEVICE_RUNTIME_KEYS: frozenset[str] = frozenset(
         "last_action",
         "last_power",
         "last_power_ts",
+        "has_power_meter",  # sticky once last_power seen (runtime)
         # API-only aliases (never stored)
         "reported_on",
         "desired",
@@ -6947,6 +6948,7 @@ def device_poll_status(
             if power:
                 d["last_power"] = power
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
+                d["has_power_meter"] = True
             # lights / dimmers only — never store eWeLink protocol mode (lan/diy)
             # as last_mode (UI treats last_mode as light mode → false dimmer UI).
             br = out.get("brightness")
@@ -6975,6 +6977,13 @@ def device_poll_status(
                 d["last_telemetry"] = tel
 
         _device_update_in_store(did, _mut)
+        # Energy: tick physical meter when this device is selected as a miner meter
+        if power:
+            try:
+                snap0 = _device_cfg_snapshot(did) or cfg
+                energy_meter_tick_from_device(snap0, power=power, online=True)
+            except Exception as e:
+                print(f"[energy] device tick: {e}", flush=True)
 
         enforced = None
         if apply_policy and reported is not None:
@@ -7232,6 +7241,7 @@ def device_set(
             if power:
                 d["last_power"] = power
                 d["last_power_ts"] = datetime.now().isoformat(timespec="seconds")
+                d["has_power_meter"] = True
             br = out.get("brightness")
             if br is None and out.get("brightness_pct") is not None:
                 br = out.get("brightness_pct")
@@ -7253,6 +7263,12 @@ def device_set(
                 d["last_mode"] = None
 
         _device_update_in_store(did, _mut)
+        if power:
+            try:
+                snap0 = _device_cfg_snapshot(did) or cfg
+                energy_meter_tick_from_device(snap0, power=power, online=True)
+            except Exception as e:
+                print(f"[energy] device tick (set): {e}", flush=True)
         snap = _device_cfg_snapshot(did) or cfg
         ret = {
             "ok": True,
@@ -11891,6 +11907,10 @@ def _normalize_managed_miner(raw: dict | None) -> dict:
         "imported_at": m.get("imported_at"),
         "last_ok_ts": m.get("last_ok_ts"),
         "last_error": m.get("last_error"),
+        # Peripheral with built-in power meter (device id); empty → ASIC virtual meter
+        "energy_meter_device_id": (
+            str(m.get("energy_meter_device_id") or "").strip()[:64] or None
+        ),
     }
 
 
@@ -11965,11 +11985,28 @@ def _miners_db_connect() -> sqlite3.Connection:
 def _ensure_miners_db() -> None:
     """Create miners.db schema (managed inventory)."""
     global _miners_db_ready
-    if _miners_db_ready and MINERS_DB_FILE.is_file():
-        return
     do_migrate = False
     with _miners_db_lock:
+        # Soft-migrate columns even when already marked ready (new releases)
         if _miners_db_ready and MINERS_DB_FILE.is_file():
+            try:
+                conn = _miners_db_connect()
+                try:
+                    cols = {
+                        str(r[1])
+                        for r in conn.execute(
+                            "PRAGMA table_info(managed_miners)"
+                        ).fetchall()
+                    }
+                    if "energy_meter_device_id" not in cols:
+                        conn.execute(
+                            "ALTER TABLE managed_miners ADD COLUMN energy_meter_device_id TEXT"
+                        )
+                        conn.commit()
+                finally:
+                    conn.close()
+            except Exception as e:
+                print(f"[miners.db] soft migrate: {e}", flush=True)
             return
         MINERS_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
         conn = _miners_db_connect()
@@ -12003,7 +12040,8 @@ def _ensure_miners_db() -> None:
                     last_ok_ts TEXT,
                     last_error TEXT,
                     factory_hashrate_th REAL,
-                    configured_hashrate_th REAL
+                    configured_hashrate_th REAL,
+                    energy_meter_device_id TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_managed_host ON managed_miners(host);
                 CREATE INDEX IF NOT EXISTS idx_managed_role ON managed_miners(role);
@@ -12030,6 +12068,13 @@ def _ensure_miners_db() -> None:
                     )
                     conn.commit()
                     cols.add(col)
+            # Peripheral energy meter device id (optional)
+            if "energy_meter_device_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE managed_miners ADD COLUMN energy_meter_device_id TEXT"
+                )
+                conn.commit()
+                cols.add("energy_meter_device_id")
             _miners_db_ready = True
             do_migrate = True
         finally:
@@ -12919,6 +12964,11 @@ def _poll_managed_fleet_live() -> None:
             energy_meter_tick_fleet_map(by_host, miners)
         except Exception as e:
             print(f"[energy] fleet map tick: {e}", flush=True)
+        # Device-selected physical meters (peripheral last_power)
+        try:
+            energy_meter_tick_selected_devices()
+        except Exception as e:
+            print(f"[energy] device meters tick: {e}", flush=True)
         # Merge per-miner work for device binding (devices-poller reads by_miner)
         try:
             by_miner: dict = {}
@@ -13163,6 +13213,7 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
         "last_error",
         "factory_hashrate_th",
         "configured_hashrate_th",
+        "energy_meter_device_id",
     )
     with _miners_db_lock:
         conn = _miners_db_connect()
@@ -13202,6 +13253,7 @@ def _save_miners_managed(miners: list, *, _from_migrate: bool = False) -> dict:
                         m.get("last_error"),
                         m.get("factory_hashrate_th"),
                         m.get("configured_hashrate_th"),
+                        m.get("energy_meter_device_id"),
                     ),
                 )
             # keep AUTOINCREMENT sequence ahead of max id
@@ -13482,6 +13534,29 @@ def update_managed(mid: str, fields: dict | None) -> dict:
     for k in str_keys:
         if k in fields and fields[k] is not None:
             found[k] = str(fields[k]).strip()
+    # Energy meter: bound peripheral device id (empty clears → ASIC virtual)
+    if "energy_meter_device_id" in fields:
+        raw_em = fields.get("energy_meter_device_id")
+        if raw_em is None or str(raw_em).strip() == "":
+            found["energy_meter_device_id"] = None
+        else:
+            did = str(raw_em).strip()
+            # must be a device bound to this miner with a power meter
+            opts = list_miner_energy_meter_options(mid)
+            ok_ids = {
+                str(o.get("device_id") or "")
+                for o in (opts.get("options") or [])
+                if o.get("device_id")
+            }
+            if did not in ok_ids:
+                raise ValueError(
+                    "energy_meter_device_id must be a power-meter device bound to this miner"
+                )
+            found["energy_meter_device_id"] = did
+            try:
+                ensure_device_energy_meter(did)
+            except Exception as e:
+                print(f"[energy] ensure device meter: {e}", flush=True)
     # Cell: topology-only (move into free cell). Never free-text when topology off.
     if "cell" in fields or "location" in fields:
         raw_cell = fields.get("cell", fields.get("location"))
@@ -19508,6 +19583,16 @@ def energy_meter_id_for_miner(miner_id) -> str:
     return "miner_" + mid
 
 
+def energy_meter_id_for_device(device_id: str | None) -> str:
+    """Physical energy.db meter id for a peripheral with power sensing."""
+    did = str(device_id or "").strip()
+    if not did:
+        return ""
+    if did.startswith("device_"):
+        return did
+    return "device_" + did
+
+
 def _is_virtual_energy_meter(meter_id: str) -> bool:
     mid = str(meter_id or "").strip()
     if not mid:
@@ -19518,6 +19603,254 @@ def _is_virtual_energy_meter(meter_id: str) -> bool:
     if mid.startswith("miner_"):
         return True
     return False
+
+
+def _is_device_energy_meter(meter_id: str) -> bool:
+    return str(meter_id or "").strip().startswith("device_")
+
+
+def device_has_power_meter(d: dict | None) -> bool:
+    """True if peripheral exposes built-in power measurement."""
+    if not isinstance(d, dict):
+        return False
+    if d.get("has_power_meter") is True or d.get("power_meter") is True:
+        return True
+    lp = d.get("last_power") if isinstance(d.get("last_power"), dict) else None
+    if lp is not None and lp.get("power_w") is not None:
+        try:
+            float(lp.get("power_w"))
+            return True
+        except (TypeError, ValueError):
+            pass
+    be = str(d.get("backend") or "").strip().lower()
+    # Shelly plugs typically meter; Tapo only when we've seen power (P110 vs P100)
+    if be in ("shelly",):
+        return True
+    return False
+
+
+def ensure_device_energy_meter(device_id: str, *, name: str | None = None) -> str:
+    """Create/update physical energy.db meter for a device; return meter_id."""
+    did = str(device_id or "").strip()
+    if not did:
+        raise ValueError("device_id required")
+    mid = energy_meter_id_for_device(did)
+    label = str(name or "").strip()
+    if not label:
+        try:
+            d = get_device_by_id(did, redact=True)
+            if d:
+                label = str(d.get("name") or d.get("alias") or did)
+        except Exception:
+            label = did
+    label = (label or did)[:80]
+    _ensure_energy_db()
+    now = time.time()
+    cfg_json = json.dumps({"device_id": did}, ensure_ascii=False)
+    with _energy_db_lock:
+        conn = _energy_db_connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO meters
+                    (id, type, name, enabled, source, source_config, unit, created_ts)
+                VALUES (?, 'physical', ?, 1, 'device', ?, 'kWh', ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    type = 'physical',
+                    name = excluded.name,
+                    source = 'device',
+                    source_config = excluded.source_config,
+                    enabled = 1
+                """,
+                (mid, f"{label} · power", cfg_json, now),
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO meter_state
+                    (meter_id, last_ts, last_power_w, total_kwh, updated_ts)
+                VALUES (?, NULL, NULL, 0, ?)
+                """,
+                (mid, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return mid
+
+
+def list_miner_energy_meter_options(miner_id) -> dict:
+    """
+    ASIC virtual meter + bound peripherals that have a power meter.
+    """
+    mid = str(miner_id or "").strip()
+    virt_id = energy_meter_id_for_miner(mid) if mid else VIRTUAL_METER_ID
+    options: list[dict] = [
+        {
+            "device_id": None,
+            "meter_id": virt_id,
+            "name": "ASIC power (virtual)",
+            "name_ru": "Мощность ASIC (виртуальный)",
+            "icon": "⛏️",
+            "kind": "virtual",
+            "last_power_w": None,
+            "online": None,
+        }
+    ]
+    selected = None
+    if mid:
+        try:
+            for m in get_miners_managed().get("miners") or []:
+                if not isinstance(m, dict):
+                    continue
+                if str(m.get("id") or "").strip() != mid:
+                    continue
+                selected = str(m.get("energy_meter_device_id") or "").strip() or None
+                break
+        except Exception:
+            selected = None
+    try:
+        devices = list_devices(redact=True)
+    except Exception:
+        devices = []
+    for d in devices or []:
+        if not isinstance(d, dict):
+            continue
+        if not d.get("enabled", True):
+            continue
+        if mid and str(d.get("miner_id") or "").strip() != mid:
+            continue
+        if not mid and str(d.get("miner_id") or "").strip():
+            # no miner filter → skip (options are per-miner)
+            continue
+        if not device_has_power_meter(d):
+            continue
+        did = str(d.get("id") or "").strip()
+        if not did:
+            continue
+        lp = d.get("last_power") if isinstance(d.get("last_power"), dict) else {}
+        pw = None
+        try:
+            if lp.get("power_w") is not None:
+                pw = round(float(lp.get("power_w")), 1)
+        except (TypeError, ValueError):
+            pw = None
+        options.append(
+            {
+                "device_id": did,
+                "meter_id": energy_meter_id_for_device(did),
+                "name": str(d.get("name") or d.get("alias") or did),
+                "icon": str(d.get("icon") or "🔌"),
+                "kind": "device",
+                "backend": d.get("backend"),
+                "last_power_w": pw,
+                "online": d.get("online"),
+                "selected": bool(selected and selected == did),
+            }
+        )
+    return {
+        "ok": True,
+        "miner_id": mid or None,
+        "selected_device_id": selected,
+        "options": options,
+    }
+
+
+def _managed_energy_meter_device_id(miner_id) -> str | None:
+    mid = str(miner_id or "").strip()
+    if not mid:
+        return None
+    try:
+        for m in get_miners_managed().get("miners") or []:
+            if not isinstance(m, dict):
+                continue
+            if str(m.get("id") or "").strip() != mid:
+                continue
+            did = str(m.get("energy_meter_device_id") or "").strip()
+            return did or None
+    except Exception:
+        return None
+    return None
+
+
+def _miners_using_energy_device(device_id: str) -> list[str]:
+    """Managed miner ids that selected this device as energy meter."""
+    did = str(device_id or "").strip()
+    if not did:
+        return []
+    out: list[str] = []
+    try:
+        for m in get_miners_managed().get("miners") or []:
+            if not isinstance(m, dict):
+                continue
+            if str(m.get("energy_meter_device_id") or "").strip() == did:
+                mid = str(m.get("id") or "").strip()
+                if mid:
+                    out.append(mid)
+    except Exception:
+        pass
+    return out
+
+
+def energy_meter_tick_from_device(
+    device: dict | None,
+    *,
+    power: dict | None = None,
+    online: bool | None = None,
+) -> dict | None:
+    """
+    When a device reports power and is selected as a miner's energy meter,
+    hold-tick the physical device_<id> meter.
+    """
+    if not isinstance(device, dict):
+        return None
+    did = str(device.get("id") or "").strip()
+    if not did:
+        return None
+    if not _miners_using_energy_device(did):
+        return None
+    lp = power if isinstance(power, dict) else device.get("last_power")
+    if not isinstance(lp, dict) or lp.get("power_w") is None:
+        return None
+    try:
+        pw = float(lp.get("power_w"))
+    except (TypeError, ValueError):
+        return None
+    on = online if online is not None else bool(device.get("online", True))
+    try:
+        mid = ensure_device_energy_meter(
+            did, name=str(device.get("name") or device.get("alias") or did)
+        )
+    except Exception as e:
+        print(f"[energy] device meter ensure: {e}", flush=True)
+        return None
+    return energy_meter_tick(pw, online=on, meter_id=mid)
+
+
+def energy_meter_tick_selected_devices() -> int:
+    """
+    Hold-tick all device meters selected on managed miners.
+    Safe to call from fleet loop / energy API (Go poller may own device status).
+    """
+    n = 0
+    try:
+        miners = get_miners_managed().get("miners") or []
+    except Exception:
+        return 0
+    seen: set[str] = set()
+    for m in miners:
+        if not isinstance(m, dict):
+            continue
+        did = str(m.get("energy_meter_device_id") or "").strip()
+        if not did or did in seen:
+            continue
+        seen.add(did)
+        try:
+            d = get_device_by_id(did, redact=False)
+            if energy_meter_tick_from_device(d):
+                n += 1
+        except Exception as e:
+            print(f"[energy] selected device tick {did}: {e}", flush=True)
+    return n
 
 
 def _resolve_managed_id_from_live(live: dict | None) -> str | None:
@@ -19579,8 +19912,8 @@ def energy_meter_tick(
     if not cfg.get("metering_enabled", True):
         return None
     mid = str(meter_id or VIRTUAL_METER_ID).strip() or VIRTUAL_METER_ID
-    if not _is_virtual_energy_meter(mid):
-        # physical drivers not implemented yet
+    # Allow virtual (ASIC) and device_* physical meters; other physical sources TBD
+    if not (_is_virtual_energy_meter(mid) or _is_device_energy_meter(mid)):
         return None
     meter_id = mid
     _ensure_energy_db()
@@ -19602,18 +19935,31 @@ def energy_meter_tick(
                 (meter_id,),
             ).fetchone()
             if not st:
-                mname = (
-                    "Virtual · miner power"
-                    if meter_id == VIRTUAL_METER_ID
-                    else f"Miner · {meter_id}"
-                )
+                if _is_device_energy_meter(meter_id):
+                    mtype, msrc, mname = (
+                        "physical",
+                        "device",
+                        f"Device · {meter_id}",
+                    )
+                elif meter_id == VIRTUAL_METER_ID:
+                    mtype, msrc, mname = (
+                        "virtual",
+                        "miner_power",
+                        "Virtual · miner power",
+                    )
+                else:
+                    mtype, msrc, mname = (
+                        "virtual",
+                        "miner_power",
+                        f"Miner · {meter_id}",
+                    )
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO meters
                         (id, type, name, enabled, source, unit, created_ts)
-                    VALUES (?, 'virtual', ?, 1, 'miner_power', 'kWh', ?)
+                    VALUES (?, ?, ?, 1, ?, 'kWh', ?)
                     """,
-                    (meter_id, mname, now),
+                    (meter_id, mtype, mname, msrc, now),
                 )
                 conn.execute(
                     """
@@ -20737,11 +21083,19 @@ def resolve_energy_meter_id(
 ) -> str:
     """
     Resolve which energy.db meter to read.
-    Prefer explicit meter_id; else miner_{id}; if empty + fallback, virtual_miner.
+    Prefer explicit meter_id; else miner.energy_meter_device_id → device_*;
+    else miner_{id}; legacy virtual_miner fallback when empty.
     """
     mid = str(meter_id or "").strip()
     if mid:
         return mid
+    rid = str(miner_id or "").strip()
+    did = _managed_energy_meter_device_id(rid) if rid else None
+    if did:
+        try:
+            return ensure_device_energy_meter(did)
+        except Exception:
+            return energy_meter_id_for_device(did)
     want = energy_meter_id_for_miner(miner_id)
     if want != VIRTUAL_METER_ID and fallback_legacy:
         # historical samples lived on virtual_miner before per-miner meters
@@ -20763,6 +21117,11 @@ def energy_summary(
     """kWh / cost periods from energy.db hold samples + virtual meter state."""
     cfg = get_energy_cfg()
     _ensure_energy_db()
+    # Keep device-selected meters fresh even when Go owns device polling
+    try:
+        energy_meter_tick_selected_devices()
+    except Exception:
+        pass
     mid = resolve_energy_meter_id(meter_id=meter_id, miner_id=miner_id)
     now = time.time()
     day0 = _local_day_start(now)
@@ -20787,42 +21146,60 @@ def energy_summary(
         virtual = next((m for m in meters if m.get("id") == VIRTUAL_METER_ID), None)
     live_w = virtual.get("last_power_w") if virtual else None
     live_est = False
+    energy_device_id = None
     try:
-        snap = None
         rid = str(miner_id or "").strip()
-        if rid:
+        energy_device_id = _managed_energy_meter_device_id(rid) if rid else None
+        # Device-selected meter: prefer live peripheral reading for UI tile
+        if energy_device_id:
             try:
-                fleet = get_miners_fleet()
-                for m in (fleet.get("miners") or []):
-                    if not isinstance(m, dict):
-                        continue
-                    if str(m.get("id") or "").strip() != rid:
-                        continue
-                    lv = m.get("live")
-                    if isinstance(lv, dict):
-                        snap = lv
-                    break
+                d = get_device_by_id(energy_device_id, redact=True)
+                lp = (
+                    d.get("last_power")
+                    if isinstance(d, dict) and isinstance(d.get("last_power"), dict)
+                    else None
+                )
+                if lp and lp.get("power_w") is not None:
+                    live_w = float(lp.get("power_w"))
+                    live_est = False
             except Exception:
-                snap = None
-        if snap is None:
-            snap = hydrate_live_from_disk(max_age_sec=180.0)
-        if isinstance(snap, dict):
-            src = str(snap.get("power_source") or "").lower()
-            live_est = bool(snap.get("power_estimated")) or src in (
-                "model",
-                "estimate",
-                "estimated",
-                "profile",
-            )
-            if live_w is None and snap.get("power") not in (None, ""):
-                live_w = snap.get("power")
+                pass
+        else:
+            snap = None
+            if rid:
+                try:
+                    fleet = get_miners_fleet()
+                    for m in (fleet.get("miners") or []):
+                        if not isinstance(m, dict):
+                            continue
+                        if str(m.get("id") or "").strip() != rid:
+                            continue
+                        lv = m.get("live")
+                        if isinstance(lv, dict):
+                            snap = lv
+                        break
+                except Exception:
+                    snap = None
+            if snap is None:
+                snap = hydrate_live_from_disk(max_age_sec=180.0)
+            if isinstance(snap, dict):
+                src = str(snap.get("power_source") or "").lower()
+                live_est = bool(snap.get("power_estimated")) or src in (
+                    "model",
+                    "estimate",
+                    "estimated",
+                    "profile",
+                )
+                if live_w is None and snap.get("power") not in (None, ""):
+                    live_w = snap.get("power")
     except Exception:
         live_est = False
-    # Prefer last_power from the selected meter state
+    # Prefer last_power from the selected meter state when device live missing
     try:
         for m in meters:
             if m.get("id") == mid and m.get("last_power_w") is not None:
-                live_w = m.get("last_power_w")
+                if live_w is None or not energy_device_id:
+                    live_w = m.get("last_power_w")
                 break
     except Exception:
         pass
@@ -20846,6 +21223,7 @@ def energy_summary(
         "config": cfg,
         "meter_id": mid,
         "miner_id": str(miner_id).strip() if miner_id not in (None, "") else None,
+        "energy_meter_device_id": energy_device_id,
         "live_power_w": live_w,
         "live_power_estimated": live_est,
         "periods": periods,
@@ -39111,6 +39489,25 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path in ("/api/energy/meters", "/api/energy/meter"):
             self._json_response(200, {"ok": True, "meters": list_energy_meters()})
+            return
+        if path in (
+            "/api/energy/meter-options",
+            "/api/energy/meter_options",
+            "/api/miners/energy-meters",
+        ):
+            try:
+                qs = parse_qs(urlparse(self.path).query)
+                mid = (qs.get("miner_id") or qs.get("id") or [None])[0]
+                if not mid:
+                    self._json_response(
+                        400, {"ok": False, "error": "miner_id required"}
+                    )
+                    return
+                self._json_response(
+                    200, list_miner_energy_meter_options(str(mid).strip())
+                )
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
             return
         if path in ("/api/telegram/config", "/api/telegram"):
             self._json_response(200, {"ok": True, "config": get_telegram_cfg(redact=True)})
